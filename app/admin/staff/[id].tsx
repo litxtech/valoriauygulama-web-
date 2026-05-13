@@ -11,25 +11,63 @@ import {
   KeyboardAvoidingView,
   Platform,
   Switch,
+  Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 import * as Print from 'expo-print';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
 import { exportStaffDetailPdf, buildStaffDetailHtml } from '@/lib/staffDetailPdf';
 import { sendNotification } from '@/lib/notificationService';
+import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import { ensureCameraPermission } from '@/lib/cameraPermission';
+import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { getDocumentsBucketPublicUrl, isDocumentImageMime } from '@/lib/documentsSignedUrl';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  type StaffPersonnelWarningSeverity,
+  SEVERITY_LABEL_TR,
+  SEVERITY_DESC_TR,
+  notificationTitleForSeverity,
+} from '@/lib/staffPersonnelWarnings';
+
+const WARN_SEVERITY_LEVELS: StaffPersonnelWarningSeverity[] = [
+  'reminder',
+  'verbal',
+  'written',
+  'severe',
+  'final',
+];
+
+function personnelWarningImageList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((u): u is string => typeof u === 'string' && u.trim().length > 0);
+}
 
 const DEPARTMENTS = [
+  { value: 'owner', label: 'Sahip' },
+  { value: 'general_manager', label: 'Genel Müdür' },
+  { value: 'manager', label: 'Müdür' },
+  { value: 'supervisor', label: 'Sorumlu / Şef' },
   { value: 'housekeeping', label: 'Temizlik' },
   { value: 'technical', label: 'Teknik' },
   { value: 'receptionist', label: 'Resepsiyon' },
+  { value: 'front_office', label: 'Ön Büro' },
   { value: 'security', label: 'Güvenlik' },
   { value: 'reception_chief', label: 'Resepsiyon Şefi' },
   { value: 'kitchen', label: 'Mutfak' },
+  { value: 'kitchen_staff', label: 'Mutfak Personeli' },
+  { value: 'chef', label: 'Aşçı' },
+  { value: 'head_chef', label: 'Baş Aşçı' },
+  { value: 'pastry', label: 'Pastane' },
   { value: 'restaurant', label: 'Restoran' },
+  { value: 'service', label: 'Servis' },
+  { value: 'bar', label: 'Bar' },
+  { value: 'hr', label: 'İnsan Kaynakları' },
+  { value: 'accounting', label: 'Muhasebe' },
 ];
 
 const ROLES = [
@@ -78,6 +116,9 @@ const APP_PERMISSIONS = [
   { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },
   { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesini yönetebilir' },
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
+  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri: bina, lokasyon, varlık ve QR yönetimi' },
+  { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
+  { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
 ];
 
 const APP_PERMISSION_LABELS: Record<string, string> = APP_PERMISSIONS.reduce<Record<string, string>>((acc, item) => {
@@ -116,6 +157,9 @@ const DEFAULT_PERMISSIONS: Record<string, boolean> = {
   dining_venues: false,
   yarin_oda_temizlik_listesi: false,
   kbs_mrz_scan: false,
+  teknik_varlik_yonetimi: false,
+  teknik_varliklar: false,
+  teknik_varliklar_okuma: false,
 };
 
 type OrgRow = { id: string; name: string; slug: string; kind: string };
@@ -175,9 +219,21 @@ type StaffRelatedVersion = {
   mime_type: string | null;
 };
 
+type PersonnelWarningRow = {
+  id: string;
+  severity: StaffPersonnelWarningSeverity;
+  subject_line: string | null;
+  body: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  acknowledgement_note: string | null;
+  image_urls: unknown;
+};
+
 export default function EditStaffScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { staff: adminActor } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [staff, setStaff] = useState<StaffDetail | null>(null);
@@ -227,6 +283,33 @@ export default function EditStaffScreen() {
   const [staffDocPreviewUrlByPath, setStaffDocPreviewUrlByPath] = useState<Record<string, string>>({});
   const [staffDocsLoading, setStaffDocsLoading] = useState(false);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [personnelWarnings, setPersonnelWarnings] = useState<PersonnelWarningRow[]>([]);
+  const [personnelWarningsLoading, setPersonnelWarningsLoading] = useState(false);
+  const [warnModalOpen, setWarnModalOpen] = useState(false);
+  const [warnSeverity, setWarnSeverity] = useState<StaffPersonnelWarningSeverity>('verbal');
+  const [warnSubject, setWarnSubject] = useState('');
+  const [warnBody, setWarnBody] = useState('');
+  const [warnImageUrls, setWarnImageUrls] = useState<string[]>([]);
+  const [warnImageUploading, setWarnImageUploading] = useState(false);
+  const [issuingWarning, setIssuingWarning] = useState(false);
+
+  const loadPersonnelWarnings = useCallback(async () => {
+    if (!id) return;
+    setPersonnelWarningsLoading(true);
+    const { data, error } = await supabase
+      .from('staff_personnel_warnings')
+      .select('id, severity, subject_line, body, created_at, acknowledged_at, acknowledgement_note, image_urls')
+      .eq('subject_staff_id', id)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    setPersonnelWarningsLoading(false);
+    if (!error && data) setPersonnelWarnings(data as PersonnelWarningRow[]);
+    else setPersonnelWarnings([]);
+  }, [id]);
+
+  useEffect(() => {
+    loadPersonnelWarnings();
+  }, [loadPersonnelWarnings]);
 
   useEffect(() => {
     supabase
@@ -380,6 +463,113 @@ export default function EditStaffScreen() {
       return;
     }
     setRole(nonAdminRole || 'receptionist');
+  };
+
+  const uploadWarnImage = async (uri: string) => {
+    setWarnImageUploading(true);
+    try {
+      const { publicUrl } = await uploadUriToPublicBucket({
+        bucketId: 'staff-personnel-warnings',
+        uri,
+        subfolder: 'warn',
+      });
+      setWarnImageUrls((prev) => (prev.length >= 8 ? prev : [...prev, publicUrl]));
+    } catch (e) {
+      Alert.alert('Yükleme', (e as Error).message);
+    } finally {
+      setWarnImageUploading(false);
+    }
+  };
+
+  const pickWarnCamera = async () => {
+    const ok = await ensureCameraPermission({
+      title: 'Kamera',
+      message: 'Uyarıya görsel eklemek için kamera gerekli.',
+      settingsMessage: 'Ayarlardan kamera iznini açın.',
+    });
+    if (!ok) return;
+    const r = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.75,
+    });
+    if (!r.canceled && r.assets[0]?.uri) await uploadWarnImage(r.assets[0].uri);
+  };
+
+  const pickWarnLibrary = async () => {
+    const ok = await ensureMediaLibraryPermission();
+    if (!ok) return;
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.75,
+      allowsMultipleSelection: true,
+      selectionLimit: 8,
+    });
+    if (r.canceled) return;
+    for (const a of r.assets ?? []) {
+      if (warnImageUrls.length >= 8) break;
+      if (a.uri) await uploadWarnImage(a.uri);
+    }
+  };
+
+  const issuePersonnelWarning = async () => {
+    if (!id || !organizationId) {
+      Alert.alert('Uyarı', 'İşletme bilgisi eksik.');
+      return;
+    }
+    if (!adminActor?.id) {
+      Alert.alert('Hata', 'Oturum bulunamadı.');
+      return;
+    }
+    const bodyText = warnBody.trim();
+    if (!bodyText) {
+      Alert.alert('Uyarı', 'Uyarı metnini yazın.');
+      return;
+    }
+    setIssuingWarning(true);
+    try {
+      const { data: inserted, error } = await supabase
+        .from('staff_personnel_warnings')
+        .insert({
+          organization_id: organizationId,
+          subject_staff_id: id,
+          issued_by_staff_id: adminActor.id,
+          severity: warnSeverity,
+          subject_line: warnSubject.trim() || null,
+          body: bodyText,
+          image_urls: warnImageUrls.length > 0 ? warnImageUrls : [],
+        })
+        .select('id')
+        .maybeSingle();
+      if (error) {
+        Alert.alert('Hata', error.message);
+        return;
+      }
+      const wid = (inserted as { id?: string } | null)?.id;
+      const title = notificationTitleForSeverity(warnSeverity);
+      const shortBody = bodyText.length > 220 ? `${bodyText.slice(0, 217)}…` : bodyText;
+      await sendNotification({
+        staffId: id,
+        title,
+        body: shortBody,
+        notificationType: 'staff_personnel_warning',
+        category: 'admin',
+        data: {
+          warningId: wid ?? '',
+          screen: '/staff/warnings',
+          severity: warnSeverity,
+        },
+        createdByStaffId: adminActor.id,
+      });
+      setWarnModalOpen(false);
+      setWarnSubject('');
+      setWarnBody('');
+      setWarnImageUrls([]);
+      setWarnSeverity('verbal');
+      await loadPersonnelWarnings();
+      Alert.alert('Gönderildi', 'Personele bildirim gitti; sözlü ve üzeri seviyede tam ekran onay istenir.');
+    } finally {
+      setIssuingWarning(false);
+    }
   };
 
   const submit = async () => {
@@ -856,6 +1046,64 @@ export default function EditStaffScreen() {
           </TouchableOpacity>
         </View>
 
+        <Text style={styles.sectionTitle}>⚠️ Resmi uyarı (disiplin)</Text>
+        <Text style={styles.label}>
+          Personelde kalıcı kayıt oluşturur; sözlü ve üzeri seviyede uygulama açılışında tam ekran uyarı ve okundu onayı zorunludur.
+          Yıldızlı değerlendirme ile birlikte İK sürecinde kullanılabilir — ikisi ayrı kayıtlardır.
+        </Text>
+        <TouchableOpacity
+          style={styles.warnIssueBtn}
+          onPress={() => {
+            setWarnImageUrls([]);
+            setWarnModalOpen(true);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.warnIssueBtnText}>Bu personele uyarı gönder</Text>
+        </TouchableOpacity>
+        {personnelWarningsLoading ? (
+          <ActivityIndicator size="small" color="#991b1b" style={{ marginVertical: 10 }} />
+        ) : personnelWarnings.length === 0 ? (
+          <Text style={styles.hint}>Henüz resmi uyarı kaydı yok.</Text>
+        ) : (
+          <View style={styles.warnList}>
+            {personnelWarnings.map((w) => {
+              const wImgs = personnelWarningImageList(w.image_urls);
+              return (
+              <View key={w.id} style={styles.warnCard}>
+                {wImgs.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.warnCardImages}>
+                    {wImgs.map((uri) => (
+                      <TouchableOpacity key={uri} onPress={() => setPreviewImageUri(uri)} activeOpacity={0.9}>
+                        <CachedImage uri={uri} style={styles.warnCardThumb} contentFit="cover" />
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                ) : null}
+                <View style={styles.warnCardTop}>
+                  <Text style={styles.warnSeverity}>{SEVERITY_LABEL_TR[w.severity]}</Text>
+                  <Text style={styles.warnDate}>{new Date(w.created_at).toLocaleString('tr-TR')}</Text>
+                </View>
+                {w.subject_line?.trim() ? (
+                  <Text style={styles.warnSubject}>{w.subject_line.trim()}</Text>
+                ) : null}
+                <Text style={styles.warnBodyPreview} numberOfLines={4}>
+                  {w.body.trim()}
+                </Text>
+                <Text style={styles.warnAck}>
+                  {w.acknowledged_at
+                    ? `Personel okudu: ${new Date(w.acknowledged_at).toLocaleString('tr-TR')}`
+                    : 'Personel henüz okundu onayı vermedi'}
+                </Text>
+                {w.acknowledgement_note?.trim() ? (
+                  <Text style={styles.warnAckNote}>Personel notu: {w.acknowledgement_note.trim()}</Text>
+                ) : null}
+              </View>
+              );
+            })}
+          </View>
+        )}
+
         <Text style={styles.sectionTitle}>⭐ Yönetim değerlendirmesi</Text>
         <Text style={styles.label}>
           Takım çalışması, disiplin, kurallara uyum vb. yıldızlı değerlendirme kaydı oluşturun; personel kendi ekranında görür.
@@ -956,6 +1204,88 @@ export default function EditStaffScreen() {
           </>
         )}
       </ScrollView>
+      <Modal visible={warnModalOpen} transparent animationType="fade" onRequestClose={() => !issuingWarning && setWarnModalOpen(false)}>
+        <View style={styles.warnModalBackdrop}>
+          <View style={styles.warnModalCard}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.warnModalTitle}>Resmi uyarı</Text>
+              <Text style={styles.warnModalHint}>Ciddiyet seviyesi personelin ekranında aynen görünür. Görseller metnin yanında / üstünde gösterilir.</Text>
+              <Text style={styles.label}>Seviye</Text>
+              <View style={styles.chips}>
+                {WARN_SEVERITY_LEVELS.map((sev) => (
+                  <TouchableOpacity
+                    key={sev}
+                    style={[styles.chip, warnSeverity === sev && styles.chipActive]}
+                    onPress={() => setWarnSeverity(sev)}
+                  >
+                    <Text style={[styles.chipText, warnSeverity === sev && styles.chipTextActive]} numberOfLines={2}>
+                      {SEVERITY_LABEL_TR[sev]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.warnSevDesc}>{SEVERITY_DESC_TR[warnSeverity]}</Text>
+              <Text style={styles.label}>Konu başlığı (isteğe bağlı)</Text>
+              <TextInput
+                style={styles.input}
+                value={warnSubject}
+                onChangeText={setWarnSubject}
+                placeholder="Örn: Kılık kıyafet ihlali"
+                placeholderTextColor="#9ca3af"
+              />
+              <Text style={styles.label}>Ek görseller (isteğe bağlı, en fazla 8)</Text>
+              <View style={styles.warnImgActions}>
+                <TouchableOpacity style={styles.warnImgBtn} onPress={pickWarnCamera} disabled={warnImageUploading || issuingWarning}>
+                  <Text style={styles.warnImgBtnText}>Kamera</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.warnImgBtn} onPress={pickWarnLibrary} disabled={warnImageUploading || issuingWarning}>
+                  <Text style={styles.warnImgBtnText}>Galeri</Text>
+                </TouchableOpacity>
+              </View>
+              {warnImageUploading ? <ActivityIndicator style={{ marginBottom: 12 }} color="#1a365d" /> : null}
+              {warnImageUrls.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.warnThumbStrip}>
+                  {warnImageUrls.map((uri, idx) => (
+                    <View key={uri} style={styles.warnThumbWrap}>
+                      <CachedImage uri={uri} style={styles.warnThumbImg} contentFit="cover" />
+                      <TouchableOpacity
+                        style={styles.warnThumbRemove}
+                        onPress={() => setWarnImageUrls((prev) => prev.filter((_, i) => i !== idx))}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.warnThumbRemoveText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : null}
+              <Text style={styles.label}>Uyarı metni (zorunlu)</Text>
+              <TextInput
+                style={[styles.input, styles.warnModalTextArea]}
+                value={warnBody}
+                onChangeText={setWarnBody}
+                placeholder="Net, ölçülebilir ve kayda geçecek şekilde yazın."
+                placeholderTextColor="#9ca3af"
+                multiline
+              />
+              <TouchableOpacity
+                style={[styles.primaryButton, issuingWarning && { opacity: 0.7 }]}
+                onPress={issuePersonnelWarning}
+                disabled={issuingWarning}
+              >
+                <Text style={styles.primaryButtonText}>{issuingWarning ? 'Gönderiliyor…' : 'Gönder ve kaydet'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => !issuingWarning && setWarnModalOpen(false)}
+                disabled={issuingWarning}
+              >
+                <Text style={styles.secondaryButtonText}>İptal</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <ImagePreviewModal
         visible={previewImageUri !== null}
         uri={previewImageUri}
@@ -1024,4 +1354,78 @@ const styles = StyleSheet.create({
   docThumbFallbackText: { color: '#4a5568', fontSize: 11, fontWeight: '700' },
   docTitle: { color: '#1a202c', fontWeight: '700', fontSize: 14 },
   docMeta: { color: '#4a5568', marginTop: 4, fontSize: 12 },
+  hint: { fontSize: 13, color: '#718096', marginTop: 4, marginBottom: 8, lineHeight: 19 },
+  warnIssueBtn: {
+    backgroundColor: '#7f1d1d',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  warnIssueBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  warnList: { gap: 10, marginTop: 4, marginBottom: 8 },
+  warnCard: {
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    borderRadius: 12,
+    padding: 12,
+  },
+  warnCardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6, gap: 8 },
+  warnSeverity: { fontSize: 14, fontWeight: '800', color: '#9a3412' },
+  warnDate: { fontSize: 12, color: '#78716c' },
+  warnSubject: { fontSize: 15, fontWeight: '700', color: '#1a202c', marginBottom: 4 },
+  warnBodyPreview: { fontSize: 14, color: '#44403c', lineHeight: 20, marginBottom: 6 },
+  warnAck: { fontSize: 12, color: '#b45309', fontWeight: '600' },
+  warnModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  warnModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    maxHeight: '88%',
+    width: '100%',
+  },
+  warnModalTextArea: { minHeight: 120, textAlignVertical: 'top' },
+  warnImgActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  warnImgBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#edf2f7',
+    alignItems: 'center',
+  },
+  warnImgBtnText: { fontSize: 14, fontWeight: '700', color: '#1a365d' },
+  warnThumbStrip: { marginBottom: 14 },
+  warnThumbWrap: {
+    width: 88,
+    height: 88,
+    marginRight: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#edf2f7',
+  },
+  warnThumbImg: { width: '100%', height: '100%' },
+  warnThumbRemove: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warnThumbRemoveText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  warnCardImages: { marginBottom: 10, maxHeight: 96 },
+  warnCardThumb: { width: 88, height: 88, borderRadius: 10, marginRight: 8, backgroundColor: '#fff' },
+  warnAckNote: { fontSize: 13, color: '#1e40af', fontWeight: '600', marginTop: 8, lineHeight: 19 },
+  warnModalTitle: { fontSize: 20, fontWeight: '800', color: '#1a202c', marginBottom: 6 },
+  warnModalHint: { fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 19 },
+  warnSevDesc: { fontSize: 13, color: '#9a3412', marginTop: -8, marginBottom: 12, lineHeight: 19 },
 });

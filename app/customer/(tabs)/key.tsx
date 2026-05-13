@@ -361,7 +361,7 @@ export default function DigitalKeyScreen() {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={showScan} animationType="slide" onRequestClose={() => setShowScan(false)}>
+      <Modal visible={showScan} animationType="fade" presentationStyle="fullScreen" onRequestClose={() => setShowScan(false)}>
         <BarcodeScannerView
           title={t('customerQrScanTitle')}
           hint={t('customerQrScanHint')}

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, Platform } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard } from '@/components/admin';
@@ -57,6 +57,33 @@ export default function StaffHubScreen() {
         <Text style={styles.sectionDesc}>İki yöntemden birini kullanın</Text>
       </View>
 
+      <View style={styles.quickRow}>
+        <TouchableOpacity
+          style={[styles.quickBtn, styles.quickBtnPrimary]}
+          onPress={() => router.push('/admin/staff/list')}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="list-outline" size={16} color="#fff" />
+          <Text style={styles.quickBtnPrimaryText}>Kullanıcı listesini aç</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickBtn}
+          onPress={() => router.push('/admin/staff/add')}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="person-add-outline" size={16} color={adminTheme.colors.primary} />
+          <Text style={styles.quickBtnText}>Yeni çalışan ekle</Text>
+        </TouchableOpacity>
+      </View>
+
+      <MethodCard
+        emoji="📋"
+        title="Kullanıcılar listesi"
+        description="Tüm çalışanları ve kullanıcıları tek ekranda görüntüleyin."
+        cta="Listeyi aç"
+        onPress={() => router.push('/admin/staff/list')}
+      />
+
       <MethodCard
         emoji="👑"
         title="Yöntem 1: Admin eklesin"
@@ -71,14 +98,6 @@ export default function StaffHubScreen() {
         description="Çalışan kendi başvurusunu yapar, siz onaylarken düzenleyip yetkileri verirsiniz."
         cta="Onay bekleyen başvurular"
         onPress={() => router.push('/admin/staff/pending')}
-      />
-
-      <MethodCard
-        emoji="📋"
-        title="Kullanıcılar listesi"
-        description="Tüm çalışanları ve kullanıcıları görüntüleyin (admin)."
-        cta="Listeyi aç"
-        onPress={() => router.push('/admin/staff/list')}
       />
 
       <AdminCard style={styles.footer} padded>
@@ -111,6 +130,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: adminTheme.colors.textSecondary,
     marginTop: 6,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  quickBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 10,
+  },
+  quickBtnPrimary: {
+    backgroundColor: adminTheme.colors.primary,
+    borderColor: adminTheme.colors.primary,
+  },
+  quickBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: adminTheme.colors.primary,
+  },
+  quickBtnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
   },
   card: {
     backgroundColor: adminTheme.colors.surface,

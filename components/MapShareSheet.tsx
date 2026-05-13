@@ -23,6 +23,7 @@ import { Video, ResizeMode } from 'expo-av';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { uploadGuestFeedMedia, uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import { ensureLocalFeedUploadUri } from '@/lib/feedPostMediaPicker';
 import { copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
 import { getOrCreateGuestForCaller, getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName } from '@/lib/guestDisplayName';
@@ -94,7 +95,7 @@ export default function MapShareSheet({ visible, onClose, location, onSuccess }:
   };
 
   /** Android content:// video: doğru uzantı + file yolu; yükleme ve önizleme güvenilir olur */
-  const resolvePickedUri = async (asset: { uri?: string | null; type?: 'image' | 'video' | 'livePhoto' | 'pairedVideo' }) => {
+  const resolvePickedUri = async (asset: ImagePicker.ImagePickerAsset) => {
     const isVideo = asset.type === 'video';
     let uri = asset.uri ?? '';
     if (!uri) return { uri: '', type: isVideo ? ('video' as const) : ('image' as const) };
@@ -159,7 +160,7 @@ export default function MapShareSheet({ visible, onClose, location, onSuccess }:
     setUploading(true);
     const geoPromise = (async (): Promise<string | null> => {
       try {
-        const { Location } = await import('expo-location');
+        const Location = await import('expo-location');
         const [rev] = await Location.reverseGeocodeAsync({
           latitude: location.lat,
           longitude: location.lng,
@@ -194,17 +195,19 @@ export default function MapShareSheet({ visible, onClose, location, onSuccess }:
           }
         }
         try {
+          const uploadUri =
+            mediaType === 'video' ? await ensureLocalFeedUploadUri(uriToUse, 'video') : uriToUse;
           if (staff) {
             const { publicUrl } = await uploadUriToPublicBucket({
               bucketId: BUCKET,
-              uri: uriToUse,
+              uri: uploadUri,
               kind: mediaType === 'video' ? 'video' : 'image',
               subfolder: 'map',
             });
             mediaUrl = publicUrl;
           } else if (guestId) {
             const { publicUrl } = await uploadGuestFeedMedia({
-              uri: uriToUse,
+              uri: uploadUri,
               guestId,
               kind: mediaType === 'video' ? 'video' : 'image',
             });

@@ -17,6 +17,8 @@ export const EMERGENCY_TYPES = {
 export const GUEST_TYPES = {
   contract_approved: 'guest_contract_approved',
   admin_assigned_room: 'guest_admin_assigned_room',
+  stay_financial_updated: 'guest_stay_financial_updated',
+  room_reassigned: 'guest_room_reassigned',
   room_settled: 'guest_room_settled',
   checkout_reminder: 'guest_checkout_reminder',
   checkout_done: 'guest_checkout_done',
@@ -106,6 +108,14 @@ export const GUEST_MESSAGE_TEMPLATES: Record<string, (ctx: Record<string, string
   [GUEST_TYPES.admin_assigned_room]: (ctx) => ({
     title: 'Oda Hazır',
     body: `✅ Oda ${ctx.roomNumber ?? '?'} hazır! Dijital anahtarınız aktif. İyi tatiller!`,
+  }),
+  [GUEST_TYPES.stay_financial_updated]: (ctx) => ({
+    title: 'Konaklama bilgisi güncellendi',
+    body: `Resepsiyon konaklama tutarınızı güncelledi: ${ctx.summary ?? 'Detaylar uygulamada.'}`,
+  }),
+  [GUEST_TYPES.room_reassigned]: (ctx) => ({
+    title: 'Odanız değiştirildi',
+    body: `Yeni odanız: ${ctx.roomNumber ?? '?'}. Dijital anahtar ve oda hizmetleri bu odaya göre güncellendi.`,
   }),
   [GUEST_TYPES.room_settled]: (ctx) => ({
     title: "Odaya Yerleştiniz",

@@ -18,13 +18,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { sendNotification } from '@/lib/notificationService';
 import { formatDateShort } from '@/lib/date';
 import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
 import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 const DEPT_LABELS: Record<string, string> = {
   housekeeping: 'Temizlik',
@@ -127,11 +128,20 @@ type ContractApprovalRow = {
   rooms?: { room_number?: string | null } | { room_number?: string | null }[] | null;
 };
 
+type ContractRoomRow = {
+  id: string;
+  room_number: string | null;
+  floor: string | number | null;
+  status: string | null;
+  price_per_night: number | null;
+};
+
 type StaffPickRow = { id: string; full_name: string | null; department: string | null };
 
 export default function AdminApprovalsHubScreen() {
   const router = useRouter();
   const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [items, setItems] = useState<UnifiedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -147,6 +157,39 @@ export default function AdminApprovalsHubScreen() {
   const [contractNightsInput, setContractNightsInput] = useState('');
 
   const load = useCallback(async () => {
+    const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : me?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    let appsQuery = supabase
+      .from('staff_applications')
+      .select('id, full_name, email, phone, applied_department, experience, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (orgScoped) appsQuery = appsQuery.eq('organization_id', orgScoped);
+    let stocksQuery = supabase
+      .from('stock_movements')
+      .select('id, product_id, movement_type, quantity, staff_image, photo_proof, notes, created_at, product:stock_products(name, unit, current_stock), staff:staff_id(full_name)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (orgScoped) stocksQuery = stocksQuery.eq('organization_id', orgScoped);
+    let expensesQuery = supabase
+      .from('staff_expenses')
+      .select(
+        'id, amount, description, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name)'
+      )
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (orgScoped) expensesQuery = expensesQuery.eq('organization_id', orgScoped);
+    let contractsQuery = supabase
+      .from('contract_acceptances')
+      .select('id, token, room_id, contract_lang, accepted_at, guest_id, guests(full_name), rooms(room_number)')
+      .is('assigned_staff_id', null)
+      .order('accepted_at', { ascending: false })
+      .limit(100);
+    if (orgScoped) contractsQuery = contractsQuery.eq('organization_id', orgScoped);
     const [
       apps,
       stocks,
@@ -154,26 +197,9 @@ export default function AdminApprovalsHubScreen() {
       reports,
       contracts,
     ] = await Promise.all([
-      supabase
-        .from('staff_applications')
-        .select('id, full_name, email, phone, applied_department, experience, created_at')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase
-        .from('stock_movements')
-        .select('id, product_id, movement_type, quantity, staff_image, photo_proof, notes, created_at, product:stock_products(name, unit, current_stock), staff:staff_id(full_name)')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(100),
-      supabase
-        .from('staff_expenses')
-        .select(
-          'id, amount, description, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name)'
-        )
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(100),
+      appsQuery,
+      stocksQuery,
+      expensesQuery,
       supabase
         .from('feed_post_reports')
         .select(
@@ -182,12 +208,7 @@ export default function AdminApprovalsHubScreen() {
         .eq('status', 'pending')
         .order('created_at', { ascending: false })
         .limit(100),
-      supabase
-        .from('contract_acceptances')
-        .select('id, token, room_id, contract_lang, accepted_at, guest_id, guests(full_name), rooms(room_number)')
-        .is('assigned_staff_id', null)
-        .order('accepted_at', { ascending: false })
-        .limit(100),
+      contractsQuery,
     ]);
 
     const list: UnifiedItem[] = [];
@@ -288,7 +309,7 @@ export default function AdminApprovalsHubScreen() {
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     setItems(list);
-  }, []);
+  }, [me?.app_permissions?.super_admin, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -327,18 +348,11 @@ export default function AdminApprovalsHubScreen() {
     const row = detail.raw as ContractApprovalRow;
     if (row.room_id) {
       setContractSelectedRoomId(row.room_id);
-      void supabase
-        .from('rooms')
-        .select('price_per_night')
-        .eq('id', row.room_id)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (data?.price_per_night != null) setContractPriceInput(String(data.price_per_night));
-        });
     } else {
       setContractSelectedRoomId(null);
-      setContractPriceInput('');
     }
+    /** Konaklama tutarı oda kartındaki fiyattan otomatik gelmez; yönetici/yetkili elle girer. */
+    setContractPriceInput('');
     setContractNightsInput('');
   }, [detail?.kind, detail?.id]);
 
@@ -696,8 +710,8 @@ export default function AdminApprovalsHubScreen() {
             {hasGuest ? (
               <>
                 <Text style={styles.contractAssignHint}>
-                  Odayı seçin; isteğe bağlı önce önizleme bağlayın (oda listesinde imzalayan adı görünür), ardından fiyat ve gece
-                  sayısı ile check-in tamamlayın.
+                  Odayı seçin; gece başı fiyat ve gece sayısını yönetici/yetkili elle girer (oda liste fiyatı otomatik
+                  doldurulmaz). İsterseniz önce önizleme bağlayın, ardından check-in tamamlayın.
                 </Text>
                 {contractRoomsLoading ? (
                   <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
@@ -720,8 +734,6 @@ export default function AdminApprovalsHubScreen() {
                         ]}
                         onPress={() => {
                           setContractSelectedRoomId(r.id);
-                          if (r.price_per_night != null) setContractPriceInput(String(r.price_per_night));
-                          else setContractPriceInput('');
                         }}
                         disabled={acting}
                         activeOpacity={0.75}
@@ -861,6 +873,10 @@ export default function AdminApprovalsHubScreen() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
       >
+        <AdminOrganizationPicker
+          canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
+          ownOrganizationId={me?.organization_id}
+        />
         <AdminCard padded>
           <Text style={styles.lead}>
             Bekleyen personel başvuruları, stok hareketleri, harcamalar, paylaşım bildirimleri ve check-in bekleyen sözleşme onayları tek

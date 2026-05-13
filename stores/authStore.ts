@@ -89,6 +89,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (staffError) {
         void kbsRpcCall.then(() => {}).catch(() => {});
         log.warn('authStore', 'staff fetch hatası (oturum korunur)', staffError.message, staffError.code);
+        // Geçici PostgREST / ağ hatasında staff=null yapma: staff layout lobiye atıyor.
+        const prev = get().staff;
+        if (prev?.auth_id === user.id) staff = prev;
       } else {
         const row = data as (StaffProfile & { is_active?: boolean }) | null;
         if (!row) {

@@ -13,7 +13,7 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.8',
+  version: '2.2.9',
   orientation: 'portrait',
   icon: './assets/icon.png',
   scheme: 'valoria',
@@ -28,7 +28,7 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '15',
+    buildNumber: '16',
     newArchEnabled: true,
     infoPlist: {
       NSCameraUsageDescription: 'Sözleşme onayı için QR kod okutmanız gerekiyor.',
@@ -41,7 +41,7 @@ const baseConfig = {
   },
   android: {
     newArchEnabled: true,
-    versionCode: 16,
+    versionCode: 17,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {

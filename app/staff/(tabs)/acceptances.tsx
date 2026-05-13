@@ -116,9 +116,8 @@ export default function StaffAcceptancesScreen() {
 
   const selectRoomForAssign = (roomId: string) => {
     setSelectedRoomId(roomId);
-    const room = rooms.find((r) => r.id === roomId);
-    if (room?.price_per_night != null) setPriceInput(String(room.price_per_night));
-    else setPriceInput('');
+    /** Liste fiyatı bilgi amaçlıdır; tutar yalnızca yetkili tarafından elle girilir (otomatik doldurulmaz). */
+    setPriceInput('');
     setNightsInput('');
   };
 
@@ -374,6 +373,9 @@ export default function StaffAcceptancesScreen() {
               />
               {selectedRoomId && (
                 <View style={styles.priceForm}>
+                  <Text style={styles.priceManualHint}>
+                    Oda kartındaki liste fiyatı buraya otomatik yazılmaz. Konaklama bedelini siz girin.
+                  </Text>
                   <Text style={styles.priceFormLabel}>Gece başı fiyat (₺)</Text>
                   <TextInput
                     style={styles.priceInput}
@@ -507,6 +509,7 @@ const styles = StyleSheet.create({
   },
   roomItemSelected: { backgroundColor: theme.colors.primary + '20', borderWidth: 2, borderColor: theme.colors.primary, borderRadius: 8 },
   priceForm: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  priceManualHint: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 17, marginBottom: 10 },
   priceFormLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary, marginBottom: 6 },
   priceInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 12 },
   confirmAssignBtn: { padding: 14, backgroundColor: theme.colors.primary, borderRadius: 12, alignItems: 'center', marginTop: 8 },

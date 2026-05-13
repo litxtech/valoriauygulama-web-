@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   TextInput,
   Share,
+  Alert,
   Platform,
   Modal,
   Pressable,
@@ -18,10 +19,12 @@ import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { formatDateShort } from '@/lib/date';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -68,6 +71,9 @@ function getDefaultDates(): { start: string; end: string } {
 }
 
 export default function AdminSalaryAllScreen() {
+  const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -80,6 +86,7 @@ export default function AdminSalaryAllScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
     const start = dateStart || '2020-01-01';
     const end = dateEnd || '2030-12-31';
 
@@ -95,6 +102,9 @@ export default function AdminSalaryAllScreen() {
     if (statusFilter !== 'all') {
       query = query.eq('status', statusFilter);
     }
+    if (orgId && orgId !== 'all') {
+      query = query.eq('organization_id', orgId);
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -103,7 +113,7 @@ export default function AdminSalaryAllScreen() {
       setPayments((data ?? []) as PaymentRow[]);
     }
     setLoading(false);
-  }, [dateStart, dateEnd, statusFilter]);
+  }, [canUseAllOrganizations, dateStart, dateEnd, me?.organization_id, selectedOrganizationId, statusFilter]);
 
   useEffect(() => {
     load();
@@ -326,6 +336,10 @@ ${sorted
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        <AdminOrganizationPicker
+          canUseAll={canUseAllOrganizations}
+          ownOrganizationId={me?.organization_id}
+        />
         <AdminCard>
           <Text style={styles.sectionTitle}>Tarih Aralığı (Ödeme Tarihi)</Text>
           <View style={styles.dateRow}>

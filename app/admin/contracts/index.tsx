@@ -15,6 +15,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
+import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 
 type Template = {
   id: string;
@@ -143,6 +146,9 @@ function NavRowButton({
 export default function ContractsHubScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAllOrganizations = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -155,14 +161,23 @@ export default function ContractsHubScreen() {
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const fromIso = weekAgo.toISOString();
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+
+    let unassignedQuery = supabase
+      .from('contract_acceptances')
+      .select('id', { count: 'exact', head: true })
+      .is('assigned_staff_id', null);
+    let weekQuery = supabase.from('contract_acceptances').select('id', { count: 'exact', head: true }).gte('accepted_at', fromIso);
+    if (orgScoped) {
+      unassignedQuery = unassignedQuery.eq('organization_id', orgScoped);
+      weekQuery = weekQuery.eq('organization_id', orgScoped);
+    }
 
     const [tplRes, unassignedRes, weekRes] = await Promise.all([
       supabase.from('contract_templates').select('id, lang, version, title, is_active').order('lang'),
-      supabase
-        .from('contract_acceptances')
-        .select('id', { count: 'exact', head: true })
-        .is('assigned_staff_id', null),
-      supabase.from('contract_acceptances').select('id', { count: 'exact', head: true }).gte('accepted_at', fromIso),
+      unassignedQuery,
+      weekQuery,
     ]);
 
     setTemplates((tplRes.data as Template[]) ?? []);
@@ -171,7 +186,7 @@ export default function ContractsHubScreen() {
       last7: weekRes.count ?? 0,
       activeTemplates: ((tplRes.data as Template[]) ?? []).filter((t) => t.is_active).length,
     });
-  }, []);
+  }, [canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -242,6 +257,9 @@ export default function ContractsHubScreen() {
             <Ionicons name="home-outline" size={22} color={adminTheme.colors.surface} />
           </TouchableOpacity>
         </View>
+      </View>
+      <View style={styles.orgPickerWrap}>
+        <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={staff?.organization_id} />
       </View>
 
       <ScrollView
@@ -371,6 +389,10 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  orgPickerWrap: {
+    paddingHorizontal: H_PAD,
+    paddingTop: 10,
   },
   scrollContent: { paddingHorizontal: H_PAD, paddingTop: 16 },
   statsRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },

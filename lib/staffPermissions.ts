@@ -61,3 +61,37 @@ export function canAccessIncidentReports(staff: StaffPermissionSlice): boolean {
   const perms = staff.app_permissions ?? {};
   return perms.incident_reports === true || perms.tutanaklar === true;
 }
+
+/** Personel uygulaması: Teknik QR / Akıllı envanter modülüne giriş (QR okuma + talimatlar). */
+export function hasTechnicalAssetsStaffAccess(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const p = staff.app_permissions ?? {};
+  return !!(p.teknik_varliklar || p.teknik_varliklar_okuma || p.teknik_varlik_yonetimi);
+}
+
+/**
+ * Yönetim paneli: bina/lokasyon/varlık tanımlama ve QR etiket yönetimi.
+ * Tam admin veya `teknik_varlik_yonetimi` yetkisi (görev-ata-only panelde değil).
+ */
+export function canAccessTechnicalAssetsAdminRoutes(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (!canAccessAdminShell(staff) || isGorevAtaOnlyUser(staff)) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.teknik_varlik_yonetimi === true;
+}
+
+/** Müdahale kaydı ve varlık durumu güncelleme (teknik personel). */
+export function canOperateTechnicalAssets(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const p = staff.app_permissions ?? {};
+  return !!(p.teknik_varliklar || p.teknik_varlik_yonetimi);
+}
+
+/** Sadece okuma: müdahale / durum değişikliği UI gizlenir. */
+export function hasTechnicalAssetsReadonlyAccess(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canOperateTechnicalAssets(staff)) return false;
+  return !!(staff.app_permissions?.teknik_varliklar_okuma);
+}

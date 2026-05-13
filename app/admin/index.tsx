@@ -10,18 +10,24 @@ import {
   useWindowDimensions,
   Platform,
   Alert,
+  BackHandler,
+  TextInput,
   type ViewStyle,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { staffListConversations } from '@/lib/messagingApi';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminBadgeDismissedStore } from '@/stores/adminBadgeDismissedStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
+import { canAccessTechnicalAssetsAdminRoutes } from '@/lib/staffPermissions';
+import { log } from '@/lib/logger';
+import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 
 type Stats = {
   roomsTotal: number;
@@ -107,10 +113,13 @@ const SECTIONS: Section[] = [
       { href: '/admin/stock/approvals', icon: 'checkmark-done-outline', label: 'Onay bekleyenler', badge: 0 },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
       { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
+      { href: '/admin/meal-menu', icon: 'restaurant-outline', label: 'Aylık yemek listesi' },
       { href: '/admin/breakfast-confirm', icon: 'cafe-outline', label: 'Kahvaltı Teyit Kayıtları' },
       { href: '/admin/transfer-tour', icon: 'car-sport-outline', label: 'Transfer & Tur' },
       { href: '/admin/dining-venues', icon: 'restaurant-outline', label: 'Yemek & Mekanlar' },
       { href: '/admin/salary', icon: 'cash-outline', label: 'Maaş yönetimi' },
+      { href: '/admin/finance-checks', icon: 'document-text-outline', label: 'Çek takibi' },
+      { href: '/admin/debts', icon: 'swap-horizontal-outline', label: 'Borç / alacak' },
     ],
   },
   {
@@ -119,6 +128,7 @@ const SECTIONS: Section[] = [
     items: [
       { href: '/admin/access', icon: 'key-outline', label: 'Geçiş kontrolü' },
       { href: '/admin/cameras', icon: 'videocam-outline', label: 'Kamera yönetimi' },
+      { href: '/admin/technical-assets', icon: 'layers-outline', label: 'Akıllı Tesis Envanteri' },
       { href: '/admin/permissions', icon: 'shield-checkmark-outline', label: 'İzinler' },
       { href: '/admin/kbs-settings', icon: 'scan-outline', label: 'KBS Ayarları (Admin)' },
       { href: '/admin/kbs-permissions', icon: 'shield-outline', label: 'KBS Yetkileri (OPS)' },
@@ -141,9 +151,16 @@ const SECTIONS: Section[] = [
       { href: '/admin/contracts/all', icon: 'document-text-outline', label: 'Tüm Sözleşmelerim' },
       { href: '/admin/staff', icon: 'person-add-outline', label: 'Çalışan ekleme', badge: 0 },
       { href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' },
+      { href: '/admin/organizations', icon: 'business-outline', label: 'Otel/Organization yönetimi' },
       { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR tasarımları' },
     ],
   },
+];
+
+const STAFF_QUICK_ACTIONS: SectionItem[] = [
+  { href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' },
+  { href: '/admin/staff/add', icon: 'person-add-outline', label: 'Çalışan ekle' },
+  { href: '/admin/staff/pending', icon: 'checkmark-done-outline', label: 'Onay bekleyen başvurular', badge: 0 },
 ];
 
 function adminSectionsForUi() {
@@ -171,12 +188,14 @@ function AdminMenuButton({
   tint: { bg: string; icon: string };
   delay?: number;
 }) {
+  const isAndroid = Platform.OS === 'android';
   const showBadge = badge != null && badge > 0;
   const enterOpacity = useRef(new Animated.Value(0)).current;
   const enterTranslateY = useRef(new Animated.Value(8)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    if (isAndroid) return;
     Animated.parallel([
       Animated.timing(enterOpacity, {
         toValue: 1,
@@ -191,9 +210,10 @@ function AdminMenuButton({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [delay, enterOpacity, enterTranslateY]);
+  }, [delay, enterOpacity, enterTranslateY, isAndroid]);
 
   const handlePressIn = () => {
+    if (isAndroid) return;
     Animated.spring(pressScale, {
       toValue: 0.985,
       damping: 16,
@@ -204,6 +224,7 @@ function AdminMenuButton({
   };
 
   const handlePressOut = () => {
+    if (isAndroid) return;
     Animated.spring(pressScale, {
       toValue: 1,
       damping: 16,
@@ -212,6 +233,31 @@ function AdminMenuButton({
       useNativeDriver: true,
     }).start();
   };
+
+  if (isAndroid) {
+    return (
+      <TouchableOpacity
+        style={[styles.menuRow, !isLast && styles.menuRowSpacing]}
+        onPress={onPress}
+        activeOpacity={0.9}
+      >
+        <View style={[styles.menuIconWrap, { backgroundColor: tint.bg }]}>
+          <Ionicons name={item.icon} size={22} color={tint.icon} />
+        </View>
+        <Text style={styles.menuLabel} numberOfLines={2}>
+          {item.label}
+        </Text>
+        <View style={styles.menuRowRight}>
+          {showBadge ? (
+            <View style={styles.menuBadge}>
+              <Text style={styles.menuBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+            </View>
+          ) : null}
+          <Ionicons name="chevron-forward" size={18} color={tint.icon} />
+        </View>
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <AnimatedTouchableOpacity
@@ -251,7 +297,21 @@ export default function AdminDashboard() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { staff } = useAuthStore();
-  const adminSections = useMemo(() => adminSectionsForUi(), []);
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const adminSections = useMemo(() => {
+    const base = adminSectionsForUi();
+    const allowTech = canAccessTechnicalAssetsAdminRoutes(staff);
+    return base
+      .map((sec) => ({
+        ...sec,
+        items: sec.items.filter((item) => {
+          if (item.href === '/admin/technical-assets') return allowTech;
+          return true;
+        }),
+      }))
+      .filter((sec) => sec.items.length > 0);
+  }, [staff]);
+  const loadInFlightRef = useRef(false);
   const [stats, setStats] = useState<Stats>({
     roomsTotal: 0,
     roomsOccupied: 0,
@@ -268,65 +328,121 @@ export default function AdminDashboard() {
     acceptancesUnassigned: 0,
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    log.info('AdminDashboard', 'mounted', { width });
+    return () => {
+      log.info('AdminDashboard', 'unmounted');
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!staff?.id) return;
-    const [
-      roomsRes,
-      roomsOccupiedRes,
-      guestsRes,
-      staffRes,
-      stockRes,
-      staffPendingRes,
-      expensesPendingRes,
-      unreadRes,
-      feedCountRes,
-      reportsPendingRes,
-      complaintsPendingRes,
-      acceptancesUnassignedRes,
-      conversationsList,
-    ] = await Promise.all([
-      supabase.from('rooms').select('*', { count: 'exact', head: true }),
-      supabase.from('rooms').select('*', { count: 'exact', head: true }).eq('status', 'occupied'),
-      supabase.from('guests').select('id', { count: 'exact', head: true }).eq('status', 'checked_in'),
-      supabase.from('staff').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('is_online', true),
-      supabase.from('stock_movements').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('staff_applications').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('staff_expenses').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('staff_id', staff.id).is('read_at', null),
-      supabase.from('feed_posts').select('*', { count: 'exact', head: true }),
-      supabase.from('feed_post_reports').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('guest_complaints').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('contract_acceptances').select('id', { count: 'exact', head: true }).is('assigned_staff_id', null),
-      staffListConversations(staff.id),
-    ]);
+    if (loadInFlightRef.current) {
+      if (Platform.OS === 'android') log.info('AdminDashboard', 'load skipped (in flight)');
+      return;
+    }
+    loadInFlightRef.current = true;
+    const startedAt = Date.now();
+    if (Platform.OS === 'android') log.info('AdminDashboard', 'load start', { staffId: staff.id });
+    try {
+      const canUseAll = Boolean(staff?.app_permissions?.super_admin || staff?.role === 'admin');
+      const orgId = canUseAll ? selectedOrganizationId : staff.organization_id;
+      const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+      let roomsQuery = supabase.from('rooms').select('*', { count: 'exact', head: true });
+      let roomsOccupiedQuery = supabase.from('rooms').select('*', { count: 'exact', head: true }).eq('status', 'occupied');
+      let guestsQuery = supabase.from('guests').select('id', { count: 'exact', head: true }).eq('status', 'checked_in');
+      let staffActiveQuery = supabase.from('staff').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('is_online', true);
+      let stockPendingQuery = supabase.from('stock_movements').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      let staffPendingQuery = supabase.from('staff_applications').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      let expensesPendingQuery = supabase.from('staff_expenses').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      let complaintsPendingQuery = supabase.from('guest_complaints').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      let acceptancesUnassignedQuery = supabase.from('contract_acceptances').select('id', { count: 'exact', head: true }).is('assigned_staff_id', null);
+      if (orgScoped) {
+        roomsQuery = roomsQuery.eq('organization_id', orgScoped);
+        roomsOccupiedQuery = roomsOccupiedQuery.eq('organization_id', orgScoped);
+        guestsQuery = guestsQuery.eq('organization_id', orgScoped);
+        staffActiveQuery = staffActiveQuery.eq('organization_id', orgScoped);
+        stockPendingQuery = stockPendingQuery.eq('organization_id', orgScoped);
+        staffPendingQuery = staffPendingQuery.eq('organization_id', orgScoped);
+        expensesPendingQuery = expensesPendingQuery.eq('organization_id', orgScoped);
+        complaintsPendingQuery = complaintsPendingQuery.eq('organization_id', orgScoped);
+        acceptancesUnassignedQuery = acceptancesUnassignedQuery.eq('organization_id', orgScoped);
+      }
+      const [
+        roomsRes,
+        roomsOccupiedRes,
+        guestsRes,
+        staffRes,
+        stockRes,
+        staffPendingRes,
+        expensesPendingRes,
+        unreadRes,
+        feedCountRes,
+        reportsPendingRes,
+        complaintsPendingRes,
+        acceptancesUnassignedRes,
+        conversationsList,
+      ] = await Promise.all([
+        roomsQuery,
+        roomsOccupiedQuery,
+        guestsQuery,
+        staffActiveQuery,
+        stockPendingQuery,
+        staffPendingQuery,
+        expensesPendingQuery,
+        supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('staff_id', staff.id).is('read_at', null),
+        supabase.from('feed_posts').select('*', { count: 'exact', head: true }),
+        supabase.from('feed_post_reports').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        complaintsPendingQuery,
+        acceptancesUnassignedQuery,
+        staffListConversations(staff.id),
+      ]);
 
-    const messagesUnread = (conversationsList ?? []).reduce((s, c) => s + (c.unread_count ?? 0), 0);
-    setStats({
-      roomsTotal: roomsRes.count ?? 0,
-      roomsOccupied: roomsOccupiedRes.count ?? 0,
-      guestsActive: guestsRes.count ?? 0,
-      staffActive: staffRes.count ?? 0,
-      stockPending: stockRes.count ?? 0,
-      staffPending: staffPendingRes.count ?? 0,
-      expensesPending: expensesPendingRes.count ?? 0,
-      unreadNotifs: unreadRes.count ?? 0,
-      messagesUnread,
-      feedTotal: feedCountRes.count ?? 0,
-      reportsPending: reportsPendingRes.count ?? 0,
-      complaintsPending: complaintsPendingRes.count ?? 0,
-      acceptancesUnassigned: acceptancesUnassignedRes.count ?? 0,
-    });
-  }, [staff?.id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      const messagesUnread = (conversationsList ?? []).reduce((s, c) => s + (c.unread_count ?? 0), 0);
+      setStats({
+        roomsTotal: roomsRes.count ?? 0,
+        roomsOccupied: roomsOccupiedRes.count ?? 0,
+        guestsActive: guestsRes.count ?? 0,
+        staffActive: staffRes.count ?? 0,
+        stockPending: stockRes.count ?? 0,
+        staffPending: staffPendingRes.count ?? 0,
+        expensesPending: expensesPendingRes.count ?? 0,
+        unreadNotifs: unreadRes.count ?? 0,
+        messagesUnread,
+        feedTotal: feedCountRes.count ?? 0,
+        reportsPending: reportsPendingRes.count ?? 0,
+        complaintsPending: complaintsPendingRes.count ?? 0,
+        acceptancesUnassigned: acceptancesUnassignedRes.count ?? 0,
+      });
+      if (Platform.OS === 'android') {
+        log.info('AdminDashboard', 'load success', { elapsedMs: Date.now() - startedAt, messagesUnread });
+      }
+    } catch (e) {
+      log.error('AdminDashboard', 'load failed', e);
+    } finally {
+      loadInFlightRef.current = false;
+    }
+  }, [selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.id, staff?.organization_id, staff?.role]);
 
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        signalStaffExitedAdminPanelFromRoot();
+        router.replace('/staff' as Href);
+        return true;
+      });
+      return () => sub.remove();
+    }, [router])
   );
 
   const onRefresh = useCallback(async () => {
@@ -336,6 +452,7 @@ export default function AdminDashboard() {
   }, [load]);
 
   const contentWidth = width - H_PAD * 2;
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase('tr-TR');
 
   const { getEffectiveBadge, setDismissed } = useAdminBadgeDismissedStore();
 
@@ -393,6 +510,9 @@ export default function AdminDashboard() {
   };
 
   const handleTilePress = (item: SectionItem) => {
+    if (Platform.OS === 'android') {
+      log.info('AdminDashboard', 'tile press', { href: item.href, label: item.label });
+    }
     const key = getBadgeKey(item.href);
     if (key) {
       const raw = stats[key];
@@ -401,15 +521,87 @@ export default function AdminDashboard() {
     router.push(item.href as any);
   };
 
+  const searchItems = useMemo(() => {
+    const unique = new Map<string, SectionItem & { sectionTitle: string; searchText: string }>();
+    const addItems = (items: SectionItem[], sectionTitle: string) => {
+      items.forEach((item) => {
+        if (unique.has(item.href)) return;
+        const searchText = `${item.label} ${sectionTitle} ${item.href}`.toLocaleLowerCase('tr-TR');
+        unique.set(item.href, { ...item, sectionTitle, searchText });
+      });
+    };
+    addItems(STAFF_QUICK_ACTIONS, 'Hızlı Personel Erişimi');
+    adminSections.forEach((section) => addItems(section.items, section.title));
+    return Array.from(unique.values());
+  }, [adminSections]);
+
+  const searchResults = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return searchItems
+      .filter((item) => item.searchText.includes(normalizedQuery))
+      .slice(0, 8);
+  }, [normalizedQuery, searchItems]);
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+      removeClippedSubviews={false}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />
       }
       showsVerticalScrollIndicator={false}
     >
+      <AdminOrganizationPicker
+        canUseAll={Boolean(staff?.app_permissions?.super_admin || staff?.role === 'admin')}
+        ownOrganizationId={staff?.organization_id}
+      />
+      <View style={[styles.searchWrap, { width: contentWidth }]}>
+        <View style={styles.searchInputRow}>
+          <Ionicons name="search-outline" size={18} color={adminTheme.colors.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Panelde ara: personel, maaş, şikayet, kamera..."
+            placeholderTextColor={adminTheme.colors.textMuted}
+            returnKeyType="search"
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {normalizedQuery ? (
+          <View style={styles.searchSuggestions}>
+            {searchResults.length === 0 ? (
+              <Text style={styles.searchEmptyText}>Sonuç bulunamadı. Farklı bir kelime deneyin.</Text>
+            ) : (
+              searchResults.map((item, idx) => (
+                <TouchableOpacity
+                  key={`search:${item.href}`}
+                  style={[styles.searchResultRow, idx === searchResults.length - 1 && styles.searchResultRowLast]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setSearchQuery('');
+                    handleTilePress(item);
+                  }}
+                >
+                  <View style={styles.searchResultLeft}>
+                    <Ionicons name={item.icon} size={16} color={adminTheme.colors.accent} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.searchResultTitle} numberOfLines={1}>{item.label}</Text>
+                      <Text style={styles.searchResultSub} numberOfLines={1}>{item.sectionTitle}</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="arrow-forward" size={16} color={adminTheme.colors.textMuted} />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        ) : null}
+      </View>
       <TouchableOpacity
         style={[styles.approvalsHubCard, { width: contentWidth }]}
         activeOpacity={0.88}
@@ -440,8 +632,41 @@ export default function AdminDashboard() {
         <Ionicons name="chevron-forward" size={22} color={adminTheme.colors.textMuted} />
       </TouchableOpacity>
 
+      <View style={styles.section}>
+        <AdminCard padded={false} elevated>
+          <View style={styles.sectionHeadPadded}>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionTitleLeft}>
+                <View style={[styles.sectionIconWrap, { backgroundColor: '#eef2ff' }]}>
+                  <Ionicons name="people-circle-outline" size={16} color="#3730a3" />
+                </View>
+                <Text style={styles.sectionTitle}>Hızlı Personel Erişimi</Text>
+              </View>
+            </View>
+            <Text style={styles.sectionSubtitle}>Çalışan yönetimi için en sık kullanılan işlemler</Text>
+          </View>
+          <View style={styles.menuList}>
+            {STAFF_QUICK_ACTIONS.map((item, idx) => {
+              const badge = getBadge(item) ?? item.badge;
+              const isLast = idx === STAFF_QUICK_ACTIONS.length - 1;
+              return (
+                <AdminMenuButton
+                  key={`staff-quick:${item.href}`}
+                  item={item}
+                  badge={badge}
+                  isLast={isLast}
+                  onPress={() => handleTilePress(item)}
+                  tint={{ bg: '#eef2ff', icon: '#3730a3' }}
+                  delay={Math.min(180, idx * 18)}
+                />
+              );
+            })}
+          </View>
+        </AdminCard>
+      </View>
+
       {adminSections.map((section, sectionIdx) => (
-        <View key={sectionIdx} style={styles.section}>
+        <View key={section.title} style={styles.section}>
           <AdminCard padded={false} elevated>
             <View style={styles.sectionHeadPadded}>
               {(() => {
@@ -480,7 +705,7 @@ export default function AdminDashboard() {
                 };
                 return (
                   <AdminMenuButton
-                    key={idx}
+                    key={`${section.title}:${item.href}`}
                     item={item}
                     badge={badge}
                     isLast={isLast}
@@ -506,6 +731,70 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: H_PAD,
     paddingTop: 16,
+  },
+  searchWrap: {
+    marginBottom: 14,
+  },
+  searchInputRow: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    gap: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: adminTheme.colors.text,
+    paddingVertical: 10,
+  },
+  searchSuggestions: {
+    marginTop: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.borderLight,
+    overflow: 'hidden',
+  },
+  searchResultRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: adminTheme.colors.borderLight,
+  },
+  searchResultRowLast: {
+    borderBottomWidth: 0,
+  },
+  searchResultLeft: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 8,
+  },
+  searchResultTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: adminTheme.colors.text,
+  },
+  searchResultSub: {
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+    marginTop: 2,
+  },
+  searchEmptyText: {
+    fontSize: 13,
+    color: adminTheme.colors.textSecondary,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
   },
   approvalsHubCard: {
     flexDirection: 'row',

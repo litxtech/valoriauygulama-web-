@@ -16,6 +16,8 @@ import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { useAdminWarningStore } from '@/stores/adminWarningStore';
 import { CachedImage } from '@/components/CachedImage';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
+import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
+import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 
 const TAB_ICON_SIZE = 24;
@@ -170,6 +172,7 @@ export default function StaffTabsLayout() {
     { label: t('tasks'), href: '/staff/tasks', icon: 'checkbox-outline', accent: '#7c3aed' },
     { label: attendanceLabel, href: '/staff/attendance', icon: 'time-outline', accent: '#0369a1' },
     { label: missingItemsLabel, href: '/staff/missing-items', icon: 'alert-circle-outline', accent: '#dc2626' },
+    { label: 'Yemek listesi', href: '/staff/meal-menu', icon: 'fast-food-outline', accent: '#ea580c' },
     ...(staff?.role === 'admin'
       ? []
       : [{ label: t('screenEmergency'), href: '/staff/emergency', icon: 'warning-outline', accent: '#ea580c' }]),
@@ -190,6 +193,14 @@ export default function StaffTabsLayout() {
 
   if (isKbsUiEnabled() && (staff?.role === 'admin' || staff?.kbs_access_enabled !== false)) {
     menuItems.push({ label: t('kbsNavOperation'), href: '/staff/kbs', icon: 'scan-outline', accent: '#0f766e' });
+  }
+  if (staff && hasTechnicalAssetsStaffAccess(staff)) {
+    menuItems.push({
+      label: 'Teknik QR Envanter',
+      href: '/staff/technical-assets',
+      icon: 'layers-outline',
+      accent: '#b8860b',
+    });
   }
   if (staff?.role === 'admin') {
     menuItems.push({ label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: '#7c3aed' });
@@ -220,6 +231,13 @@ export default function StaffTabsLayout() {
     <>
     <Tabs
       tabBar={(props) => <BottomTabBar {...props} />}
+      screenListeners={({ route }) => ({
+        tabPress: () => {
+          if (route.name !== 'admin') {
+            signalStaffExitedAdminPanelFromRoot();
+          }
+        },
+      })}
       screenOptions={{
         /** Varsayılan lazy: true ilk sekme tıklanınca mount + yükleme flicker’ı; hepsini erken mount et */
         lazy: false,

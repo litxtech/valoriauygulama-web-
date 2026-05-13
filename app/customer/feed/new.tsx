@@ -58,7 +58,7 @@ export default function CustomerNewFeedPostScreen() {
   const resolveUploadTimeoutMs = (type: 'image' | 'video', total: number) => {
     const base = FEED_MEDIA_UPLOAD_TIMEOUT_MS;
     const multiExtra = Math.max(0, total - 1) * 2 * 60 * 1000;
-    const videoExtra = type === 'video' ? 6 * 60 * 1000 : 0;
+    const videoExtra = type === 'video' ? 18 * 60 * 1000 : 0;
     return base + multiExtra + videoExtra;
   };
 
@@ -182,6 +182,7 @@ export default function CustomerNewFeedPostScreen() {
         try {
           uploadedItems = await Promise.all(
             itemsForUpload.map(async (item, i) => {
+              if (item.type === 'video') setUploadStepLabel(t('feedVideoCompressing'));
               const uriReady = await ensureLocalFeedUploadUri(item.uri, item.type);
               const { publicUrl } = await promiseWithTimeout(
                 uploadGuestFeedMedia({
@@ -237,7 +238,7 @@ export default function CustomerNewFeedPostScreen() {
         insertPayload.lat = locationFromMap.lat;
         insertPayload.lng = locationFromMap.lng;
         try {
-          const { Location } = await import('expo-location');
+          const Location = await import('expo-location');
           const [rev] = await Location.reverseGeocodeAsync({
             latitude: locationFromMap.lat,
             longitude: locationFromMap.lng,

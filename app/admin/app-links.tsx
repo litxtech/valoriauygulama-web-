@@ -19,6 +19,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';

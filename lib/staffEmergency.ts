@@ -49,6 +49,7 @@ export async function notifyStaffEmergency(params: {
   note?: string;
   createdByStaffId: string;
   createdByName?: string | null;
+  organizationId?: string | null;
 }): Promise<{ count: number; error?: string }> {
   const location = params.locationName.trim();
   const note = (params.note ?? '').trim();
@@ -65,6 +66,7 @@ export async function notifyStaffEmergency(params: {
 
   return sendBulkToStaff({
     target: 'all_staff',
+    organizationId: params.organizationId ?? null,
     title,
     body,
     createdByStaffId: params.createdByStaffId,

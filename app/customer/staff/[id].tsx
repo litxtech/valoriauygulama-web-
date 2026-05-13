@@ -79,6 +79,7 @@ type StaffDetail = {
   evaluation_responsibility?: number | null;
   evaluation_insight?: string | null;
   social_links?: Record<string, string> | null;
+  organization?: { name: string | null; kind: string | null } | null;
 };
 
 type Review = {
@@ -177,6 +178,12 @@ export default function StaffProfileScreen() {
         show_whatsapp_to_guest: c?.show_whatsapp_to_guest ?? raw.show_whatsapp_to_guest,
         social_links: rawSocial && typeof rawSocial === 'object' ? rawSocial : null,
       };
+      const { data: orgRow } = await supabase
+        .from('staff')
+        .select('organization:organization_id(name,kind)')
+        .eq('id', id)
+        .maybeSingle();
+      staffData.organization = (orgRow as { organization?: { name: string | null; kind: string | null } | null } | null)?.organization ?? null;
       setStaff(staffData);
       recordStaffProfileVisit(id).catch(() => {});
       if (s.shift_id) {
@@ -524,6 +531,15 @@ export default function StaffProfileScreen() {
             <View style={styles.jobBadge}>
               <Text style={styles.jobBadgeText}>{staff.position || staff.department || '—'}</Text>
             </View>
+            {!!staff.organization?.name && (
+              <View style={styles.orgBadge}>
+                <Ionicons name="business-outline" size={14} color="#0369a1" />
+                <Text style={styles.orgBadgeText}>
+                  {staff.organization.name}
+                  {staff.organization.kind ? ` • ${staff.organization.kind === 'office' ? 'Ofis' : 'Otel'}` : ''}
+                </Text>
+              </View>
+            )}
             <TouchableOpacity style={styles.reviewToggleBtn} onPress={() => setReviewsModalVisible(true)} activeOpacity={0.85}>
               <Ionicons name="star-outline" size={14} color={theme.colors.primary} />
               <Text style={styles.reviewToggleText}>Degerlendirmeler</Text>
@@ -1073,6 +1089,18 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary + '35',
   },
   jobBadgeText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
+  orgBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#7dd3fc',
+    backgroundColor: '#e0f2fe',
+  },
+  orgBadgeText: { fontSize: 12, fontWeight: '700', color: '#0369a1' },
   reviewToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',

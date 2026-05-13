@@ -3,6 +3,8 @@ import { Link, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 
 type NotifRow = {
   id: string;
@@ -17,23 +19,37 @@ type NotifRow = {
 export default function AdminNotificationsIndex() {
   const router = useRouter();
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : staff?.organization_id;
+    let query = supabase
       .from('notifications')
-      .select('id, title, body, category, guest_id, staff_id, created_at')
+      .select('id, title, body, category, guest_id, staff_id, created_at, created_by')
       .order('created_at', { ascending: false })
-      .limit(50);
-    setList((data as NotifRow[]) ?? []);
+      .limit(120);
+    if (orgId && orgId !== 'all') {
+      const { data: orgStaff } = await supabase.from('staff').select('id').eq('organization_id', orgId);
+      const ids = (orgStaff ?? []).map((s: { id: string }) => s.id);
+      if (ids.length === 0) {
+        setList([]);
+        setLoading(false);
+        return;
+      }
+      query = query.in('created_by', ids);
+    }
+    const { data } = await query;
+    setList(((data ?? []) as Array<NotifRow & { created_by?: string | null }>).map(({ created_by: _createdBy, ...rest }) => rest));
     setLoading(false);
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.organization_id]);
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -65,6 +81,10 @@ export default function AdminNotificationsIndex() {
       refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
     >
       <Text style={styles.title}>Bildirim Sistemi</Text>
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <Text style={styles.subtitle}>Toplu bildirim gönder, şablonları yönet, son bildirimlere bakın.</Text>
 
       <Link href="/admin/notifications/bulk" asChild>

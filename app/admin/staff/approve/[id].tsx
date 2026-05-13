@@ -28,10 +28,25 @@ type Application = {
 };
 
 const DEPARTMENTS = [
+  { value: 'owner', label: 'Sahip' },
+  { value: 'general_manager', label: 'Genel Müdür' },
+  { value: 'manager', label: 'Müdür' },
+  { value: 'supervisor', label: 'Sorumlu / Şef' },
   { value: 'housekeeping', label: 'Temizlik' },
   { value: 'technical', label: 'Teknik' },
   { value: 'receptionist', label: 'Resepsiyon' },
+  { value: 'front_office', label: 'Ön Büro' },
   { value: 'security', label: 'Güvenlik' },
+  { value: 'kitchen', label: 'Mutfak' },
+  { value: 'kitchen_staff', label: 'Mutfak Personeli' },
+  { value: 'chef', label: 'Aşçı' },
+  { value: 'head_chef', label: 'Baş Aşçı' },
+  { value: 'pastry', label: 'Pastane' },
+  { value: 'restaurant', label: 'Restoran' },
+  { value: 'service', label: 'Servis' },
+  { value: 'bar', label: 'Bar' },
+  { value: 'hr', label: 'İnsan Kaynakları' },
+  { value: 'accounting', label: 'Muhasebe' },
 ];
 
 const CONTRACT_TYPES: { value: string; label: string }[] = [
@@ -65,6 +80,9 @@ const APP_PERMISSIONS = [
   { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeler' },
   { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesi' },
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
+  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri yönetimi' },
+  { key: 'teknik_varliklar', label: 'Teknik QR (müdahale kaydı)' },
+  { key: 'teknik_varliklar_okuma', label: 'Teknik QR salt okunur' },
 ];
 
 export default function ApproveStaffScreen() {
@@ -93,6 +111,9 @@ export default function ApproveStaffScreen() {
     tum_sozlesmeler: false,
     yarin_oda_temizlik_listesi: false,
     kbs_mrz_scan: false,
+    teknik_varlik_yonetimi: false,
+    teknik_varliklar: false,
+    teknik_varliklar_okuma: false,
   });
   const [organizations, setOrganizations] = useState<OrgRow[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);

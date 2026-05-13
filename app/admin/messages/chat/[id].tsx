@@ -144,6 +144,7 @@ function MessageBubble({
 }
 
 export default function AdminChatScreen() {
+  const { t } = useTranslation();
   const { id: conversationId } = useLocalSearchParams<{ id: string }>();
   const { staff } = useAuthStore();
   const router = useRouter();
@@ -203,9 +204,10 @@ export default function AdminChatScreen() {
   }, [conversationId, staff?.id]);
 
   useEffect(() => {
+    const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
     navigation.setOptions({
       headerTitle: () => (
-        <View style={styles.headerTitleRow}>
+        <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
           {conversationAvatar ? (
             <CachedImage uri={conversationAvatar} style={styles.headerAvatar} contentFit="cover" />
           ) : (
@@ -222,7 +224,7 @@ export default function AdminChatScreen() {
         </TouchableOpacity>
       ),
     });
-  }, [navigation, conversationName, conversationAvatar]);
+  }, [navigation, conversationName, conversationAvatar, t, winWidth]);
 
   const openGroupSettings = () => {
     setEditGroupName(conversationName);
@@ -834,7 +836,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerAvatarInitial: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  headerTitleText: { fontSize: 17, fontWeight: '700', color: MESSAGING_COLORS.text, flex: 1 },
+  headerTitleText: { fontSize: 17, fontWeight: '700', color: MESSAGING_COLORS.text, flex: 1, minWidth: 0 },
   empty: { textAlign: 'center', color: MESSAGING_COLORS.textSecondary, marginTop: 24 },
   typingRow: { paddingHorizontal: 12, paddingVertical: 4, paddingBottom: 2, minHeight: 22, backgroundColor: '#fff' },
   typingText: { fontSize: 12, color: MESSAGING_COLORS.textSecondary },

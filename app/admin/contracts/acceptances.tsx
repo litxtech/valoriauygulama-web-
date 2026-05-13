@@ -16,6 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { Platform } from 'react-native';
 import { adminTheme } from '@/constants/adminTheme';
+import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 import {
   shareContractPdf,
   buildContractHtml,
@@ -42,6 +45,9 @@ type Row = {
 
 export default function ContractAcceptances() {
   const router = useRouter();
+  const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAllOrganizations = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -58,11 +64,15 @@ export default function ContractAcceptances() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data: list, error } = await supabase
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    let listQuery = supabase
       .from('contract_acceptances')
       .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id, guests(full_name)')
       .order('accepted_at', { ascending: false })
       .limit(200);
+    if (orgScoped) listQuery = listQuery.eq('organization_id', orgScoped);
+    const { data: list, error } = await listQuery;
 
     if (error) {
       setRows([]);
@@ -100,7 +110,7 @@ export default function ContractAcceptances() {
         };
       })
     );
-  }, []);
+  }, [canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -108,14 +118,16 @@ export default function ContractAcceptances() {
 
   useEffect(() => {
     if (assignModalVisible) {
-      supabase
+      let staffQuery = supabase
         .from('staff')
         .select('id, full_name, department')
         .eq('is_active', true)
-        .order('full_name')
-        .then(({ data }) => setStaffList(data ?? []));
+        .order('full_name');
+      const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
+      if (orgId && orgId !== 'all') staffQuery = staffQuery.eq('organization_id', orgId);
+      staffQuery.then(({ data }) => setStaffList(data ?? []));
     }
-  }, [assignModalVisible]);
+  }, [assignModalVisible, canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -237,6 +249,9 @@ export default function ContractAcceptances() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.orgPickerWrap}>
+        <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={staff?.organization_id} />
+      </View>
       {loadError ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>Liste yüklenemedi: {loadError}</Text>
@@ -410,6 +425,7 @@ export default function ContractAcceptances() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7fafc' },
+  orgPickerWrap: { paddingHorizontal: 16, paddingTop: 8 },
   contactHubBtn: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -16,6 +16,8 @@ import { adminTheme } from '@/constants/adminTheme';
 import { CachedImage } from '@/components/CachedImage';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 import { useTranslation } from 'react-i18next';
 import {
   complaintsText,
@@ -52,6 +54,7 @@ export default function AdminComplaintsIndex() {
   useTranslation();
   const loc = complaintsLocaleTag();
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [list, setList] = useState<ComplaintRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | ComplaintRow['status']>('pending');
@@ -59,10 +62,13 @@ export default function AdminComplaintsIndex() {
   const [noteById, setNoteById] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : staff?.organization_id;
     let query = supabase
       .from('guest_complaints')
       .select('id, topic_type, category, description, phone, room_number, image_url, status, admin_note, created_at, guest_id, guests(id, full_name, photo_url)')
       .order('created_at', { ascending: false });
+    if (orgId && orgId !== 'all') query = query.eq('organization_id', orgId);
     if (filter !== 'all') query = query.eq('status', filter);
     const { data, error } = await query;
     if (error) {
@@ -76,7 +82,7 @@ export default function AdminComplaintsIndex() {
       initialNotes[row.id] = row.admin_note ?? '';
     });
     setNoteById(initialNotes);
-  }, [filter]);
+  }, [filter, selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.organization_id]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -127,6 +133,10 @@ export default function AdminComplaintsIndex() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
     >
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <View style={styles.banner}>
         <Ionicons name="shield-checkmark-outline" size={20} color={adminTheme.colors.accent} />
         <Text style={styles.bannerText}>{complaintsText('adminBanner')}</Text>

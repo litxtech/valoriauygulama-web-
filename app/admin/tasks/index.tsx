@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminButton, AdminCard } from '@/components/admin';
+import { AdminOrganizationPicker } from '@/components/admin';
 import {
   ASSIGNMENT_TASK_LABELS,
   ASSIGNMENT_PRIORITY_LABELS,
@@ -22,6 +23,7 @@ import {
   STAFF_ROLE_LABELS,
 } from '@/lib/staffAssignments';
 import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 type AssignmentRow = {
   id: string;
@@ -45,6 +47,7 @@ type FilterKey = 'all' | 'open' | 'done';
 export default function AdminTasksIndexScreen() {
   const router = useRouter();
   const authStaff = useAuthStore((s) => s.staff);
+  const { selectedOrganizationId } = useAdminOrgStore();
   const isAdmin = authStaff?.role === 'admin';
   const [rows, setRows] = useState<AssignmentRow[]>([]);
   const [staffMap, setStaffMap] = useState<Record<string, StaffMini>>({});
@@ -55,23 +58,29 @@ export default function AdminTasksIndexScreen() {
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    const { data: list, error } = await supabase
+    const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : authStaff?.organization_id;
+    let baseQuery = supabase
       .from('staff_assignments')
       .select(
         'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls'
       )
       .order('created_at', { ascending: false })
       .limit(120);
+    if (orgId && orgId !== 'all') baseQuery = baseQuery.eq('organization_id', orgId);
+    const { data: list, error } = await baseQuery;
     if (error) {
       const msg = error.message ?? '';
       if (msg.includes('attachment_urls') || error.code === 'PGRST204') {
-        const { data: list2, error: e2 } = await supabase
+        let legacyQuery = supabase
           .from('staff_assignments')
           .select(
             'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at'
           )
           .order('created_at', { ascending: false })
           .limit(120);
+        if (orgId && orgId !== 'all') legacyQuery = legacyQuery.eq('organization_id', orgId);
+        const { data: list2, error: e2 } = await legacyQuery;
         if (e2) {
           setRows([]);
           setStaffMap({});
@@ -96,12 +105,12 @@ export default function AdminTasksIndexScreen() {
     }
     const assignments = (list ?? []) as AssignmentRow[];
     setRows(assignments);
-    await hydrateMaps(assignments);
+    await hydrateMaps(assignments, orgId);
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [authStaff?.app_permissions?.super_admin, authStaff?.organization_id, selectedOrganizationId]);
 
-  async function hydrateMaps(assignments: AssignmentRow[]) {
+  async function hydrateMaps(assignments: AssignmentRow[], organizationId?: string | 'all') {
     const staffIds = [
       ...new Set([
         ...assignments.map((a) => a.assigned_staff_id),
@@ -109,13 +118,17 @@ export default function AdminTasksIndexScreen() {
       ]),
     ] as string[];
     if (staffIds.length) {
-      const { data: sm } = await supabase.from('staff').select('id, full_name, role, department').in('id', staffIds);
+      let staffQuery = supabase.from('staff').select('id, full_name, role, department').in('id', staffIds);
+      if (organizationId && organizationId !== 'all') staffQuery = staffQuery.eq('organization_id', organizationId);
+      const { data: sm } = await staffQuery;
       setStaffMap(Object.fromEntries((sm ?? []).map((s: StaffMini) => [s.id, s])));
     } else setStaffMap({});
 
     const roomIds = [...new Set(assignments.flatMap((a) => a.room_ids ?? []))];
     if (roomIds.length) {
-      const { data: rm } = await supabase.from('rooms').select('id, room_number').in('id', roomIds);
+      let roomQuery = supabase.from('rooms').select('id, room_number').in('id', roomIds);
+      if (organizationId && organizationId !== 'all') roomQuery = roomQuery.eq('organization_id', organizationId);
+      const { data: rm } = await roomQuery;
       setRoomMap(Object.fromEntries((rm ?? []).map((r: { id: string; room_number: string }) => [r.id, r.room_number])));
     } else setRoomMap({});
   }
@@ -201,6 +214,10 @@ export default function AdminTasksIndexScreen() {
       contentContainerStyle={styles.scroll}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
     >
+      <AdminOrganizationPicker
+        canUseAll={authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin'}
+        ownOrganizationId={authStaff?.organization_id}
+      />
       <AdminCard style={styles.hero} elevated>
         <View style={styles.heroRow}>
           <View style={styles.heroIcon}>

@@ -21,6 +21,9 @@ const ALLOWED_BUCKETS = new Set([
   "contract-media",
   "staff-task-media",
   "carbon-evidence",
+  "tech-assets",
+  "finance-checks",
+  "staff-personnel-warnings",
 ]);
 
 function json(obj: Record<string, unknown>, status: number) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Linking, AppState, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, AppState, ActivityIndicator } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
 
 /** Sadece sık kullanılan barkod tipleri — hepsini taramak kasılmaya yol açar */
@@ -33,7 +33,6 @@ export function BarcodeScannerView({
   const [requesting, setRequesting] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [lastData, setLastData] = useState<string | null>(null);
-  const [cameraMounted, setCameraMounted] = useState(false);
   const lastScanTime = useRef(0);
 
   const refreshPermission = useCallback(async () => {
@@ -54,17 +53,6 @@ export function BarcodeScannerView({
     });
     return () => sub.remove();
   }, [refreshPermission]);
-
-  useEffect(() => {
-    if (permStatus !== 'granted') {
-      setCameraMounted(false);
-      return;
-    }
-    /** Android: izin sonrası CameraView bazen siyah kalıyor; kısa gecikme + tek frame sonra mount */
-    const delay = Platform.OS === 'android' ? 680 : 160;
-    const t = setTimeout(() => setCameraMounted(true), delay);
-    return () => clearTimeout(t);
-  }, [permStatus]);
 
   const handleRequestPermission = useCallback(async () => {
     setRequesting(true);
@@ -100,9 +88,8 @@ export function BarcodeScannerView({
 
   if (permStatus === null) {
     return (
-      <View style={styles.centered}>
+      <View style={styles.boot}>
         <ActivityIndicator size="small" color="#b8860b" />
-        <Text style={styles.message}>Kamera izni kontrol ediliyor...</Text>
       </View>
     );
   }
@@ -153,14 +140,6 @@ export function BarcodeScannerView({
     );
   }
 
-  if (!cameraMounted) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.message}>Kamera hazırlanıyor...</Text>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <CameraView
@@ -196,7 +175,13 @@ export function BarcodeScannerView({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#000' },
+  boot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -204,7 +189,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a365d',
     padding: 24,
   },
-  message: { fontSize: 16, color: '#fff', marginTop: 12 },
   permCard: {
     backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 16,

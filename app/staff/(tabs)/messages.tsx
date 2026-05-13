@@ -54,6 +54,7 @@ function ConversationRow({
 }) {
   const { t } = useTranslation();
   const unread = item.unread_count ?? 0;
+  const isGroup = item.type === 'group';
   const isAllStaff = item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME;
   const displayName = item.name || t('messages');
   const isMuted = item.is_muted ?? false;
@@ -84,9 +85,17 @@ function ConversationRow({
         </View>
         <View style={styles.rowBody}>
           <View style={styles.rowTitleRow}>
-            <Text style={styles.rowTitle} numberOfLines={1}>
-              {displayName}
-            </Text>
+            <View style={styles.rowTitleLeft}>
+              {isGroup ? (
+                <View style={styles.groupChip}>
+                  <Ionicons name="people" size={11} color={theme.colors.primary} />
+                  <Text style={styles.groupChipText}>Grup</Text>
+                </View>
+              ) : null}
+              <Text style={styles.rowTitle} numberOfLines={1}>
+                {displayName}
+              </Text>
+            </View>
             <Text style={styles.rowTime}>{formatTime(item.last_message_at ?? null)}</Text>
           </View>
           <Text
@@ -552,9 +561,33 @@ const styles = StyleSheet.create({
   },
   rowTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  rowTitleLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  groupChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  groupChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: theme.colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
   rowTitle: {
     fontWeight: '700',

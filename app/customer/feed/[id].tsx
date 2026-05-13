@@ -51,6 +51,27 @@ type PostRow = {
   media_items?: { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number }[];
 };
 
+type FeedDetailMediaItem = { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number };
+
+/** feed_post_media_items veya feed_posts legacy tek medya — overlay / carousel ile aynı kaynak */
+function buildFeedPostMediaItems(post: PostRow): FeedDetailMediaItem[] {
+  if (post.media_items && post.media_items.length > 0) {
+    return post.media_items;
+  }
+  if (post.media_type !== 'text' && (post.media_url || post.thumbnail_url)) {
+    return [
+      {
+        id: `${post.id}-legacy`,
+        media_type: post.media_type === 'video' ? 'video' : 'image',
+        media_url: post.media_url || post.thumbnail_url || '',
+        thumbnail_url: post.thumbnail_url,
+        sort_order: 0,
+      },
+    ];
+  }
+  return [];
+}
+
 type CommentRow = {
   id: string;
   parent_comment_id?: string | null;
@@ -194,12 +215,18 @@ export default function CustomerFeedPostDetail() {
     }
   }, [loadPost]);
 
-  // Video yüklenme overlay'ı bazen onLoad tetiklenmeyebilir; bir süre sonra kaldır
+  // İlk slayt video ise overlay: feed_posts.media_type yanlış/eskimiş olsa bile media_items ile uyumlu olsun.
+  // expo-av bazen onLoad gecikir; yedek zaman aşımı.
   useEffect(() => {
-    if (!post || post.media_type !== 'video') return;
-    const t = setTimeout(() => setVideoLoading(false), 4000);
+    if (!post) return;
+    const firstIsVideo = buildFeedPostMediaItems(post)[0]?.media_type === 'video';
+    if (!firstIsVideo) {
+      setVideoLoading(false);
+      return;
+    }
+    const t = setTimeout(() => setVideoLoading(false), 8000);
     return () => clearTimeout(t);
-  }, [post?.id]);
+  }, [post]);
 
   useEffect(() => {
     searchStaffMentionCandidates('', 700)
@@ -289,11 +316,7 @@ export default function CustomerFeedPostDetail() {
     : guestDisplayName(guestInfo?.full_name, t('guestDefaultName'));
   const dept = staffInfo?.department;
   const badge = staffInfo?.verification_badge ?? null;
-  const postMediaItems = (post.media_items && post.media_items.length > 0)
-    ? post.media_items
-    : (post.media_type !== 'text' && (post.media_url || post.thumbnail_url)
-      ? [{ id: `${post.id}-legacy`, media_type: post.media_type === 'video' ? 'video' as const : 'image' as const, media_url: post.media_url || post.thumbnail_url || '', thumbnail_url: post.thumbnail_url, sort_order: 0 }]
-      : []);
+  const postMediaItems = buildFeedPostMediaItems(post);
   const imageUri = postMediaItems.length > 0 ? (postMediaItems[0].thumbnail_url || postMediaItems[0].media_url) : null;
   const firstMedia = postMediaItems[0];
   const isVideo = firstMedia?.media_type === 'video';
@@ -471,6 +494,7 @@ export default function CustomerFeedPostDetail() {
               }))}
               width={winWidth - 32}
               height={winWidth - 32}
+              onFirstVideoReady={isVideo ? () => setVideoLoading(false) : undefined}
             />
             {isVideo && videoLoading ? (
               <View style={styles.videoLoadingOverlay} pointerEvents="none">

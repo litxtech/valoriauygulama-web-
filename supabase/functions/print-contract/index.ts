@@ -34,6 +34,18 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+/** Uzun metni paragraflara bölerek A4 üzerinde doğal sayfa kırılımları sağlar. */
+function contractContentToParagraphHtml(raw: string): string {
+  const t = raw.trim();
+  if (!t) return '<p class="contract-p">Sozlesme metni bulunamadi.</p>';
+  const parts = t.split(/\n{2,}/);
+  return parts
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p class="contract-p">${escapeHtml(p).replaceAll("\n", "<br/>")}</p>`)
+    .join("\n");
+}
+
 const CONTRACT_TEMPLATE_HTML = `<!doctype html>
 <html lang="tr">
   <head>
@@ -41,73 +53,105 @@ const CONTRACT_TEMPLATE_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Valoria Sozlesme</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
+      @page {
+        size: A4;
+        margin: 14mm 12mm 16mm 12mm;
+      }
+      html, body {
+        font-family: "Segoe UI", Arial, sans-serif;
         color: #0f172a;
-        margin: 28px;
+        margin: 0;
+        padding: 0;
+        font-size: 11pt;
+        line-height: 1.45;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .wrap {
+        max-width: 100%;
+        box-sizing: border-box;
       }
       .header {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         border-bottom: 2px solid #1a365d;
         padding-bottom: 10px;
-        margin-bottom: 20px;
+        margin-bottom: 14px;
       }
       .logo {
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 700;
         color: #1a365d;
       }
       .meta {
-        font-size: 12px;
+        font-size: 10pt;
         color: #475569;
         text-align: right;
+        line-height: 1.35;
       }
       .section-title {
-        font-size: 15px;
+        font-size: 12pt;
         font-weight: 700;
-        margin-top: 16px;
+        margin-top: 12px;
         margin-bottom: 8px;
+        page-break-after: avoid;
       }
       .card {
         border: 1px solid #cbd5e1;
-        border-radius: 10px;
-        padding: 12px;
-        margin-bottom: 12px;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
         background: #f8fafc;
+        page-break-inside: avoid;
       }
       .line {
         margin-bottom: 4px;
-        font-size: 13px;
+        font-size: 10.5pt;
       }
-      .contract {
-        white-space: pre-wrap;
-        font-size: 13px;
+      .contract-wrap {
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px 12px 12px;
+        background: #fff;
+      }
+      .contract-p {
+        margin: 0 0 10px 0;
+        font-size: 10.5pt;
         line-height: 1.5;
+        text-align: justify;
+        word-wrap: break-word;
+        overflow-wrap: anywhere;
+        orphans: 3;
+        widows: 3;
+      }
+      .contract-p:last-child {
+        margin-bottom: 0;
       }
       .signature {
-        margin-top: 26px;
+        margin-top: 22px;
         display: flex;
         justify-content: space-between;
-        gap: 18px;
+        gap: 16px;
+        page-break-inside: avoid;
       }
       .sign-box {
         flex: 1;
         border-top: 1px solid #0f172a;
         padding-top: 8px;
-        font-size: 12px;
-        min-height: 80px;
+        font-size: 10pt;
+        min-height: 64px;
       }
       .foot {
-        margin-top: 24px;
-        font-size: 11px;
+        margin-top: 18px;
+        font-size: 9pt;
         color: #334155;
         text-align: center;
       }
     </style>
   </head>
   <body>
+    <div class="wrap">
     <div class="header">
       <div class="logo">VALORIA HOTEL</div>
       <div class="meta">
@@ -125,7 +169,7 @@ const CONTRACT_TEMPLATE_HTML = `<!doctype html>
     </div>
 
     <div class="section-title">Sozlesme Metni</div>
-    <div class="card contract">{{contract_content}}</div>
+    <div class="contract-wrap">{{contract_content}}</div>
 
     <div class="signature">
       <div class="sign-box">Misafir Imza</div>
@@ -134,6 +178,7 @@ const CONTRACT_TEMPLATE_HTML = `<!doctype html>
 
     <div class="foot">
       T.C. Hazine ve Maliye Bakanligi duzenlemeleri kapsaminda kayit altina alinmistir.
+    </div>
     </div>
   </body>
 </html>`;
@@ -196,13 +241,14 @@ async function buildContractHtml(
   const roomNumber = roomRes.data?.room_number?.trim() || "-";
   const acceptedAt = new Date(record.accepted_at).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
   const contractContent = contractRes.data?.content?.trim() || "Sozlesme metni bulunamadi.";
+  const contractBodyHtml = contractContentToParagraphHtml(contractContent);
 
   const html = CONTRACT_TEMPLATE_HTML
     .replaceAll("{{guest_name}}", escapeHtml(guestName))
     .replaceAll("{{room_number}}", escapeHtml(roomNumber))
     .replaceAll("{{contract_lang}}", escapeHtml(record.contract_lang))
     .replaceAll("{{accepted_at}}", escapeHtml(acceptedAt))
-    .replaceAll("{{contract_content}}", escapeHtml(contractContent));
+    .replaceAll("{{contract_content}}", contractBodyHtml);
 
   return { html, guestName, roomNumber };
 }
@@ -222,7 +268,10 @@ async function generatePdfFromHtml(html: string): Promise<Uint8Array> {
     body: JSON.stringify({
       source: html,
       landscape: false,
-      use_print: false,
+      format: "A4",
+      margin: "10mm 11mm 12mm 11mm",
+      use_print: true,
+      delay: 1200,
       sandbox: false,
     }),
   });

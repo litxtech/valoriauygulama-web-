@@ -16,13 +16,26 @@ import { useRouter } from 'expo-router';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 
 const DEPARTMENTS = [
+  { value: 'owner', label: 'Sahip' },
+  { value: 'general_manager', label: 'Genel Müdür' },
+  { value: 'manager', label: 'Müdür' },
+  { value: 'supervisor', label: 'Sorumlu / Şef' },
   { value: 'housekeeping', label: 'Temizlik' },
   { value: 'technical', label: 'Teknik' },
   { value: 'receptionist', label: 'Resepsiyon' },
+  { value: 'front_office', label: 'Ön Büro' },
   { value: 'security', label: 'Güvenlik' },
   { value: 'reception_chief', label: 'Resepsiyon Şefi' },
   { value: 'kitchen', label: 'Mutfak' },
+  { value: 'kitchen_staff', label: 'Mutfak Personeli' },
+  { value: 'chef', label: 'Aşçı' },
+  { value: 'head_chef', label: 'Baş Aşçı' },
+  { value: 'pastry', label: 'Pastane' },
   { value: 'restaurant', label: 'Restoran' },
+  { value: 'service', label: 'Servis' },
+  { value: 'bar', label: 'Bar' },
+  { value: 'hr', label: 'İnsan Kaynakları' },
+  { value: 'accounting', label: 'Muhasebe' },
 ];
 
 const ROLES = [
@@ -32,6 +45,23 @@ const ROLES = [
   { value: 'technical', label: 'Teknik' },
   { value: 'security', label: 'Güvenlik' },
 ];
+
+const ROLE_BY_DEPARTMENT: Record<string, string> = {
+  owner: 'reception_chief',
+  general_manager: 'reception_chief',
+  manager: 'reception_chief',
+  supervisor: 'reception_chief',
+  front_office: 'receptionist',
+  kitchen: 'technical',
+  kitchen_staff: 'technical',
+  chef: 'technical',
+  head_chef: 'technical',
+  pastry: 'technical',
+  service: 'receptionist',
+  bar: 'receptionist',
+  hr: 'reception_chief',
+  accounting: 'reception_chief',
+};
 
 const SHIFT_TYPES = [
   { value: 'morning', label: 'Sabah (08:00-17:00)' },
@@ -61,6 +91,9 @@ const APP_PERMISSIONS = [
   { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },
   { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesini yönetebilir' },
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
+  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri: bina, lokasyon, varlık ve QR yönetimi' },
+  { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
+  { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
 ];
 
 const CONTRACT_TYPES: { value: string; label: string }[] = [
@@ -132,6 +165,9 @@ export default function AddStaffScreen() {
     dining_venues: false,
     yarin_oda_temizlik_listesi: false,
     kbs_mrz_scan: false,
+    teknik_varlik_yonetimi: false,
+    teknik_varliklar: false,
+    teknik_varliklar_okuma: false,
   });
   const [notes, setNotes] = useState('');
   const [emergency_contact_name, setEmergencyContactName] = useState('');
@@ -182,7 +218,7 @@ export default function AddStaffScreen() {
       Alert.alert('Hata', 'Şifre en az 6 karakter olmalıdır.');
       return;
     }
-    const role = department || 'receptionist';
+    const role = ROLE_BY_DEPARTMENT[department] ?? department ?? 'receptionist';
     if (!ROLES.some((r) => r.value === role)) {
       Alert.alert('Hata', 'Geçerli bir departman seçin.');
       return;

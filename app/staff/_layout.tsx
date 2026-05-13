@@ -9,6 +9,7 @@ import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
 import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
+import { PersonnelWarningGate } from '@/components/staff/PersonnelWarningGate';
 
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
@@ -45,7 +46,7 @@ function useStaffPresence(staffId: string | undefined) {
     (async () => {
       // Personel profilindeki manuel "çevrimdışı" tercihini koru.
       const { data } = await supabase.from('staff').select('work_status').eq('id', staffId).maybeSingle();
-      preferOffline = data?.work_status === 'offline';
+      preferOffline = data?.work_status === 'off' || data?.work_status === 'offline';
       if (!preferOffline) setOnline(true);
     })().catch(() => {
       // Okuma başarısızsa mevcut davranışa dön.
@@ -176,7 +177,9 @@ export default function StaffLayout() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: true, headerStyle: { backgroundColor: '#fff' }, headerTintColor: '#1a1d21' }}>
+    <>
+      <PersonnelWarningGate staffId={staff.id} subjectDisplayName={staff.full_name} />
+      <Stack screenOptions={{ headerShown: true, headerStyle: { backgroundColor: '#fff' }, headerTintColor: '#1a1d21' }}>
       {/* iOS: grup adı "(tabs)" bazen üstte/geri başlığında kod gibi görünüyor — tüm başlık alanlarını temizle */}
       <Stack.Screen
         name="(tabs)"
@@ -194,6 +197,7 @@ export default function StaffLayout() {
       <Stack.Screen name="new-group" options={{ title: t('screenNewGroup'), headerBackTitle: t('back') }} />
       <Stack.Screen name="feed/new" options={{ title: t('screenNewPost'), headerBackTitle: t('back') }} />
       <Stack.Screen name="expenses" options={{ headerShown: false }} />
+      <Stack.Screen name="debts" options={{ headerShown: false }} />
       <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
       <Stack.Screen
         name="staff-posts/[id]"
@@ -225,7 +229,7 @@ export default function StaffLayout() {
       <Stack.Screen name="incident-reports/new" options={{ title: t('screenIncidentReportNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="incident-reports/[id]" options={{ title: t('screenIncidentReportDetail'), headerBackTitle: t('back') }} />
       <Stack.Screen name="missing-items/index" options={{ title: t('screenMissingItems'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="internal-complaints/new" options={{ title: t('screenInternalComplaintsForm'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="internal-complaints/new" options={{ title: 'Yönetime Not/Öneri', headerBackTitle: t('back') }} />
       <Stack.Screen
         name="documents/[id]"
         options={{ title: t('adminDocumentsDetail'), headerBackTitle: t('back'), headerLeft: renderStaffDocumentDetailBack }}
@@ -240,6 +244,7 @@ export default function StaffLayout() {
         name="mrz-scan"
         options={{ title: t('kbsNavScanSerial'), headerBackTitle: t('back') }}
       />
+      <Stack.Screen name="meal-menu" options={{ title: 'Yemek listesi', headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />
       <Stack.Screen name="attendance/index" options={{ title: 'Mesai Takibi', headerBackTitle: t('back') }} />
@@ -250,7 +255,10 @@ export default function StaffLayout() {
       <Stack.Screen name="local-area-guide/index" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="local-area-guide/[id]" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="emergency" options={{ title: t('screenEmergencyButton'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="technical-assets" options={{ headerShown: false }} />
+      <Stack.Screen name="warnings" options={{ title: 'Resmi uyarılar', headerBackTitle: t('back') }} />
     </Stack>
+    </>
   );
 }
 

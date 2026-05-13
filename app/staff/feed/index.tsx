@@ -89,7 +89,13 @@ type FeedPostRow = {
   created_at: string;
   staff_id: string | null;
   post_tag?: string | null;
-  staff: { full_name: string | null; department: string | null; profile_image: string | null; verification_badge?: 'blue' | 'yellow' | null } | null;
+  staff: {
+    full_name: string | null;
+    department: string | null;
+    profile_image: string | null;
+    verification_badge?: 'blue' | 'yellow' | null;
+    organization?: { name?: string | null; kind?: string | null } | null;
+  } | null;
   guest_id?: string | null;
   guest?: { full_name: string | null; photo_url?: string | null } | null;
   media_items?: { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number }[];
@@ -123,6 +129,7 @@ type StaffAvatarRow = {
   profile_image: string | null;
   department: string | null;
   position: string | null;
+  organization?: { name?: string | null; kind?: string | null } | null;
   verification_badge?: 'blue' | 'yellow' | null;
   role?: string | null;
 };
@@ -397,7 +404,7 @@ export default function StaffHomeScreen() {
   const loadStaffList = useCallback(async (hiddenStaffIds?: Set<string>): Promise<StaffAvatarRow[]> => {
     const { data } = await supabase
       .from('staff')
-      .select('id, full_name, profile_image, department, position, verification_badge, email, role')
+      .select('id, full_name, profile_image, department, position, verification_badge, email, role, organization:organization_id(name, kind)')
       .eq('is_active', true)
       .is('deleted_at', null)
       .order('full_name');
@@ -408,12 +415,13 @@ export default function StaffHomeScreen() {
       if (!byKey.has(key)) byKey.set(key, r);
     });
     const mapped = Array.from(byKey.values()).map(
-      ({ id, full_name, profile_image, department, position, verification_badge, role }) => ({
+      ({ id, full_name, profile_image, department, position, organization, verification_badge, role }) => ({
         id,
         full_name,
         profile_image,
         department,
         position,
+        organization,
         verification_badge,
         role,
       })
@@ -432,7 +440,7 @@ export default function StaffHomeScreen() {
     const staffListRows = await loadStaffList(hidden.hiddenStaffIds);
     const { data: postsData } = await supabase
       .from('feed_posts')
-      .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
+      .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, organization:organization_id(name, kind)), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
       .or('visibility.eq.all_staff,visibility.eq.my_team,visibility.eq.customers')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -1527,6 +1535,12 @@ export default function StaffHomeScreen() {
                     {(s.department || s.position) ? (
                       <Text style={styles.staffAvatarRole} numberOfLines={1}>{s.department || s.position || ''}</Text>
                     ) : null}
+                    {s.organization?.name ? (
+                      <Text style={styles.staffAvatarOrg} numberOfLines={2}>
+                        {s.organization.name}
+                        {s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}
+                      </Text>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               );
@@ -1577,6 +1591,7 @@ export default function StaffHomeScreen() {
               department?: string | null;
               position?: string | null;
               verification_badge?: 'blue' | 'yellow' | null;
+              organization?: { name?: string | null; kind?: string | null } | null;
             } | null;
             const rawGuest = p.guest;
             const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
@@ -1586,7 +1601,11 @@ export default function StaffHomeScreen() {
               : (staffInfo?.full_name?.trim() || '—');
             const authorAvatar = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
             const authorBadge = staffInfo?.verification_badge ?? null;
-            const roleLabel = isGuestPost ? 'Misafir' : (staffInfo?.department || staffInfo?.position || null);
+            const orgName = staffInfo?.organization?.name?.trim() || null;
+            const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
+            const roleBase = staffInfo?.department || staffInfo?.position || null;
+            const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
+            const roleLabel = isGuestPost ? 'Misafir' : [roleBase, orgLabel].filter(Boolean).join(' • ') || null;
             const mediaItems = (p.media_items && p.media_items.length > 0)
               ? p.media_items
               : (p.media_type !== 'text' && (p.media_url || p.thumbnail_url)
@@ -2547,6 +2566,7 @@ const styles = StyleSheet.create({
   staffAvatarLetter: { fontSize: 24, fontWeight: '700', color: theme.colors.white },
   staffAvatarName: { fontSize: 13, fontWeight: '600', color: theme.colors.text, maxWidth: 72, textAlign: 'center' },
   staffAvatarRole: { fontSize: 11, color: theme.colors.textMuted, marginTop: 4, maxWidth: 72, textAlign: 'center' },
+  staffAvatarOrg: { fontSize: 10, color: theme.colors.primary, marginTop: 2, maxWidth: 78, textAlign: 'center', fontWeight: '700' },
   guestAvatarsSection: {
     backgroundColor: theme.colors.surface,
     paddingVertical: 12,

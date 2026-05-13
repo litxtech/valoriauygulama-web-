@@ -3,6 +3,9 @@ import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, Text,
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { sendNotification } from '@/lib/notificationService';
 
 type Row = {
   id: string;
@@ -16,6 +19,8 @@ type Row = {
   complained?: { full_name: string | null } | null;
 };
 
+type TopicFilter = 'all' | 'suggestion' | 'problem' | 'daily' | 'memory' | 'unknown';
+
 const STATUS_LABEL: Record<Row['status'], string> = {
   open: 'Açık',
   reviewing: 'İnceleniyor',
@@ -23,20 +28,45 @@ const STATUS_LABEL: Record<Row['status'], string> = {
   dismissed: 'Kapatıldı',
 };
 
+const TOPIC_LABEL: Record<TopicFilter, string> = {
+  all: 'Tümü',
+  suggestion: 'Öneri',
+  problem: 'Sorun',
+  daily: 'Günlük',
+  memory: 'Hatıra',
+  unknown: 'Diğer',
+};
+
+function inferTopicFromNote(note: string): TopicFilter {
+  const line = (note.split('\n')[0] ?? '').toLowerCase();
+  if (line.includes('öneri')) return 'suggestion';
+  if (line.includes('sorun')) return 'problem';
+  if (line.includes('günlük')) return 'daily';
+  if (line.includes('hatıra')) return 'memory';
+  return 'unknown';
+}
+
 export default function AdminStaffComplaintsScreen() {
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [statusFilter, setStatusFilter] = useState<'all' | Row['status']>('all');
+  const [topicFilter, setTopicFilter] = useState<TopicFilter>('all');
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : staff?.organization_id;
+    let query = supabase
       .from('staff_internal_complaints')
       .select(
         'id, note, status, admin_action_note, created_at, complainant_staff_id, complained_staff_id, complainant:complainant_staff_id(full_name), complained:complained_staff_id(full_name)'
       )
       .order('created_at', { ascending: false });
+    if (orgId && orgId !== 'all') query = query.eq('organization_id', orgId);
+    const { data, error } = await query;
     if (error) {
       Alert.alert('Hata', error.message);
       return;
@@ -48,7 +78,7 @@ export default function AdminStaffComplaintsScreen() {
       n[r.id] = r.admin_action_note ?? '';
     });
     setNotes(n);
-  }, []);
+  }, [selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.organization_id]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -71,6 +101,20 @@ export default function AdminStaffComplaintsScreen() {
       Alert.alert('Hata', error.message);
       return;
     }
+    const statusLabel = STATUS_LABEL[status];
+    await sendNotification({
+      staffId: row.complainant_staff_id,
+      title: 'Yönetici notunuzu inceledi',
+      body: `Durum: ${statusLabel}${(notes[row.id] ?? '').trim() ? ` • Not: ${(notes[row.id] ?? '').trim()}` : ''}`,
+      notificationType: 'staff_internal_note_status',
+      category: 'staff',
+      data: {
+        screen: '/staff/(tabs)/notifications',
+        complaintId: row.id,
+        status,
+      },
+      createdByStaffId: staff.id,
+    });
     await load();
   };
 
@@ -80,10 +124,14 @@ export default function AdminStaffComplaintsScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={async () => { setLoading(true); await load(); setLoading(false); }} />}
     >
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <View style={styles.banner}>
-        <Text style={styles.bannerTitle}>Personel İç Şikayetleri</Text>
+        <Text style={styles.bannerTitle}>Personel Not / Öneri / Sorun Kayıtları</Text>
         <Text style={styles.bannerSub}>
-          Bu ekran yalnızca otel sorumlusu içindir. İşlem durumu şikayet eden personele gösterilmez.
+          Bu ekran yalnızca otel sorumlusu içindir. Durum güncellendiğinde ilgili personele otomatik bildirim gider.
         </Text>
       </View>
 
@@ -96,7 +144,41 @@ export default function AdminStaffComplaintsScreen() {
           <Text style={styles.empty}>Kayıt bulunamadı.</Text>
         </View>
       ) : (
-        rows.map((r) => (
+        <>
+          <View style={styles.filterSection}>
+            <Text style={styles.filterLabel}>Durum</Text>
+            <View style={styles.filterChips}>
+              {(['all', 'open', 'reviewing', 'resolved', 'dismissed'] as const).map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.filterChip, statusFilter === s && styles.filterChipActive]}
+                  onPress={() => setStatusFilter(s)}
+                >
+                  <Text style={[styles.filterChipText, statusFilter === s && styles.filterChipTextActive]}>
+                    {s === 'all' ? 'Tümü' : STATUS_LABEL[s]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.filterLabel, { marginTop: 8 }]}>Konu</Text>
+            <View style={styles.filterChips}>
+              {(['all', 'suggestion', 'problem', 'daily', 'memory', 'unknown'] as const).map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.filterChip, topicFilter === s && styles.filterChipActive]}
+                  onPress={() => setTopicFilter(s)}
+                >
+                  <Text style={[styles.filterChipText, topicFilter === s && styles.filterChipTextActive]}>
+                    {TOPIC_LABEL[s]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          {rows
+            .filter((r) => statusFilter === 'all' || r.status === statusFilter)
+            .filter((r) => topicFilter === 'all' || inferTopicFromNote(r.note) === topicFilter)
+            .map((r) => (
           <View key={r.id} style={styles.card}>
             <Text style={styles.title}>
               Şikayet Eden: {r.complainant?.full_name || r.complainant_staff_id}
@@ -129,7 +211,8 @@ export default function AdminStaffComplaintsScreen() {
               ))}
             </View>
           </View>
-        ))
+            ))}
+        </>
       )}
     </ScrollView>
   );
@@ -150,6 +233,27 @@ const styles = StyleSheet.create({
   },
   bannerTitle: { fontSize: 15, fontWeight: '800', color: '#9a3412' },
   bannerSub: { marginTop: 4, fontSize: 12, lineHeight: 18, color: '#7c2d12' },
+  filterSection: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+  },
+  filterLabel: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textSecondary, marginBottom: 6 },
+  filterChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#f8fafc',
+  },
+  filterChipActive: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  filterChipText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textSecondary },
+  filterChipTextActive: { color: '#fff' },
   card: {
     backgroundColor: '#fff',
     borderWidth: 1,

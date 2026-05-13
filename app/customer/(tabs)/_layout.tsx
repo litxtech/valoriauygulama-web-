@@ -148,6 +148,7 @@ function NewChatHeaderButton() {
 
 function FeedCreateHeaderButton() {
   const router = useRouter();
+  const { t } = useTranslation();
   return (
     <TouchableOpacity
       onPress={() => router.push('/customer/feed/new')}

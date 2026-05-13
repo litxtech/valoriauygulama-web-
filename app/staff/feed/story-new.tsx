@@ -70,6 +70,8 @@ export default function NewStoryScreen() {
     setUploading(true);
     try {
       const readyUri = await ensureLocalFeedUploadUri(imageUri, mediaType);
+      const uploadTimeoutMs =
+        mediaType === 'video' ? FEED_MEDIA_UPLOAD_TIMEOUT_MS + 18 * 60 * 1000 : FEED_MEDIA_UPLOAD_TIMEOUT_MS;
       const { publicUrl } = await promiseWithTimeout(
         uploadUriToPublicBucket({
           bucketId: BUCKET,
@@ -77,7 +79,7 @@ export default function NewStoryScreen() {
           kind: mediaType,
           subfolder: 'stories',
         }),
-        FEED_MEDIA_UPLOAD_TIMEOUT_MS,
+        uploadTimeoutMs,
         'Yukleme cok uzun surdu. Tekrar deneyin.'
       );
 

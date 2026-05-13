@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,8 +10,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Keyboard,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -32,6 +34,10 @@ const PAYMENT_TYPES: { value: 'cash' | 'credit_card' | 'company_card'; label: st
 
 export default function NewExpenseScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
+  /** Android: KAV davranışı yok; klavye yüksekliği kadar alt boşluk — form yukarı kaydırılabilsin. */
+  const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const { staff } = useAuthStore();
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
@@ -56,6 +62,30 @@ export default function NewExpenseScreen() {
       .order('sort_order')
       .then(({ data }) => setCategories((data as CategoryRow[]) ?? []));
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      setAndroidKeyboardInset(0);
+      return;
+    }
+    const onShow = Keyboard.addListener('keyboardDidShow', (e) => {
+      setAndroidKeyboardInset(Math.max(0, e.endCoordinates?.height ?? 0));
+    });
+    const onHide = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardInset(0);
+    });
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
+  const scrollFocusedFieldIntoView = () => {
+    const delay = Platform.OS === 'android' ? 220 : 120;
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, delay);
+  };
 
   const uploadReceipt = async (uri: string): Promise<string> => {
     const { publicUrl } = await uploadUriToPublicBucket({
@@ -192,9 +222,23 @@ export default function NewExpenseScreen() {
     }
   };
 
+  const contentPaddingBottom =
+    Math.max(insets.bottom, 16) + 32 + (Platform.OS === 'android' ? androidKeyboardInset : 0);
+
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
+    >
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, { paddingBottom: contentPaddingBottom }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator
+      >
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Fiş fotoğrafı (Zorunlu)</Text>
           <View style={styles.receiptBox}>
@@ -287,10 +331,13 @@ export default function NewExpenseScreen() {
             style={[styles.input, styles.textArea]}
             value={description}
             onChangeText={setDescription}
+            onFocus={scrollFocusedFieldIntoView}
             placeholder="Harcama detayı (örn: Klima tamiri için yedek parça)"
             placeholderTextColor={theme.colors.textMuted}
             multiline
             numberOfLines={3}
+            blurOnSubmit={false}
+            scrollEnabled
           />
 
           <Text style={styles.label}>Etiketler (opsiyonel)</Text>
@@ -298,6 +345,7 @@ export default function NewExpenseScreen() {
             style={styles.input}
             value={tags}
             onChangeText={setTags}
+            onFocus={scrollFocusedFieldIntoView}
             placeholder="#klima #teknik"
             placeholderTextColor={theme.colors.textMuted}
           />
@@ -316,7 +364,7 @@ export default function NewExpenseScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   scroll: { flex: 1 },
-  content: { padding: 16, paddingBottom: 40 },
+  content: { padding: 16, flexGrow: 1 },
   section: { marginBottom: 24 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 10 },
   receiptBox: { backgroundColor: theme.colors.surface, borderRadius: theme.radius.md, padding: 12, minHeight: 140, borderWidth: 1, borderColor: theme.colors.borderLight },

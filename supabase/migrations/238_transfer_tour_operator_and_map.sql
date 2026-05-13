@@ -14,3 +14,4 @@ CREATE INDEX IF NOT EXISTS idx_transfer_services_map_pin
   WHERE map_lat IS NOT NULL AND map_lng IS NOT NULL;
 
 COMMIT;
+

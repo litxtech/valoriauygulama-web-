@@ -17,9 +17,10 @@ import { supabase } from '@/lib/supabase';
 import { sendNotification } from '@/lib/notificationService';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDateShort } from '@/lib/date';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 type ExpenseRow = {
   id: string;
@@ -65,16 +66,20 @@ type MonthBucket = {
   pending: number;
 };
 
-async function fetchAllExpenseAggRows(): Promise<AggRow[]> {
+async function fetchAllExpenseAggRows(organizationId?: string | 'all'): Promise<AggRow[]> {
   const out: AggRow[] = [];
   const page = 1000;
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase
+    let q = supabase
       .from('staff_expenses')
       .select('amount,status,expense_date')
       .order('expense_date', { ascending: true })
       .range(from, from + page - 1);
+    if (organizationId && organizationId !== 'all') {
+      q = q.eq('organization_id', organizationId);
+    }
+    const { data, error } = await q;
     if (error) break;
     const chunk = (data ?? []) as AggRow[];
     out.push(...chunk);
@@ -146,6 +151,7 @@ function aggregateExpenses(rows: AggRow[]): {
 export default function AdminExpensesScreen() {
   const router = useRouter();
   const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [pending, setPending] = useState<ExpenseRow[]>([]);
   const [allExpenses, setAllExpenses] = useState<ExpenseRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -172,19 +178,27 @@ export default function AdminExpensesScreen() {
   const [receiptModal, setReceiptModal] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : me?.organization_id;
+    let pendingQuery = supabase
+      .from('staff_expenses')
+      .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    let allQuery = supabase
+      .from('staff_expenses')
+      .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
+      .order('expense_date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (orgId && orgId !== 'all') {
+      pendingQuery = pendingQuery.eq('organization_id', orgId);
+      allQuery = allQuery.eq('organization_id', orgId);
+    }
     const [pendingRes, allDataRes, aggRows] = await Promise.all([
-      supabase
-        .from('staff_expenses')
-        .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('staff_expenses')
-        .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
-        .order('expense_date', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(50),
-      fetchAllExpenseAggRows(),
+      pendingQuery,
+      allQuery,
+      fetchAllExpenseAggRows(orgId),
     ]);
 
     const pendingList = (pendingRes.data ?? []) as unknown as ExpenseRow[];
@@ -207,7 +221,7 @@ export default function AdminExpensesScreen() {
       grandApproved: agg.grandApproved,
     });
     setLoading(false);
-  }, []);
+  }, [me?.app_permissions?.super_admin, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
     load();
@@ -298,6 +312,10 @@ export default function AdminExpensesScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        <AdminOrganizationPicker
+          canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
+          ownOrganizationId={me?.organization_id}
+        />
         <AdminCard style={styles.totalHeroCard}>
           <View style={styles.totalHeroHeader}>
             <Ionicons name="stats-chart" size={22} color={adminTheme.colors.accent} />

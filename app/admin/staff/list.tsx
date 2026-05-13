@@ -314,6 +314,16 @@ export default function StaffListScreen() {
           <Text style={[styles.tabText, tab === 'guests' && styles.tabTextActive]}>Misafirler</Text>
         </TouchableOpacity>
       </View>
+      {tab === 'staff' ? (
+        <TouchableOpacity
+          style={styles.addStaffButton}
+          onPress={() => router.push('/admin/staff/add')}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="person-add-outline" size={18} color="#fff" />
+          <Text style={styles.addStaffButtonText}>Çalışan ekle</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <AdminCard padded={false} elevated>
         {tab === 'staff' && staffList.length > 0 && (
@@ -631,6 +641,22 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#fff' },
   subBar: { paddingHorizontal: adminTheme.spacing.xl, paddingVertical: adminTheme.spacing.sm, paddingTop: adminTheme.spacing.md },
   subBarText: { fontSize: 14, color: adminTheme.colors.textSecondary },
+  addStaffButton: {
+    backgroundColor: adminTheme.colors.primary,
+    borderRadius: 12,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: adminTheme.spacing.md,
+    paddingHorizontal: 12,
+  },
+  addStaffButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   empty: { alignItems: 'center', paddingVertical: 48 },
   emptyText: { fontSize: 16, color: adminTheme.colors.textSecondary, marginTop: 12 },
   rowWrap: { position: 'relative' },

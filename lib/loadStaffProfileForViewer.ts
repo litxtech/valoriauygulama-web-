@@ -1,9 +1,9 @@
 import { supabase } from '@/lib/supabase';
 
 const STAFF_SELECT_BASE =
-  'id, full_name, department, position, profile_image, cover_image, bio, specialties, languages, is_online, created_at, hire_date, tenure_note, average_rating, total_reviews, office_location, achievements, verification_badge, shift_id, role, phone, email, whatsapp, show_phone_to_guest, show_email_to_guest, show_whatsapp_to_guest, app_permissions';
+  'id, full_name, department, position, profile_image, cover_image, bio, specialties, languages, is_online, created_at, hire_date, tenure_note, average_rating, total_reviews, office_location, achievements, verification_badge, shift_id, role, phone, email, whatsapp, show_phone_to_guest, show_email_to_guest, show_whatsapp_to_guest, app_permissions, organization:organization_id(name,kind)';
 const STAFF_SELECT_BASE_LEGACY =
-  'id, full_name, department, position, profile_image, cover_image, bio, specialties, languages, is_online, created_at, hire_date, average_rating, total_reviews, office_location, achievements, verification_badge, shift_id, role, phone, email, whatsapp, show_phone_to_guest, show_email_to_guest, show_whatsapp_to_guest, app_permissions';
+  'id, full_name, department, position, profile_image, cover_image, bio, specialties, languages, is_online, created_at, hire_date, average_rating, total_reviews, office_location, achievements, verification_badge, shift_id, role, phone, email, whatsapp, show_phone_to_guest, show_email_to_guest, show_whatsapp_to_guest, app_permissions, organization:organization_id(name,kind)';
 
 const STAFF_SELECT_FULL = `${STAFF_SELECT_BASE}, evaluation_score, evaluation_discipline, evaluation_communication, evaluation_speed, evaluation_responsibility, evaluation_insight`;
 const STAFF_SELECT_FULL_LEGACY = `${STAFF_SELECT_BASE_LEGACY}, evaluation_score, evaluation_discipline, evaluation_communication, evaluation_speed, evaluation_responsibility, evaluation_insight`;

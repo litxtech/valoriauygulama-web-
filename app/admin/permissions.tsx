@@ -69,6 +69,21 @@ const STAFF_APP_PERMISSIONS = [
     label: 'Pasaport / MRZ tarama (KBS)',
     desc: 'Kimlik ve pasaport MRZ okuma, KBS tarama ekranı ve header MRZ simgesi.',
   },
+  {
+    key: 'teknik_varlik_yonetimi',
+    label: 'Akıllı Tesis Envanteri (yönetim)',
+    desc: 'Bina/lokasyon/varlık tanımlama, QR ve etiket çıktısı; yönetim paneli menüsü.',
+  },
+  {
+    key: 'teknik_varliklar',
+    label: 'Teknik QR (operasyon)',
+    desc: 'QR okutma, talimatlar, müdahale kaydı ve durum güncelleme.',
+  },
+  {
+    key: 'teknik_varliklar_okuma',
+    label: 'Teknik QR (salt okunur)',
+    desc: 'QR okutup talimatları görür; kayıt ve durum değişikliği yapamaz.',
+  },
 ];
 
 /** Geçiş kontrolü yetkileri */

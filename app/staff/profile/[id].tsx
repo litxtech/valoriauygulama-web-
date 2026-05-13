@@ -75,6 +75,7 @@ type StaffProfile = {
   evaluation_speed?: number | null;
   evaluation_responsibility?: number | null;
   evaluation_insight?: string | null;
+  organization?: { name: string | null; kind: string | null } | null;
 };
 
 function formatReviewDateShort(iso: string) {
@@ -373,6 +374,15 @@ export default function StaffProfileViewScreen() {
             <View style={styles.jobBadge}>
               <Text style={styles.jobBadgeText}>{profile.position || profile.department || '—'}</Text>
             </View>
+            {!!profile.organization?.name && (
+              <View style={styles.orgBadge}>
+                <Ionicons name="business-outline" size={14} color="#0369a1" />
+                <Text style={styles.orgBadgeText}>
+                  {profile.organization.name}
+                  {profile.organization.kind ? ` • ${profile.organization.kind === 'office' ? 'Ofis' : 'Otel'}` : ''}
+                </Text>
+              </View>
+            )}
             <TouchableOpacity style={styles.reviewToggleBtn} onPress={() => setReviewsModalVisible(true)} activeOpacity={0.85}>
               <Ionicons name="star-outline" size={14} color={theme.colors.primary} />
               <Text style={styles.reviewToggleText}>Degerlendirmeler</Text>
@@ -859,6 +869,18 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary + '35',
   },
   jobBadgeText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
+  orgBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#7dd3fc',
+    backgroundColor: '#e0f2fe',
+  },
+  orgBadgeText: { fontSize: 12, fontWeight: '700', color: '#0369a1' },
   reviewToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',

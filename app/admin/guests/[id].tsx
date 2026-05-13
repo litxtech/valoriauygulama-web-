@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -7,8 +7,9 @@ import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
 import { shareContractPdf, type GuestForPdf } from '@/lib/contractPdf';
 import { CachedImage } from '@/components/CachedImage';
-import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
 import { getAuthProviderLabel } from '@/lib/updateGuestLoginInfo';
+import { computeStayAmounts, effectiveNightlyRate } from '@/lib/guestStayFinancials';
+import { moveGuestToRoom, updateGuestStayFinancials } from '@/lib/guestStayRoomOps';
 
 type ContractTemplate = { title: string; content: string } | null;
 type Guest = {
@@ -58,21 +59,48 @@ export default function GuestDetail() {
   const [priceInput, setPriceInput] = useState('');
   const [nightsInput, setNightsInput] = useState('');
   const [assigning, setAssigning] = useState(false);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [editStayVisible, setEditStayVisible] = useState(false);
+  const [changeRoomVisible, setChangeRoomVisible] = useState(false);
+  const [roomsForMove, setRoomsForMove] = useState<{ id: string; room_number: string; status: string; price_per_night?: number | null }[]>([]);
+  const [selectedNewRoomId, setSelectedNewRoomId] = useState<string | null>(null);
+  const [stayEditPrice, setStayEditPrice] = useState('');
+  const [stayEditNights, setStayEditNights] = useState('');
+  const [stayUpdateBusy, setStayUpdateBusy] = useState(false);
+  const [roomMoveBusy, setRoomMoveBusy] = useState(false);
+
+  const loadGuestAndRooms = useCallback(async () => {
+    if (!id) return;
+    const { data: g } = await supabase
+      .from('guests')
+      .select('*, rooms(room_number), contract_templates(title, content)')
+      .eq('id', id)
+      .single();
+    setGuest(g ?? null);
+    const { data: r } = await supabase.from('rooms').select('id, room_number, price_per_night').eq('status', 'available');
+    setRooms(r ?? []);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const { data: g } = await supabase
-        .from('guests')
-        .select('*, rooms(room_number), contract_templates(title, content)')
-        .eq('id', id)
-        .single();
-      setGuest(g ?? null);
-      const { data: r } = await supabase.from('rooms').select('id, room_number, price_per_night').eq('status', 'available');
-      setRooms(r ?? []);
+      await loadGuestAndRooms();
       setLoading(false);
     })();
-  }, [id]);
+  }, [id, loadGuestAndRooms]);
+
+  useEffect(() => {
+    if (!changeRoomVisible || !guest?.room_id) return;
+    (async () => {
+      const { data } = await supabase
+        .from('rooms')
+        .select('id, room_number, status, price_per_night')
+        .or(`status.eq.available,id.eq.${guest.room_id}`)
+        .order('room_number');
+      setRoomsForMove(data ?? []);
+      setSelectedNewRoomId(null);
+    })();
+  }, [changeRoomVisible, guest?.room_id]);
 
   const exportPdf = async () => {
     if (!guest) return;
@@ -88,10 +116,8 @@ export default function GuestDetail() {
   };
 
   const openAssignModal = (roomId: string) => {
-    const room = rooms.find((r) => r.id === roomId);
     setAssignRoomId(roomId);
-    if (room?.price_per_night) setPriceInput(String(room.price_per_night));
-    else setPriceInput('');
+    setPriceInput('');
     setNightsInput('');
     setAssignModalVisible(true);
   };
@@ -105,8 +131,7 @@ export default function GuestDetail() {
       return;
     }
     const totalNet = price * nights;
-    const vatAmount = Math.round(totalNet * VAT_RATE * 100) / 100;
-    const accommodationTaxAmount = Math.round(totalNet * ACCOMMODATION_TAX_RATE * 100) / 100;
+    const { vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
     setAssigning(true);
     const roomNumber = rooms.find((r) => r.id === assignRoomId)?.room_number;
     const { error } = await supabase
@@ -127,12 +152,14 @@ export default function GuestDetail() {
       return;
     }
     await supabase.from('rooms').update({ status: 'occupied' }).eq('id', assignRoomId);
+    await supabase.from('contract_acceptances').update({ room_id: assignRoomId }).eq('guest_id', id);
     setGuest((prev) =>
       prev
         ? {
             ...prev,
             room_id: assignRoomId,
             status: 'checked_in',
+            rooms: roomNumber ? { room_number: roomNumber } : prev?.rooms ?? null,
             total_amount_net: totalNet,
             vat_amount: vatAmount,
             accommodation_tax_amount: accommodationTaxAmount,
@@ -156,24 +183,147 @@ export default function GuestDetail() {
     setAssigning(false);
   };
 
-  const checkOut = async () => {
+  const checkOut = () => {
     if (!id || !guest?.room_id) return;
-    const { error } = await supabase.from('guests').update({ status: 'checked_out', check_out_at: new Date().toISOString() }).eq('id', id);
-    if (error) Alert.alert('Hata', error.message);
-    else {
-      await supabase.from('rooms').update({ status: 'available' }).eq('id', guest.room_id);
-      setGuest((prev) => prev ? { ...prev, status: 'checked_out', room_id: null } : null);
-      const msg = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.checkout_done]({});
-      await sendNotification({
-        guestId: id,
-        title: msg.title,
-        body: msg.body,
-        notificationType: GUEST_TYPES.checkout_done,
-        category: 'guest',
-        createdByStaffId: staff?.id ?? undefined,
-      });
-    }
+    Alert.alert('Check-out', `${guest.full_name} odadan çıksın mı? Oda müsait görünür; misafir çıkış bildirimi gider.`, [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Check-out',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setCheckoutBusy(true);
+            const rid = guest.room_id;
+            const { error } = await supabase
+              .from('guests')
+              .update({ status: 'checked_out', check_out_at: new Date().toISOString(), room_id: null })
+              .eq('id', id);
+            if (error) {
+              Alert.alert('Hata', error.message);
+              setCheckoutBusy(false);
+              return;
+            }
+            if (rid) await supabase.from('rooms').update({ status: 'available' }).eq('id', rid);
+            setGuest((prev) =>
+              prev ? { ...prev, status: 'checked_out', room_id: null, rooms: null } : null
+            );
+            const msg = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.checkout_done]({});
+            await sendNotification({
+              guestId: id,
+              title: msg.title,
+              body: msg.body,
+              notificationType: GUEST_TYPES.checkout_done,
+              category: 'guest',
+              createdByStaffId: staff?.id ?? undefined,
+            });
+            await loadGuestAndRooms();
+            setCheckoutBusy(false);
+          })();
+        },
+      },
+    ]);
   };
+
+  const openEditStayModal = () => {
+    if (!guest) return;
+    const p = effectiveNightlyRate(guest.total_amount_net, guest.nights_count);
+    setStayEditPrice(p != null ? String(p) : '');
+    setStayEditNights(guest.nights_count != null && guest.nights_count > 0 ? String(guest.nights_count) : '');
+    setEditStayVisible(true);
+  };
+
+  const applyStayUpdate = async () => {
+    if (!id || !guest) return;
+    const price = stayEditPrice.trim() ? parseFloat(stayEditPrice.replace(',', '.')) : null;
+    const nights = stayEditNights.trim() ? parseInt(stayEditNights, 10) : null;
+    if (price == null || price < 0 || !nights || nights < 1) {
+      Alert.alert('Hata', 'Geçerli gece fiyatı ve en az 1 gece girin.');
+      return;
+    }
+    setStayUpdateBusy(true);
+    const { totalNet, vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
+    const { error } = await updateGuestStayFinancials(supabase, {
+      guestId: id,
+      pricePerNight: price,
+      nights,
+    });
+    if (error) {
+      Alert.alert('Hata', error.message);
+      setStayUpdateBusy(false);
+      return;
+    }
+    setGuest((prev) =>
+      prev
+        ? {
+            ...prev,
+            total_amount_net: totalNet,
+            vat_amount: vatAmount,
+            accommodation_tax_amount: accommodationTaxAmount,
+            nights_count: nights,
+          }
+        : null
+    );
+    const summary = `${nights} gece · net ₺${totalNet.toFixed(0)} (KDV ₺${vatAmount.toFixed(0)}, konaklama vergisi ₺${accommodationTaxAmount.toFixed(0)})`;
+    const tmpl = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.stay_financial_updated]({ summary });
+    await sendNotification({
+      guestId: id,
+      title: tmpl.title,
+      body: tmpl.body,
+      notificationType: GUEST_TYPES.stay_financial_updated,
+      category: 'guest',
+      createdByStaffId: staff?.id ?? undefined,
+    });
+    setEditStayVisible(false);
+    await loadGuestAndRooms();
+    setStayUpdateBusy(false);
+    Alert.alert('Tamam', 'Konaklama tutarları güncellendi; misafire bildirim gönderildi.');
+  };
+
+  const applyRoomChange = async () => {
+    if (!id || !guest?.room_id || !selectedNewRoomId) {
+      Alert.alert('Uyarı', 'Yeni oda seçin.');
+      return;
+    }
+    if (selectedNewRoomId === guest.room_id) {
+      Alert.alert('Bilgi', 'Misafir zaten bu odada.');
+      setChangeRoomVisible(false);
+      return;
+    }
+    setRoomMoveBusy(true);
+    const { error } = await moveGuestToRoom(supabase, {
+      guestId: id,
+      oldRoomId: guest.room_id,
+      newRoomId: selectedNewRoomId,
+    });
+    if (error) {
+      Alert.alert('Hata', error.message);
+      setRoomMoveBusy(false);
+      return;
+    }
+    const newNum = roomsForMove.find((r) => r.id === selectedNewRoomId)?.room_number ?? '';
+    const tmpl = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.room_reassigned]({ roomNumber: newNum });
+    await sendNotification({
+      guestId: id,
+      title: tmpl.title,
+      body: tmpl.body,
+      notificationType: GUEST_TYPES.room_reassigned,
+      category: 'guest',
+      createdByStaffId: staff?.id ?? undefined,
+    });
+    setChangeRoomVisible(false);
+    setSelectedNewRoomId(null);
+    await loadGuestAndRooms();
+    setRoomMoveBusy(false);
+    Alert.alert('Tamam', `Misafir oda ${newNum} olarak güncellendi.`);
+  };
+
+  const stayPreview = (() => {
+    const price = stayEditPrice.trim() ? parseFloat(stayEditPrice.replace(',', '.')) : null;
+    const nights = stayEditNights.trim() ? parseInt(stayEditNights, 10) : null;
+    if (price == null || price < 0 || !nights || nights < 1) return null;
+    const { totalNet, vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
+    return { totalNet, vatAmount, accommodationTaxAmount, nights };
+  })();
 
   if (loading || !guest) return <Text style={styles.loading}>Yükleniyor...</Text>;
 
@@ -225,6 +375,39 @@ export default function GuestDetail() {
             {guest.nights_count != null && guest.total_amount_net != null ? ' · ' : ''}
             {guest.total_amount_net != null ? `₺${Number(guest.total_amount_net).toFixed(2)} (net)` : ''}
           </Text>
+          {guest.vat_amount != null && guest.accommodation_tax_amount != null ? (
+            <Text style={styles.maliyeSub}>
+              KDV %10: ₺{Number(guest.vat_amount).toFixed(2)} · Konaklama vergisi %2: ₺
+              {Number(guest.accommodation_tax_amount).toFixed(2)}
+            </Text>
+          ) : null}
+          {guest.total_amount_net != null &&
+          guest.nights_count != null &&
+          guest.nights_count > 0 &&
+          effectiveNightlyRate(guest.total_amount_net, guest.nights_count) != null ? (
+            <Text style={styles.maliyeSub}>
+              Hesaplanan gece başı: ₺{effectiveNightlyRate(guest.total_amount_net, guest.nights_count)?.toFixed(2)}
+            </Text>
+          ) : null}
+        </View>
+      )}
+      {guest.status === 'checked_in' && guest.room_id && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Konaklama yönetimi (check-in sonrası)</Text>
+          <Text style={styles.manageHint}>
+            Fiyat veya gece sayısı düzeltmesi Maliye satırlarını yeniden hesaplar. Oda değişiminde eski oda müsait, yeni oda dolu
+            olur; sözleşme onayı ve uygulama anahtarı yeni odaya bağlanır.
+          </Text>
+          <TouchableOpacity style={styles.secondaryActionBtn} onPress={openEditStayModal} activeOpacity={0.85}>
+            <Text style={styles.secondaryActionText}>Fiyat / gece sayısı güncelle</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.secondaryActionBtn, styles.secondaryActionBtnMargin]}
+            onPress={() => setChangeRoomVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryActionText}>Oda değiştir</Text>
+          </TouchableOpacity>
         </View>
       )}
       {(guest.last_login_platform || guest.auth_provider || guest.last_login_at || guest.auth_user_created_at) && (
@@ -321,9 +504,126 @@ export default function GuestDetail() {
           </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
+
+      <Modal visible={editStayVisible} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !stayUpdateBusy && setEditStayVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalContentWrap}
+          >
+            <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+              <Text style={styles.modalTitle}>Konaklama tutarlarını güncelle</Text>
+              <Text style={styles.modalSub}>
+                Check-in tarihi değişmez. Net tutar, KDV ve konaklama vergisi yeniden hesaplanır.
+              </Text>
+              <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
+              <TextInput
+                style={styles.input}
+                value={stayEditPrice}
+                onChangeText={setStayEditPrice}
+                keyboardType="decimal-pad"
+                placeholder="Örn. 1500"
+              />
+              <Text style={styles.inputLabel}>Gece sayısı</Text>
+              <TextInput
+                style={styles.input}
+                value={stayEditNights}
+                onChangeText={setStayEditNights}
+                keyboardType="number-pad"
+                placeholder="Örn. 3"
+              />
+              {stayPreview ? (
+                <Text style={styles.previewBox}>
+                  Önizleme — Net: ₺{stayPreview.totalNet.toFixed(2)} · KDV: ₺{stayPreview.vatAmount.toFixed(2)} · Konaklama
+                  vergisi: ₺{stayPreview.accommodationTaxAmount.toFixed(2)}
+                </Text>
+              ) : null}
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.confirmAssignBtn, stayUpdateBusy && styles.btnDisabled]}
+                  onPress={applyStayUpdate}
+                  disabled={stayUpdateBusy}
+                >
+                  {stayUpdateBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.confirmAssignText}>Kaydet ve misafire bildir</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !stayUpdateBusy && setEditStayVisible(false)}>
+                  <Text style={styles.modalCloseBtnText}>İptal</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={changeRoomVisible} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => !roomMoveBusy && setChangeRoomVisible(false)}
+        >
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modalTitle}>Oda değiştir</Text>
+            <Text style={styles.modalSub}>Müsait odalar ve mevcut oda listelenir. Misafire bildirim gider.</Text>
+            <ScrollView style={styles.roomPickList} keyboardShouldPersistTaps="handled">
+              {roomsForMove.map((r) => {
+                const isCurrent = r.id === guest.room_id;
+                const selected = selectedNewRoomId === r.id;
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[
+                      styles.roomPickRow,
+                      selected && styles.roomPickRowSelected,
+                      isCurrent && styles.roomPickRowCurrent,
+                    ]}
+                    onPress={() => setSelectedNewRoomId(r.id)}
+                    disabled={roomMoveBusy}
+                  >
+                    <Text style={styles.roomPickTitle}>
+                      Oda {r.room_number}
+                      {isCurrent ? ' (şu an)' : ''}
+                    </Text>
+                    <Text style={styles.roomPickMeta}>
+                      {r.status === 'occupied' && isCurrent ? 'Mevcut' : r.status}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.confirmAssignBtn, roomMoveBusy && styles.btnDisabled]}
+                onPress={applyRoomChange}
+                disabled={roomMoveBusy}
+              >
+                {roomMoveBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.confirmAssignText}>Taşı ve bildir</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !roomMoveBusy && setChangeRoomVisible(false)}>
+                <Text style={styles.modalCloseBtnText}>İptal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
       {guest.status === 'checked_in' && guest.room_id && (
-        <TouchableOpacity style={styles.checkOutBtn} onPress={checkOut}>
-          <Text style={styles.checkOutBtnText}>Check-out</Text>
+        <TouchableOpacity
+          style={[styles.checkOutBtn, checkoutBusy && styles.btnDisabled]}
+          onPress={checkOut}
+          disabled={checkoutBusy}
+        >
+          <Text style={styles.checkOutBtnText}>{checkoutBusy ? 'İşleniyor…' : 'Check-out'}</Text>
         </TouchableOpacity>
       )}
     </ScrollView>
@@ -358,6 +658,42 @@ const styles = StyleSheet.create({
   pdfBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   checkOutBtn: { marginTop: 24, padding: 16, backgroundColor: '#e53e3e', borderRadius: 12, alignItems: 'center' },
   checkOutBtnText: { color: '#fff', fontWeight: '600' },
+  maliyeSub: { fontSize: 13, color: '#64748b', marginTop: 8, lineHeight: 18 },
+  manageHint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 12 },
+  secondaryActionBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#edf2f7',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+  },
+  secondaryActionBtnMargin: { marginTop: 10 },
+  secondaryActionText: { fontSize: 15, fontWeight: '700', color: '#1e3a5f' },
+  previewBox: {
+    fontSize: 13,
+    color: '#334155',
+    backgroundColor: '#f1f5f9',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 12,
+    lineHeight: 19,
+  },
+  roomPickList: { maxHeight: 280, marginBottom: 8 },
+  roomPickRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#f8fafc',
+  },
+  roomPickRowSelected: { backgroundColor: '#dbeafe', borderWidth: 1, borderColor: '#3b82f6' },
+  roomPickRowCurrent: { borderLeftWidth: 4, borderLeftColor: '#1a365d' },
+  roomPickTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  roomPickMeta: { fontSize: 12, color: '#64748b', marginTop: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   modalContentWrap: { maxWidth: 400, width: '100%', alignSelf: 'center' },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 20 },

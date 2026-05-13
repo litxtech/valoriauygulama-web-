@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import {
   sendBulkToGuests,
   sendBulkToStaff,
@@ -51,6 +53,7 @@ export default function BulkNotifyScreen() {
     body?: string;
   }>();
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [toStaff, setToStaff] = useState(false);
   const [guestTarget, setGuestTarget] = useState<BulkGuestTarget>('all_guests');
   const [staffTarget, setStaffTarget] = useState<BulkStaffTarget>('all_staff');
@@ -73,6 +76,12 @@ export default function BulkNotifyScreen() {
   }, [params.audience, params.category, params.title, params.body]);
 
   const handleSend = async () => {
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const organizationId = canUseAll ? selectedOrganizationId : staff?.organization_id;
+    if (canUseAll && organizationId === 'all') {
+      Alert.alert('Otel seçin', 'Toplu bildirim için hedef otel seçmelisiniz.');
+      return;
+    }
     if (!staff?.id) {
       Alert.alert('Hata', 'Oturum bulunamadı.');
       return;
@@ -97,6 +106,7 @@ export default function BulkNotifyScreen() {
       if (toStaff) {
         const result = await sendBulkToStaff({
           target: staffTarget,
+          organizationId: organizationId === 'all' ? null : organizationId ?? null,
           title: trimmedTitle || 'Toplu Duyuru',
           body: trimmedBody,
           createdByStaffId: staff.id,
@@ -116,6 +126,7 @@ export default function BulkNotifyScreen() {
         const result = await sendBulkToGuests({
           target: guestTarget,
           roomNumbers: roomList,
+          organizationId: organizationId === 'all' ? null : organizationId ?? null,
           title: trimmedTitle,
           body: trimmedBody,
           category,
@@ -137,6 +148,10 @@ export default function BulkNotifyScreen() {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <View style={styles.switchRow}>
         <Text style={styles.switchLabel}>Personele gönder</Text>
         <Switch value={toStaff} onValueChange={setToStaff} />

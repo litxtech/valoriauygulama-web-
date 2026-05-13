@@ -22,10 +22,11 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDateShort } from '@/lib/date';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 type ExpenseRow = {
   id: string;
@@ -70,6 +71,7 @@ function getDefaultDates(): { start: string; end: string } {
 
 export default function AdminExpensesAllScreen() {
   const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -84,6 +86,8 @@ export default function AdminExpensesAllScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : me?.organization_id;
     const start = dateStart || '2020-01-01';
     const end = dateEnd || '2030-12-31';
 
@@ -99,6 +103,9 @@ export default function AdminExpensesAllScreen() {
     if (statusFilter !== 'all') {
       query = query.eq('status', statusFilter);
     }
+    if (orgId && orgId !== 'all') {
+      query = query.eq('organization_id', orgId);
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -107,7 +114,7 @@ export default function AdminExpensesAllScreen() {
       setExpenses((data ?? []) as ExpenseRow[]);
     }
     setLoading(false);
-  }, [dateStart, dateEnd, statusFilter]);
+  }, [dateStart, dateEnd, me?.app_permissions?.super_admin, me?.organization_id, selectedOrganizationId, statusFilter]);
 
   useEffect(() => {
     load();
@@ -466,6 +473,10 @@ ${sorted.map((e) => `<tr><td class="colDate">${formatDateShort(e.expense_date)}<
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        <AdminOrganizationPicker
+          canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
+          ownOrganizationId={me?.organization_id}
+        />
         <AdminCard>
           <Text style={styles.sectionTitle}>Tarih Aralığı</Text>
           <View style={styles.dateRow}>

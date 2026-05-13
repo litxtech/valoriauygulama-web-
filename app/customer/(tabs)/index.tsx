@@ -72,6 +72,7 @@ type StaffRow = {
   id: string;
   full_name: string | null;
   department: string | null;
+  organization?: { name?: string | null; kind?: string | null } | null;
   profile_image: string | null;
   is_online: boolean | null;
   last_active: string | null;
@@ -102,7 +103,13 @@ type FeedPost = {
   lng?: number | null;
   location_label?: string | null;
   media_items?: { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number }[];
-  staff: { full_name: string | null; department: string | null; profile_image?: string | null; verification_badge?: 'blue' | 'yellow' | null } | null;
+  staff: {
+    full_name: string | null;
+    department: string | null;
+    profile_image?: string | null;
+    verification_badge?: 'blue' | 'yellow' | null;
+    organization?: { name?: string | null; kind?: string | null } | null;
+  } | null;
   guest: { full_name: string | null; photo_url?: string | null } | null;
 };
 
@@ -486,7 +493,7 @@ export default function CustomerHome() {
       (async () => {
         const { data } = await supabase
           .from('staff')
-          .select('id, full_name, department, profile_image, is_online, last_active, work_status, verification_badge, email, role')
+          .select('id, full_name, department, organization:organization_id(name, kind), profile_image, is_online, last_active, work_status, verification_badge, email, role')
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('is_online', { ascending: false })
@@ -500,6 +507,7 @@ export default function CustomerHome() {
               id: r.id,
               full_name: r.full_name,
               department: r.department,
+              organization: r.organization,
               profile_image: r.profile_image,
               is_online: r.is_online,
               last_active: r.last_active,
@@ -525,7 +533,7 @@ export default function CustomerHome() {
       supabase.from('hotel_info').select('id, name, description, address, stars').limit(1).maybeSingle(),
       supabase
         .from('feed_posts')
-        .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, post_tag, lat, lng, location_label, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)')
+        .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, post_tag, lat, lng, location_label, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, organization:organization_id(name, kind)), guest:guest_id(full_name, photo_url, deleted_at)')
         .eq('visibility', 'customers')
         .order('created_at', { ascending: false })
         .limit(10),
@@ -1284,6 +1292,12 @@ export default function CustomerHome() {
                     textStyle={styles.staffCardName}
                   />
                   <Text style={styles.staffCardDept} numberOfLines={1}>{staff.department || '—'}</Text>
+                  {staff.organization?.name ? (
+                    <Text style={styles.staffCardOrg} numberOfLines={2}>
+                      {staff.organization.name}
+                      {staff.organization.kind === 'tour_office' ? ' • Ofis' : staff.organization.kind ? ' • Otel' : ''}
+                    </Text>
+                  ) : null}
                 </TouchableOpacity>
               </View>
             </View>
@@ -1315,14 +1329,25 @@ export default function CustomerHome() {
       ) : (
         <View style={styles.feedList}>
           {visibleFeedPosts.map((post) => {
-            const rawStaff = post.staff as { full_name?: string; department?: string; profile_image?: string | null; verification_badge?: 'blue' | 'yellow' | null } | null;
+            const rawStaff = post.staff as {
+              full_name?: string;
+              department?: string;
+              profile_image?: string | null;
+              verification_badge?: 'blue' | 'yellow' | null;
+              organization?: { name?: string | null; kind?: string | null } | null;
+            } | null;
             const rawGuest = post.guest;
             const staffInfo = Array.isArray(rawStaff) ? rawStaff[0] ?? null : rawStaff;
             const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) ?? null : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
 
             const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
             const authorName = staffInfo ? (staffInfo.full_name?.trim() || t('visitorTypeStaff')) : guestDisplayName(guestInfo?.full_name, t('visitorTypeGuest'));
-            const roleLabel = staffInfo ? (staffInfo.department ?? null) : t('visitorTypeGuest');
+            const orgName = staffInfo?.organization?.name?.trim() || null;
+            const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
+            const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
+            const roleLabel = staffInfo
+              ? [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ')
+              : t('visitorTypeGuest');
             const authorBadge = staffInfo?.verification_badge ?? null;
             const authorAvatarUrl = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
 
@@ -2064,6 +2089,7 @@ const styles = StyleSheet.create({
   staffCardTextBlock: { minHeight: 36, alignItems: 'center', justifyContent: 'flex-start' },
   staffCardName: { fontWeight: '600', fontSize: 13, color: theme.colors.text, textAlign: 'center' },
   staffCardDept: { fontSize: 11, color: theme.colors.textMuted, marginTop: 4, textAlign: 'center' },
+  staffCardOrg: { fontSize: 10, color: theme.colors.primary, marginTop: 2, textAlign: 'center', fontWeight: '700' },
   statusDot: {
     position: 'absolute',
     bottom: -1,

@@ -210,9 +210,10 @@ export default function CustomerChatScreen() {
   }, [conversationId, conversationName, t]);
 
   useEffect(() => {
+    const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
     navigation.setOptions({
       headerTitle: () => (
-        <View style={styles.headerTitleRow}>
+        <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
           {headerAvatar ? (
             <CachedImage uri={headerAvatar} style={styles.headerAvatar} contentFit="cover" />
           ) : (
@@ -224,15 +225,21 @@ export default function CustomerChatScreen() {
         </View>
       ),
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginRight: 8 }}>
-          <TouchableOpacity onPress={() => setShowBubbleColorModal(true)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+          <TouchableOpacity
+            onPress={() => setShowBubbleColorModal(true)}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={{ marginRight: 10 }}
+          >
             <Ionicons name="color-palette-outline" size={24} color={MESSAGING_COLORS.primary} />
           </TouchableOpacity>
-          <Text style={styles.headerOnline}>{t('chatHeaderOnline')}</Text>
+          <Text style={styles.headerOnline} numberOfLines={1}>
+            {t('chatHeaderOnline')}
+          </Text>
         </View>
       ),
     });
-  }, [navigation, headerName, headerAvatar, t, i18n.language]);
+  }, [navigation, headerName, headerAvatar, t, i18n.language, winWidth]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -741,10 +748,9 @@ const styles = StyleSheet.create({
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    maxWidth: 220,
+    minWidth: 0,
   },
-  headerAvatar: { width: 32, height: 32, borderRadius: 16 },
+  headerAvatar: { width: 32, height: 32, borderRadius: 16, marginRight: 10 },
   headerAvatarPlaceholder: {
     width: 32,
     height: 32,
@@ -752,9 +758,10 @@ const styles = StyleSheet.create({
     backgroundColor: MESSAGING_COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 10,
   },
   headerAvatarInitial: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  headerTitleText: { fontSize: 17, fontWeight: '700', color: MESSAGING_COLORS.text, flex: 1 },
+  headerTitleText: { fontSize: 17, fontWeight: '700', color: MESSAGING_COLORS.text, flex: 1, minWidth: 0 },
   listContent: { padding: 16, paddingBottom: 24 },
   listContentGrow: { flexGrow: 1 },
   typingRow: { paddingHorizontal: 16, paddingVertical: 4, paddingBottom: 2, minHeight: 22 },

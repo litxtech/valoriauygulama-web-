@@ -17,6 +17,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { sendNotification } from '@/lib/notificationService';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const PAYMENT_TYPES = [
@@ -31,6 +33,7 @@ export default function AdminSalaryNewScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ staffId?: string }>();
   const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
   const [staffId, setStaffId] = useState<string>(params.staffId ?? '');
   const [periodMonth, setPeriodMonth] = useState(() => new Date().getMonth() + 1);
@@ -43,22 +46,30 @@ export default function AdminSalaryNewScreen() {
   const [description, setDescription] = useState('');
   const [sendNotif, setSendNotif] = useState(true);
   const [saving, setSaving] = useState(false);
+  const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
   const loadStaff = useCallback(async () => {
-    const { data } = await supabase
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
+    let q = supabase
       .from('staff')
       .select('id, full_name, department')
       .eq('is_active', true)
       .order('full_name');
+    if (orgId && orgId !== 'all') q = q.eq('organization_id', orgId);
+    const { data } = await q;
     setStaffList((data ?? []) as StaffOption[]);
     if (params.staffId && !staffId) setStaffId(params.staffId);
-  }, [params.staffId, staffId]);
+  }, [canUseAllOrganizations, me?.organization_id, params.staffId, selectedOrganizationId, staffId]);
 
   useEffect(() => {
     loadStaff();
   }, [loadStaff]);
 
   const save = async () => {
+    if (canUseAllOrganizations && selectedOrganizationId === 'all') {
+      Alert.alert('Otel seçin', 'Maaş kaydı için tek bir otel seçmelisiniz.');
+      return;
+    }
     const num = parseFloat(amount.replace(/,/g, '.'));
     if (!staffId || !num || num <= 0) {
       Alert.alert('Eksik bilgi', 'Personel seçin ve geçerli maaş tutarı girin.');
@@ -73,6 +84,9 @@ export default function AdminSalaryNewScreen() {
       .from('salary_payments')
       .insert({
         staff_id: staffId,
+        organization_id: canUseAllOrganizations && selectedOrganizationId !== 'all'
+          ? selectedOrganizationId
+          : me?.organization_id ?? null,
         period_month: periodMonth,
         period_year: periodYear,
         amount: num,
@@ -117,6 +131,10 @@ export default function AdminSalaryNewScreen() {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <AdminOrganizationPicker
+          canUseAll={canUseAllOrganizations}
+          ownOrganizationId={me?.organization_id}
+        />
         <Text style={styles.label}>Personel</Text>
         <View style={styles.pickerWrap}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerScroll}>

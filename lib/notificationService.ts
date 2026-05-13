@@ -185,18 +185,20 @@ export async function sendNotification(params: SendNotificationParams): Promise<
 export async function sendBulkToGuests(params: {
   target: BulkGuestTarget;
   roomNumbers?: string[];
+  organizationId?: string | null;
   title: string;
   body: string;
   category: BulkCategory;
   createdByStaffId: string;
 }): Promise<{ count: number; error?: string }> {
-  const { target, roomNumbers, title, body, category, createdByStaffId } = params;
+  const { target, roomNumbers, organizationId, title, body, category, createdByStaffId } = params;
 
   const selectFields = target === 'long_stay' ? 'id, check_in_at, check_out_at' : 'id';
   let query = supabase
     .from('guests')
     .select(selectFields)
     .in('status', ['pending', 'checked_in']);
+  if (organizationId) query = query.eq('organization_id', organizationId);
 
   const today = new Date().toISOString().slice(0, 10);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -208,7 +210,9 @@ export async function sendBulkToGuests(params: {
     query = query.not('check_out_at', 'is', null);
     query = query.gte('check_out_at', `${tomorrow}T00:00:00.000Z`).lte('check_out_at', `${tomorrow}T23:59:59.999Z`);
   } else if (target === 'specific_rooms' && roomNumbers?.length) {
-    const { data: rooms } = await supabase.from('rooms').select('id').in('room_number', roomNumbers);
+    let roomQuery = supabase.from('rooms').select('id').in('room_number', roomNumbers);
+    if (organizationId) roomQuery = roomQuery.eq('organization_id', organizationId);
+    const { data: rooms } = await roomQuery;
     const ids = (rooms ?? []).map((r: { id: string }) => r.id);
     if (ids.length) query = query.in('room_id', ids);
     else return { count: 0 };
@@ -252,6 +256,7 @@ export async function sendBulkToGuests(params: {
 /** Personele toplu bildirim (departman/rol filtresi) */
 export async function sendBulkToStaff(params: {
   target: BulkStaffTarget;
+  organizationId?: string | null;
   title?: string;
   body: string;
   createdByStaffId: string;
@@ -259,11 +264,12 @@ export async function sendBulkToStaff(params: {
   category?: 'emergency' | 'guest' | 'staff' | 'admin' | 'bulk';
   data?: Record<string, unknown>;
 }): Promise<{ count: number; error?: string }> {
-  const { target, title: titleParam, body, createdByStaffId, notificationType, category, data } = params;
+  const { target, organizationId, title: titleParam, body, createdByStaffId, notificationType, category, data } = params;
   const title = (titleParam && titleParam.trim()) || 'Toplu Duyuru';
   const resolvedNotificationType = (notificationType && notificationType.trim()) || 'bulk_staff';
 
   let query = supabase.from('staff').select('id').eq('is_active', true);
+  if (organizationId) query = query.eq('organization_id', organizationId);
 
   const roleMap: Record<BulkStaffTarget, string[] | null> = {
     all_staff: null,
@@ -391,12 +397,15 @@ export async function sendEmergencyToAllGuests(params: {
   notificationType: string;
   title: string;
   body: string;
+  organizationId?: string | null;
   createdByStaffId?: string | null;
 }): Promise<{ count: number; error?: string }> {
-  const { data: guests, error: fetchError } = await supabase
+  let query = supabase
     .from('guests')
     .select('id')
     .eq('status', 'checked_in');
+  if (params.organizationId) query = query.eq('organization_id', params.organizationId);
+  const { data: guests, error: fetchError } = await query;
   if (fetchError) return { count: 0, error: fetchError.message };
   const list = guests ?? [];
   if (list.length === 0) return { count: 0 };

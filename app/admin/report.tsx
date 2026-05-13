@@ -4,6 +4,9 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { formatTime, addDaysToDate } from '@/lib/date';
+import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
 
 type ReportData = {
   date: string;
@@ -22,6 +25,8 @@ function csvEscape(s: string): string {
 }
 
 export default function ReportScreen() {
+  const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [date, setDate] = useState(() => {
     const d = new Date();
     return d.toISOString().slice(0, 10);
@@ -32,24 +37,38 @@ export default function ReportScreen() {
 
   const loadReport = async () => {
     setLoading(true);
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : staff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
     const dayStart = `${date}T00:00:00.000Z`;
     const dayEnd = `${date}T23:59:59.999Z`;
 
+    let roomsQuery = supabase.from('rooms').select('id', { count: 'exact', head: true });
+    let occupiedQuery = supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'occupied');
+    let checkInsQuery = supabase
+      .from('guests')
+      .select('full_name, check_in_at, rooms(room_number)')
+      .not('check_in_at', 'is', null)
+      .gte('check_in_at', dayStart)
+      .lte('check_in_at', dayEnd);
+    let checkOutsQuery = supabase
+      .from('guests')
+      .select('full_name, check_out_at, rooms(room_number)')
+      .not('check_out_at', 'is', null)
+      .gte('check_out_at', dayStart)
+      .lte('check_out_at', dayEnd);
+    if (orgScoped) {
+      roomsQuery = roomsQuery.eq('organization_id', orgScoped);
+      occupiedQuery = occupiedQuery.eq('organization_id', orgScoped);
+      checkInsQuery = checkInsQuery.eq('organization_id', orgScoped);
+      checkOutsQuery = checkOutsQuery.eq('organization_id', orgScoped);
+    }
+
     const [roomsRes, occupiedRes, checkInsRes, checkOutsRes] = await Promise.all([
-      supabase.from('rooms').select('id', { count: 'exact', head: true }),
-      supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'occupied'),
-      supabase
-        .from('guests')
-        .select('full_name, check_in_at, rooms(room_number)')
-        .not('check_in_at', 'is', null)
-        .gte('check_in_at', dayStart)
-        .lte('check_in_at', dayEnd),
-      supabase
-        .from('guests')
-        .select('full_name, check_out_at, rooms(room_number)')
-        .not('check_out_at', 'is', null)
-        .gte('check_out_at', dayStart)
-        .lte('check_out_at', dayEnd),
+      roomsQuery,
+      occupiedQuery,
+      checkInsQuery,
+      checkOutsQuery,
     ]);
 
     const totalRooms = roomsRes.count ?? 0;
@@ -135,6 +154,10 @@ export default function ReportScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Günlük Rapor</Text>
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <View style={styles.dateRow}>
         <TouchableOpacity style={styles.dateBtn} onPress={() => goDay(-1)}>
           <Text style={styles.dateBtnText}>← Önceki</Text>

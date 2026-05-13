@@ -31,7 +31,7 @@ import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { AvatarWithBadge, StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { formatDateShort } from '@/lib/date';
-import { notifyAdmins } from '@/lib/notificationService';
+import { notifyAdmins, sendNotification } from '@/lib/notificationService';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { listBlockedUsersForStaff } from '@/lib/userBlocks';
 import { StaffEvaluationProfileTeaser } from '@/components/StaffEvaluationHub';
@@ -217,6 +217,7 @@ const ACTION_ACCENTS: Record<string, string> = {
   stok: '#059669',
   stoklarim: '#0d9488',
   harcamalar: '#d97706',
+  borc_alacak: '#0369a1',
   pasaportlar_mrz: '#ca8a04',
   personel_sikayet: '#b45309',
 };
@@ -239,6 +240,7 @@ const actionButtons = (
     { key: 'stok', label: t('stockTab'), icon: 'cube', route: '/staff/stock' },
     { key: 'stoklarim', label: t('myStocks'), icon: 'list', route: '/staff/stock/my-movements' },
     { key: 'harcamalar', label: t('expenses'), icon: 'wallet-outline', route: '/staff/expenses' },
+    { key: 'borc_alacak', label: 'Borç / alacak', icon: 'swap-horizontal-outline', route: '/staff/debts' },
   ];
   if (canAccessDocumentManagement(staffLike)) {
     base.splice(1, 0, {
@@ -319,6 +321,7 @@ export default function StaffProfileScreen() {
   const [salaryActingId, setSalaryActingId] = useState<string | null>(null);
   const [salaryHistoryOpen, setSalaryHistoryOpen] = useState(false);
   const [blockedCount, setBlockedCount] = useState(0);
+  const [personnelWarningUnread, setPersonnelWarningUnread] = useState(0);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
   const [engagement, setEngagement] = useState<StaffEngagementStats>({ posts: 0, likes: 0, comments: 0, visits: 0 });
@@ -326,6 +329,7 @@ export default function StaffProfileScreen() {
   const [profileVisits, setProfileVisits] = useState<StaffProfileVisitRow[]>([]);
   const [profileVisitsLoading, setProfileVisitsLoading] = useState(false);
   const [profileVisitsRefreshing, setProfileVisitsRefreshing] = useState(false);
+  const [presenceUpdating, setPresenceUpdating] = useState(false);
   const [tenureModalVisible, setTenureModalVisible] = useState(false);
   const [todayAnchor, setTodayAnchor] = useState(() => Date.now());
   const profileRef = useRef<StaffProfile | null>(null);
@@ -505,13 +509,16 @@ export default function StaffProfileScreen() {
   };
 
   const updateOnline = async (value: boolean) => {
-    if (!profile) return;
+    if (!profile || presenceUpdating) return;
+    if ((profile.is_online ?? false) === value) return;
+    setPresenceUpdating(true);
     const { error } = await supabase
       .from('staff')
-      .update({ is_online: value, work_status: value ? 'online' : 'offline', last_active: new Date().toISOString() })
+      .update({ is_online: value, work_status: value ? 'active' : 'off', last_active: new Date().toISOString() })
       .eq('id', profile.id);
     if (error) {
-      Alert.alert(t('error'), t('recordError'));
+      Alert.alert(t('error'), error.message || t('recordError'));
+      setPresenceUpdating(false);
       return;
     }
     setProfile((p) => (p ? { ...p, is_online: value } : null));
@@ -524,6 +531,50 @@ export default function StaffProfileScreen() {
     } catch {
       // cache yazımı başarısız olsa da akış bozulmasın
     }
+
+    // Profildeki çevrim içi/dışı anahtarı değişince aynı organizasyondaki personele bilgi bildirimi.
+    try {
+      const orgId = authStaff?.organization_id;
+      if (orgId) {
+        const { data: staffRows } = await supabase
+          .from('staff')
+          .select('id')
+          .eq('organization_id', orgId)
+          .eq('is_active', true)
+          .neq('id', profile.id);
+        const recipientIds = (staffRows ?? []).map((r: { id: string }) => r.id).filter(Boolean);
+        if (recipientIds.length > 0) {
+          const actorName = (profile.full_name || authStaff?.full_name || 'Personel').trim();
+          const actorDept = (profile.department || authStaff?.department || '').trim();
+          const actorLabel = actorDept ? `${actorName} (${actorDept})` : actorName;
+          const statusText = value ? 'çevrim içi oldu' : 'çevrim dışı oldu';
+          const capabilityText = value ? 'işlem yapabilir.' : 'işlem yapamaz.';
+          const title = 'Personel durum bildirimi';
+          const body = `${actorLabel} ${statusText}; ${capabilityText}`;
+          await Promise.allSettled(
+            recipientIds.map((staffId) =>
+              sendNotification({
+                staffId,
+                title,
+                body,
+                category: 'staff',
+                notificationType: 'staff_shift_changes',
+                data: {
+                  screen: '/staff/(tabs)/profile',
+                  event: 'staff_presence_changed',
+                  staffId: profile.id,
+                  isOnline: value,
+                },
+                createdByStaffId: profile.id,
+              })
+            )
+          );
+        }
+      }
+    } catch {
+      // Bildirim başarısız olsa da kullanıcı toggle akışı etkilenmesin.
+    }
+    setPresenceUpdating(false);
   };
 
   const approveSalary = async (paymentId: string) => {
@@ -654,6 +705,23 @@ export default function StaffProfileScreen() {
     setEngagement(stats);
   }, [authStaff?.id]);
 
+  const refreshPersonnelWarnings = useCallback(async () => {
+    if (!authStaff?.id) {
+      setPersonnelWarningUnread(0);
+      return;
+    }
+    try {
+      const { count, error } = await supabase
+        .from('staff_personnel_warnings')
+        .select('id', { count: 'exact', head: true })
+        .eq('subject_staff_id', authStaff.id)
+        .is('acknowledged_at', null);
+      if (!error) setPersonnelWarningUnread(count ?? 0);
+    } catch {
+      setPersonnelWarningUnread(0);
+    }
+  }, [authStaff?.id]);
+
   const loadProfileVisits = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
       if (!authStaff?.id) return;
@@ -684,13 +752,14 @@ export default function StaffProfileScreen() {
       }
       void refreshOpenTaskCount();
       void refreshEngagement();
+      void refreshPersonnelWarnings();
       if (profileSectionTabRef.current === 'visitors') {
         if (now - lastVisitorsFocusLoadRef.current > 30_000) {
           lastVisitorsFocusLoadRef.current = now;
           loadProfileVisits('initial');
         }
       }
-    }, [reloadProfile, refreshOpenTaskCount, refreshEngagement, authStaff?.id, loadProfileVisits, loadSession])
+    }, [reloadProfile, refreshOpenTaskCount, refreshEngagement, refreshPersonnelWarnings, authStaff?.id, loadProfileVisits, loadSession])
   );
 
   useEffect(() => {
@@ -836,6 +905,36 @@ export default function StaffProfileScreen() {
             <View style={[styles.heroOnlineDot, profile.is_online && styles.heroOnlineDotOn]} />
             <Text style={styles.heroOnlineText}>{profile.is_online ? t('online') : t('offlineStatus')}</Text>
           </View>
+          <View style={styles.heroPresenceCard}>
+            <View style={styles.heroPresenceHeader}>
+              <Text style={styles.heroPresenceTitle}>Çalışma durumu</Text>
+              {presenceUpdating ? <ActivityIndicator size="small" color={P.gradient.start} /> : null}
+            </View>
+            <View style={styles.heroPresenceRow}>
+              <TouchableOpacity
+                style={[styles.heroPresenceChip, (profile.is_online ?? false) && styles.heroPresenceChipOn]}
+                onPress={() => void updateOnline(true)}
+                disabled={presenceUpdating || (profile.is_online ?? false)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkmark-circle-outline" size={16} color={(profile.is_online ?? false) ? '#fff' : '#166534'} />
+                <Text style={[styles.heroPresenceChipText, (profile.is_online ?? false) && styles.heroPresenceChipTextOn]}>
+                  Çevrim içi
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.heroPresenceChip, !(profile.is_online ?? false) && styles.heroPresenceChipOff]}
+                onPress={() => void updateOnline(false)}
+                disabled={presenceUpdating || !(profile.is_online ?? false)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="pause-circle-outline" size={16} color={!(profile.is_online ?? false) ? '#fff' : '#dc2626'} />
+                <Text style={[styles.heroPresenceChipText, !(profile.is_online ?? false) && styles.heroPresenceChipTextOn]}>
+                  Çevrim dışı
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           <View style={styles.statsWrap}>
             <ProfileStatsCard items={statItems} />
           </View>
@@ -964,6 +1063,8 @@ export default function StaffProfileScreen() {
                     { route: '/admin/salary/all', icon: 'cash-outline' as const, label: ui.allPayments, accent: '#16a34a' },
                     { route: '/admin/contracts/all', icon: 'document-text-outline' as const, label: ui.allContracts, accent: '#6366f1' },
                     { route: '/admin/stock/all', icon: 'layers-outline' as const, label: ui.allStocks, accent: '#64748b' },
+                    { route: '/admin/finance-checks', icon: 'document-text-outline' as const, label: 'Çek takibi', accent: '#0369a1' },
+                    { route: '/admin/debts', icon: 'swap-horizontal-outline' as const, label: 'Borç / alacak', accent: '#0d9488' },
                   ] as const
                 ).map((item) => (
                   <TouchableOpacity
@@ -1020,15 +1121,39 @@ export default function StaffProfileScreen() {
               <View style={styles.jobInfoStatus}>
                 <View style={[styles.onlineDot, profile.is_online && styles.onlineDotOn]} />
                 <Text style={styles.onlineLabel}>{profile.is_online ? t('online') : t('offlineStatus')}</Text>
-                <Switch
-                  value={profile.is_online ?? false}
-                  onValueChange={updateOnline}
-                  trackColor={{ false: theme.colors.borderLight, true: P.gradient.start }}
-                  thumbColor={theme.colors.surface}
-                />
               </View>
             </View>
           </View>
+
+          <Text style={styles.pageSectionLabel}>İşyeri ve uyarılar</Text>
+          <TouchableOpacity
+            style={[styles.menuCard, personnelWarningUnread > 0 && styles.personnelWarnBanner]}
+            onPress={() => router.push('/staff/warnings')}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.menuRow, styles.menuRowLast]}>
+              <View style={[styles.menuIconCircle, personnelWarningUnread > 0 && styles.personnelWarnIconCircle]}>
+                <Ionicons name="warning-outline" size={22} color={personnelWarningUnread > 0 ? '#fff' : '#b91c1c'} />
+              </View>
+              <View style={styles.menuRowTextCol}>
+                <Text style={[styles.menuDetailTitle, personnelWarningUnread > 0 && styles.personnelWarnTitle]}>
+                  Resmi uyarılarım
+                </Text>
+                <Text style={[styles.menuDetailSub, personnelWarningUnread > 0 && styles.personnelWarnSub]}>
+                  {personnelWarningUnread > 0
+                    ? `${personnelWarningUnread} okunmamış yönetim uyarısı — açıp onaylamanız gerekir.`
+                    : 'Yönetimden gelen disiplin ve uyarı kayıtları.'}
+                </Text>
+              </View>
+              {personnelWarningUnread > 0 ? (
+                <View style={styles.warnBadge}>
+                  <Text style={styles.warnBadgeText}>{personnelWarningUnread > 99 ? '99+' : personnelWarningUnread}</Text>
+                </View>
+              ) : (
+                <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} />
+              )}
+            </View>
+          </TouchableOpacity>
 
           <View style={styles.evaluationTeaserWrap}>
             <StaffEvaluationProfileTeaser
@@ -1468,7 +1593,7 @@ function getStaffProfileUiCopy(lang: string) {
   }
   if (code.startsWith('tr')) {
     return {
-      staffComplaint: 'Personel Şikayet',
+      staffComplaint: 'Yönetime Not/Öneri',
       fixedAssets: 'Demirbaşlar',
       documentManagement: 'Doküman Yönetimi',
       incidentCreate: 'Tutanak Oluştur',
@@ -1493,7 +1618,7 @@ function getStaffProfileUiCopy(lang: string) {
     };
   }
   return {
-    staffComplaint: 'Staff complaint',
+    staffComplaint: 'Note/Suggestion to manager',
     fixedAssets: 'Fixed assets',
     documentManagement: 'Document management',
     incidentCreate: 'Create incident report',
@@ -1720,6 +1845,53 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: P.subtext,
   },
+  heroPresenceCard: {
+    width: '100%',
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  heroPresenceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  heroPresenceTitle: { fontSize: 13, fontWeight: '800', color: '#334155' },
+  heroPresenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  heroPresenceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 128,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  heroPresenceChipOn: {
+    backgroundColor: '#16a34a',
+    borderColor: '#16a34a',
+  },
+  heroPresenceChipOff: {
+    backgroundColor: '#dc2626',
+    borderColor: '#dc2626',
+  },
+  heroPresenceChipText: { fontSize: 12, fontWeight: '800', color: '#166534' },
+  heroPresenceChipTextOn: { color: '#fff' },
   heroAvatarShadow: {
     borderRadius: P.avatar.size / 2,
     ...P.avatarShadow,
@@ -1841,6 +2013,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  personnelWarnBanner: {
+    borderWidth: 2,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+  },
+  personnelWarnIconCircle: { backgroundColor: '#b91c1c' },
+  personnelWarnTitle: { color: '#7f1d1d' },
+  personnelWarnSub: { color: '#991b1b', fontWeight: '600' },
+  warnBadge: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    backgroundColor: '#b91c1c',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  warnBadgeText: { color: '#fff', fontSize: 13, fontWeight: '900' },
   body: { padding: theme.spacing.lg, paddingTop: theme.spacing.sm },
   name: { ...theme.typography.title, color: theme.colors.text, textAlign: 'center' },
   dept: { fontSize: 15, color: theme.colors.textSecondary, marginTop: 4, textAlign: 'center' },

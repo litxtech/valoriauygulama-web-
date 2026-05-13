@@ -15,6 +15,7 @@ import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -29,6 +30,8 @@ export default function StockMovementScreen() {
   const params = useLocalSearchParams<{ type?: string; productId?: string }>();
   const type = (params.type as 'in' | 'out') || 'in';
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAllOrganizations = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
 
   useEffect(() => {
     navigation.setOptions({ title: type === 'in' ? 'Stok Girişi' : 'Stok Çıkışı' });
@@ -45,12 +48,18 @@ export default function StockMovementScreen() {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   useEffect(() => {
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
     if (params.productId) {
-      supabase.from('stock_products').select('id, name, unit, current_stock').eq('id', params.productId).single().then(({ data }) => setProduct(data ?? null));
+      let q = supabase.from('stock_products').select('id, name, unit, current_stock').eq('id', params.productId);
+      if (orgScoped) q = q.eq('organization_id', orgScoped);
+      q.single().then(({ data }) => setProduct(data ?? null));
     } else {
-      supabase.from('stock_products').select('id, name, unit, current_stock').order('name').then(({ data }) => setProducts(data ?? []));
+      let q = supabase.from('stock_products').select('id, name, unit, current_stock').order('name');
+      if (orgScoped) q = q.eq('organization_id', orgScoped);
+      q.then(({ data }) => setProducts(data ?? []));
     }
-  }, [params.productId]);
+  }, [params.productId, canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   const uploadPhotoFromUri = async (uri: string): Promise<string> => {
     const { publicUrl } = await uploadUriToPublicBucket({

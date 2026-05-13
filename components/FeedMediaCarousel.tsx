@@ -16,9 +16,11 @@ type Props = {
   width: number;
   height: number;
   onPressItem?: (item: FeedMediaItem) => void;
+  /** İlk slaytta video decode edildiğinde / hata (detay sayfası “yükleniyor” overlay’i için). */
+  onFirstVideoReady?: () => void;
 };
 
-export function FeedMediaCarousel({ items, width, height, onPressItem }: Props) {
+export function FeedMediaCarousel({ items, width, height, onPressItem, onFirstVideoReady }: Props) {
   const safeItems = useMemo(() => items.filter((x) => !!x.media_url), [items]);
   const [activeIndex, setActiveIndex] = useState(0);
   if (safeItems.length === 0) return null;
@@ -51,6 +53,8 @@ export function FeedMediaCarousel({ items, width, height, onPressItem }: Props) 
                 shouldPlay={false}
                 isMuted
                 useNativeControls={false}
+                onLoad={idx === 0 ? () => onFirstVideoReady?.() : undefined}
+                onError={idx === 0 ? () => onFirstVideoReady?.() : undefined}
               />
             ) : (
               <CachedImage

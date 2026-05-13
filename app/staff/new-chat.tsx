@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
@@ -45,6 +46,7 @@ type RowItem = {
 
 export default function StaffNewChatScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { staff } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState<string | null>(null);

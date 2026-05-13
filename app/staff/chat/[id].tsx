@@ -310,9 +310,10 @@ export default function StaffChatScreen() {
 
   useEffect(() => {
     const isAllStaff = isAllStaffGroup;
+    const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
     navigation.setOptions({
       headerTitle: () => (
-        <View style={styles.headerTitleRow}>
+        <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
           {headerAvatar ? (
             <CachedImage uri={headerAvatar} style={styles.headerAvatar} contentFit="cover" />
           ) : (
@@ -331,13 +332,21 @@ export default function StaffChatScreen() {
       headerTintColor: theme.colors.text,
       headerBackTitle: t('back'),
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginRight: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
           {canEditGroup ? (
-            <TouchableOpacity onPress={openGroupSettingsModal} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <TouchableOpacity
+              onPress={openGroupSettingsModal}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ marginRight: 10 }}
+            >
               <Ionicons name="settings-outline" size={22} color={groupThemeColor} />
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity onPress={() => setShowBubbleColorModal(true)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <TouchableOpacity
+            onPress={() => setShowBubbleColorModal(true)}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={{ marginRight: isAllStaff ? 10 : 0 }}
+          >
             <Ionicons name="color-palette-outline" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
           {isAllStaff ? (
@@ -350,6 +359,7 @@ export default function StaffChatScreen() {
                 else setAllStaffMuted(next);
               }}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ marginRight: 8 }}
             >
               <Ionicons
                 name={allStaffMuted ? 'notifications-off' : 'notifications'}
@@ -367,7 +377,19 @@ export default function StaffChatScreen() {
         </View>
       ),
     });
-  }, [conversationName, headerAvatar, isAllStaffGroup, allStaffMuted, navigation, conversationId, staff?.id, t, canEditGroup, groupThemeColor]);
+  }, [
+    conversationName,
+    headerAvatar,
+    isAllStaffGroup,
+    allStaffMuted,
+    navigation,
+    conversationId,
+    staff?.id,
+    t,
+    canEditGroup,
+    groupThemeColor,
+    winWidth,
+  ]);
 
   const scrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => {
@@ -943,13 +965,13 @@ const styles = StyleSheet.create({
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    maxWidth: 220,
+    minWidth: 0,
   },
   headerAvatar: {
     width: 32,
     height: 32,
     borderRadius: 16,
+    marginRight: 10,
   },
   headerAvatarPlaceholder: {
     width: 32,
@@ -958,6 +980,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 10,
   },
   headerAvatarInitial: {
     color: theme.colors.white,
@@ -969,6 +992,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.text,
     flex: 1,
+    minWidth: 0,
   },
   listContent: {
     padding: theme.spacing.lg,

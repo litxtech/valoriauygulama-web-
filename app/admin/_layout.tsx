@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from 'react';
 import { View, TouchableOpacity, Platform, StyleSheet, Text } from 'react-native';
-import { Stack, useRouter, useNavigation, useFocusEffect, usePathname } from 'expo-router';
+import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
@@ -9,6 +9,8 @@ import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { Ionicons } from '@expo/vector-icons';
 import { complaintsText } from '@/lib/complaintsI18n';
+import { log } from '@/lib/logger';
+import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 
 export default function AdminLayout() {
   const { t } = useTranslation();
@@ -17,13 +19,14 @@ export default function AdminLayout() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
+  /**
+   * Android: router.back() çoğu zaman personel sekmesindeki /staff/admin placeholder'a düşer;
+   * sekme tekrar odaklanınca /admin yeniden push edilir (geri "tutmuyor" hissi).
+   * Doğrudan personel köküne replace ile çıkış tek adımda ve tutarlı olur.
+   */
   const handleAdminBack = () => {
-    if (navigation.canGoBack()) {
-      router.back();
-    } else {
-      // Admin giriş yapmış kullanıcı; lobi yerine doğrudan personel paneline dön
-      router.replace('/staff');
-    }
+    signalStaffExitedAdminPanelFromRoot();
+    router.replace('/staff' as Href);
   };
 
   /** Belge detayı: replace ile açıldığında stack boş kalmasın; yoksa tüm belgelere dön. */
@@ -43,15 +46,39 @@ export default function AdminLayout() {
       <Ionicons name="arrow-back" size={24} color={adminTheme.colors.text} />
     </TouchableOpacity>
   );
-  const { staff, loading, loadSession } = useAuthStore();
+  const { staff, loading } = useAuthStore();
 
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
 
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    log.info('AdminLayout', 'mounted', { pathname });
+    return () => {
+      log.info('AdminLayout', 'unmounted');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    log.info('AdminLayout', 'route changed', { pathname });
+  }, [pathname]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    log.info('AdminLayout', 'auth snapshot', {
+      loading,
+      hasStaff: !!staff,
+      staffId: staff?.id ?? null,
+      role: staff?.role ?? null,
+    });
+  }, [loading, staff?.id, staff?.role]);
+
   useFocusEffect(
     useCallback(() => {
-      refreshNotifications();
-      loadSession();
-    }, [refreshNotifications, loadSession])
+      if (Platform.OS === 'android') log.info('AdminLayout', 'focus effect start');
+      Promise.resolve(refreshNotifications()).catch(() => {});
+      return () => {};
+    }, [refreshNotifications])
   );
 
   const renderHeaderRight = () => (
@@ -69,12 +96,11 @@ export default function AdminLayout() {
   );
 
   useEffect(() => {
-    loadSession();
-  }, []);
-
-  useEffect(() => {
     if (loading) return;
     if (!staff || !canAccessAdminShell(staff)) {
+      if (Platform.OS === 'android') {
+        log.warn('AdminLayout', 'redirecting non-admin user', { hasStaff: !!staff, role: staff?.role ?? null });
+      }
       router.replace('/');
       return;
     }
@@ -86,6 +112,9 @@ export default function AdminLayout() {
     if (!isGorevAtaOnlyUser(staff)) return;
     const p = pathname ?? '';
     if (!p.startsWith('/admin/tasks')) {
+      if (Platform.OS === 'android') {
+        log.warn('AdminLayout', 'gorev-ata-only redirect', { from: p, to: '/admin/tasks' });
+      }
       router.replace('/admin/tasks');
     }
   }, [loading, staff, pathname, router]);
@@ -219,10 +248,23 @@ export default function AdminLayout() {
       <Stack.Screen name="cameras/new" options={{ title: t('adminCameraNew'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="cameras/[id]" options={{ title: t('adminCameraEdit'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="cameras/logs" options={{ title: t('adminCameraLogs'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/index" options={{ title: 'Akıllı Tesis Envanteri', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/structure" options={{ title: 'Bina & Lokasyon', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/assets/index" options={{ title: 'Teknik Varlıklar', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/assets/new" options={{ title: 'Yeni Varlık', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/assets/[id]" options={{ title: 'Varlık & QR', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="technical-assets/faults/index" options={{ title: 'Arıza bildirimleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="profile" options={{ title: t('myProfile'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="app-links" options={{ title: t('adminAppsAndWebsites'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="settings/printer" options={{ title: t('adminPrinterSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="map" options={{ headerShown: false }} />
+      <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="finance-checks/[id]" options={{ title: 'Çek detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="debts/index" options={{ title: 'Borç / alacak', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="debts/new" options={{ title: 'Yeni borç kaydı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="debts/[id]" options={{ title: 'Borç detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="meal-menu/index" options={{ title: 'Aylık yemek listesi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: 'Kahvaltı Teyit Kayıtları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/settings" options={{ title: 'Kahvaltı Teyit Ayarları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="transfer-tour/index" options={{ title: t('transferTourAdminMenu'), headerRight: renderHeaderRight }} />

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { getExpoPushTokenAsync, savePushTokenForStaff, isExpoGo } from '@/lib/notificationsPush';
 import { useAuthStore } from '@/stores/authStore';
@@ -26,7 +27,16 @@ type NotifRow = {
   notification_type: string | null;
   read_at: string | null;
   created_at: string;
-  data?: { postId?: string; url?: string; missingItemId?: string; kind?: string; note?: string } | null;
+  data?: {
+    postId?: string;
+    url?: string;
+    missingItemId?: string;
+    kind?: string;
+    note?: string;
+    conversationId?: string;
+    warningId?: string;
+    screen?: string;
+  } | null;
 };
 
 type MissingItemDetail = {
@@ -43,6 +53,7 @@ type MissingItemDetail = {
 };
 
 export default function StaffNotificationsScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { staff } = useAuthStore();
   const scrollRef = useRef<ScrollView>(null);
@@ -243,8 +254,37 @@ export default function StaffNotificationsScreen() {
 
   const onNotificationPress = (n: NotifRow) => {
     if (!n.read_at) markRead(n.id);
+    if (n.notification_type === 'staff_personnel_warning') {
+      const wid = typeof n.data?.warningId === 'string' ? n.data.warningId.trim() : '';
+      if (wid) {
+        router.push({ pathname: '/staff/warnings', params: { focus: wid } });
+      } else {
+        router.push('/staff/warnings');
+      }
+      return;
+    }
+    if (n.notification_type === 'staff_personnel_warning_ack') {
+      const sid = typeof n.data?.subjectStaffId === 'string' ? n.data.subjectStaffId.trim() : '';
+      if (sid) {
+        router.push({ pathname: '/admin/staff/[id]', params: { id: sid } } as never);
+      }
+      return;
+    }
     if (n.data?.postId) {
       router.push({ pathname: '/staff/feed', params: { openPostId: n.data.postId } });
+      return;
+    }
+    const cid = typeof n.data?.conversationId === 'string' ? n.data.conversationId.trim() : '';
+    if (cid) {
+      const u = n.data?.url;
+      if (typeof u === 'string' && u.includes('/admin/messages/chat/')) {
+        const m = u.match(/\/admin\/messages\/chat\/([^/?#]+)/);
+        if (m?.[1]) {
+          router.push({ pathname: '/admin/messages/chat/[id]', params: { id: m[1] } });
+          return;
+        }
+      }
+      router.push({ pathname: '/staff/chat/[id]', params: { id: cid } });
       return;
     }
     openNotificationDetail(n);

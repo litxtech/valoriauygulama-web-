@@ -153,6 +153,10 @@ export default function StaffExpensesScreen() {
           <Ionicons name="add-circle" size={24} color={theme.colors.white} />
           <Text style={styles.newBtnText}>Yeni Harcama Girişi</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.monthlyBtn} onPress={() => router.push('/staff/expenses/monthly')} activeOpacity={0.85}>
+          <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
+          <Text style={styles.monthlyBtnText}>Aylık Geçmiş</Text>
+        </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>Harcamalarım</Text>
         {loading ? (
@@ -247,6 +251,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   newBtnText: { color: theme.colors.white, fontSize: 16, fontWeight: '700' },
+  monthlyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surface,
+    marginBottom: 20,
+  },
+  monthlyBtnText: { color: theme.colors.primary, fontSize: 15, fontWeight: '700' },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 12 },
   loader: { marginVertical: 24 },
   empty: { alignItems: 'center', paddingVertical: 32 },

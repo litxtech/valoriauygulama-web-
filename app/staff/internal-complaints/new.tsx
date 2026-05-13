@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
+import { sendNotification } from '@/lib/notificationService';
 
 type StaffOption = { id: string; full_name: string | null; department: string | null };
 
@@ -15,12 +16,21 @@ const FREQUENCY_OPTIONS = [
   { id: 'everyday', label: 'Neredeyse her gün oluyor' },
 ];
 
+const TOPIC_OPTIONS = [
+  { id: 'suggestion', label: 'Öneri' },
+  { id: 'problem', label: 'Sorun' },
+  { id: 'daily', label: 'Günlük' },
+  { id: 'memory', label: 'Hatıra Notu' },
+] as const;
+
 export default function StaffInternalComplaintNewScreen() {
   const router = useRouter();
   const { t } = useTranslation();
   const { staff } = useAuthStore();
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
   const [targetId, setTargetId] = useState('');
+  const [topicType, setTopicType] = useState<(typeof TOPIC_OPTIONS)[number]['id']>('suggestion');
+  const [topicTitle, setTopicTitle] = useState('');
   const [whatHappened, setWhatHappened] = useState('');
   const [frequency, setFrequency] = useState('sometimes');
   const [continues, setContinues] = useState<'yes' | 'no'>('yes');
@@ -35,6 +45,7 @@ export default function StaffInternalComplaintNewScreen() {
         .from('staff')
         .select('id, full_name, department')
         .eq('organization_id', staff.organization_id)
+        .eq('role', 'admin')
         .eq('is_active', true)
         .is('deleted_at', null)
         .neq('id', staff.id)
@@ -46,8 +57,12 @@ export default function StaffInternalComplaintNewScreen() {
   }, [staff?.organization_id, staff?.id]);
 
   const canSubmit = useMemo(
-    () => !!targetId && whatHappened.trim().length > 3 && detailNote.trim().length > 8,
-    [targetId, whatHappened, detailNote]
+    () =>
+      !!targetId &&
+      topicTitle.trim().length > 2 &&
+      whatHappened.trim().length > 3 &&
+      detailNote.trim().length > 8,
+    [targetId, topicTitle, whatHappened, detailNote]
   );
 
   const submit = async () => {
@@ -59,13 +74,16 @@ export default function StaffInternalComplaintNewScreen() {
       Alert.alert(t('missingInfo'), t('internalComplaintRequiredFields'));
       return;
     }
+    const topicLabel = TOPIC_OPTIONS.find((x) => x.id === topicType)?.label ?? topicType;
     const frequencyLabel = FREQUENCY_OPTIONS.find((x) => x.id === frequency)?.label ?? frequency;
     const note = [
-      `Soru 1 - Ne yaptı?: ${whatHappened.trim()}`,
-      `Soru 2 - Sıklık: ${frequencyLabel}`,
-      `Soru 3 - Hâlâ devam ediyor mu?: ${continues === 'yes' ? 'Evet' : 'Hayır'}`,
-      `Soru 4 - Etkisi: ${effect.trim() || '-'}`,
-      `Detaylı not:`,
+      `Konu tipi: ${topicLabel}`,
+      `Konu başlığı: ${topicTitle.trim()}`,
+      `Detay: ${whatHappened.trim()}`,
+      `Sıklık: ${frequencyLabel}`,
+      `Durum devam ediyor mu?: ${continues === 'yes' ? 'Evet' : 'Hayır'}`,
+      `Etkisi: ${effect.trim() || '-'}`,
+      `Not:`,
       detailNote.trim(),
     ].join('\n');
 
@@ -81,6 +99,19 @@ export default function StaffInternalComplaintNewScreen() {
       Alert.alert(t('error'), error.message);
       return;
     }
+    await sendNotification({
+      staffId: targetId,
+      title: 'Yeni personel notu',
+      body: `${staff.full_name ?? 'Personel'}: ${topicTitle.trim()} (${topicLabel})`,
+      notificationType: 'staff_internal_note_new',
+      category: 'admin',
+      data: {
+        screen: '/admin/staff-complaints',
+        kind: topicType,
+        authorStaffId: staff.id,
+      },
+      createdByStaffId: staff.id,
+    });
     Alert.alert(t('sent'), t('internalComplaintSentBody'), [
       { text: t('ok'), onPress: () => router.back() },
     ]);
@@ -98,10 +129,28 @@ export default function StaffInternalComplaintNewScreen() {
         keyboardShouldPersistTaps="always"
         keyboardDismissMode="none"
       >
-        <Text style={styles.title}>{t('screenInternalComplaintsForm')}</Text>
-        <Text style={styles.hint}>{t('internalComplaintHint')}</Text>
+        <Text style={styles.title}>Yöneticiye Not / Öneri / Sorun</Text>
+        <Text style={styles.hint}>Yazdıklarınız otel sorumlusuna gider, kayıt olarak saklanır.</Text>
 
-      <Text style={styles.label}>{t('internalComplaintTargetLabel')}</Text>
+      <Text style={styles.label}>Konu tipi</Text>
+      <View style={styles.chips}>
+        {TOPIC_OPTIONS.map((x) => (
+          <TouchableOpacity key={x.id} style={[styles.chip, topicType === x.id && styles.chipActive]} onPress={() => setTopicType(x.id)}>
+            <Text style={[styles.chipText, topicType === x.id && styles.chipTextActive]}>{x.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.label}>Konu başlığı</Text>
+      <TextInput
+        style={styles.input}
+        value={topicTitle}
+        onChangeText={setTopicTitle}
+        placeholder="Örn: Gece vardiyası önerim"
+        placeholderTextColor={theme.colors.textMuted}
+      />
+
+      <Text style={styles.label}>Otel sorumlusu</Text>
       <View style={styles.chips}>
         {staffList.map((s) => (
           <TouchableOpacity key={s.id} style={[styles.chip, targetId === s.id && styles.chipActive]} onPress={() => setTargetId(s.id)}>
@@ -112,12 +161,12 @@ export default function StaffInternalComplaintNewScreen() {
         ))}
       </View>
 
-      <Text style={styles.label}>{t('internalComplaintQ1')}</Text>
+      <Text style={styles.label}>Ana mesaj</Text>
       <TextInput
         style={[styles.input, styles.textAreaSmall]}
         value={whatHappened}
         onChangeText={setWhatHappened}
-        placeholder={t('internalComplaintQ1Placeholder')}
+        placeholder="Ne paylaşmak istiyorsunuz?"
         placeholderTextColor={theme.colors.textMuted}
         multiline
       />

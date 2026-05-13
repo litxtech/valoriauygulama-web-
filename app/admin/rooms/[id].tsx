@@ -11,6 +11,8 @@ import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
+import { computeStayAmounts, effectiveNightlyRate } from '@/lib/guestStayFinancials';
+import { moveGuestToRoom, updateGuestStayFinancials } from '@/lib/guestStayRoomOps';
 
 type Room = {
   id: string;
@@ -54,7 +56,14 @@ function resolveRoomDesign(settings: SettingsRow | null): QRDesign | null {
 
 type QrType = 'checkin' | 'contract';
 
-type CurrentGuest = { id: string; full_name: string };
+type CurrentGuest = {
+  id: string;
+  full_name: string;
+  total_amount_net?: number | null;
+  nights_count?: number | null;
+  vat_amount?: number | null;
+  accommodation_tax_amount?: number | null;
+};
 type PendingAcceptance = { id: string; guest_id: string; accepted_at: string; signer_name: string | null };
 
 const FRAME_OPTIONS: QRFrameStyle[] = ['minimal', 'bordered', 'modern', 'elegant'];
@@ -99,6 +108,12 @@ export default function RoomDetail() {
   const [nightsInput, setNightsInput] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [contractRoomPreviews, setContractRoomPreviews] = useState<{ signer_name: string; accepted_at: string }[]>([]);
+  const [editStayVisible, setEditStayVisible] = useState(false);
+  const [changeRoomVisible, setChangeRoomVisible] = useState(false);
+  const [roomsForMove, setRoomsForMove] = useState<{ id: string; room_number: string; status: string }[]>([]);
+  const [selectedNewRoomId, setSelectedNewRoomId] = useState<string | null>(null);
+  const [stayEditPrice, setStayEditPrice] = useState('');
+  const [stayEditNights, setStayEditNights] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -108,7 +123,7 @@ export default function RoomDetail() {
       if (data?.status === 'occupied') {
         const { data: guest } = await supabase
           .from('guests')
-          .select('id, full_name')
+          .select('id, full_name, total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
           .eq('room_id', id)
           .eq('status', 'checked_in')
           .maybeSingle();
@@ -288,7 +303,8 @@ export default function RoomDetail() {
 
   const openAssignForm = (guestId: string) => {
     setSelectedGuestId(guestId);
-    setPriceInput(room?.price_per_night ? String(room.price_per_night) : '');
+    /** Oda liste fiyatı otomatik yazılmaz; maliye tutarı yetkili tarafından girilir. */
+    setPriceInput('');
     setNightsInput('');
     setAssignFormVisible(true);
   };

@@ -12,6 +12,8 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { sendEmergencyToAllGuests } from '@/lib/notificationService';
 import { EMERGENCY_TYPES, EMERGENCY_MESSAGES } from '@/lib/notifications';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 const EMERGENCY_OPTIONS = [
   { type: EMERGENCY_TYPES.fire_drill, label: 'Yangın Tatbikatı' },
@@ -23,6 +25,7 @@ const EMERGENCY_OPTIONS = [
 export default function EmergencyNotifyScreen() {
   const router = useRouter();
   const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [sending, setSending] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -33,6 +36,12 @@ export default function EmergencyNotifyScreen() {
     }
     const msg = EMERGENCY_MESSAGES[notificationType];
     if (!msg) return;
+    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+    const organizationId = canUseAll ? selectedOrganizationId : staff.organization_id;
+    if (canUseAll && organizationId === 'all') {
+      Alert.alert('Otel seçin', 'Acil bildirim için hedef otel seçmelisiniz.');
+      return;
+    }
     Alert.alert(
       'Acil Bildirim Gönder',
       `"${msg.title}" tüm giriş yapmış misafirlere gönderilecek. Emin misiniz?`,
@@ -48,6 +57,7 @@ export default function EmergencyNotifyScreen() {
               notificationType,
               title: msg.title,
               body: msg.body,
+              organizationId: organizationId === 'all' ? null : organizationId ?? null,
               createdByStaffId: staff.id,
             });
             setSending(false);
@@ -67,6 +77,10 @@ export default function EmergencyNotifyScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <AdminOrganizationPicker
+        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        ownOrganizationId={staff?.organization_id}
+      />
       <Text style={styles.warning}>
         🚨 Bu bildirimler tüm check-in yapmış misafirlere gider ve kapatılamaz.
       </Text>

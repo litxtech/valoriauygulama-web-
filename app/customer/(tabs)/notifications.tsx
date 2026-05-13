@@ -213,6 +213,24 @@ export default function CustomerNotificationsScreen() {
       const data = n.data ?? {};
       const url = data.url as string | undefined;
       const postId = data.postId as string | undefined;
+      const conversationId =
+        typeof data.conversationId === 'string'
+          ? data.conversationId.trim()
+          : typeof data.conversation_id === 'string'
+            ? data.conversation_id.trim()
+            : '';
+
+      if (conversationId && url?.startsWith('/customer/chat/')) {
+        router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+        return;
+      }
+      if (url?.startsWith('/customer/chat/')) {
+        const idFromUrl = url.slice('/customer/chat/'.length).split('/')[0]?.split('?')[0];
+        if (idFromUrl) {
+          router.push({ pathname: '/customer/chat/[id]', params: { id: idFromUrl } });
+          return;
+        }
+      }
 
       const isInternalPath = url && typeof url === 'string' && url.startsWith('/');
       if (isInternalPath) {

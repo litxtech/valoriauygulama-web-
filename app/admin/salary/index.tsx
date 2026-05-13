@@ -12,10 +12,12 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { formatDateShort } from '@/lib/date';
 import { sendNotification } from '@/lib/notificationService';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -51,6 +53,8 @@ function fmtMoney(n: number): string {
 
 export default function AdminSalaryIndexScreen() {
   const router = useRouter();
+  const { staff: me } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
   const [staffList, setStaffList] = useState<StaffWithSalary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -63,13 +67,17 @@ export default function AdminSalaryIndexScreen() {
     pendingApprovalCount: 0,
   });
   const [remindingId, setRemindingId] = useState<string | null>(null);
+  const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
   const load = useCallback(async () => {
-    const { data: staffData } = await supabase
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
+    let staffQuery = supabase
       .from('staff')
-      .select('id, full_name, department')
+      .select('id, full_name, department, organization_id')
       .eq('is_active', true)
       .order('full_name');
+    if (orgId && orgId !== 'all') staffQuery = staffQuery.eq('organization_id', orgId);
+    const { data: staffData } = await staffQuery;
     const staff = (staffData ?? []) as StaffRow[];
     if (staff.length === 0) {
       setStaffList([]);
@@ -78,12 +86,14 @@ export default function AdminSalaryIndexScreen() {
       return;
     }
 
-    const { data: paymentsData } = await supabase
+    let paymentsQuery = supabase
       .from('salary_payments')
       .select('id, staff_id, period_month, period_year, created_at, amount, payment_date, status, staff_approved_at, staff_rejected_at, rejection_reason')
       .order('period_year', { ascending: false })
       .order('period_month', { ascending: false })
       .order('created_at', { ascending: false });
+    if (orgId && orgId !== 'all') paymentsQuery = paymentsQuery.eq('organization_id', orgId);
+    const { data: paymentsData } = await paymentsQuery;
 
     const payments = (paymentsData ?? []) as PaymentRow[];
     const now = new Date();
@@ -161,7 +171,7 @@ export default function AdminSalaryIndexScreen() {
       pendingApprovalCount,
     });
     setLoading(false);
-  }, []);
+  }, [canUseAllOrganizations, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
     load();
@@ -215,6 +225,10 @@ export default function AdminSalaryIndexScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        <AdminOrganizationPicker
+          canUseAll={canUseAllOrganizations}
+          ownOrganizationId={me?.organization_id}
+        />
         <AdminCard>
           <Text style={styles.summaryTitle}>Toplu özet</Text>
           <Text style={styles.summaryRow}>Toplam personel: {summary.totalStaff} kişi</Text>

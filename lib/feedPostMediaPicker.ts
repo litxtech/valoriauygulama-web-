@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { compressFeedVideoForUpload, type FeedVideoCompressProgress } from '@/lib/feedVideoCompress';
 import { copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
 
 const basePickerOptions: ImagePicker.ImagePickerOptions = {
@@ -89,12 +90,20 @@ export function applyFeedGallerySelection(
   }
 }
 
-/** Yükleme öncesi: Android content:// → file:// (kopya bitmemiş olabilir). */
-export async function ensureLocalFeedUploadUri(uri: string, mediaType: 'image' | 'video'): Promise<string> {
+/** Yükleme öncesi: Android content:// → file://; videoda 4K vb. → ~1080p H.264 sıkıştırma (native). */
+export async function ensureLocalFeedUploadUri(
+  uri: string,
+  mediaType: 'image' | 'video',
+  options?: { onVideoCompressProgress?: FeedVideoCompressProgress }
+): Promise<string> {
   const u = (uri ?? '').trim();
   if (!u) return u;
+  let local = u;
   if (Platform.OS === 'android' && u.startsWith('content://')) {
-    return copyAndroidContentUriToCacheForPreview(u, mediaType === 'video' ? 'video' : 'image');
+    local = await copyAndroidContentUriToCacheForPreview(u, mediaType === 'video' ? 'video' : 'image');
   }
-  return u;
+  if (mediaType === 'video') {
+    return compressFeedVideoForUpload(local, options?.onVideoCompressProgress);
+  }
+  return local;
 }

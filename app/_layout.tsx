@@ -12,6 +12,7 @@ import * as Linking from 'expo-linking';
 import { saveLastRoute } from '@/lib/lastRoutePersistence';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
+import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
 import { initAuthListener } from '@/stores/authStore';
@@ -46,6 +47,41 @@ if (Platform.OS !== 'web') {
 log.info('RootLayout', 'app başlatılıyor');
 
 const WEB_BG = '#1a365d';
+
+/** Push / deep link: mesaj bildiriminde doğru sohbet ekranı (Expo Router pathname + params). */
+function parseConversationIdFromNotificationPayload(data: Record<string, unknown>): string | undefined {
+  const raw = data.conversationId ?? data.conversation_id;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t.length > 0 ? t : undefined;
+  }
+  if (raw != null && String(raw).trim().length > 0) return String(raw).trim();
+  return undefined;
+}
+
+function resolveMessagePushHref(
+  url: string,
+  conversationIdFromData?: string
+):
+  | { pathname: '/staff/chat/[id]'; params: { id: string } }
+  | { pathname: '/customer/chat/[id]'; params: { id: string } }
+  | { pathname: '/admin/messages/chat/[id]'; params: { id: string } }
+  | null {
+  const base = (url.split('?')[0] || '').replace(/\/+$/, '') || '';
+  const staff = base.match(/^\/staff\/chat\/([^/]+)$/);
+  if (staff?.[1]) return { pathname: '/staff/chat/[id]', params: { id: staff[1] } };
+  const customer = base.match(/^\/customer\/chat\/([^/]+)$/);
+  if (customer?.[1]) return { pathname: '/customer/chat/[id]', params: { id: customer[1] } };
+  const admin = base.match(/^\/admin\/messages\/chat\/([^/]+)$/);
+  if (admin?.[1]) return { pathname: '/admin/messages/chat/[id]', params: { id: admin[1] } };
+  if (
+    conversationIdFromData &&
+    (base === '/staff/(tabs)/messages' || base.startsWith('/staff/(tabs)/messages/'))
+  ) {
+    return { pathname: '/staff/chat/[id]', params: { id: conversationIdFromData } };
+  }
+  return null;
+}
 
 function RootLayoutInner() {
   const { t } = useTranslation();
@@ -264,6 +300,14 @@ function RootLayoutInner() {
   // Bildirime tıklandığında yönlendir (aynı mantık hem listener hem cold start için)
   const handleNotificationResponse = (data: Record<string, unknown> | undefined) => {
     if (!data) return;
+    const safePush = (target: string) => {
+      if (!target || typeof target !== 'string' || !target.startsWith('/')) return;
+      try {
+        router.push(target);
+      } catch (e) {
+        log.warn('RootLayout', 'notification route push failed', { target, error: (e as Error)?.message });
+      }
+    };
     const notificationType =
       typeof data.notificationType === 'string'
         ? data.notificationType
@@ -290,11 +334,24 @@ function RootLayoutInner() {
       notificationType === 'staff_room_cleaning_plan_note_saved' ||
       url === '/staff/cleaning-plan'
     ) {
-      router.push('/staff/cleaning-plan');
+      safePush('/staff/cleaning-plan');
       return;
     }
 
     if (isInternalPath) {
+      const convFromPayload = parseConversationIdFromNotificationPayload(data);
+      const messageHref = resolveMessagePushHref(url, convFromPayload);
+      if (messageHref) {
+        try {
+          router.push(messageHref);
+        } catch (e) {
+          log.warn('RootLayout', 'notification message chat route push failed', {
+            url,
+            error: (e as Error)?.message,
+          });
+        }
+        return;
+      }
       const rawPid = data.postId ?? (data as { postid?: unknown }).postid;
       const postId =
         typeof rawPid === 'string'
@@ -310,19 +367,38 @@ function RootLayoutInner() {
             : undefined;
       if (postId) {
         if (url.includes('/customer/feed/[id]')) {
-          router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
+          try {
+            router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
+          } catch (e) {
+            log.warn('RootLayout', 'notification feed route push failed', { postId, error: (e as Error)?.message });
+          }
         } else {
-          router.push({ pathname: url, params: { openPostId: postId } });
+          try {
+            router.push({ pathname: url, params: { openPostId: postId } });
+          } catch (e) {
+            log.warn('RootLayout', 'notification route push with params failed', {
+              url,
+              postId,
+              error: (e as Error)?.message,
+            });
+          }
         }
       } else if (assignmentId && url === '/staff/tasks') {
-        router.push({ pathname: '/staff/tasks', params: { focusAssignment: assignmentId } });
+        try {
+          router.push({ pathname: '/staff/tasks', params: { focusAssignment: assignmentId } });
+        } catch (e) {
+          log.warn('RootLayout', 'notification assignment route push failed', {
+            assignmentId,
+            error: (e as Error)?.message,
+          });
+        }
       } else {
-        router.push(url);
+        safePush(url);
       }
     } else if (data?.screen === 'admin') {
-      router.push('/admin');
+      safePush('/admin');
     } else if (data?.screen === 'notifications') {
-      const goToNotifications = () => router.push('/go-to-notifications');
+      const goToNotifications = () => safePush('/go-to-notifications');
       requestAnimationFrame(() => setTimeout(goToNotifications, 100));
     }
   };
@@ -423,6 +499,22 @@ function RootLayoutInner() {
         }
         return;
       }
+
+      const techAssetId =
+        parseTechnicalAssetIdFromScan(url) || parseTechnicalAssetIdFromScan(decodeURIComponent(url));
+      if (techAssetId) {
+        const { staff: staffRow } = useAuthStore.getState();
+        if (staffRow) {
+          router.replace({
+            pathname: '/staff/technical-assets/[id]',
+            params: { id: techAssetId },
+          } as never);
+        } else {
+          log.info('RootLayout', 'tech-asset deep link atlandi (personel oturumu yok)', { techAssetId });
+        }
+        return;
+      }
+
       const parsed = parseCheckinUrl(url);
       if (!parsed) return;
       log.info('RootLayout', 'Deep link', parsed);
@@ -572,6 +664,7 @@ function RootLayoutInner() {
       ) : null}
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="[id]" options={{ headerShown: false }} />
         <Stack.Screen name="room-select" options={{ headerShown: false }} />
         <Stack.Screen name="policies" />
         <Stack.Screen name="legal/[type]" options={{ headerShown: true, title: '' }} />
