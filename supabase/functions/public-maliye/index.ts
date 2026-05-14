@@ -10,7 +10,7 @@ const HTML_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
   "X-Content-Type-Options": "nosniff",
   "Content-Disposition": "inline",
-  "Cache-Control": "no-cache",
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
 };
 
 const JSON_HEADERS = { ...CORS, "Content-Type": "application/json; charset=utf-8" };
@@ -484,54 +484,6 @@ function renderPage(token: string) {
 </html>`;
 }
 
-function renderLoaderPage(token: string) {
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-  return `<!doctype html>
-<html lang="tr">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Maliye Evrak Merkezi Yukleniyor...</title>
-  <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-    .box{padding:20px 24px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);text-align:center}
-    .muted{opacity:.8;font-size:13px;margin-top:8px}
-    .err{margin-top:10px;color:#fecaca;font-size:13px}
-  </style>
-</head>
-<body>
-  <div class="box">
-    <div>Maliye Evrak Merkezi aciliyor...</div>
-    <div class="muted">Lutfen bekleyin</div>
-    <div id="err" class="err"></div>
-  </div>
-  <script>
-    (function(){
-      var anon = ${JSON.stringify(anonKey)};
-      var qs = new URLSearchParams(window.location.search);
-      var t = qs.get('token') || qs.get('t') || ${JSON.stringify(token)};
-      var u = window.location.origin + window.location.pathname + '?render=1&token=' + encodeURIComponent(t);
-      var h = { Accept: 'text/html' };
-      if (anon && String(anon).trim()) {
-        h.Authorization = 'Bearer ' + anon;
-        h.apikey = anon;
-      }
-      fetch(u, { headers: h })
-        .then(function(r){ return r.text(); })
-        .then(function(html){
-          if(!html || html.length < 100) throw new Error('Bos yanit');
-          document.open(); document.write(html); document.close();
-        })
-        .catch(function(e){
-          var el = document.getElementById('err');
-          if (el) el.textContent = 'Yuklenemedi: ' + (e && e.message ? e.message : 'Bilinmeyen hata');
-        });
-    })();
-  </script>
-</body>
-</html>`;
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
@@ -543,10 +495,9 @@ Deno.serve(async (req: Request) => {
   const pin = (url.searchParams.get("pin") ?? "").trim();
 
   if (req.method === "GET" && url.searchParams.get("format") !== "json") {
-    if (url.searchParams.get("render") === "1") {
-      return new Response(renderPage(token), { status: 200, headers: HTML_HEADERS });
-    }
-    return new Response(renderLoaderPage(token), { status: 200, headers: HTML_HEADERS });
+    // Dogrudan tam portal HTML'i dondur (eski iki-asamali loader kaldirildi: ikinci fetch
+    // icin istemcide anon/apikey gerekirdi; bos kalinca "Yuklenemedi" olusuyordu).
+    return new Response(renderPage(token), { status: 200, headers: HTML_HEADERS });
   }
 
   const auth = await validateAccess(supabase, token, pin);
