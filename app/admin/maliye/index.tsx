@@ -100,6 +100,13 @@ export default function AdminMaliyeHome() {
         Denetim evraklari, gunluk musteri listesi, PIN ile acilan portal. Misafir sozlesmesi (netlify-contract) ile hicbir ilgisi yok; ayri Vercel projesi: klasor netlify-maliye.
       </Text>
 
+      <View style={styles.warnBox}>
+        <Text style={styles.warnTitle}>Sozlesme sayfasi aciliyorsa</Text>
+        <Text style={styles.warnText}>
+          Sozlesme Vercel adresi (ornek: valoriahotel-el4r.vercel.app) netlify-contract kokudur; orada maliye yok. Maliye icin Vercelde ayri proje ac, Root Directory netlify-maliye, cikan yeni xxx.vercel.app adresini asagidaki taban URL olarak kaydet veya QRda kullan.
+        </Text>
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.label}>Maliye portal taban URL (QR hedefi)</Text>
         <Text style={styles.hint}>
@@ -174,6 +181,16 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 10 },
   title: { fontSize: 20, fontWeight: '800', color: '#0f172a' },
   sub: { color: '#475569' },
+  warnBox: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 4,
+  },
+  warnTitle: { fontSize: 13, fontWeight: '800', color: '#991b1b', marginBottom: 6 },
+  warnText: { fontSize: 12, lineHeight: 18, color: '#7f1d1d' },
   hint: { color: '#64748b', fontSize: 12, lineHeight: 18, marginBottom: 4 },
   card: { backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 6 },
   label: { fontWeight: '700', color: '#334155' },
