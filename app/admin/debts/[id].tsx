@@ -11,7 +11,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -119,6 +119,8 @@ export default function AdminDebtDetail() {
         .from('finance_checks')
         .select('id, counterparty_name, amount')
         .eq('organization_id', debtRow.organization_id)
+        .not('status', 'eq', 'paid')
+        .not('status', 'eq', 'bounced')
         .not('status', 'eq', 'cancelled')
         .order('created_at', { ascending: false })
         .limit(40);
@@ -131,6 +133,12 @@ export default function AdminDebtDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const submitPayment = async () => {
     if (!id || !me?.id || !debt) return;
@@ -169,7 +177,7 @@ export default function AdminDebtDetail() {
     setPayAmount('');
     setPayNote('');
     setPayCheckId(null);
-    load();
+    await load();
   };
 
   const removeDebt = () => {
@@ -234,6 +242,9 @@ export default function AdminDebtDetail() {
                 {PAYMENT_METHOD_LABELS[p.payment_method]} · {formatDateShort(p.paid_at)}
               </Text>
               {p.notes ? <Text style={styles.payNote}>{p.notes}</Text> : null}
+              {p.finance_check_id ? (
+                <Text style={styles.payCheck}>Çek kaydına bağlı ödeme</Text>
+              ) : null}
             </View>
           ))
         )}
@@ -326,7 +337,7 @@ const styles = StyleSheet.create({
   payRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: adminTheme.colors.border },
   payAmt: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
   payMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
-  payNote: { fontSize: 13, color: adminTheme.colors.textSecondary, marginTop: 4 },
+  payCheck: { fontSize: 12, color: adminTheme.colors.info, marginTop: 4, fontWeight: '600' },
   delBtn: { padding: 16, alignItems: 'center' },
   delText: { color: adminTheme.colors.error, fontWeight: '600' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },

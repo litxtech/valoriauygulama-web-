@@ -1,5 +1,18 @@
 import { z } from 'zod';
 
+/**
+ * `GATEWAY_BASE_URL` boşsa, aynı anlama gelen yedek isimlerden doldur (KBS_SOAP_GATEWAY_URL / INTERNAL_KBS_GATEWAY_URL).
+ * Supabase `KBS_GATEWAY_URL` burada kullanılmaz — o değişken Edge → **dış Ops API** içindir; bu ise Ops → **iç SOAP gateway** içindir.
+ */
+function coalesceGatewayBaseUrl(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...input };
+  const primary = String(out.GATEWAY_BASE_URL ?? '').trim();
+  if (primary) return out;
+  const alt = String(out.KBS_SOAP_GATEWAY_URL ?? out.INTERNAL_KBS_GATEWAY_URL ?? '').trim();
+  if (alt) out.GATEWAY_BASE_URL = alt;
+  return out;
+}
+
 const EnvSchema = z.object({
   NODE_ENV: z.string().optional(),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -23,7 +36,7 @@ const EnvSchema = z.object({
 export type Env = z.infer<typeof EnvSchema>;
 
 export function loadEnv(input: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = EnvSchema.safeParse(input);
+  const parsed = EnvSchema.safeParse(coalesceGatewayBaseUrl(input));
   if (!parsed.success) {
     // Do not log secrets; zod output may contain values.
     throw new Error(`Invalid env: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')}`);

@@ -512,7 +512,7 @@ ON CONFLICT (hotel_id) DO NOTHING;
 
 -- NOTE: ops.app_users seed depends on auth.users. Create auth users via admin tooling,
 -- then insert ops.app_users rows using service-role in backend.
--- TODO(seed): add a Railway admin bootstrap endpoint (service-role) to create demo users + ops.app_users rows.
+-- TODO(seed): add an ops admin bootstrap endpoint (service_role) to create demo users + ops.app_users rows.
 
 COMMIT;
 

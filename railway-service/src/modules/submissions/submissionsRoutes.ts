@@ -19,7 +19,9 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
     const { data: doc, error: docErr } = await app.supabase
       .schema('ops')
       .from('guest_documents')
-      .select('id, hotel_id, guest_id, document_number, nationality_code, issuing_country_code, parsed_payload')
+      .select(
+        'id, hotel_id, guest_id, document_number, nationality_code, issuing_country_code, parsed_payload, document_series, usage_kind, kbs_person_kind, plate_number, guest_phone_submitted, forward_dated, expiry_date'
+      )
       .eq('id', args.guestDocumentId)
       .eq('hotel_id', args.hotelId)
       .maybeSingle();
@@ -28,7 +30,7 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
     const { data: guest, error: guestErr } = await app.supabase
       .schema('ops')
       .from('guests')
-      .select('id, full_name, first_name, last_name, birth_date, gender, nationality_code')
+      .select('id, full_name, first_name, last_name, middle_name, birth_date, gender, nationality_code, father_name, mother_name')
       .eq('id', doc.guest_id)
       .eq('hotel_id', args.hotelId)
       .maybeSingle();
@@ -57,18 +59,29 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
       (typeof parsed.birthDate === 'string' ? parsed.birthDate : null) ??
       (guest.birth_date ? String(guest.birth_date) : null);
     const gender = (typeof parsed.gender === 'string' ? parsed.gender : null) ?? (guest.gender ? String(guest.gender) : null);
+    const middleFromParsed = typeof parsed.middleName === 'string' ? parsed.middleName : null;
 
     return {
       fullName: guest.full_name ?? null,
       firstName: guest.first_name ?? null,
       lastName: guest.last_name ?? null,
+      middleName: guest.middle_name ?? middleFromParsed,
       documentNumber: doc.document_number ?? null,
+      documentSeries: doc.document_series ?? null,
       nationalityCode: doc.nationality_code ?? guest.nationality_code ?? null,
       issuingCountryCode: doc.issuing_country_code ?? null,
       birthDate,
       gender: gender === 'M' || gender === 'F' || gender === 'X' ? (gender as 'M' | 'F' | 'X') : null,
       roomNumber: room.room_number ?? null,
-      checkInAt: stay.check_in_at ? String(stay.check_in_at) : null
+      checkInAt: stay.check_in_at ? String(stay.check_in_at) : null,
+      documentExpiryDate: doc.expiry_date ? String(doc.expiry_date) : null,
+      usageKind: doc.usage_kind ? String(doc.usage_kind) : 'konaklama',
+      kbsPersonKind: doc.kbs_person_kind ? String(doc.kbs_person_kind) : null,
+      plateNumber: doc.plate_number ?? null,
+      phone: doc.guest_phone_submitted ?? null,
+      forwardDated: Boolean(doc.forward_dated),
+      fatherName: guest.father_name ?? null,
+      motherName: guest.mother_name ?? null
     };
   }
 

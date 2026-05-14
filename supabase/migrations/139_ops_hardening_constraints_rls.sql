@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS ops_audit_logs_hotel_entity_idx
 
 -- ========== RLS HARDENING ==========
 -- We intentionally disallow direct client INSERT/UPDATE/DELETE to ops operational tables.
--- Writes must go through Railway service (service-role) where permission + validation + audit are enforced.
+-- Writes must go through the KBS ops gateway (service_role) where permission + validation + audit are enforced.
 -- Service-role bypasses RLS, so this does not block backend.
 
 -- guest_documents: keep SELECT, drop/replace write policies with admin-only (optional).

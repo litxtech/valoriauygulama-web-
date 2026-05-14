@@ -16,14 +16,24 @@ const BaseSchema = z.object({
   fullName: z.string().nullable().optional(),
   firstName: z.string().nullable().optional(),
   lastName: z.string().nullable().optional(),
+  middleName: z.string().nullable().optional(),
   documentNumber: z.string().nullable().optional(),
+  documentSeries: z.string().nullable().optional(),
   nationalityCode: z.string().nullable().optional(),
   issuingCountryCode: z.string().nullable().optional(),
   birthDate: z.string().nullable().optional(),
   gender: z.enum(['M', 'F', 'X']).nullable().optional(),
   roomNumber: z.string().nullable().optional(),
   checkInAt: z.string().nullable().optional(),
-  checkOutAt: z.string().nullable().optional()
+  checkOutAt: z.string().nullable().optional(),
+  documentExpiryDate: z.string().nullable().optional(),
+  usageKind: z.string().nullable().optional(),
+  kbsPersonKind: z.string().nullable().optional(),
+  plateNumber: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  forwardDated: z.boolean().optional(),
+  fatherName: z.string().nullable().optional(),
+  motherName: z.string().nullable().optional()
 });
 
 function createProvider(app: any): OfficialSubmissionProvider {

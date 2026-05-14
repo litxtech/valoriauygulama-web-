@@ -33,8 +33,17 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
     if (docTypeRaw.includes('td3')) documentType = 'passport';
     else if (docTypeRaw.includes('td1') || docTypeRaw.includes('td2')) documentType = 'id_card';
 
-    const firstName = res?.fields?.firstName ?? res?.fields?.givenNames ?? null;
-    const lastName = res?.fields?.lastName ?? res?.fields?.surname ?? null;
+    let firstName = res?.fields?.firstName ?? res?.fields?.givenNames ?? null;
+    let lastName = res?.fields?.lastName ?? res?.fields?.surname ?? null;
+    let middleName: string | null = null;
+    /** TD3: ikinci/üçüncü ad MRZ’de tek “given” alanında boşlukla gelebilir → KBS için ayır. */
+    if (firstName && typeof firstName === 'string') {
+      const parts = firstName.trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        firstName = parts[0] ?? null;
+        middleName = parts.slice(1).join(' ') || null;
+      }
+    }
     const fullName =
       res?.fields?.name
         ? String(res.fields.name)
@@ -43,6 +52,14 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
     const checksumsValid =
       typeof res?.valid === 'boolean' ? res.valid : typeof res?.validCheckDigits === 'boolean' ? res.validCheckDigits : null;
     if (checksumsValid === false) warnings.push('MRZ checksum validation failed');
+
+    const nat = String(res?.fields?.nationality ?? '').toUpperCase();
+    const gcc = new Set(['OMN', 'SAU', 'QAT', 'KWT', 'ARE', 'BHR', 'YEM', 'IRQ', 'IRN', 'JOR', 'LBN', 'SYR', 'PSE']);
+    if (nat && gcc.has(nat)) {
+      warnings.push(
+        'Körfez / Arap pasaportu: MRZ ad sırası farklı olabilir; KBS’e göndermeden ad-soyadı ekranda kontrol edin.'
+      );
+    }
 
     // mrz@5: issuing country = `issuingState` (ICAO 3-letter), NOT `issuingCountry`
     const issuingRaw =
@@ -59,7 +76,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       fullName,
       firstName: firstName ? String(firstName) : null,
       lastName: lastName ? String(lastName) : null,
-      middleName: null,
+      middleName,
       documentNumber: res?.fields?.documentNumber ? String(res.fields.documentNumber) : null,
       nationalityCode: res?.fields?.nationality ? String(res.fields.nationality) : null,
       issuingCountryCode: issuingRaw ? String(issuingRaw).toUpperCase() : null,

@@ -88,7 +88,7 @@ function normalizeInvokePayload(raw: unknown): unknown {
         error: {
           code: 'GATEWAY_HTML',
           message:
-            'Sunucu JSON yerine HTML hata sayfası döndü. Genelde VPS’teki gateway sürümü eski (bu route yok) veya yanlış porta istek gidiyor. VPS’te railway-service: npm run build && pm2 restart; KBS_GATEWAY_URL’nin doğru IP:port olduğundan emin olun.',
+            'Sunucu JSON yerine HTML hata sayfası döndü. Genelde VPS’teki gateway sürümü eski (bu route yok) veya yanlış porta istek gidiyor. VPS’te `railway-service` klasöründe: npm run build && pm2 restart; KBS_GATEWAY_URL’nin doğru IP:port olduğundan emin olun.',
           details: snippet,
         },
       };

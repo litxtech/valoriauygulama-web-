@@ -28,7 +28,7 @@ import {
   type FinanceCheckStatus,
 } from '@/lib/finance';
 
-const STATUSES: FinanceCheckStatus[] = ['draft', 'registered', 'presented', 'paid', 'bounced', 'cancelled'];
+const STATUSES: FinanceCheckStatus[] = ['draft', 'registered', 'presented', 'partial', 'paid', 'bounced', 'cancelled'];
 
 export default function AdminFinanceCheckNew() {
   const router = useRouter();

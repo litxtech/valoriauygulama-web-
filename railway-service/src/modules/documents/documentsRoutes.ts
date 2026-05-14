@@ -27,10 +27,85 @@ const UpsertSchema = z.object({
   parsed: ParsedDocumentSchema,
   scanConfidence: z.number().nullable().optional(),
   rawMrz: z.string().nullable().optional(),
-  ocrEngine: z.string().nullable().optional()
+  ocrEngine: z.string().nullable().optional(),
+  /** true: MRZ sonrası `scanned` kalır (parti / Beklet); parti ekranında hazıra çekilir. */
+  deferReady: z.boolean().optional(),
+  kbsPersonKind: z.enum(['tc_citizen', 'ykn_foreign', 'foreign']).nullable().optional(),
+  usageKind: z.enum(['konaklama', 'gunluk', 'afetzede']).optional(),
+  documentSeries: z.string().nullable().optional(),
+  plateNumber: z.string().nullable().optional(),
+  guestPhone: z.string().nullable().optional(),
+  forwardDated: z.boolean().optional(),
+  mrzBatchKey: z.string().uuid().nullable().optional(),
+  fatherName: z.string().nullable().optional(),
+  motherName: z.string().nullable().optional()
 });
 
+function kbsGuestDocumentExtras(body: z.infer<typeof UpsertSchema>) {
+  return {
+    kbs_person_kind: body.kbsPersonKind ?? null,
+    usage_kind: body.usageKind ?? 'konaklama',
+    document_series: body.documentSeries ?? null,
+    plate_number: body.plateNumber ?? null,
+    guest_phone_submitted: body.guestPhone ?? null,
+    forward_dated: body.forwardDated ?? false,
+    mrz_batch_key: body.mrzBatchKey ?? null
+  };
+}
+
 export const documentsRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/documents/batch/:mrzBatchKey', async (req) => {
+    const auth = req.auth;
+    if (!auth) throw Errors.unauthorized();
+    const mrzBatchKey = z.string().uuid().parse((req.params as { mrzBatchKey?: string }).mrzBatchKey);
+
+    const { data, error } = await app.supabase
+      .schema('ops')
+      .from('guest_documents')
+      .select(
+        'id, guest_id, scan_status, document_type, document_number, kbs_person_kind, usage_kind, mrz_batch_key, guests(full_name, first_name, last_name)'
+      )
+      .eq('hotel_id', auth.hotelId)
+      .eq('mrz_batch_key', mrzBatchKey)
+      .in('scan_status', ['scanned', 'ready_to_submit'])
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) throw Errors.internal('Failed to load batch documents');
+
+    const rows = (data ?? []) as unknown as Array<{
+      id: string;
+      guest_id: string;
+      scan_status: string;
+      document_type: string | null;
+      document_number: string | null;
+      kbs_person_kind: string | null;
+      usage_kind: string | null;
+      mrz_batch_key: string | null;
+      guests:
+        | { full_name: string | null; first_name: string | null; last_name: string | null }
+        | { full_name: string | null; first_name: string | null; last_name: string | null }[]
+        | null;
+    }>;
+
+    const mapped = rows.map((r) => {
+      const g = r.guests;
+      const guest = Array.isArray(g) ? g[0] ?? null : g ?? null;
+      return {
+        id: r.id,
+        guest_id: r.guest_id,
+        scan_status: r.scan_status,
+        document_type: r.document_type,
+        document_number: r.document_number,
+        kbs_person_kind: r.kbs_person_kind,
+        usage_kind: r.usage_kind,
+        mrz_batch_key: r.mrz_batch_key,
+        guest
+      };
+    });
+
+    return { ok: true, data: mapped };
+  });
+
   app.post('/documents/upsert', async (req) => {
     const auth = req.auth;
     if (!auth) throw Errors.unauthorized();
@@ -52,7 +127,20 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
     const birthDate = body.parsed.birthDate && body.parsed.birthDate.length >= 10 ? body.parsed.birthDate.slice(0, 10) : null;
     const expiryDate = body.parsed.expiryDate && body.parsed.expiryDate.length >= 10 ? body.parsed.expiryDate.slice(0, 10) : null;
 
-    const scanStatus = normalizedDocNo && fullName ? 'ready_to_submit' : body.parsed.rawMrz ? 'scanned' : 'draft';
+    const hasMrz = !!(body.parsed.rawMrz ?? body.rawMrz);
+    const deferReady = body.deferReady === true;
+    const coreReady = !!(normalizedDocNo && fullName);
+    const scanStatus = deferReady
+      ? hasMrz || coreReady
+        ? 'scanned'
+        : 'draft'
+      : coreReady
+        ? 'ready_to_submit'
+        : hasMrz
+          ? 'scanned'
+          : 'draft';
+
+    const kbsExtras = kbsGuestDocumentExtras(body);
 
     // Idempotency:
     // - If document identity exists (hotel + type + document_number), update and return it.
@@ -80,6 +168,7 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
             parsed_payload: body.parsed,
             scan_confidence: body.scanConfidence ?? body.parsed.confidence ?? null,
             scan_status: scanStatus,
+            ...kbsExtras,
             ...mrzExtra,
             ...scanMeta
           })
@@ -87,6 +176,23 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
           .select('id, guest_id, scan_status')
           .single();
         if (updErr || !updated) throw Errors.internal('Failed to update document');
+
+        await app.supabase
+          .schema('ops')
+          .from('guests')
+          .update({
+            full_name: fullName ?? 'UNKNOWN',
+            first_name: body.parsed.firstName,
+            last_name: body.parsed.lastName,
+            middle_name: body.parsed.middleName,
+            nationality_code: body.parsed.nationalityCode,
+            gender: body.parsed.gender,
+            birth_date: birthDate,
+            ...(body.fatherName !== undefined ? { father_name: body.fatherName } : {}),
+            ...(body.motherName !== undefined ? { mother_name: body.motherName } : {})
+          })
+          .eq('id', existing.guest_id)
+          .eq('hotel_id', auth.hotelId);
 
         await writeAudit({
           supabase: app.supabase,
@@ -115,7 +221,9 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
         middle_name: body.parsed.middleName,
         nationality_code: body.parsed.nationalityCode,
         gender: body.parsed.gender,
-        birth_date: birthDate
+        birth_date: birthDate,
+        father_name: body.fatherName ?? null,
+        mother_name: body.motherName ?? null
       })
       .select('id')
       .single();
@@ -137,6 +245,7 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
         parsed_payload: body.parsed,
         scan_confidence: body.scanConfidence ?? body.parsed.confidence ?? null,
         scan_status: scanStatus,
+        ...kbsExtras,
         ...mrzExtra,
         ...scanMeta
       })

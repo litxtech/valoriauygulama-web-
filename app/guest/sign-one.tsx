@@ -26,6 +26,8 @@ import { CachedImage } from '@/components/CachedImage';
 import { COUNTRY_PHONE_CODES, type CountryCode } from '@/constants/countryPhoneCodes';
 import { LANGUAGES } from '@/i18n';
 import { FORM_STRINGS, DEFAULT_FORM_FIELDS, type ContractFormLang } from '@/lib/contractFormStrings';
+import { notifyAdmins } from '@/lib/notificationService';
+import { ADMIN_TYPES } from '@/lib/notifications';
 
 const CONTRACT_LANGS = LANGUAGES;
 
@@ -344,7 +346,7 @@ export default function GuestSignOneScreen() {
       }
 
       if (token) {
-        await supabase.from('contract_acceptances').insert({
+        const { error: accErr } = await supabase.from('contract_acceptances').insert({
           token,
           room_id: roomId || null,
           contract_lang: contractLang,
@@ -353,6 +355,17 @@ export default function GuestSignOneScreen() {
           source: Platform.OS === 'web' ? 'web' : 'app',
           guest_id: guest?.id ?? null,
         });
+        if (!accErr) {
+          const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir';
+          void notifyAdmins({
+            title: 'Yeni sözleşme onayı',
+            body: `${signer} sözleşmeyi onayladı. Sözleşme onayları ekranından kontrol edin.`,
+            data: {
+              url: '/admin/contracts/acceptances',
+              notificationType: ADMIN_TYPES.contract_acceptance_new,
+            },
+          }).catch(() => {});
+        }
       }
 
       setStoreContractLang(contractLang);

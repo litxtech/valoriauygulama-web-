@@ -180,12 +180,12 @@ function renderPage(token: string) {
       <div class="card">
         <h3 class="panelTitle">Erisim ve Evraklar</h3>
         <div class="row" style="margin-bottom:8px">
-          <input id="pin" type="password" placeholder="PIN girin" />
-          <button onclick="unlock()">Portali Ac</button>
+          <input id="pin" type="password" placeholder="PIN girin" autocomplete="one-time-code" />
+          <button type="button" id="btnUnlock">Portali Ac</button>
           <span id="authState" class="status">Kilitli</span>
-          <button class="secondary" onclick="refreshDocuments()">Listeyi Yenile</button>
+          <button type="button" id="btnRefresh" class="secondary">Listeyi Yenile</button>
         </div>
-        <div class="muted">Portal acildiktan sonra evraklar 30 saniyede bir otomatik guncellenir.</div>
+        <div class="muted">Portal acikken her 30 saniyede sunucu sorgulanir; yeni evrak veya musteri formu algilaninca liste yenilenir.</div>
         <div class="stats">
           <div class="stat"><b id="statSections">0</b><span>Cekmece</span></div>
           <div class="stat"><b id="statDocs">0</b><span>Toplam Evrak</span></div>
@@ -197,8 +197,8 @@ function renderPage(token: string) {
         <div class="row">
           <input id="dayFilter" type="date" />
           <input id="monthFilter" type="month" />
-          <button class="secondary" onclick="loadForms()">Gunluk Formlari Cek</button>
-          <button class="secondary" onclick="loadLatest()">Son Form</button>
+          <button type="button" id="btnLoadForms" class="secondary">Gunluk Formlari Cek</button>
+          <button type="button" id="btnLoadLatest" class="secondary">Son Form</button>
         </div>
         <div class="muted" style="margin-top:8px">Gun veya ay bazinda form listesi alinabilir. Son form hizli kontrol icindir.</div>
       </div>
@@ -212,10 +212,15 @@ function renderPage(token: string) {
     const token = ${JSON.stringify(token)};
     let pin = "";
     let autoRefreshTimer = null;
+    let lastVersion = null;
 
     function qs(params){
       const u = new URLSearchParams(params);
       return "?" + u.toString();
+    }
+
+    function escAttr(v){
+      return String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     }
 
     async function api(params){
@@ -245,15 +250,15 @@ function renderPage(token: string) {
             '<div><div class="docTitle">' + d.title + '</div>' +
             '<div class="muted">' + (d.description || "-") + '</div></div>' +
             '<div class="docActions">' +
-              '<button onclick="window.open(\\'' + signed + '\\', \\'_blank\\')">Goruntule</button>' +
-              '<button class="secondary" onclick="downloadDoc(\\'' + signed + '\\')">Indir</button>' +
-              '<button class="secondary" onclick="printDoc(\\'' + signed + '\\')">Yazdir</button>' +
-              '<button class="secondary" onclick="sendPrinter(\\'' + d.id + '\\')">Yaziciya Gonder</button>' +
+              '<button type="button" data-doc-action="view" data-url="' + escAttr(signed) + '">Goruntule</button>' +
+              '<button type="button" class="secondary" data-doc-action="download" data-url="' + escAttr(signed) + '">Indir</button>' +
+              '<button type="button" class="secondary" data-doc-action="print" data-url="' + escAttr(signed) + '">Yazdir</button>' +
+              '<button type="button" class="secondary" data-doc-action="printSend" data-doc-id="' + escAttr(d.id) + '">Yaziciya Gonder</button>' +
             '</div>' +
           '</div>';
         }).join("");
         const html = '<div class="accordion">' +
-          '<div class="accHead" onclick="toggleBody(\\'' + accId + '\\')"><span>' + s.name + '</span><span>' + (s.documents || []).length + ' evrak</span></div>' +
+          '<div class="accHead" role="button" tabindex="0" data-acc-id="' + escAttr(accId) + '"><span>' + s.name + '</span><span>' + (s.documents || []).length + ' evrak</span></div>' +
           '<div class="accBody" id="' + accId + '">' + docsHtml + '</div></div>';
         root.insertAdjacentHTML("beforeend", html);
       });
@@ -294,7 +299,7 @@ function renderPage(token: string) {
         document.getElementById("authState").textContent = "Acik";
         if (autoRefreshTimer) clearInterval(autoRefreshTimer);
         autoRefreshTimer = setInterval(() => {
-          refreshDocuments().catch(() => null);
+          refreshIfChanged().catch(() => null);
         }, 30000);
         document.getElementById("statRefresh").textContent = "Acik";
       }catch(e){
@@ -303,9 +308,38 @@ function renderPage(token: string) {
       }
     }
 
+    async function syncLastVersion(){
+      try{
+        const v = await api({ format: "json", view: "documents", mode: "version" });
+        lastVersion = v && v.version ? v.version : null;
+      }catch(_){
+        lastVersion = null;
+      }
+    }
+
     async function refreshDocuments(){
       const docs = await api({ format: "json", view: "documents" });
       renderDocs(docs);
+      await syncLastVersion();
+    }
+
+    async function refreshIfChanged(){
+      if (!pin) return;
+      try{
+        const v = await api({ format: "json", view: "documents", mode: "version" });
+        const cur = v && v.version ? v.version : null;
+        if (!cur) return;
+        if (lastVersion === null) {
+          lastVersion = cur;
+          return;
+        }
+        if (cur === lastVersion) return;
+        await refreshDocuments();
+        const box = document.getElementById("forms");
+        if (box && box.style.display === "block") {
+          try{ await loadForms(); }catch(_){}
+        }
+      }catch(_){}
     }
 
     async function loadForms(){
@@ -331,6 +365,51 @@ function renderPage(token: string) {
       box.innerHTML = "<h3 style='margin:0 0 8px'>Son Musteri Formu</h3>" + (f ? '<div class="doc"><div class="docTitle">' +
         (f.full_name || "İsimsiz") + '</div><div class="muted">' + (f.created_at || "-") + "</div></div>" : "<p>Kayıt yok.</p>");
     }
+
+    function bindDocsDelegation(){
+      const root = document.getElementById("docs");
+      if (!root || root.dataset.bound === "1") return;
+      root.dataset.bound = "1";
+      root.addEventListener("click", function(ev){
+        const head = ev.target && ev.target.closest ? ev.target.closest(".accHead[data-acc-id]") : null;
+        if (head) {
+          const id = head.getAttribute("data-acc-id");
+          if (id) toggleBody(id);
+          return;
+        }
+        const btn = ev.target && ev.target.closest ? ev.target.closest("button[data-doc-action]") : null;
+        if (!btn) return;
+        const act = btn.getAttribute("data-doc-action");
+        const url = btn.getAttribute("data-url") || "";
+        const docId = btn.getAttribute("data-doc-id") || "";
+        if (act === "view" && url) window.open(url, "_blank", "noopener");
+        else if (act === "download" && url) downloadDoc(url);
+        else if (act === "print" && url) printDoc(url);
+        else if (act === "printSend" && docId) void sendPrinter(docId);
+      });
+    }
+
+    function initUi(){
+      bindDocsDelegation();
+      const pinEl = document.getElementById("pin");
+      const unlockBtn = document.getElementById("btnUnlock");
+      const refreshBtn = document.getElementById("btnRefresh");
+      const formsBtn = document.getElementById("btnLoadForms");
+      const latestBtn = document.getElementById("btnLoadLatest");
+      if (pinEl) {
+        pinEl.addEventListener("keydown", function(ev){
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            void unlock();
+          }
+        });
+      }
+      if (unlockBtn) unlockBtn.addEventListener("click", function(){ void unlock(); });
+      if (refreshBtn) refreshBtn.addEventListener("click", function(){ void refreshDocuments().catch(function(e){ alert((e && e.message) || "Yenilenemedi"); }); });
+      if (formsBtn) formsBtn.addEventListener("click", function(){ void loadForms().catch(function(e){ alert((e && e.message) || "Formlar alinamadi"); }); });
+      if (latestBtn) latestBtn.addEventListener("click", function(){ void loadLatest().catch(function(e){ alert((e && e.message) || "Form alinamadi"); }); });
+    }
+    initUi();
   </script>
 </body>
 </html>`;

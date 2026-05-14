@@ -410,10 +410,21 @@ const resources = {
       kbsMrzFrameChecksumBad: 'Checksum hatalı — tekrar okutun',
       kbsMrzFrameSuccess: 'Başarılı',
       kbsScanTopHint:
-        'Kamera MRZ’yi kısa aralıklarla otomatik arar. ICAO checksum aynı metinde üst üste iki kez doğrulanınca kayıt onayı açılır; «Kaydet» veritabanına yazar. Geçersiz okumalar kayda yazılmaz.',
-      kbsScanFrameHint: 'MRZ şeridini çerçevede net ve sabit tutun; otomatik kare+OCR çalışır.',
-      kbsScanOcrEmptyHint: 'Belgeyi kameraya gösterin; MRZ görünür görünmez tarama kendiliğinden hızlanır.',
-      kbsMrzFrameHunting: 'Otomatik arama — MRZ’yi hizalayın',
+        'Tam ekran kamera: MRZ şeridini çerçeveye alın. Hazır olduğunuzda «MRZ oku»ya basın; tek karede OCR çalışır. Bilgiler doğruysa «Kaydet» veritabanına yazar.',
+      kbsScanTopHintShort:
+        'Önizleme açıldıktan sonra kısa süre beklenir; MRZ iki kare üst üste doğrulanınca tam okuma başlar.',
+      kbsTorchOn: 'Feneri aç',
+      kbsTorchOff: 'Feneri kapat',
+      kbsScanFrameHint: 'MRZ şeridini çerçeveye hizalayın; net ve yeterince aydınlık olsun.',
+      kbsScanFrameHintAuto:
+        'MRZ net göründüğünde otomatik tam okuma yapılır. Önizleme ve bekleme süresi bittikten sonra algılama başlar; karanlıkta feneri açık tutun.',
+      kbsScanOcrEmptyHint: 'MRZ netleşince önizleme burada görünür; gerekirse sağdaki kamera ile manuel okuyun.',
+      kbsMrzFrameHunting: 'Hazırsanız «MRZ oku»ya basın',
+      kbsMrzFrameAutoHunting: 'Pasaport veya kimlikteki MRZ alanını çerçeveye hizalayın',
+      kbsMrzFrameTapToRead: 'MRZ hazırsa «MRZ oku»ya basın',
+      kbsMrzAutoCaptureHint:
+        'Önizleme hazır olduktan ve kısa bir beklemeden sonra MRZ doğrulanınca otomatik tam okuma yapılır. İsterseniz sağdaki düğmeyle manuel de okuyabilirsiniz.',
+      kbsMrzManualCapture: 'MRZ oku (manuel)',
       kbsMrzFrameScout: 'Belgeyi gösterin — MRZ görünür görünmez tarama açılır (pil)',
       kbsMrzFrameLockActive: 'MRZ sinyali var — net tutun, okunuyor…',
       kbsMrzFrameAutoProcessing: 'Kare alınıyor / OCR…',
@@ -423,8 +434,11 @@ const resources = {
       kbsMrzFrameReadySave: 'Bilgileri kontrol edip «Kaydet»e basın',
       kbsMrzSaveButton: 'Kaydet',
       kbsMrzDiscardSave: 'Vazgeç',
-      kbsMrzScanNow: 'Şimdi Tara',
+      kbsMrzScanNow: 'MRZ oku',
       kbsMrzScanBusy: 'İşleniyor…',
+      kbsMrzScanAlignPassportIdMrz: 'Pasaport veya kimlikteki MRZ alanını çerçeveye hizalayın.',
+      kbsMrzScanDetectedProcessing: 'MRZ algılandı, işleniyor...',
+      kbsMrzScanReadFailedHold: 'MRZ okunamadı, lütfen belgeyi sabit tutun.',
       staffPassportsTitle: 'Pasaportlar (MRZ)',
       staffPassportsSubtitle: 'Tarama ile kaydedilen belgeler, 10 dakikalık dilimlere ayrılmıştır.',
       staffPassportsEmpty: 'Henüz kayıtlı MRZ yok. MRZ taramada «Kaydet» ile ekleyin.',
@@ -945,6 +959,8 @@ const resources = {
         'Şifre alanı write-only’dir. Mevcut şifre geri okunmaz; yeni şifre girilirse overwrite edilir.',
       adminKbsSettingsBridgeHint:
         'Oda listesi ve oda ekleme mobil istemciden PostgREST ops şemasına doğrudan değil; Edge ops-proxy → VPS gateway üzerinden /admin/ops-rooms ile yapılır (aynı köprü KBS kayıt/test için de kullanılır). Kaydet / liste hata verirse KBS_GATEWAY_URL ve KBS_GATEWAY_TOKEN eşleşmesine bakın.',
+      adminKbsStaffTabDisabledBanner:
+        'Personel uygulamasındaki KBS sekmesi şu an kapalı (EXPO_PUBLIC_KBS_UI_ENABLED). Buradan tesis bilgilerini kaydedebilir ve bağlantı testi yapabilirsiniz; personel KBS ekranlarını açmak için .env’de bu değişkeni true yapıp uygulamayı yeniden derleyin.',
       adminKbsOpsRoomsTitle: 'KBS odaları (ops.rooms)',
       adminKbsOpsRoomsSub:
         'Personelin “Bildirime hazır” ekranında oda ataması bu listeden yapılır; otel uygulamasındaki genel oda yönetimi ile ayrıdır.',
@@ -995,7 +1011,7 @@ const resources = {
       kbsApiHintNonJson:
         '\n\n• VPS’te gateway (ör. :4000) ayakta mı? curl ile /health deneyin.\n• KBS_GATEWAY_URL secret’ında boşluk olmamalı.',
       kbsApiHintGatewayHtml:
-        '\n\n• Bu genelde eski gateway binary veya yanlış port demektir. Sunucuda repo güncel mi? cd railway-service && npm ci && npm run build && pm2 restart all',
+        '\n\n• Bu genelde eski gateway binary veya yanlış port demektir. Sunucuda repo güncel mi? `cd railway-service && npm ci && npm run build && pm2 restart all`',
       adminKbsPermissionsTitle: 'KBS Yetkileri (OPS)',
       adminKbsPermissionsIntro: 'Ops personelinin KBS ekranlarına erişimi ve aksiyon yetkileri.',
       adminKbsTabLabel: 'KBS sekmesi',
@@ -1847,10 +1863,21 @@ const resources = {
       kbsMrzFrameChecksumBad: 'Invalid checksum — scan again',
       kbsMrzFrameSuccess: 'Success',
       kbsScanTopHint:
-        'The camera searches for MRZ in short intervals. When the same text passes ICAO checksum twice in a row, the save prompt opens; “Save” writes to the database.',
-      kbsScanFrameHint: 'Keep the MRZ strip steady in the frame; capture + OCR run automatically.',
-      kbsScanOcrEmptyHint: 'Point the page at the camera; scanning speeds up as soon as MRZ is visible.',
-      kbsMrzFrameHunting: 'Auto search — align MRZ',
+        'Full-screen camera: align the MRZ strip in the frame. When it looks clear, tap “Read MRZ”; one frame runs OCR. Tap “Save” to write to the database.',
+      kbsScanTopHintShort:
+        'After the preview starts, a short wait runs; a full read begins once MRZ is validated on two consecutive frames.',
+      kbsTorchOn: 'Turn torch on',
+      kbsTorchOff: 'Turn torch off',
+      kbsScanFrameHint: 'Align the MRZ strip in the frame; keep it sharp and well lit.',
+      kbsScanFrameHintAuto:
+        'A full read runs automatically when MRZ is clear. Detection starts after the preview warm-up; in the dark, keep the torch on.',
+      kbsScanOcrEmptyHint: 'When the MRZ is sharp, a preview appears here; use the camera button on the right for a manual read.',
+      kbsMrzFrameHunting: 'Tap “Read MRZ” when ready',
+      kbsMrzFrameAutoHunting: 'Align the MRZ area of your passport or ID with the frame',
+      kbsMrzFrameTapToRead: 'When the MRZ is clear, tap “Read MRZ”',
+      kbsMrzAutoCaptureHint:
+        'After the preview is ready and a short warm-up, MRZ is validated from the camera; then one automatic full read runs. You can also tap the camera on the right for a manual read.',
+      kbsMrzManualCapture: 'Read MRZ (manual)',
       kbsMrzFrameScout: 'Show the page — fast scan runs when MRZ is visible (battery-friendly)',
       kbsMrzFrameLockActive: 'MRZ signal — hold steady, reading…',
       kbsMrzFrameAutoProcessing: 'Frame + OCR…',
@@ -1860,8 +1887,11 @@ const resources = {
       kbsMrzFrameReadySave: 'Review and tap “Save”',
       kbsMrzSaveButton: 'Save',
       kbsMrzDiscardSave: 'Discard',
-      kbsMrzScanNow: 'Scan now',
+      kbsMrzScanNow: 'Read MRZ',
       kbsMrzScanBusy: 'Processing…',
+      kbsMrzScanAlignPassportIdMrz: 'Align the MRZ area of your passport or ID with the frame.',
+      kbsMrzScanDetectedProcessing: 'MRZ detected, processing…',
+      kbsMrzScanReadFailedHold: 'MRZ could not be read. Please hold the document steady.',
       staffPassportsTitle: 'Passports (MRZ)',
       staffPassportsSubtitle: 'Saved scans are grouped in 10-minute windows.',
       staffPassportsEmpty: 'No saved MRZ yet. Use MRZ scan and «Save».',
@@ -2380,6 +2410,8 @@ const resources = {
         'The password field is write-only. The current password is never read back; entering a new password overwrites it.',
       adminKbsSettingsBridgeHint:
         'Room list and add-room from the mobile client do not talk to the PostgREST ops schema directly; they go through Edge ops-proxy → VPS gateway at /admin/ops-rooms (same bridge as KBS save/test). If save or list fails, check KBS_GATEWAY_URL and KBS_GATEWAY_TOKEN match.',
+      adminKbsStaffTabDisabledBanner:
+        'The staff KBS tab is off (EXPO_PUBLIC_KBS_UI_ENABLED). You can still save facility credentials and run the connection test here; set that env var to true and rebuild to show staff KBS screens.',
       adminKbsOpsRoomsTitle: 'KBS rooms (ops.rooms)',
       adminKbsOpsRoomsSub:
         'Room assignment on staff “Ready to notify” uses this list; it is separate from general room management in the hotel app.',
@@ -2430,7 +2462,7 @@ const resources = {
       kbsApiHintNonJson:
         '\n\n• Is the gateway (e.g. :4000) up on the VPS? Try curl /health.\n• KBS_GATEWAY_URL must not contain stray spaces.',
       kbsApiHintGatewayHtml:
-        '\n\n• This usually means an old gateway binary or wrong port. Is the server repo up to date? cd railway-service && npm ci && npm run build && pm2 restart all',
+        '\n\n• This usually means an old gateway binary or wrong port. Is the server repo up to date? `cd railway-service && npm ci && npm run build && pm2 restart all`',
       adminKbsPermissionsTitle: 'KBS permissions (OPS)',
       adminKbsPermissionsIntro: 'OPS staff access to KBS screens and action permissions.',
       adminKbsTabLabel: 'KBS tab',

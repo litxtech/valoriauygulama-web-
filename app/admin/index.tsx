@@ -167,7 +167,10 @@ function adminSectionsForUi() {
   if (isKbsUiEnabled()) return SECTIONS;
   return SECTIONS.map((sec) => ({
     ...sec,
-    items: sec.items.filter((i) => !i.href.includes('/admin/kbs')),
+    items: sec.items.filter((i) => {
+      if (!i.href.includes('/admin/kbs')) return true;
+      return i.href === '/admin/kbs-settings' || i.href === '/admin/kbs-permissions';
+    }),
   }));
 }
 

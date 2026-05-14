@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert, Switch, Platform } from 'react-native';
-import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { theme } from '@/constants/theme';
@@ -24,7 +23,6 @@ export default function AdminKbsPermissionsScreen() {
 
   const catalogQ = useQuery({
     queryKey: ['kbs', 'admin', 'permission_catalog'],
-    enabled: kbsUi,
     queryFn: async () => {
       const res = await apiGet<PermissionCatalogItem[]>('/admin/permission-catalog');
       if (!res.ok) throw new Error(res.error.message);
@@ -34,7 +32,6 @@ export default function AdminKbsPermissionsScreen() {
 
   const usersQ = useQuery({
     queryKey: ['kbs', 'admin', 'users_with_permissions'],
-    enabled: kbsUi,
     queryFn: async () => {
       const res = await apiGet<UserRow[]>('/admin/users-with-permissions');
       if (!res.ok) throw new Error(res.error.message);
@@ -84,14 +81,11 @@ export default function AdminKbsPermissionsScreen() {
     await Promise.all([catalogQ.refetch(), usersQ.refetch()]);
   };
 
-  if (!kbsUi) {
-    return <Redirect href="/admin" />;
-  }
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{t('adminKbsPermissionsTitle')}</Text>
       <Text style={styles.p}>{t('adminKbsPermissionsIntro')}</Text>
+      {!kbsUi ? <Text style={styles.banner}>{t('adminKbsStaffTabDisabledBanner')}</Text> : null}
 
       <FlatList
         data={usersQ.data ?? []}
@@ -156,6 +150,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: theme.colors.backgroundSecondary, gap: 10 },
   title: { fontSize: 18, fontWeight: '900', color: theme.colors.text },
   p: { color: theme.colors.textSecondary, lineHeight: 20 },
+  banner: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#92400e',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    padding: 12,
+    borderRadius: 12,
+  },
   empty: { color: theme.colors.textSecondary, marginTop: 12 },
   card: { backgroundColor: theme.colors.surface, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.borderLight, padding: 12, marginBottom: 10, gap: 10 },
   userRow: { gap: 8 },

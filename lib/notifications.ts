@@ -42,6 +42,7 @@ export const STAFF_TYPES = {
 
 /** Admin'e giden bildirim tipleri */
 export const ADMIN_TYPES = {
+  contract_acceptance_new: 'admin_contract_acceptance_new',
   pending_checkin: 'admin_pending_checkin',
   pending_stock: 'admin_pending_stock',
   pending_leave: 'admin_pending_leave',

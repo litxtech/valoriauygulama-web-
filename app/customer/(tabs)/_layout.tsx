@@ -2,9 +2,8 @@ import { useCallback, useEffect } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Platform } from 'react-native';
 import { Tabs, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
-import { BottomTabBar } from '@react-navigation/bottom-tabs';
+import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
@@ -198,9 +197,8 @@ const styles = StyleSheet.create({
 
 export default function CustomerTabsLayout() {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
-  const tabBarHeight = 58 + 8 + insets.bottom;
-  const tabBarPaddingBottom = Math.max(insets.bottom, 8);
+  const tabBarHeight = 58 + 8;
+  const tabBarPaddingBottom = 8;
   const staff = useAuthStore((s) => s.staff);
   const { appToken, setUnreadCount, loadStoredToken, unreadCount: guestMsgUnread } = useGuestMessagingStore();
   const refreshNotifications = useGuestNotificationStore((s) => s.refresh);
@@ -267,7 +265,9 @@ export default function CustomerTabsLayout() {
 
   return (
     <Tabs
-      tabBar={(props) => <BottomTabBar {...props} />}
+      tabBar={(props) => (
+        <FloatingIslandTabBar {...props} surfaceColor={appTabBar.background} borderColor={appTabBar.border} />
+      )}
       screenOptions={{
         /** Varsayılan lazy: true ilk sekme tıklanınca mount + yükleme flicker’ı; hepsini erken mount et */
         lazy: false,
@@ -276,17 +276,13 @@ export default function CustomerTabsLayout() {
         tabBarActiveTintColor: appTabBar.fallbackActive,
         tabBarInactiveTintColor: appTabBar.inactive,
         tabBarStyle: {
-          backgroundColor: appTabBar.background,
-          borderTopColor: appTabBar.border,
-          borderTopWidth: 1,
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
           height: tabBarHeight,
           paddingTop: 6,
           paddingBottom: tabBarPaddingBottom,
-          elevation: 8,
-          shadowColor: 'rgba(99, 102, 241, 0.2)',
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 1,
-          shadowRadius: 12,
+          elevation: 0,
+          shadowOpacity: 0,
         },
         tabBarLabelStyle: {
           fontSize: 10,

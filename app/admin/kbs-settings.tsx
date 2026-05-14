@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { Redirect } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
@@ -93,12 +92,10 @@ export default function AdminKbsSettingsScreen() {
   };
 
   useEffect(() => {
-    if (!kbsUi) return;
     void loadOpsRooms();
-  }, [kbsUi]);
+  }, []);
 
   useEffect(() => {
-    if (!kbsUi) return;
     const load = async () => {
       setLoading(true);
       try {
@@ -144,7 +141,7 @@ export default function AdminKbsSettingsScreen() {
     load();
     // Initial load only; formatters read latest t() when alerts run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reset, kbsUi]);
+  }, [reset]);
 
   const copyDebugToClipboard = async () => {
     const payload = {
@@ -266,13 +263,10 @@ export default function AdminKbsSettingsScreen() {
     }
   };
 
-  if (!kbsUi) {
-    return <Redirect href="/admin" />;
-  }
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>{t('adminKbsSettingsScreenTitle')}</Text>
+      {!kbsUi ? <Text style={styles.banner}>{t('adminKbsStaffTabDisabledBanner')}</Text> : null}
       <Text style={styles.sub}>{t('adminKbsSettingsPasswordHint')}</Text>
       <Text style={styles.hintBox}>{t('adminKbsSettingsBridgeHint')}</Text>
 
@@ -389,6 +383,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   content: { padding: 16, gap: 10, paddingBottom: 40 },
   title: { fontSize: 18, fontWeight: '900', color: theme.colors.text },
+  banner: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#92400e',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   sub: { color: theme.colors.textSecondary, lineHeight: 20, marginBottom: 6 },
   hintBox: {
     color: theme.colors.textSecondary,

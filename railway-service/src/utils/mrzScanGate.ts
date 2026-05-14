@@ -1,4 +1,4 @@
-/** Railway köprüsü: app `lib/scanner` ile aynı MRZ kayıt kuralları. */
+/** Ops KBS köprüsü: app `lib/scanner` ile aynı MRZ kayıt kuralları. */
 
 import { Errors } from '../shared/errors/appError.js';
 

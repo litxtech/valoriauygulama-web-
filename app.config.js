@@ -128,6 +128,8 @@ const baseConfig = {
     public: {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+      /** KBS sekmesi + admin KBS menüleri; ayrıca EXPO_PUBLIC_KBS_UI_ENABLED env */
+      kbsUiEnabled: process.env.EXPO_PUBLIC_KBS_UI_ENABLED,
     },
   },
   owner: 'valoriahotel',

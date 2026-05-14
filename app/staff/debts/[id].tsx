@@ -11,7 +11,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -117,6 +117,8 @@ export default function StaffDebtDetail() {
       .from('finance_checks')
       .select('id, counterparty_name, amount')
       .eq('organization_id', dr.organization_id)
+      .not('status', 'eq', 'paid')
+      .not('status', 'eq', 'bounced')
       .not('status', 'eq', 'cancelled')
       .order('created_at', { ascending: false })
       .limit(40);
@@ -128,6 +130,12 @@ export default function StaffDebtDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const submitPayment = async () => {
     if (!id || !me?.id || !debt) return;
@@ -166,7 +174,7 @@ export default function StaffDebtDetail() {
     setPayAmount('');
     setPayNote('');
     setPayCheckId(null);
-    load();
+    await load();
   };
 
   if (loading || !debt) {
@@ -215,6 +223,9 @@ export default function StaffDebtDetail() {
                 {PAYMENT_METHOD_LABELS[p.payment_method]} · {formatDateShort(p.paid_at)}
               </Text>
               {p.notes ? <Text style={styles.payNote}>{p.notes}</Text> : null}
+              {p.finance_check_id ? (
+                <Text style={styles.payCheck}>Çek kaydına bağlı ödeme</Text>
+              ) : null}
             </View>
           ))
         )}
@@ -309,7 +320,7 @@ const styles = StyleSheet.create({
   payRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.borderLight },
   payAmt: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
   payMeta: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
-  payNote: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 4 },
+  payCheck: { fontSize: 12, color: theme.colors.primary, marginTop: 4, fontWeight: '600' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalCard: {
     backgroundColor: '#fff',

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,13 +12,15 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  AppState,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { shareContractPdf, type GuestForPdf } from '@/lib/contractPdf';
-import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
+import { computeStayAmounts } from '@/lib/guestStayFinancials';
 import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
 
@@ -43,6 +45,10 @@ const STATUS_LABELS: Record<string, string> = {
   out_of_order: 'Kullanılmıyor',
 };
 
+function formatTry(n: number): string {
+  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 2 }).format(n);
+}
+
 export default function StaffAcceptancesScreen() {
   const staffId = useAuthStore((s) => s.staff?.id);
   const [rows, setRows] = useState<AcceptanceRow[]>([]);
@@ -56,6 +62,18 @@ export default function StaffAcceptancesScreen() {
   const [nightsInput, setNightsInput] = useState('');
   const [assigning, setAssigning] = useState(false);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
+
+  const stayPreview = useMemo(() => {
+    if (!selectedRoomId) return null;
+    const raw = priceInput.replace(/\s/g, '').replace(',', '.');
+    const price = raw === '' ? NaN : parseFloat(raw);
+    const nightsRaw = nightsInput.trim();
+    const nights = nightsRaw === '' ? NaN : parseInt(nightsRaw, 10);
+    if (!Number.isFinite(price) || price < 0 || !Number.isFinite(nights) || nights < 1) return null;
+    const { totalNet, vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
+    const grandTotal = Math.round((totalNet + vatAmount + accommodationTaxAmount) * 100) / 100;
+    return { totalNet, vatAmount, accommodationTaxAmount, grandTotal };
+  }, [selectedRoomId, priceInput, nightsInput]);
 
   const load = useCallback(async () => {
     if (!staffId) return;
@@ -86,9 +104,57 @@ export default function StaffAcceptancesScreen() {
     );
   }, [staffId]);
 
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
   useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+    if (!staffId) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`contract_acceptances_assigned_${staffId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'contract_acceptances',
+          filter: `assigned_staff_id=eq.${staffId}`,
+        },
+        () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            debounce = null;
+            loadRef.current();
+          }, 250);
+        }
+      )
+      .subscribe();
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, [staffId]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && staffId) loadRef.current();
+    });
+    return () => sub.remove();
+  }, [staffId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!staffId) return;
+      let cancelled = false;
+      void (async () => {
+        await load();
+        if (!cancelled) setLoading(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [staffId, load])
+  );
 
   useEffect(() => {
     if (roomModalVisible) {
@@ -135,8 +201,7 @@ export default function StaffAcceptancesScreen() {
       return;
     }
     const totalNet = price * nights;
-    const vatAmount = Math.round(totalNet * VAT_RATE * 100) / 100;
-    const accommodationTaxAmount = Math.round(totalNet * ACCOMMODATION_TAX_RATE * 100) / 100;
+    const { vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
     setAssigning(true);
     try {
       const { error: errAcceptance } = await supabase
@@ -144,6 +209,13 @@ export default function StaffAcceptancesScreen() {
         .update({ room_id: roomId })
         .eq('id', assignTarget.id);
       if (errAcceptance) throw errAcceptance;
+      if (assignTarget.guest_id) {
+        const { error: syncAcc } = await supabase
+          .from('contract_acceptances')
+          .update({ room_id: roomId })
+          .eq('guest_id', assignTarget.guest_id);
+        if (syncAcc) throw syncAcc;
+      }
 
       if (assignTarget.guest_id) {
         const { error: errGuest } = await supabase
@@ -189,38 +261,56 @@ export default function StaffAcceptancesScreen() {
 
   const clearRoom = async () => {
     if (!assignTarget) return;
-    setAssigning(true);
-    try {
-      const { error } = await supabase
-        .from('contract_acceptances')
-        .update({ room_id: null })
-        .eq('id', assignTarget.id);
-      if (error) throw error;
-      if (assignTarget.guest_id && assignTarget.room_id) {
-        await supabase
-          .from('guests')
-          .update({
-            room_id: null,
-            status: 'pending',
-            check_in_at: null,
-            total_amount_net: null,
-            vat_amount: null,
-            accommodation_tax_amount: null,
-            nights_count: null,
-          })
-          .eq('id', assignTarget.guest_id);
-        await supabase.from('rooms').update({ status: 'available' }).eq('id', assignTarget.room_id);
-      }
-      setRoomModalVisible(false);
-      setAssignTarget(null);
-      setSelectedRoomId(null);
-      setPriceInput('');
-      setNightsInput('');
-      await load();
-    } catch (e) {
-      Alert.alert('Hata', (e as Error)?.message ?? 'Oda kaldırılamadı.');
-    }
-    setAssigning(false);
+    Alert.alert(
+      'Oda atamasını kaldır',
+      'Misafir beklemede durumuna döner; maliye satırları ve check-in sıfırlanır. Emin misiniz?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Kaldır',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setAssigning(true);
+              try {
+                const { error } = await supabase
+                  .from('contract_acceptances')
+                  .update({ room_id: null })
+                  .eq('id', assignTarget.id);
+                if (error) throw error;
+                if (assignTarget.guest_id) {
+                  await supabase.from('contract_acceptances').update({ room_id: null }).eq('guest_id', assignTarget.guest_id);
+                }
+                if (assignTarget.guest_id && assignTarget.room_id) {
+                  await supabase
+                    .from('guests')
+                    .update({
+                      room_id: null,
+                      status: 'pending',
+                      check_in_at: null,
+                      total_amount_net: null,
+                      vat_amount: null,
+                      accommodation_tax_amount: null,
+                      nights_count: null,
+                    })
+                    .eq('id', assignTarget.guest_id);
+                  await supabase.from('rooms').update({ status: 'available' }).eq('id', assignTarget.room_id);
+                }
+                setRoomModalVisible(false);
+                setAssignTarget(null);
+                setSelectedRoomId(null);
+                setPriceInput('');
+                setNightsInput('');
+                await load();
+              } catch (e) {
+                Alert.alert('Hata', (e as Error)?.message ?? 'Oda kaldırılamadı.');
+              }
+              setAssigning(false);
+            })();
+          },
+        },
+      ]
+    );
   };
 
   const downloadPdf = async (item: AcceptanceRow) => {
@@ -236,10 +326,6 @@ export default function StaffAcceptancesScreen() {
         .eq('id', item.guest_id)
         .single();
       if (error || !guest) throw new Error(error?.message ?? 'Misafir bulunamadı.');
-      if (!guest.signature_data) {
-        Alert.alert('Uyarı', 'Bu misafir henüz sözleşmeyi imzalamamış.');
-        return;
-      }
       const forPdf: GuestForPdf = {
         ...guest,
         rooms: Array.isArray(guest.rooms) ? (guest.rooms[0] ?? null) : guest.rooms,
@@ -248,8 +334,9 @@ export default function StaffAcceptancesScreen() {
       await shareContractPdf(forPdf);
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'PDF oluşturulamadı.');
+    } finally {
+      setPdfLoadingId(null);
     }
-    setPdfLoadingId(null);
   };
 
   if (!staffId) return null;
@@ -392,6 +479,27 @@ export default function StaffAcceptancesScreen() {
                     keyboardType="number-pad"
                     placeholder="Örn. 3"
                   />
+                  {stayPreview && (
+                    <View style={styles.liveAmountCard}>
+                      <Text style={styles.liveAmountTitle}>Maliye özeti (canlı)</Text>
+                      <View style={styles.liveAmountRow}>
+                        <Text style={styles.liveAmountLabel}>Net konaklama</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.totalNet)}</Text>
+                      </View>
+                      <View style={styles.liveAmountRow}>
+                        <Text style={styles.liveAmountLabel}>KDV</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.vatAmount)}</Text>
+                      </View>
+                      <View style={styles.liveAmountRow}>
+                        <Text style={styles.liveAmountLabel}>Konaklama vergisi</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.accommodationTaxAmount)}</Text>
+                      </View>
+                      <View style={[styles.liveAmountRow, styles.liveAmountRowTotal]}>
+                        <Text style={styles.liveAmountLabelTotal}>Genel toplam (net + vergiler)</Text>
+                        <Text style={styles.liveAmountValueTotal}>{formatTry(stayPreview.grandTotal)}</Text>
+                      </View>
+                    </View>
+                  )}
                   <TouchableOpacity
                     style={[styles.confirmAssignBtn, assigning && styles.confirmAssignBtnDisabled]}
                     onPress={confirmAssignRoom}
@@ -512,6 +620,21 @@ const styles = StyleSheet.create({
   priceManualHint: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 17, marginBottom: 10 },
   priceFormLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary, marginBottom: 6 },
   priceInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 12 },
+  liveAmountCard: {
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  liveAmountTitle: { fontSize: 13, fontWeight: '700', color: theme.colors.text, marginBottom: 10 },
+  liveAmountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  liveAmountLabel: { fontSize: 13, color: theme.colors.textSecondary },
+  liveAmountValue: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
+  liveAmountRowTotal: { marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, marginBottom: 0 },
+  liveAmountLabelTotal: { fontSize: 14, fontWeight: '700', color: theme.colors.text },
+  liveAmountValueTotal: { fontSize: 15, fontWeight: '800', color: theme.colors.primary },
   confirmAssignBtn: { padding: 14, backgroundColor: theme.colors.primary, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   confirmAssignBtnDisabled: { opacity: 0.7 },
   confirmAssignBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },

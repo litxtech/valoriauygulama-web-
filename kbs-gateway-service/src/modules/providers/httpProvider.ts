@@ -98,16 +98,19 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       (([payload.firstName, payload.lastName].filter(Boolean).join(' ').trim() || null) as string | null)) as string | null;
     const firstName = payload.firstName ?? (fullName ? fullName.split(' ')[0] : null);
     const lastName = payload.lastName ?? null;
+    const adiFromParts = [firstName, payload.middleName].filter((x) => x != null && String(x).trim().length > 0).join(' ').trim();
+    const adi = adiFromParts || firstName || null;
 
     const musteriFields: Record<string, string | null | undefined> = {
-      ADI: firstName ?? null,
+      ADI: adi,
       SOYADI: lastName ?? null,
       BELGENO: payload.documentNumber,
       DOGUMTARIHI: payload.birthDate ? this.normalizeDateTime(payload.birthDate) : null,
       GRSTRH: this.normalizeDateTime(payload.checkInAt) ?? new Date().toISOString(),
       ODANO: payload.roomNumber ?? null,
       CINSIYET: gender
-      // ULKKOD: optional enum (snfEnum.Ulkeler) - left unset unless mapped
+      // Ek KBS alanları (seri, kullanım, plaka, telefon vb.) resmi WSDL ile doğrulanana kadar SOAP’a eklenmez;
+      // gateway yükünde taşınır ve log / ileri entegrasyon için kullanılabilir.
     };
 
     const musteriXml = this.buildWcfDatacontractObjectXml('http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis', musteriFields);

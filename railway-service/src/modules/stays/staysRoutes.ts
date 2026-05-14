@@ -8,6 +8,10 @@ const AssignSchema = z.object({
   roomId: z.string().uuid()
 });
 
+const MarkReadySchema = z.object({
+  guestDocumentIds: z.array(z.string().uuid()).min(1)
+});
+
 export const staysRoutes: FastifyPluginAsync = async (app) => {
   app.get('/rooms', async (req) => {
     const auth = req.auth;
@@ -201,6 +205,48 @@ export const staysRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return { ok: true, data: stay };
+  });
+
+  /** Parti (Beklet) sonrası: `scanned` → `ready_to_submit` (oda ataması ayrıca yapılmalı). */
+  app.post('/documents/mark-ready', async (req) => {
+    const auth = req.auth;
+    if (!auth) throw Errors.unauthorized();
+    const body = MarkReadySchema.parse(req.body);
+
+    const { data: rows, error: qErr } = await app.supabase
+      .schema('ops')
+      .from('guest_documents')
+      .select('id, scan_status')
+      .eq('hotel_id', auth.hotelId)
+      .in('id', body.guestDocumentIds);
+    if (qErr) throw Errors.internal('Failed to load documents');
+
+    const allowed = (rows ?? []).filter((r) => r.scan_status === 'scanned').map((r) => r.id as string);
+    if (!allowed.length) {
+      return { ok: true, data: { updated: 0 } };
+    }
+
+    const { data: upd, error: uErr } = await app.supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update({ scan_status: 'ready_to_submit' })
+      .in('id', allowed)
+      .eq('hotel_id', auth.hotelId)
+      .eq('scan_status', 'scanned')
+      .select('id');
+    if (uErr) throw Errors.internal('Failed to mark documents ready');
+
+    await writeAudit({
+      supabase: app.supabase,
+      hotelId: auth.hotelId,
+      actorUserId: auth.authUserId,
+      action: 'document.mark_ready',
+      entityType: 'guest_document',
+      entityId: allowed[0] ?? 'batch',
+      metadata: { count: upd?.length ?? 0, ids: allowed }
+    });
+
+    return { ok: true, data: { updated: upd?.length ?? 0 } };
   });
 };
 

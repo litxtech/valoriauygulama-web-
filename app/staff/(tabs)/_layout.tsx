@@ -2,9 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Modal, Pressable, Platform, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Tabs, useRouter, type Href } from 'expo-router';
-import { BottomTabBar } from '@react-navigation/bottom-tabs';
+import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
@@ -23,7 +22,6 @@ import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
 
-const IG_HEADER_BG = pds.barGlass;
 const IG_HEADER_FG = pds.text;
 const IG_HEADER_BORDER = pds.borderLight;
 
@@ -137,9 +135,8 @@ function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['sta
 
 export default function StaffTabsLayout() {
   const { t, i18n } = useTranslation();
-  const insets = useSafeAreaInsets();
-  const tabBarHeight = 58 + 8 + insets.bottom;
-  const tabBarPaddingBottom = Math.max(insets.bottom, 8);
+  const tabBarHeight = 58 + 8;
+  const tabBarPaddingBottom = 8;
   const staff = useAuthStore((s) => s.staff);
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
   const unreadMessagesCount = useStaffUnreadMessagesStore((s) => s.unreadCount);
@@ -230,7 +227,9 @@ export default function StaffTabsLayout() {
   return (
     <>
     <Tabs
-      tabBar={(props) => <BottomTabBar {...props} />}
+      tabBar={(props) => (
+        <FloatingIslandTabBar {...props} surfaceColor={pds.cardBg} borderColor={pds.borderLight} />
+      )}
       screenListeners={({ route }) => ({
         tabPress: () => {
           if (route.name !== 'admin') {
@@ -247,17 +246,13 @@ export default function StaffTabsLayout() {
         tabBarActiveTintColor: pds.indigo,
         tabBarInactiveTintColor: pds.subtext,
         tabBarStyle: {
-          backgroundColor: pds.barGlassStrong,
-          borderTopColor: pds.borderLight,
-          borderTopWidth: 1,
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
           height: tabBarHeight,
           paddingTop: 8,
           paddingBottom: tabBarPaddingBottom,
-          elevation: 12,
-          shadowColor: 'rgba(0,0,0,0.08)',
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 1,
-          shadowRadius: 12,
+          elevation: 0,
+          shadowOpacity: 0,
         },
         tabBarLabelStyle: {
           fontSize: 10,

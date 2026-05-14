@@ -43,6 +43,7 @@ export default function AdminFinanceChecksIndex() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dirFilter, setDirFilter] = useState<'all' | FinanceCheckDirection>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | FinanceCheckStatus>('all');
 
   const orgFilter = useMemo(() => {
     if (me?.app_permissions?.super_admin === true || me?.role === 'admin') {
@@ -78,9 +79,11 @@ export default function AdminFinanceChecksIndex() {
   }, [load]);
 
   const filtered = useMemo(() => {
-    if (dirFilter === 'all') return rows;
-    return rows.filter((r) => r.direction === dirFilter);
-  }, [rows, dirFilter]);
+    let list = rows;
+    if (dirFilter !== 'all') list = list.filter((r) => r.direction === dirFilter);
+    if (statusFilter !== 'all') list = list.filter((r) => r.status === statusFilter);
+    return list;
+  }, [rows, dirFilter, statusFilter]);
 
   const upcoming = useMemo(() => {
     const t = new Date();
@@ -134,6 +137,29 @@ export default function AdminFinanceChecksIndex() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <Text style={styles.filterLabel}>Duruma göre</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusChips}>
+          <TouchableOpacity
+            onPress={() => setStatusFilter('all')}
+            style={[styles.stChip, statusFilter === 'all' && styles.stChipOn]}
+          >
+            <Text style={[styles.stChipText, statusFilter === 'all' && styles.stChipTextOn]}>Tümü</Text>
+          </TouchableOpacity>
+          {(['draft', 'registered', 'presented', 'partial', 'paid', 'bounced', 'cancelled'] as FinanceCheckStatus[]).map(
+            (st) => (
+              <TouchableOpacity
+                key={st}
+                onPress={() => setStatusFilter(st)}
+                style={[styles.stChip, statusFilter === st && styles.stChipOn]}
+              >
+                <Text style={[styles.stChipText, statusFilter === st && styles.stChipTextOn]} numberOfLines={1}>
+                  {CHECK_STATUS_LABELS[st]}
+                </Text>
+              </TouchableOpacity>
+            ),
+          )}
+        </ScrollView>
 
         {upcoming.length > 0 ? (
           <AdminCard style={styles.hintCard}>
@@ -204,6 +230,20 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: adminTheme.colors.infoLight, borderColor: adminTheme.colors.info },
   chipText: { fontSize: 13, color: adminTheme.colors.textSecondary },
   chipTextOn: { color: adminTheme.colors.info, fontWeight: '600' },
+  filterLabel: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textSecondary, marginBottom: 8 },
+  statusChips: { flexDirection: 'row', gap: 8, paddingBottom: 4, marginBottom: 8 },
+  stChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    maxWidth: 160,
+  },
+  stChipOn: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  stChipText: { fontSize: 12, color: adminTheme.colors.textSecondary, fontWeight: '600' },
+  stChipTextOn: { color: '#fff' },
   hintCard: { marginBottom: 12, backgroundColor: adminTheme.colors.warningLight },
   hintTitle: { fontWeight: '700', marginBottom: 6, color: adminTheme.colors.text },
   hintLine: { fontSize: 13, color: adminTheme.colors.textSecondary, marginBottom: 4 },

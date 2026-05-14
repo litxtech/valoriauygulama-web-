@@ -1,6 +1,6 @@
 -- OPS hardening: enforce idempotency + block client writes via RLS
 -- Goal:
--- - Add unique/partial indexes required by Railway logic (idempotent upsert + single active stay).
+-- - Add unique/partial indexes required by backend idempotency (idempotent upsert + single active stay).
 -- - Tighten RLS: authenticated clients can read scoped data, but cannot write ops core tables.
 --   Writes are expected via backend using service_role (RLS-bypass) only.
 

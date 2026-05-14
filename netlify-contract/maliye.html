@@ -93,7 +93,7 @@
           <span id="authState" class="status">Kilitli</span>
           <button id="refreshBtn" type="button" class="secondary">Listeyi Yenile</button>
         </div>
-        <div class="muted">PIN dogrulandiktan sonra belgeler ve gunluk formlar otomatik yuklenir. Sayfa 30 saniyede bir kendini yeniler.</div>
+        <div class="muted">PIN dogrulandiktan sonra belgeler ve gunluk formlar yuklenir. Her 30 saniyede kontrol edilir; yeni evrak veya kayit olunca liste guncellenir.</div>
         <div id="messageBox" class="info"></div>
       </div>
     </div>
@@ -252,7 +252,7 @@
           msg.className = 'info show ok';
           msg.textContent = 'Giris basarili. Evraklar yuklendi.';
           if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-          autoRefreshTimer = setInterval(function(){ refreshIfChanged().catch(function(){}); }, 12000);
+          autoRefreshTimer = setInterval(function(){ refreshIfChanged().catch(function(){}); }, 30000);
         }catch(e){
           var authStateError = document.getElementById('authState');
           authStateError.textContent = 'Hatali PIN';

@@ -14,13 +14,24 @@ export type SubmitCheckInPayload = {
   fullName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  middleName?: string | null;
   documentNumber?: string | null;
+  documentSeries?: string | null;
   nationalityCode?: string | null;
   issuingCountryCode?: string | null;
   birthDate?: string | null; // ISO yyyy-mm-dd preferred
   gender?: 'M' | 'F' | 'X' | null;
   roomNumber?: string | null;
   checkInAt?: string | null; // ISO datetime preferred
+  /** Pasaport / belge bitiş (ISO date); SOAP’a yalnızca doğrulanmış alan adlarıyla eklenir. */
+  documentExpiryDate?: string | null;
+  usageKind?: string | null;
+  kbsPersonKind?: string | null;
+  plateNumber?: string | null;
+  phone?: string | null;
+  forwardDated?: boolean;
+  fatherName?: string | null;
+  motherName?: string | null;
 };
 
 export type SubmitCheckOutPayload = {

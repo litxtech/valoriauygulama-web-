@@ -3,8 +3,8 @@
  * (Admin paneli Stack — alt tab yok; bu tema orada kullanılmaz.)
  */
 export const appTabBar = {
-  /** Tab çubuğu — “cam” + ince ayrıç (personel / misafir) */
-  background: 'rgba(255,255,255,0.94)',
+  /** Tab ada + alt güvenli alan: opak (yarı saydamda alt grimsi belli oluyordu) */
+  background: '#FFFFFF',
   border: '#EEEEEE',
   /** Pasif ikon + etiket */
   inactive: '#6B7280',

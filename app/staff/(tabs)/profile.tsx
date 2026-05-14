@@ -47,8 +47,55 @@ import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { ProfileCover } from '@/components/ProfileCover';
 import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
+import { SEVERITY_LABEL_TR } from '@/lib/staffPersonnelWarnings';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/** Ciddi uyarı kaydından sonra profilde yanıp sönen not süresi */
+const PROFILE_SEVERE_WARNING_HIGHLIGHT_MS = 3 * 24 * 60 * 60 * 1000;
+
+type SevereWarningHighlightRow = {
+  id: string;
+  subject_line: string | null;
+  body: string;
+  created_at: string;
+};
+
+function SevereWarningProfileNote({ onPress }: { onPress: () => void }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.28,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return (
+    <TouchableOpacity style={styles.severeWarnNoteRow} onPress={onPress} activeOpacity={0.88}>
+      <Animated.View style={[styles.severeWarnDot, { opacity }]} />
+      <View style={styles.severeWarnNoteTextCol}>
+        <Text style={styles.severeWarnNoteTitle}>Yönetim uyarı notu</Text>
+        <Text style={styles.severeWarnNoteHint} numberOfLines={2}>
+          Ciddi uyarı — nedenini görmek için dokunun
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#991b1b" />
+    </TouchableOpacity>
+  );
+}
 const STAFF_HERO_HEIGHT = P.hero.height;
 
 type StaffProfile = {
@@ -322,6 +369,8 @@ export default function StaffProfileScreen() {
   const [salaryHistoryOpen, setSalaryHistoryOpen] = useState(false);
   const [blockedCount, setBlockedCount] = useState(0);
   const [personnelWarningUnread, setPersonnelWarningUnread] = useState(0);
+  const [severeWarningHighlight, setSevereWarningHighlight] = useState<SevereWarningHighlightRow | null>(null);
+  const [severeWarningDetailOpen, setSevereWarningDetailOpen] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
   const [engagement, setEngagement] = useState<StaffEngagementStats>({ posts: 0, likes: 0, comments: 0, visits: 0 });
@@ -708,17 +757,37 @@ export default function StaffProfileScreen() {
   const refreshPersonnelWarnings = useCallback(async () => {
     if (!authStaff?.id) {
       setPersonnelWarningUnread(0);
+      setSevereWarningHighlight(null);
       return;
     }
     try {
-      const { count, error } = await supabase
-        .from('staff_personnel_warnings')
-        .select('id', { count: 'exact', head: true })
-        .eq('subject_staff_id', authStaff.id)
-        .is('acknowledged_at', null);
-      if (!error) setPersonnelWarningUnread(count ?? 0);
+      const sinceIso = new Date(Date.now() - PROFILE_SEVERE_WARNING_HIGHLIGHT_MS).toISOString();
+      const [unreadRes, severeRes] = await Promise.all([
+        supabase
+          .from('staff_personnel_warnings')
+          .select('id', { count: 'exact', head: true })
+          .eq('subject_staff_id', authStaff.id)
+          .is('acknowledged_at', null),
+        supabase
+          .from('staff_personnel_warnings')
+          .select('id, subject_line, body, created_at')
+          .eq('subject_staff_id', authStaff.id)
+          .eq('severity', 'severe')
+          .gte('created_at', sinceIso)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      if (!unreadRes.error) setPersonnelWarningUnread(unreadRes.count ?? 0);
+      else setPersonnelWarningUnread(0);
+      if (!severeRes.error && severeRes.data && typeof severeRes.data === 'object' && 'id' in severeRes.data) {
+        setSevereWarningHighlight(severeRes.data as SevereWarningHighlightRow);
+      } else {
+        setSevereWarningHighlight(null);
+      }
     } catch {
       setPersonnelWarningUnread(0);
+      setSevereWarningHighlight(null);
     }
   }, [authStaff?.id]);
 
@@ -884,6 +953,9 @@ export default function StaffProfileScreen() {
           <Text style={styles.heroSubtitle} numberOfLines={2}>
             {[profile.position?.trim(), profile.department?.trim()].filter(Boolean).join(' · ') || t('unspecified')}
           </Text>
+          {severeWarningHighlight ? (
+            <SevereWarningProfileNote onPress={() => setSevereWarningDetailOpen(true)} />
+          ) : null}
           {daysWithUs != null ? (
             <TouchableOpacity activeOpacity={0.9} style={styles.tenureButtonWrap} onPress={() => setTenureModalVisible(true)}>
               <LinearGradient
@@ -1433,6 +1505,50 @@ export default function StaffProfileScreen() {
       </Modal>
 
       <Modal
+        visible={severeWarningDetailOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSevereWarningDetailOpen(false)}
+      >
+        <Pressable style={styles.langModalOverlay} onPress={() => setSevereWarningDetailOpen(false)}>
+          <Pressable style={styles.severeWarnModalBox} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.severeWarnModalTitle}>{SEVERITY_LABEL_TR.severe}</Text>
+            <Text style={styles.severeWarnModalMeta}>
+              Kayıt:{' '}
+              {severeWarningHighlight
+                ? formatDateShort(severeWarningHighlight.created_at)
+                : '—'}
+            </Text>
+            {severeWarningHighlight?.subject_line?.trim() ? (
+              <Text style={styles.severeWarnModalSubject}>{severeWarningHighlight.subject_line.trim()}</Text>
+            ) : null}
+            <ScrollView style={styles.severeWarnModalScroll} showsVerticalScrollIndicator keyboardShouldPersistTaps="handled">
+              <Text style={styles.severeWarnModalBody}>
+                {(severeWarningHighlight?.body ?? '').trim() || 'Açıklama metni eklenmemiş.'}
+              </Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.severeWarnModalLinkBtn}
+              onPress={() => {
+                setSevereWarningDetailOpen(false);
+                router.push('/staff/warnings');
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.severeWarnModalLinkText}>Tüm resmi uyarılarım</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.tenureModalCloseBtn}
+              onPress={() => setSevereWarningDetailOpen(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.tenureModalCloseText}>Kapat</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
         visible={tenureModalVisible}
         transparent
         animationType="fade"
@@ -1824,6 +1940,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tenureModalCloseText: { color: theme.colors.white, fontSize: 14, fontWeight: '700' },
+  severeWarnNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+    marginHorizontal: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  severeWarnDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#dc2626',
+  },
+  severeWarnNoteTextCol: { flex: 1, minWidth: 0 },
+  severeWarnNoteTitle: { fontSize: 14, fontWeight: '800', color: '#7f1d1d' },
+  severeWarnNoteHint: { fontSize: 12, fontWeight: '600', color: '#991b1b', marginTop: 2 },
+  severeWarnModalBox: {
+    width: '90%',
+    maxWidth: 420,
+    maxHeight: '78%',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#fecaca',
+  },
+  severeWarnModalTitle: { fontSize: 18, fontWeight: '800', color: '#7f1d1d' },
+  severeWarnModalMeta: { marginTop: 6, fontSize: 12, fontWeight: '600', color: theme.colors.textMuted },
+  severeWarnModalSubject: {
+    marginTop: 10,
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  severeWarnModalScroll: { maxHeight: 280, marginTop: 8 },
+  severeWarnModalBody: { fontSize: 15, lineHeight: 22, color: theme.colors.text },
+  severeWarnModalLinkBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surface,
+  },
+  severeWarnModalLinkText: { fontSize: 14, fontWeight: '700', color: theme.colors.primary },
   heroOnlineRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -17,6 +17,42 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function notifyAdminsNewContractAcceptance(
+  supabaseUrl: string,
+  serviceKey: string,
+  supabase: ReturnType<typeof createClient>,
+  params: { guestName?: string | null; roomId?: string | null; lang: string }
+) {
+  try {
+    let roomBit = "";
+    if (params.roomId && String(params.roomId).trim().length > 0) {
+      const { data: r } = await supabase.from("rooms").select("room_number").eq("id", params.roomId).maybeSingle();
+      const n = (r as { room_number?: string } | null)?.room_number?.trim();
+      if (n) roomBit = ` · ${n} no'lu oda`;
+    }
+    const name = (params.guestName ?? "").trim() || "Misafir";
+    await fetch(`${supabaseUrl}/functions/v1/notify-admins`, {
+      method: "POST",
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+      },
+      body: JSON.stringify({
+        title: "Yeni sözleşme onayı",
+        body: `${name} sözleşmeyi onayladı (${String(params.lang).toUpperCase()})${roomBit}. Sözleşme onayları ekranından kontrol edin.`,
+        data: {
+          url: "/admin/contracts/acceptances",
+          notificationType: "admin_contract_acceptance_new",
+        },
+      }),
+    });
+  } catch {
+    /* push hatası onayı engellemesin */
+  }
+}
+
 /** Tarayıcının sayfayı HTML olarak render etmesi için (kaynak kodu göstermesin) */
 const HTML_HEADERS = {
   ...CORS,
@@ -662,7 +698,7 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
       }
       const ua = req.headers.get("user-agent");
       const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? null;
-      await supabase.from("contract_acceptances").insert({
+      const { error: accJsonErr } = await supabase.from("contract_acceptances").insert({
         token: postToken,
         room_id: postRoomId,
         contract_lang: postLang,
@@ -672,6 +708,13 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
         ip_address: ip,
         source: "web",
       });
+      if (!accJsonErr) {
+        await notifyAdminsNewContractAcceptance(supabaseUrl, serviceKey, supabase, {
+          guestName: null,
+          roomId: postRoomId,
+          lang: postLang,
+        });
+      }
       return new Response(JSON.stringify({ success: true, message: "Onayınız alınmıştır." }), {
         status: 200,
         headers: { ...CORS, "Content-Type": "application/json" },
@@ -750,7 +793,7 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
       if (insertedGuest?.id) insertedGuestId = insertedGuest.id;
     }
 
-    await supabase.from("contract_acceptances").insert({
+    const { error: accFormErr } = await supabase.from("contract_acceptances").insert({
       token,
       room_id: roomId,
       contract_lang: lang,
@@ -761,6 +804,13 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
       source: "web",
       guest_id: insertedGuestId,
     });
+    if (!accFormErr) {
+      await notifyAdminsNewContractAcceptance(supabaseUrl, serviceKey, supabase, {
+        guestName: hasFullForm ? fullName : null,
+        roomId,
+        lang,
+      });
+    }
 
     const { data: settingsRows } = await supabase.from("app_settings").select("key, value").in("key", ["google_play_url", "app_store_url", "contract_font_size", "contract_theme", "contract_compact"]);
     const settingsMap: Record<string, string | null> = {};

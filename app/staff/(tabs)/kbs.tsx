@@ -5,6 +5,7 @@ import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import { useTranslation } from 'react-i18next';
+import { useKbsMrzBatchStore } from '@/stores/kbsMrzBatchStore';
 
 function Tile(props: { title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
   return (
@@ -26,6 +27,7 @@ export default function StaffKbsTab() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const showMrz = canStaffUseMrzScan(staff);
+  const batchKey = useKbsMrzBatchStore((s) => s.batchKey);
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
@@ -47,6 +49,18 @@ export default function StaffKbsTab() {
 
       {showMrz ? (
         <Tile title={t('kbsNavScanSerial')} subtitle={t('kbsTabScanSub')} icon="scan-outline" onPress={() => router.push('/staff/mrz-scan')} />
+      ) : null}
+      {showMrz ? (
+        <Tile
+          title="Parti / Beklet"
+          subtitle="Aynı grupta sırayla MRZ; oda atayıp hazıra çekin."
+          icon="people-outline"
+          onPress={() =>
+            batchKey
+              ? router.push({ pathname: '/staff/kbs/batch', params: { batchKey } } as never)
+              : router.push('/staff/kbs/scan' as never)
+          }
+        />
       ) : null}
       <Tile title={t('kbsNavReady')} subtitle={t('kbsTabReadySub')} icon="paper-plane-outline" onPress={() => router.push('/staff/kbs/ready')} />
       <Tile title={t('kbsNavSubmitted')} subtitle={t('kbsTabSubmittedSub')} icon="list-outline" onPress={() => router.push('/staff/kbs/submitted')} />

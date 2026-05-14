@@ -4,7 +4,14 @@
 import { sendNotification } from '@/lib/notificationService';
 
 export type FinanceCheckDirection = 'given' | 'received';
-export type FinanceCheckStatus = 'draft' | 'registered' | 'presented' | 'paid' | 'bounced' | 'cancelled';
+export type FinanceCheckStatus =
+  | 'draft'
+  | 'registered'
+  | 'presented'
+  | 'partial'
+  | 'paid'
+  | 'bounced'
+  | 'cancelled';
 
 export type DebtCategory = 'personal' | 'hotel_expense' | 'company_flow';
 export type DebtStatus = 'open' | 'partial' | 'closed';
@@ -25,6 +32,7 @@ export const CHECK_STATUS_LABELS: Record<FinanceCheckStatus, string> = {
   draft: 'Taslak',
   registered: 'Kayıtlı',
   presented: 'İbraz',
+  partial: 'Kısmi tahsil (borç ödemesi)',
   paid: 'Ödendi / Tahsil',
   bounced: 'Karşılıksız',
   cancelled: 'İptal',

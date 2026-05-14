@@ -14,7 +14,7 @@ function run(cmd, args, opts) {
 }
 
 if (process.env.START_KBS_GATEWAY === '1') {
-  console.log('Starting KBS gateway (railway-service / dist)...');
+  console.log('Starting KBS ops gateway (railway-service / dist)...');
   run('node', ['dist/app/server.js'], { cwd: 'railway-service' });
 } else {
   run('node', ['scripts/dev-host.js']);
