@@ -1,5 +1,5 @@
 /**
- * Vercel/CI build: Supabase public-maliye JSON cagrilari icin anon key ve API tabanini yazar.
+ * netlify-maliye Vercel build: public-maliye JSON icin maliye-config.js uretir.
  * Vercel Project Settings > Environment Variables:
  *   EXPO_PUBLIC_SUPABASE_ANON_KEY (veya MALIYE_SUPABASE_ANON_KEY)
  *   EXPO_PUBLIC_SUPABASE_URL (opsiyonel; yoksa asagidaki varsayilan proje URL'i)

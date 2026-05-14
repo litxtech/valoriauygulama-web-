@@ -1,9 +1,9 @@
 /**
  * Sabit maliye QR token (tek QR mantigi).
- * QR URL: Vercel maliye.html veya dogrudan public-maliye — misafir sozlesmesi (public-contract) ile karistirilmamali.
+ * Statik portal: repo `netlify-maliye` — Vercel'de ayri proje (sozlesme klasoru degil).
  */
 export const FIXED_MALIYE_QR_TOKEN = 'valoria-maliye-qr';
 
-/** Env yokken; kendi Vercel domain'inizle degistirin. */
+/** Env yokken; tam URL yerine Edge (QR yine calisir). Vercel maliye URL'ini app_settings ile verin. */
 export const FIXED_MALIYE_QR_URL_FALLBACK =
-  'https://valoriahotel-el4r.vercel.app/maliye.html?token=valoria-maliye-qr';
+  'https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye?token=valoria-maliye-qr';

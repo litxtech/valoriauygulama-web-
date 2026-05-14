@@ -97,15 +97,15 @@ export default function AdminMaliyeHome() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Maliye QR Evrak Merkezi</Text>
       <Text style={styles.sub}>
-        Denetim evraklari ve formlar. Sözlesme onayindan tamamen ayri modul; QR ve linkler yalniz maliye icindir.
+        Denetim evraklari, gunluk musteri listesi, PIN ile acilan portal. Misafir sozlesmesi (netlify-contract) ile hicbir ilgisi yok; ayri Vercel projesi: klasor netlify-maliye.
       </Text>
 
       <View style={styles.card}>
         <Text style={styles.label}>Maliye portal taban URL (QR hedefi)</Text>
         <Text style={styles.hint}>
-          Tercih: dogrudan Edge — ornek: {'\n'}
+          Edge API: {'\n'}
           {defaultLivePortalBase || 'https://PROJE_REF.supabase.co/functions/v1/public-maliye'}
-          {'\n\n'}Bos birakirsaniz QR uretiminde Edge adresi kullanilir. Isterseniz Vercel statik maliye sayfasi icin taban: https://SITE.vercel.app/maliye.html (sorgusuz). Bu yalniz maliye dosya yolu; misafir sozlesmesi (index) ile ayni is degildir.
+          {'\n\n'}Bos birakirsaniz QR bu adresi kullanir. Statik maliye sitesi icin Vercel ayri proje acin, Root Directory netlify-maliye; QR tabani ornek: https://MALIYE-PROJE.vercel.app (kök /, token sorguda).
         </Text>
         <TextInput
           value={baseUrl}

@@ -1,0 +1,8 @@
+{
+  "name": "valoria-maliye-portal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/gen-maliye-config.mjs"
+  }
+}
