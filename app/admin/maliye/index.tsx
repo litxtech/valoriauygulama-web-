@@ -96,14 +96,16 @@ export default function AdminMaliyeHome() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Maliye QR Evrak Merkezi</Text>
-      <Text style={styles.sub}>Denetim gorevlileri icin resmi evrak paneli. Sayfa statik dosya degildir: Supabase Edge Function her istekte canli uretir.</Text>
+      <Text style={styles.sub}>
+        Denetim evraklari ve formlar. Sözlesme onayindan tamamen ayri modul; QR ve linkler yalniz maliye icindir.
+      </Text>
 
       <View style={styles.card}>
         <Text style={styles.label}>Maliye portal taban URL (QR hedefi)</Text>
         <Text style={styles.hint}>
-          Tercih: dogrudan Edge adresi — ornek: {'\n'}
+          Tercih: dogrudan Edge — ornek: {'\n'}
           {defaultLivePortalBase || 'https://PROJE_REF.supabase.co/functions/v1/public-maliye'}
-          {'\n\n'}Bos birakirsaniz QR uretiminde Supabase Edge adresi kullanilir. Denetim QR icin Vercel uzerindeki maliye.html (sozlesme sitesi ile ayni deploy) kullanmak isterseniz taban URL olarak https://SITE.vercel.app/maliye.html (sorgu olmadan) kaydedin. maliye.html sayfasi statiktir; veri her zaman public-maliye API ile canli gelir.
+          {'\n\n'}Bos birakirsaniz QR uretiminde Edge adresi kullanilir. Isterseniz Vercel statik maliye sayfasi icin taban: https://SITE.vercel.app/maliye.html (sorgusuz). Bu yalniz maliye dosya yolu; misafir sozlesmesi (index) ile ayni is degildir.
         </Text>
         <TextInput
           value={baseUrl}
