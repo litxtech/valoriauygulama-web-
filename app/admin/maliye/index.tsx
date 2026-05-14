@@ -6,6 +6,11 @@ import { supabase } from '@/lib/supabase';
 import { FIXED_MALIYE_QR_TOKEN, FIXED_MALIYE_QR_URL_FALLBACK } from '@/constants/maliyeQr';
 import * as Clipboard from 'expo-clipboard';
 
+const supabaseOrigin = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+const defaultLivePortalBase = supabaseOrigin
+  ? `${supabaseOrigin}/functions/v1/public-maliye`
+  : '';
+
 export default function AdminMaliyeHome() {
   const router = useRouter();
   const [pin, setPin] = useState('');
@@ -41,9 +46,11 @@ export default function AdminMaliyeHome() {
       return;
     }
     const row = Array.isArray(res.data) ? res.data[0] : res.data;
-    const base = (baseUrl || '').trim() || (process.env.EXPO_PUBLIC_SUPABASE_URL
-      ? `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/public-maliye`
-      : '');
+    const base =
+      (baseUrl || '').trim() ||
+      (process.env.EXPO_PUBLIC_SUPABASE_URL
+        ? `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/public-maliye`
+        : FIXED_MALIYE_QR_URL_FALLBACK.replace(/\?.*$/, ''));
     const url = `${base}?token=${row.token}`;
     setLastUrl(url);
     Alert.alert('Hazır', 'Yeni maliye QR linki oluşturuldu.');
@@ -89,11 +96,22 @@ export default function AdminMaliyeHome() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Maliye QR Evrak Merkezi</Text>
-      <Text style={styles.sub}>Denetim gorevlileri icin resmi evrak karşılama paneli.</Text>
+      <Text style={styles.sub}>Denetim gorevlileri icin resmi evrak paneli. Sayfa statik dosya degildir: Supabase Edge Function her istekte canli uretir.</Text>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Maliye Portal Base URL</Text>
-        <TextInput value={baseUrl} onChangeText={setBaseUrl} placeholder="https://.../maliye.html" style={styles.input} autoCapitalize="none" />
+        <Text style={styles.label}>Maliye portal taban URL (QR hedefi)</Text>
+        <Text style={styles.hint}>
+          Tercih: dogrudan Edge adresi — ornek: {'\n'}
+          {defaultLivePortalBase || 'https://PROJE_REF.supabase.co/functions/v1/public-maliye'}
+          {'\n\n'}Bos birakirsaniz QR uretiminde Supabase Edge adresi kullanilir. Denetim QR icin Vercel uzerindeki maliye.html (sozlesme sitesi ile ayni deploy) kullanmak isterseniz taban URL olarak https://SITE.vercel.app/maliye.html (sorgu olmadan) kaydedin. maliye.html sayfasi statiktir; veri her zaman public-maliye API ile canli gelir.
+        </Text>
+        <TextInput
+          value={baseUrl}
+          onChangeText={setBaseUrl}
+          placeholder={defaultLivePortalBase || 'https://PROJE_REF.supabase.co/functions/v1/public-maliye'}
+          style={styles.input}
+          autoCapitalize="none"
+        />
         <TouchableOpacity style={styles.secondaryBtn} onPress={saveBaseUrl} disabled={savingBase}>
           {savingBase ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Portal Adresini Kaydet</Text>}
         </TouchableOpacity>
@@ -154,6 +172,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 10 },
   title: { fontSize: 20, fontWeight: '800', color: '#0f172a' },
   sub: { color: '#475569' },
+  hint: { color: '#64748b', fontSize: 12, lineHeight: 18, marginBottom: 4 },
   card: { backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', gap: 6 },
   label: { fontWeight: '700', color: '#334155' },
   input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 10, backgroundColor: '#fff' },

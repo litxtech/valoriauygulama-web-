@@ -1,7 +1,8 @@
 {
   "name": "valoria-contract",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "echo OK"
+    "build": "node scripts/gen-maliye-config.mjs"
   }
 }

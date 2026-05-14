@@ -1,39 +1,458 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Maliye Evrak Merkezi</title>
+  <title>Valoria Maliye Evrak Merkezi</title>
+  <script src="/maliye-config.js"></script>
   <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:20px;text-align:center}
-    a{color:#93c5fd}
-    .box{max-width:420px;font-size:15px;line-height:1.5}
+    :root{
+      --bg:#0b1220;--bg2:#101c34;--card:#ffffff;--text:#111827;--muted:#64748b;
+      --line:#e2e8f0;--primary:#1d4ed8;--secondary:#0f766e;--soft:#f8fafc;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#fff;
+      background:
+        radial-gradient(1200px 500px at 15% -10%, rgba(59,130,246,.30), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(16,185,129,.22), transparent 55%),
+        linear-gradient(180deg,var(--bg),var(--bg2));
+    }
+    .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 26px}
+    .hero{
+      background:linear-gradient(135deg,rgba(255,255,255,.12),rgba(255,255,255,.04));
+      border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:16px 18px;margin-bottom:12px;
+      backdrop-filter: blur(6px);
+    }
+    .heroTop{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+    .title{font-size:24px;font-weight:900;letter-spacing:.2px}
+    .subtitle{margin-top:6px;color:rgba(255,255,255,.86);font-size:13px}
+    .badge{padding:8px 10px;border-radius:999px;background:rgba(255,255,255,.12);font-size:12px;font-weight:700}
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+    .card{background:var(--card);color:var(--text);border-radius:14px;padding:14px;border:1px solid var(--line)}
+    .panelTitle{font-size:14px;font-weight:900;color:#0f172a;margin:0 0 10px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    input,button{padding:10px;border-radius:10px;border:1px solid #cbd5e1}
+    input{background:#fff}
+    button{cursor:pointer;background:var(--primary);color:#fff;border:none;font-weight:800}
+    button.secondary{background:var(--secondary)}
+    .status{padding:8px 10px;border-radius:999px;font-size:12px;background:#e2e8f0;color:#1f2937;font-weight:700}
+    .muted{color:var(--muted);font-size:12px}
+    .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+    .stat{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:10px}
+    .stat b{display:block;font-size:18px;color:#0f172a}
+    .stat span{font-size:12px;color:#64748b}
+    .accordion{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden;background:#fff}
+    .accHead{padding:12px;background:var(--soft);font-weight:900;display:flex;justify-content:space-between;cursor:pointer}
+    .accBody{padding:10px;display:none}
+    .doc{
+      padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;
+      display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
+    }
+    .docTitle{font-weight:800;margin-bottom:3px}
+    .docActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .docActions button{padding:8px 10px;font-size:12px}
+    #forms{display:none}
+    .empty{padding:18px;text-align:center;color:var(--muted)}
+    .pinRow{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+    @media (min-width:520px){
+      .pinRow{flex-direction:row;flex-wrap:wrap;align-items:flex-end}
+    }
+    .pinField{flex:1;min-width:0}
+    #pin{width:100%;font-size:16px;box-sizing:border-box;padding:12px 14px;border-radius:10px}
+    .pinActions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .pinActions button{min-width:min(100%,140px);padding:12px 14px;border-radius:10px}
+    #msg{display:none;margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600}
+    #msg.show{display:block}
+    #msg.wait{background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd}
+    #msg.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
+    #msg.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+    .status.open{background:#dcfce7;color:#166534;border-color:#86efac}
+    .cfgWarn{margin:12px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:13px;line-height:1.45;display:none}
+    .cfgWarn.show{display:block}
+    @media (max-width: 900px){
+      .grid{grid-template-columns:1fr}
+      .doc{grid-template-columns:1fr}
+      .docActions{justify-content:flex-start}
+      .stats{grid-template-columns:1fr 1fr}
+    }
   </style>
-  <script>
-    (function () {
-      var BASE = "https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye";
-      var p = new URLSearchParams(window.location.search);
-      if (!p.get("token") && !p.get("t")) {
-        p.set("token", "valoria-maliye-qr");
-      }
-      var target = BASE + "?" + p.toString();
-      window.location.replace(target);
-    })();
-  </script>
 </head>
 <body>
-  <div class="box">
-    <p>Maliye portalina yonlendiriliyorsunuz…</p>
-    <p><a id="link" href="#">Buraya tiklayin</a></p>
+  <div class="wrap">
+    <div id="cfgWarn" class="cfgWarn"></div>
+    <div class="hero">
+      <div class="heroTop">
+        <div>
+          <div class="title">Maliye Evrak Merkezi</div>
+          <div class="subtitle">Sayin denetim gorevlisi, gerekli belgeler bu portalda cekmeceli yapida sunulmaktadir.</div>
+        </div>
+        <div class="badge">Valoria Hotel | Resmi Dokuman Portali</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3 class="panelTitle">Erisim ve Evraklar</h3>
+        <div class="pinRow">
+          <div class="pinField">
+            <label for="pin" class="muted" style="display:block;margin-bottom:6px;font-weight:600">PIN</label>
+            <input id="pin" type="password" inputmode="numeric" placeholder="PIN kodunu girin" autocomplete="one-time-code" enterkeyhint="go" />
+          </div>
+          <div class="pinActions">
+            <button type="button" id="btnUnlock">Portali Ac</button>
+            <span id="authState" class="status">Kilitli</span>
+            <button type="button" id="btnRefresh" class="secondary">Listeyi Yenile</button>
+          </div>
+        </div>
+        <div id="msg" role="status" aria-live="polite"></div>
+        <div class="muted">Portal acikken her 30 saniyede sunucu sorgulanir; yeni evrak veya musteri formu algilaninca liste yenilenir.</div>
+        <div class="stats">
+          <div class="stat"><b id="statSections">0</b><span>Cekmece</span></div>
+          <div class="stat"><b id="statDocs">0</b><span>Toplam Evrak</span></div>
+          <div class="stat"><b id="statRefresh">Kapali</b><span>Canli Yenileme</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="panelTitle">Gunluk Musteri Formlari</h3>
+        <div class="row">
+          <input id="dayFilter" type="date" />
+          <input id="monthFilter" type="month" />
+          <button type="button" id="btnLoadForms" class="secondary">Gunluk Formlari Cek</button>
+          <button type="button" id="btnLoadLatest" class="secondary">Son Form</button>
+        </div>
+        <div class="muted" style="margin-top:8px">Gun veya ay bazinda form listesi alinabilir. Son form hizli kontrol icindir.</div>
+      </div>
+    </div>
+
+    <div id="docs" class="card" style="margin-top:12px"><div class="empty">Portal kilitli. PIN ile aciniz.</div></div>
+    <div id="forms" class="card"></div>
   </div>
+
   <script>
     (function () {
-      var BASE = "https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye";
-      var p = new URLSearchParams(window.location.search);
-      if (!p.get("token") && !p.get("t")) p.set("token", "valoria-maliye-qr");
-      var u = BASE + "?" + p.toString();
-      var a = document.getElementById("link");
-      if (a) a.href = u;
+      var cfg = window.MALIYE_PUBLIC || {};
+      var apiBase = String(cfg.apiBase || "").trim().replace(/\/$/, "");
+      var anon = String(cfg.anonKey || "").trim();
+      var qsParams = new URLSearchParams(window.location.search);
+      var token = (qsParams.get("token") || qsParams.get("t") || "valoria-maliye-qr").trim();
+      var pin = "";
+      var autoRefreshTimer = null;
+      var lastVersion = null;
+
+      var warnEl = document.getElementById("cfgWarn");
+      if (!apiBase) {
+        if (warnEl) {
+          warnEl.className = "cfgWarn show";
+          warnEl.textContent = "maliye-config.js bulunamadi veya apiBase bos. Vercel deployda 'npm run build' calistigindan emin olun (scripts/gen-maliye-config.mjs).";
+        }
+        return;
+      }
+      if (!anon) {
+        if (warnEl) {
+          warnEl.className = "cfgWarn show";
+          warnEl.textContent = "Supabase anon key yok. Vercel Project > Settings > Environment Variables: EXPO_PUBLIC_SUPABASE_ANON_KEY (veya MALIYE_SUPABASE_ANON_KEY) ekleyip yeniden deploy edin.";
+        }
+      }
+
+      function qs(params) {
+        var u = new URLSearchParams();
+        Object.keys(params).forEach(function (k) {
+          var v = params[k];
+          if (v !== undefined && v !== null) u.set(k, String(v));
+        });
+        return "?" + u.toString();
+      }
+
+      function escAttr(v) {
+        return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      }
+
+      function jsonFetch(fullUrl) {
+        var headers = { Accept: "application/json" };
+        if (anon) {
+          headers.Authorization = "Bearer " + anon;
+          headers.apikey = anon;
+        }
+        return fetch(fullUrl, { headers: headers });
+      }
+
+      async function api(params) {
+        var merged = Object.assign({ format: "json", token: token, pin: pin }, params);
+        var q = qs(merged);
+        var url = apiBase + q;
+        var r = await jsonFetch(url);
+        var j = null;
+        try {
+          j = await r.json();
+        } catch (_) {
+          throw new Error("Sunucudan gecersiz yanit alindi");
+        }
+        if (!r.ok) throw new Error((j && j.error) || "HTTP " + r.status);
+        return j;
+      }
+
+      function setMsg(kind, text) {
+        var el = document.getElementById("msg");
+        if (!el) return;
+        el.className = "show " + (kind || "");
+        el.textContent = text || "";
+      }
+
+      function toggleBody(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = el.style.display === "block" ? "none" : "block";
+      }
+
+      function renderDocs(data) {
+        var root = document.getElementById("docs");
+        root.innerHTML = "";
+        var totalDocs = 0;
+        (data.sections || []).forEach(function (s, idx) {
+          var accId = "acc_" + idx;
+          totalDocs += (s.documents || []).length;
+          var docsHtml = (s.documents || []).map(function (d) {
+            var signed = d.signedUrl || "";
+            return (
+              '<div class="doc">' +
+              '<div><div class="docTitle">' + d.title + "</div>" +
+              '<div class="muted">' + (d.description || "-") + "</div></div>" +
+              '<div class="docActions">' +
+              '<button type="button" data-doc-action="view" data-url="' + escAttr(signed) + '">Goruntule</button>' +
+              '<button type="button" class="secondary" data-doc-action="download" data-url="' + escAttr(signed) + '">Indir</button>' +
+              '<button type="button" class="secondary" data-doc-action="print" data-url="' + escAttr(signed) + '">Yazdir</button>' +
+              '<button type="button" class="secondary" data-doc-action="printSend" data-doc-id="' + escAttr(d.id) + '">Yaziciya Gonder</button>' +
+              "</div>" +
+              "</div>"
+            );
+          }).join("");
+          var html =
+            '<div class="accordion">' +
+            '<div class="accHead" role="button" tabindex="0" data-acc-id="' +
+            escAttr(accId) +
+            '"><span>' +
+            s.name +
+            "</span><span>" +
+            (s.documents || []).length +
+            " evrak</span></div>" +
+            '<div class="accBody" id="' +
+            accId +
+            '">' +
+            docsHtml +
+            "</div></div>";
+          root.insertAdjacentHTML("beforeend", html);
+        });
+        if (!(data.sections || []).length) root.innerHTML = '<div class="empty">Gosterilecek evrak bulunamadi.</div>';
+        document.getElementById("statSections").textContent = String((data.sections || []).length);
+        document.getElementById("statDocs").textContent = String(totalDocs);
+      }
+
+      function downloadDoc(url) {
+        var a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      function printDoc(url) {
+        var w = window.open(url, "_blank", "noopener");
+        if (!w) return;
+        setTimeout(function () {
+          try {
+            w.print();
+          } catch (_) {}
+        }, 1200);
+      }
+
+      async function sendPrinter(documentId) {
+        try {
+          await api({ view: "print", documentId: documentId });
+          alert("Yazici kuyruguna gonderildi.");
+        } catch (e) {
+          alert((e && e.message) || "Gonderilemedi");
+        }
+      }
+
+      async function unlock() {
+        pin = (document.getElementById("pin").value || "").trim();
+        if (!pin) {
+          setMsg("err", "PIN gerekli.");
+          return;
+        }
+        if (!anon) {
+          setMsg("err", "Anon key eksik; Vercel ortam degiskenlerini ayarlayin.");
+          return;
+        }
+        var unlockBtn = document.getElementById("btnUnlock");
+        var authEl = document.getElementById("authState");
+        if (unlockBtn) unlockBtn.disabled = true;
+        setMsg("wait", "PIN dogrulaniyor...");
+        try {
+          await refreshDocuments({ notify: true });
+          authEl.textContent = "Acik";
+          authEl.classList.add("open");
+          if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+          autoRefreshTimer = setInterval(function () {
+            refreshIfChanged().catch(function () {});
+          }, 30000);
+          document.getElementById("statRefresh").textContent = "Acik";
+          setMsg("ok", "Giris basarili. Evraklar yuklendi.");
+        } catch (e) {
+          authEl.textContent = "Hatali PIN";
+          authEl.classList.remove("open");
+          setMsg("err", (e && e.message) || "Erisim reddedildi");
+        } finally {
+          if (unlockBtn) unlockBtn.disabled = false;
+        }
+      }
+
+      async function syncLastVersion() {
+        try {
+          var v = await api({ view: "documents", mode: "version" });
+          lastVersion = v && v.version ? v.version : null;
+        } catch (_) {
+          lastVersion = null;
+        }
+      }
+
+      async function refreshDocuments(opts) {
+        if (!anon) throw new Error("Anon key eksik");
+        var params = { view: "documents" };
+        if (opts && opts.notify) params.notify = "1";
+        var docs = await api(params);
+        renderDocs(docs);
+        await syncLastVersion();
+      }
+
+      async function refreshIfChanged() {
+        if (!pin || !anon) return;
+        try {
+          var v = await api({ view: "documents", mode: "version" });
+          var cur = v && v.version ? v.version : null;
+          if (!cur) return;
+          if (lastVersion === null) {
+            lastVersion = cur;
+            return;
+          }
+          if (cur === lastVersion) return;
+          await refreshDocuments();
+          var box = document.getElementById("forms");
+          if (box && box.style.display === "block") {
+            try {
+              await loadForms();
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      async function loadForms() {
+        if (!pin) return alert("Once PIN ile portali acin.");
+        if (!anon) return alert("Anon key eksik.");
+        var day = document.getElementById("dayFilter").value;
+        var month = document.getElementById("monthFilter").value;
+        var res = await api({ view: "daily-forms", date: day || "", month: month || "" });
+        var box = document.getElementById("forms");
+        box.style.display = "block";
+        box.innerHTML =
+          "<h3 style='margin:0 0 8px'>Gunluk Musteri Formlari</h3>" +
+          (res.items || [])
+            .map(function (f) {
+              return (
+                '<div class="doc"><div class="docTitle">' +
+                (f.full_name || "Isimsiz") +
+                '</div><div class="muted">' +
+                (f.created_at || "-") +
+                " / Oda: " +
+                (f.room_id || "-") +
+                "</div></div>"
+              );
+            })
+            .join("");
+      }
+
+      async function loadLatest() {
+        if (!pin) return alert("Once PIN ile portali acin.");
+        if (!anon) return alert("Anon key eksik.");
+        var res = await api({ view: "latest-form" });
+        var f = res.item;
+        var box = document.getElementById("forms");
+        box.style.display = "block";
+        box.innerHTML =
+          "<h3 style='margin:0 0 8px'>Son Musteri Formu</h3>" +
+          (f
+            ? '<div class="doc"><div class="docTitle">' +
+              (f.full_name || "Isimsiz") +
+              '</div><div class="muted">' +
+              (f.created_at || "-") +
+              "</div></div>"
+            : "<p>Kayit yok.</p>");
+      }
+
+      function bindDocsDelegation() {
+        var root = document.getElementById("docs");
+        if (!root || root.dataset.bound === "1") return;
+        root.dataset.bound = "1";
+        root.addEventListener("click", function (ev) {
+          var head = ev.target && ev.target.closest ? ev.target.closest(".accHead[data-acc-id]") : null;
+          if (head) {
+            var id = head.getAttribute("data-acc-id");
+            if (id) toggleBody(id);
+            return;
+          }
+          var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-doc-action]") : null;
+          if (!btn) return;
+          var act = btn.getAttribute("data-doc-action");
+          var url = btn.getAttribute("data-url") || "";
+          var docId = btn.getAttribute("data-doc-id") || "";
+          if (act === "view" && url) window.open(url, "_blank", "noopener");
+          else if (act === "download" && url) downloadDoc(url);
+          else if (act === "print" && url) printDoc(url);
+          else if (act === "printSend" && docId) void sendPrinter(docId);
+        });
+      }
+
+      function initUi() {
+        bindDocsDelegation();
+        var pinEl = document.getElementById("pin");
+        var unlockBtn = document.getElementById("btnUnlock");
+        var refreshBtn = document.getElementById("btnRefresh");
+        var formsBtn = document.getElementById("btnLoadForms");
+        var latestBtn = document.getElementById("btnLoadLatest");
+        if (pinEl) {
+          pinEl.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              void unlock();
+            }
+          });
+        }
+        if (unlockBtn) unlockBtn.addEventListener("click", function () { void unlock(); });
+        if (refreshBtn)
+          refreshBtn.addEventListener("click", function () {
+            void refreshDocuments().catch(function (e) {
+              setMsg("err", (e && e.message) || "Yenilenemedi");
+            });
+          });
+        if (formsBtn)
+          formsBtn.addEventListener("click", function () {
+            void loadForms().catch(function (e) {
+              alert((e && e.message) || "Formlar alinamadi");
+            });
+          });
+        if (latestBtn)
+          latestBtn.addEventListener("click", function () {
+            void loadLatest().catch(function (e) {
+              alert((e && e.message) || "Form alinamadi");
+            });
+          });
+      }
+
+      initUi();
     })();
   </script>
 </body>
