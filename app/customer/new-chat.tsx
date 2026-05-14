@@ -17,6 +17,7 @@ import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge'
 import { CachedImage } from '@/components/CachedImage';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { useTranslation } from 'react-i18next';
+import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 
 type StaffRow = {
   id: string;
@@ -26,6 +27,7 @@ type StaffRow = {
   is_online: boolean | null;
   role?: string | null;
   verification_badge?: 'blue' | 'yellow' | null;
+  profile_hidden_by_admin?: boolean | null;
 };
 
 export default function NewChatScreen() {
@@ -54,7 +56,7 @@ export default function NewChatScreen() {
     if (session) {
       const { data: directData } = await supabase
         .from('staff')
-        .select('id, full_name, department, profile_image, is_online, role, verification_badge')
+        .select('id, full_name, department, profile_image, is_online, role, verification_badge, profile_hidden_by_admin')
         .eq('is_active', true)
         .is('deleted_at', null)
         .order('full_name');
@@ -121,9 +123,13 @@ export default function NewChatScreen() {
               <CachedImage uri={item.profile_image || 'https://via.placeholder.com/56'} style={styles.avatar} contentFit="cover" />
             </AvatarWithBadge>
             <View style={styles.rowBody}>
-              <StaffNameWithBadge name={item.full_name || t('staffTab')} badge={item.verification_badge ?? null} textStyle={styles.name} />
+              <StaffNameWithBadge
+                name={displayStaffNameForViewer(item.full_name, item.profile_hidden_by_admin ?? null, false, t('staffTab'))}
+                badge={item.verification_badge ?? null}
+                textStyle={styles.name}
+              />
               <Text style={styles.dept}>
-                {item.department || item.role || '—'}
+                {item.profile_hidden_by_admin ? '—' : item.department || item.role || '—'}
                 {item.is_online ? `  ·  🟢 ${t('online')}` : ''}
               </Text>
             </View>

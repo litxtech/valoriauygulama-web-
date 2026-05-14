@@ -41,6 +41,7 @@ import { log } from '@/lib/logger';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
 import { guestDisplayName } from '@/lib/guestDisplayName';
+import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
@@ -132,6 +133,7 @@ type StaffAvatarRow = {
   organization?: { name?: string | null; kind?: string | null } | null;
   verification_badge?: 'blue' | 'yellow' | null;
   role?: string | null;
+  profile_hidden_by_admin?: boolean | null;
 };
 
 type StoryPlayerState = {
@@ -404,7 +406,7 @@ export default function StaffHomeScreen() {
   const loadStaffList = useCallback(async (hiddenStaffIds?: Set<string>): Promise<StaffAvatarRow[]> => {
     const { data } = await supabase
       .from('staff')
-      .select('id, full_name, profile_image, department, position, verification_badge, email, role, organization:organization_id(name, kind)')
+      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, organization:organization_id(name, kind)')
       .eq('is_active', true)
       .is('deleted_at', null)
       .order('full_name');
@@ -415,7 +417,7 @@ export default function StaffHomeScreen() {
       if (!byKey.has(key)) byKey.set(key, r);
     });
     const mapped = Array.from(byKey.values()).map(
-      ({ id, full_name, profile_image, department, position, organization, verification_badge, role }) => ({
+      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin }) => ({
         id,
         full_name,
         profile_image,
@@ -424,6 +426,7 @@ export default function StaffHomeScreen() {
         organization,
         verification_badge,
         role,
+        profile_hidden_by_admin: profile_hidden_by_admin ?? null,
       })
     );
     const visible = mapped.filter((s) => !hiddenStaffIds?.has(s.id));
@@ -440,7 +443,7 @@ export default function StaffHomeScreen() {
     const staffListRows = await loadStaffList(hidden.hiddenStaffIds);
     const { data: postsData } = await supabase
       .from('feed_posts')
-      .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, organization:organization_id(name, kind)), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
+      .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, profile_hidden_by_admin, organization:organization_id(name, kind)), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
       .or('visibility.eq.all_staff,visibility.eq.my_team,visibility.eq.customers')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -502,7 +505,7 @@ export default function StaffHomeScreen() {
     }
     const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
       supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-      supabase.from('feed_post_comments').select('post_id, id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, verification_badge, profile_image, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
+      supabase.from('feed_post_comments').select('post_id, id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, verification_badge, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
       supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('staff_id', staff.id),
       supabase.rpc('get_feed_post_view_counts', { post_ids: ids }),
       supabase.from('feed_post_notification_prefs').select('post_id').eq('staff_id', staff.id).in('post_id', ids),
@@ -591,7 +594,7 @@ export default function StaffHomeScreen() {
       const { data: commentsData, error } = await supabase
         .from('feed_post_comments')
         .select(
-          'post_id, id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, verification_badge, profile_image, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)'
+          'post_id, id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, verification_badge, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)'
         )
         .eq('post_id', commentsSheetPostId)
         .order('created_at', { ascending: true });
@@ -622,7 +625,7 @@ export default function StaffHomeScreen() {
   const loadStories = useCallback(async () => {
     if (!staff?.id) return;
     try {
-      const groups = await loadActiveStaffStories(staff.id);
+      const groups = await loadActiveStaffStories(staff.id, staff.role === 'admin');
       if (!mountedRef.current) return;
       setStoryGroups(groups);
     } catch {
@@ -1341,7 +1344,12 @@ export default function StaffHomeScreen() {
       return;
     }
     const targetName = post.staff_id
-      ? ((post.staff as { full_name?: string | null } | null)?.full_name?.trim() || t('thisUser'))
+      ? displayStaffNameForViewer(
+          (post.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
+          (post.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
+          staff?.role === 'admin',
+          t('thisUser')
+        )
       : guestDisplayName((post.guest as { full_name?: string | null } | null)?.full_name, t('thisUser'));
     Alert.alert(t('blockUserTitle'), t('blockUserMessage', { name: targetName }), [
       { text: t('cancel'), style: 'cancel' },
@@ -1477,7 +1485,12 @@ export default function StaffHomeScreen() {
             contentContainerStyle={styles.staffAvatarsContent}
           >
             {staffList.map((s) => {
-              const name = s.full_name || '—';
+              const name = displayStaffNameForViewer(
+                s.full_name,
+                s.profile_hidden_by_admin ?? null,
+                staff?.role === 'admin',
+                '—'
+              );
               const staffStory = storyGroupByStaffId.get(s.id);
               const hasStory = !!staffStory;
               const isMe = s.id === staff?.id;
@@ -1532,10 +1545,12 @@ export default function StaffHomeScreen() {
                       ) : null}
                     </LinearGradient>
                     <StaffNameWithBadge name={name} badge={s.verification_badge ?? null} textStyle={styles.staffAvatarName} />
-                    {(s.department || s.position) ? (
+                    {!s.profile_hidden_by_admin && (s.department || s.position) ? (
                       <Text style={styles.staffAvatarRole} numberOfLines={1}>{s.department || s.position || ''}</Text>
+                    ) : s.profile_hidden_by_admin && staff?.role !== 'admin' ? (
+                      <Text style={styles.staffAvatarRole} numberOfLines={1}>—</Text>
                     ) : null}
-                    {s.organization?.name ? (
+                    {!s.profile_hidden_by_admin && s.organization?.name ? (
                       <Text style={styles.staffAvatarOrg} numberOfLines={2}>
                         {s.organization.name}
                         {s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}
@@ -1570,6 +1585,7 @@ export default function StaffHomeScreen() {
             );
           }
           return visiblePosts.map((p) => {
+            const maySeeHiddenFull = staff?.role === 'admin';
             const likeCount = likeCounts[p.id] ?? 0;
             const commentCount = commentCounts[p.id] ?? 0;
             const viewCount = viewCounts[p.id] ?? 0;
@@ -1580,7 +1596,12 @@ export default function StaffHomeScreen() {
               .slice(-2)
               .map((c) => ({
                 author: c.staff
-                  ? ((c.staff as { full_name?: string | null } | null)?.full_name?.trim() || 'Personel')
+                  ? displayStaffNameForViewer(
+                      (c.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
+                      (c.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
+                      maySeeHiddenFull,
+                      'Personel'
+                    )
                   : guestDisplayName((c.guest as { full_name?: string | null } | null)?.full_name, 'Misafir'),
                 text: (c.content ?? '').trim(),
               }))
@@ -1592,20 +1613,30 @@ export default function StaffHomeScreen() {
               position?: string | null;
               verification_badge?: 'blue' | 'yellow' | null;
               organization?: { name?: string | null; kind?: string | null } | null;
+              profile_hidden_by_admin?: boolean | null;
             } | null;
             const rawGuest = p.guest;
             const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
             const isGuestPost = !p.staff_id;
             const authorName = isGuestPost
               ? guestDisplayName(guestInfo?.full_name, 'Misafir')
-              : (staffInfo?.full_name?.trim() || '—');
+              : displayStaffNameForViewer(
+                  staffInfo?.full_name ?? null,
+                  staffInfo?.profile_hidden_by_admin ?? null,
+                  maySeeHiddenFull,
+                  '—'
+                );
             const authorAvatar = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
             const authorBadge = staffInfo?.verification_badge ?? null;
             const orgName = staffInfo?.organization?.name?.trim() || null;
             const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
             const roleBase = staffInfo?.department || staffInfo?.position || null;
             const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
-            const roleLabel = isGuestPost ? 'Misafir' : [roleBase, orgLabel].filter(Boolean).join(' • ') || null;
+            const roleLabel = isGuestPost
+              ? 'Misafir'
+              : staffInfo?.profile_hidden_by_admin && !maySeeHiddenFull
+                ? '—'
+                : [roleBase, orgLabel].filter(Boolean).join(' • ') || null;
             const mediaItems = (p.media_items && p.media_items.length > 0)
               ? p.media_items
               : (p.media_type !== 'text' && (p.media_url || p.thumbnail_url)
@@ -1957,12 +1988,24 @@ export default function StaffHomeScreen() {
                     ) : (
                       topLevelComments.map((c) => {
                         const isGuestComment = !c.staff_id && !!c.guest_id;
+                        const maySeeHiddenFull = staff?.role === 'admin';
+                        const staffHidden = !!(c.staff as { profile_hidden_by_admin?: boolean | null })?.profile_hidden_by_admin;
                         const authorName = isGuestComment
                           ? guestDisplayName((c.guest as { full_name?: string | null } | null)?.full_name, '—')
-                          : ((c.staff as { full_name?: string } | null)?.full_name?.trim() || '—');
+                          : displayStaffNameForViewer(
+                              (c.staff as { full_name?: string | null } | null)?.full_name ?? null,
+                              staffHidden,
+                              maySeeHiddenFull,
+                              '—'
+                            );
                         const badge = (c.staff as { verification_badge?: 'blue' | 'yellow' | null } | null)?.verification_badge ?? null;
                         const avatarUri = (c.staff as { profile_image?: string | null } | null)?.profile_image ?? (c.guest as { photo_url?: string | null } | null)?.photo_url ?? null;
-                        const profileHref = c.staff_id ? `/staff/profile/${c.staff_id}` : c.guest_id ? `/staff/guests/${c.guest_id}` : null;
+                        const profileHref =
+                          c.staff_id && !(staffHidden && !maySeeHiddenFull)
+                            ? `/staff/profile/${c.staff_id}`
+                            : c.guest_id
+                              ? `/staff/guests/${c.guest_id}`
+                              : null;
                         const deletable = canDeleteComment(c);
                         return (
                           <View
@@ -2023,8 +2066,14 @@ export default function StaffHomeScreen() {
                                 return (
                                   <View style={styles.replyListWrap}>
                                     {replies.slice(0, 2).map((r) => {
+                                      const rHidden = !!(r.staff as { profile_hidden_by_admin?: boolean | null })?.profile_hidden_by_admin;
                                       const rAuthor = r.staff
-                                        ? ((r.staff as { full_name?: string | null } | null)?.full_name?.trim() || '—')
+                                        ? displayStaffNameForViewer(
+                                            (r.staff as { full_name?: string | null } | null)?.full_name ?? null,
+                                            rHidden,
+                                            staff?.role === 'admin',
+                                            '—'
+                                          )
                                         : guestDisplayName((r.guest as { full_name?: string | null } | null)?.full_name, '—');
                                       return (
                                         <View key={r.id} style={styles.replyRow}>

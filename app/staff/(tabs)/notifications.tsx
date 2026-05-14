@@ -18,6 +18,10 @@ import { supabase } from '@/lib/supabase';
 import { getExpoPushTokenAsync, savePushTokenForStaff, isExpoGo } from '@/lib/notificationsPush';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
+import {
+  type StaffPersonnelWarningSeverity,
+  SEVERITY_LABEL_TR,
+} from '@/lib/staffPersonnelWarnings';
 
 type NotifRow = {
   id: string;
@@ -52,6 +56,24 @@ type MissingItemDetail = {
   resolver?: { full_name: string | null } | null;
 };
 
+type PersonnelWarningDetail = {
+  id: string;
+  severity: StaffPersonnelWarningSeverity;
+  subject_line: string | null;
+  body: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  acknowledgement_note: string | null;
+  image_urls: unknown;
+};
+
+function warningIdFromNotifData(data: Record<string, unknown> | NotifRow['data'] | null | undefined): string {
+  if (!data || typeof data !== 'object') return '';
+  const o = data as Record<string, unknown>;
+  const w = o.warningId ?? o.warning_id;
+  return typeof w === 'string' ? w.trim() : '';
+}
+
 export default function StaffNotificationsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -64,6 +86,7 @@ export default function StaffNotificationsScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<NotifRow | null>(null);
   const [missingItemDetail, setMissingItemDetail] = useState<MissingItemDetail | null>(null);
+  const [personnelWarningDetail, setPersonnelWarningDetail] = useState<PersonnelWarningDetail | null>(null);
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
 
@@ -241,9 +264,48 @@ export default function StaffNotificationsScreen() {
   const openNotificationDetail = async (n: NotifRow) => {
     setSelectedNotification(n);
     setMissingItemDetail(null);
+    setPersonnelWarningDetail(null);
     setDetailVisible(true);
     if (n.data?.missingItemId) {
       await fetchMissingItemDetail(n.data.missingItemId);
+    } else {
+      setDetailLoading(false);
+    }
+  };
+
+  const fetchPersonnelWarningDetail = async (warningId: string) => {
+    if (!staff?.id || !warningId) {
+      setPersonnelWarningDetail(null);
+      setDetailLoading(false);
+      return;
+    }
+    setDetailLoading(true);
+    const { data, error } = await supabase
+      .from('staff_personnel_warnings')
+      .select('id, severity, subject_line, body, created_at, acknowledged_at, acknowledgement_note, image_urls')
+      .eq('id', warningId)
+      .eq('subject_staff_id', staff.id)
+      .maybeSingle();
+    setDetailLoading(false);
+    if (error || !data) {
+      setPersonnelWarningDetail(null);
+      return;
+    }
+    setPersonnelWarningDetail(data as PersonnelWarningDetail);
+  };
+
+  const openPersonnelWarningsFromDetail = () => {
+    const wid =
+      personnelWarningDetail?.id?.trim() ||
+      (selectedNotification ? warningIdFromNotifData(selectedNotification.data) : '');
+    setDetailVisible(false);
+    setSelectedNotification(null);
+    setMissingItemDetail(null);
+    setPersonnelWarningDetail(null);
+    if (wid) {
+      router.push({ pathname: '/staff/warnings', params: { focus: wid } });
+    } else {
+      router.push('/staff/warnings');
     }
   };
 
@@ -255,16 +317,27 @@ export default function StaffNotificationsScreen() {
   const onNotificationPress = (n: NotifRow) => {
     if (!n.read_at) markRead(n.id);
     if (n.notification_type === 'staff_personnel_warning') {
-      const wid = typeof n.data?.warningId === 'string' ? n.data.warningId.trim() : '';
+      setSelectedNotification(n);
+      setMissingItemDetail(null);
+      setPersonnelWarningDetail(null);
+      setDetailVisible(true);
+      setDetailLoading(true);
+      const wid = warningIdFromNotifData(n.data);
       if (wid) {
-        router.push({ pathname: '/staff/warnings', params: { focus: wid } });
+        void fetchPersonnelWarningDetail(wid);
       } else {
-        router.push('/staff/warnings');
+        setDetailLoading(false);
       }
       return;
     }
     if (n.notification_type === 'staff_personnel_warning_ack') {
-      const sid = typeof n.data?.subjectStaffId === 'string' ? n.data.subjectStaffId.trim() : '';
+      const raw = n.data as Record<string, unknown> | undefined;
+      const sid =
+        typeof raw?.subjectStaffId === 'string'
+          ? raw.subjectStaffId.trim()
+          : typeof raw?.subject_staff_id === 'string'
+            ? raw.subject_staff_id.trim()
+            : '';
       if (sid) {
         router.push({ pathname: '/admin/staff/[id]', params: { id: sid } } as never);
       }
@@ -416,16 +489,34 @@ export default function StaffNotificationsScreen() {
           </TouchableOpacity>
         ))
       )}
-      <Modal visible={detailVisible} transparent animationType="fade" onRequestClose={() => setDetailVisible(false)}>
+      <Modal
+        visible={detailVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setDetailVisible(false);
+          setPersonnelWarningDetail(null);
+        }}
+      >
         <View style={styles.detailBackdrop}>
           <View style={styles.detailCard}>
             <View style={styles.detailHeader}>
               <Text style={styles.detailTitle}>{selectedNotification ? displayTitle(selectedNotification) : 'Bildirim'}</Text>
-              <TouchableOpacity onPress={() => setDetailVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setDetailVisible(false);
+                  setPersonnelWarningDetail(null);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <Ionicons name="close" size={20} color="#718096" />
               </TouchableOpacity>
             </View>
-            {!!selectedNotification?.body && <Text style={styles.detailBody}>{selectedNotification.body}</Text>}
+            {!!selectedNotification?.body &&
+              !(
+                selectedNotification.notification_type === 'staff_personnel_warning' &&
+                personnelWarningDetail
+              ) && <Text style={styles.detailBody}>{selectedNotification.body}</Text>}
             {!!selectedNotification && (
               <Text style={styles.detailMeta}>Tarih: {new Date(selectedNotification.created_at).toLocaleString('tr-TR')}</Text>
             )}
@@ -451,6 +542,52 @@ export default function StaffNotificationsScreen() {
                 ) : null}
                 <Text style={styles.detailSectionTitle}>Not</Text>
                 <Text style={styles.detailNote}>{missingItemDetail.description?.trim() || 'Not girilmemis.'}</Text>
+              </View>
+            ) : selectedNotification?.notification_type === 'staff_personnel_warning' ? (
+              <View style={{ marginTop: 8 }}>
+                {personnelWarningDetail ? (
+                  <View style={styles.detailBox}>
+                    <Text style={styles.detailSectionTitle}>Uyarı kaydı</Text>
+                    <Text style={styles.detailLine}>
+                      Seviye:{' '}
+                      {SEVERITY_LABEL_TR[personnelWarningDetail.severity] ?? personnelWarningDetail.severity}
+                    </Text>
+                    {personnelWarningDetail.subject_line?.trim() ? (
+                      <Text style={styles.detailLine}>Konu: {personnelWarningDetail.subject_line.trim()}</Text>
+                    ) : null}
+                    <Text style={styles.detailSectionTitle}>Metin</Text>
+                    <Text style={styles.detailNote}>{personnelWarningDetail.body.trim()}</Text>
+                    <Text style={styles.detailMeta}>
+                      {new Date(personnelWarningDetail.created_at).toLocaleString('tr-TR')}
+                      {personnelWarningDetail.acknowledged_at
+                        ? ` · Okundu: ${new Date(personnelWarningDetail.acknowledged_at).toLocaleString('tr-TR')}`
+                        : ' · Okuma bekliyor'}
+                    </Text>
+                    {personnelWarningDetail.acknowledgement_note?.trim() ? (
+                      <Text style={[styles.detailLine, { marginTop: 8 }]}>
+                        Sizin notunuz: {personnelWarningDetail.acknowledgement_note.trim()}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : selectedNotification.body?.trim() ? (
+                  <Text style={styles.detailMeta}>
+                    Tam kayıt yüklenemedi veya kimlik eksik; yukarıdaki özet geçerlidir. Görseller ve tam kayıt için
+                    uyarılar sayfasını açın.
+                  </Text>
+                ) : (
+                  <Text style={styles.detailWarn}>
+                    Tam kayıt yüklenemedi veya kimlik eksik; tam metin ve görseller için aşağıdan uyarılar sayfasını
+                    açın.
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={styles.warningDetailBtn}
+                  onPress={openPersonnelWarningsFromDetail}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="document-text-outline" size={18} color="#fff" />
+                  <Text style={styles.warningDetailBtnText}>Resmi uyarılar sayfasında aç</Text>
+                </TouchableOpacity>
               </View>
             ) : selectedNotification && isMissingNotification(selectedNotification) ? (
               <Text style={styles.detailWarn}>Eksik kaydinin detaylari su an alinamadi.</Text>
@@ -548,4 +685,15 @@ const styles = StyleSheet.create({
   detailLine: { fontSize: 13, color: '#334155' },
   detailNote: { fontSize: 13, color: '#1f2937', lineHeight: 20 },
   detailWarn: { marginTop: 10, fontSize: 13, color: '#b45309' },
+  warningDetailBtn: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#991b1b',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  warningDetailBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

@@ -101,11 +101,12 @@ async function validateAccess(
 }
 
 function renderPage(token: string) {
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   return `<!doctype html>
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Valoria Maliye Evrak Merkezi</title>
   <style>
     :root{
@@ -156,6 +157,20 @@ function renderPage(token: string) {
     .docActions button{padding:8px 10px;font-size:12px}
     #forms{display:none}
     .empty{padding:18px;text-align:center;color:var(--muted)}
+    .pinRow{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+    @media (min-width:520px){
+      .pinRow{flex-direction:row;flex-wrap:wrap;align-items:flex-end}
+    }
+    .pinField{flex:1;min-width:0}
+    #pin{width:100%;font-size:16px;box-sizing:border-box;padding:12px 14px;border-radius:10px}
+    .pinActions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .pinActions button{min-width:min(100%,140px);padding:12px 14px;border-radius:10px}
+    #msg{display:none;margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600}
+    #msg.show{display:block}
+    #msg.wait{background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd}
+    #msg.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
+    #msg.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+    .status.open{background:#dcfce7;color:#166534;border-color:#86efac}
     @media (max-width: 900px){
       .grid{grid-template-columns:1fr}
       .doc{grid-template-columns:1fr}
@@ -179,12 +194,18 @@ function renderPage(token: string) {
     <div class="grid">
       <div class="card">
         <h3 class="panelTitle">Erisim ve Evraklar</h3>
-        <div class="row" style="margin-bottom:8px">
-          <input id="pin" type="password" placeholder="PIN girin" autocomplete="one-time-code" />
-          <button type="button" id="btnUnlock">Portali Ac</button>
-          <span id="authState" class="status">Kilitli</span>
-          <button type="button" id="btnRefresh" class="secondary">Listeyi Yenile</button>
+        <div class="pinRow">
+          <div class="pinField">
+            <label for="pin" class="muted" style="display:block;margin-bottom:6px;font-weight:600">PIN</label>
+            <input id="pin" type="password" inputmode="numeric" placeholder="PIN kodunu girin" autocomplete="one-time-code" enterkeyhint="go" />
+          </div>
+          <div class="pinActions">
+            <button type="button" id="btnUnlock">Portali Ac</button>
+            <span id="authState" class="status">Kilitli</span>
+            <button type="button" id="btnRefresh" class="secondary">Listeyi Yenile</button>
+          </div>
         </div>
+        <div id="msg" role="status" aria-live="polite"></div>
         <div class="muted">Portal acikken her 30 saniyede sunucu sorgulanir; yeni evrak veya musteri formu algilaninca liste yenilenir.</div>
         <div class="stats">
           <div class="stat"><b id="statSections">0</b><span>Cekmece</span></div>
@@ -210,6 +231,7 @@ function renderPage(token: string) {
 
   <script>
     const token = ${JSON.stringify(token)};
+    const anon = ${JSON.stringify(anonKey)};
     let pin = "";
     let autoRefreshTimer = null;
     let lastVersion = null;
@@ -220,15 +242,42 @@ function renderPage(token: string) {
     }
 
     function escAttr(v){
-      return String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    }
+
+    function jsonFetch(url){
+      var headers = { Accept: "application/json" };
+      if (anon && String(anon).trim()) {
+        headers.Authorization = "Bearer " + anon;
+        headers.apikey = anon;
+      }
+      return fetch(url, { headers: headers });
     }
 
     async function api(params){
       const q = qs({ token, pin, ...params });
-      const r = await fetch(q, { headers: { "Accept": "application/json" } });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "İstek başarısız");
+      const r = await jsonFetch(q);
+      let j = null;
+      try {
+        j = await r.json();
+      } catch (_) {
+        throw new Error("Sunucudan gecersiz yanit alindi");
+      }
+      if (!r.ok) throw new Error((j && j.error) || ("HTTP " + r.status));
       return j;
+    }
+
+    function setMsg(kind, text){
+      const el = document.getElementById("msg");
+      if (!el) return;
+      el.className = "show " + (kind || "");
+      el.textContent = text || "";
+    }
+    function clearMsg(){
+      const el = document.getElementById("msg");
+      if (!el) return;
+      el.className = "";
+      el.textContent = "";
     }
 
     function toggleBody(id){
@@ -293,18 +342,30 @@ function renderPage(token: string) {
 
     async function unlock(){
       pin = (document.getElementById("pin").value || "").trim();
-      if (!pin) return alert("PIN gerekli");
+      if (!pin) {
+        setMsg("err", "PIN gerekli.");
+        return;
+      }
+      const unlockBtn = document.getElementById("btnUnlock");
+      const authEl = document.getElementById("authState");
+      if (unlockBtn) unlockBtn.disabled = true;
+      setMsg("wait", "PIN dogrulaniyor...");
       try{
-        await refreshDocuments();
-        document.getElementById("authState").textContent = "Acik";
+        await refreshDocuments({ notify: true });
+        authEl.textContent = "Acik";
+        authEl.classList.add("open");
         if (autoRefreshTimer) clearInterval(autoRefreshTimer);
         autoRefreshTimer = setInterval(() => {
           refreshIfChanged().catch(() => null);
         }, 30000);
         document.getElementById("statRefresh").textContent = "Acik";
+        setMsg("ok", "Giris basarili. Evraklar yuklendi.");
       }catch(e){
-        document.getElementById("authState").textContent = "Hatali PIN";
-        alert(e.message || "Erişim reddedildi");
+        authEl.textContent = "Hatali PIN";
+        authEl.classList.remove("open");
+        setMsg("err", e.message || "Erisim reddedildi");
+      } finally {
+        if (unlockBtn) unlockBtn.disabled = false;
       }
     }
 
@@ -317,8 +378,12 @@ function renderPage(token: string) {
       }
     }
 
-    async function refreshDocuments(){
-      const docs = await api({ format: "json", view: "documents" });
+    async function refreshDocuments(opts){
+      const docs = await api({
+        format: "json",
+        view: "documents",
+        ...(opts && opts.notify ? { notify: "1" } : {}),
+      });
       renderDocs(docs);
       await syncLastVersion();
     }
@@ -405,7 +470,11 @@ function renderPage(token: string) {
         });
       }
       if (unlockBtn) unlockBtn.addEventListener("click", function(){ void unlock(); });
-      if (refreshBtn) refreshBtn.addEventListener("click", function(){ void refreshDocuments().catch(function(e){ alert((e && e.message) || "Yenilenemedi"); }); });
+      if (refreshBtn) refreshBtn.addEventListener("click", function(){
+        void refreshDocuments().catch(function(e){
+          setMsg("err", (e && e.message) || "Yenilenemedi");
+        });
+      });
       if (formsBtn) formsBtn.addEventListener("click", function(){ void loadForms().catch(function(e){ alert((e && e.message) || "Formlar alinamadi"); }); });
       if (latestBtn) latestBtn.addEventListener("click", function(){ void loadLatest().catch(function(e){ alert((e && e.message) || "Form alinamadi"); }); });
     }
@@ -416,6 +485,7 @@ function renderPage(token: string) {
 }
 
 function renderLoaderPage(token: string) {
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   return `<!doctype html>
 <html lang="tr">
 <head>
@@ -437,10 +507,16 @@ function renderLoaderPage(token: string) {
   </div>
   <script>
     (function(){
+      var anon = ${JSON.stringify(anonKey)};
       var qs = new URLSearchParams(window.location.search);
       var t = qs.get('token') || qs.get('t') || ${JSON.stringify(token)};
       var u = window.location.origin + window.location.pathname + '?render=1&token=' + encodeURIComponent(t);
-      fetch(u, { headers: { 'Accept': 'text/html' } })
+      var h = { Accept: 'text/html' };
+      if (anon && String(anon).trim()) {
+        h.Authorization = 'Bearer ' + anon;
+        h.apikey = anon;
+      }
+      fetch(u, { headers: h })
         .then(function(r){ return r.text(); })
         .then(function(html){
           if(!html || html.length < 100) throw new Error('Bos yanit');

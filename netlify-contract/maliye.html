@@ -3,293 +3,37 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Valoria Hotel - Maliye Evrak Merkezi</title>
+  <title>Maliye Evrak Merkezi</title>
   <style>
-    :root{
-      --bg:#090f1f;--bg2:#13213d;--card:#ffffff;--text:#0f172a;--muted:#475569;
-      --line:#dbe4f0;--primary:#1d4ed8;--secondary:#0f766e;--soft:#f8fafc;
-      --ok:#166534;--okBg:#dcfce7;
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#fff;
-      background:
-        radial-gradient(1200px 500px at 15% -10%, rgba(59,130,246,.30), transparent 60%),
-        radial-gradient(900px 500px at 90% 0%, rgba(16,185,129,.22), transparent 55%),
-        linear-gradient(180deg,var(--bg),var(--bg2));
-    }
-    .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 26px}
-    .hero{
-      background:linear-gradient(120deg,rgba(255,255,255,.14),rgba(255,255,255,.05));
-      border:1px solid rgba(255,255,255,.18);border-radius:18px;padding:18px 20px;margin-bottom:14px;
-      backdrop-filter: blur(8px);
-    }
-    .heroTop{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
-    .title{font-size:25px;font-weight:900;letter-spacing:.2px}
-    .subtitle{margin-top:6px;color:rgba(255,255,255,.9);font-size:13px}
-    .badge{padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.16);font-size:12px;font-weight:700}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    .card{
-      background:linear-gradient(140deg,rgba(255,255,255,.95),rgba(255,255,255,.9));
-      color:var(--text);
-      border-radius:16px;
-      padding:16px;
-      border:1px solid rgba(255,255,255,.45);
-      box-shadow:0 12px 36px rgba(2,8,23,.18);
-      backdrop-filter: blur(8px);
-    }
-    .panelTitle{font-size:15px;font-weight:900;color:#0f172a;margin:0 0 12px}
-    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    input,button{padding:11px 12px;border-radius:12px;border:1px solid #cbd5e1}
-    input{background:#fff;min-width:220px}
-    button{cursor:pointer;background:var(--primary);color:#fff;border:none;font-weight:800}
-    button.secondary{background:var(--secondary)}
-    .status{padding:8px 12px;border-radius:999px;font-size:12px;background:#e2e8f0;color:#1f2937;font-weight:700}
-    .status.open{background:var(--okBg);color:var(--ok)}
-    .muted{color:var(--muted);font-size:12px}
-    .info{margin-top:10px;padding:10px 12px;border-radius:10px;font-size:13px;display:none}
-    .info.show{display:block}
-    .info.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
-    .info.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
-    .info.wait{background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd}
-    .accordion{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden;background:#fff}
-    .accHead{padding:12px;background:var(--soft);font-weight:900;display:flex;justify-content:space-between;cursor:pointer}
-    .accBody{padding:10px;display:none}
-    .doc{
-      padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;
-      display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
-    }
-    .docTitle{font-weight:800;margin-bottom:3px}
-    .docActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-    .docActions button{padding:8px 10px;font-size:12px}
-    #contentArea{display:none}
-    #forms{display:block}
-    .empty{padding:18px;text-align:center;color:var(--muted)}
-    @media (max-width: 900px){
-      .grid{grid-template-columns:1fr}
-      .doc{grid-template-columns:1fr}
-      .docActions{justify-content:flex-start}
-    }
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:20px;text-align:center}
+    a{color:#93c5fd}
+    .box{max-width:420px;font-size:15px;line-height:1.5}
   </style>
+  <script>
+    (function () {
+      var BASE = "https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye";
+      var p = new URLSearchParams(window.location.search);
+      if (!p.get("token") && !p.get("t")) {
+        p.set("token", "valoria-maliye-qr");
+      }
+      var target = BASE + "?" + p.toString();
+      window.location.replace(target);
+    })();
+  </script>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div class="heroTop">
-        <div>
-          <div class="title">Maliye Evrak Merkezi</div>
-          <div class="subtitle">Denetim icin gerekli belgeler ve gunluk musteri formlari bu ekranda sunulur.</div>
-        </div>
-        <div class="badge">Valoria Hotel · Resmi Dokuman Portali</div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card" id="pinCard">
-        <h3 class="panelTitle">PIN Dogrulama</h3>
-        <div class="row" style="margin-bottom:8px">
-          <input id="pin" type="password" placeholder="PIN kodunu girin" />
-          <button id="unlockBtn" type="button">Portali Ac</button>
-          <span id="authState" class="status">Kilitli</span>
-          <button id="refreshBtn" type="button" class="secondary">Listeyi Yenile</button>
-        </div>
-        <div class="muted">PIN dogrulandiktan sonra belgeler ve gunluk formlar yuklenir. Her 30 saniyede kontrol edilir; yeni evrak veya kayit olunca liste guncellenir.</div>
-        <div id="messageBox" class="info"></div>
-      </div>
-    </div>
-
-    <div id="contentArea">
-      <div id="docs" class="card" style="margin-top:12px"></div>
-      <div id="forms" class="card" style="margin-top:12px"></div>
-    </div>
+  <div class="box">
+    <p>Maliye portalina yonlendiriliyorsunuz…</p>
+    <p><a id="link" href="#">Buraya tiklayin</a></p>
   </div>
-
   <script>
-    (function(){
-      var API = 'https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye';
-      var params = new URLSearchParams(location.search);
-      var token = params.get('token') || params.get('t') || 'valoria-maliye-qr';
-      var pin = '';
-      var autoRefreshTimer = null;
-      var lastVersion = null;
-
-      function qs(obj){ return '?' + new URLSearchParams(obj).toString(); }
-
-      function toggleBody(id){
-        var el = document.getElementById(id);
-        if (!el) return;
-        el.style.display = el.style.display === 'block' ? 'none' : 'block';
-      }
-      window.toggleBody = toggleBody;
-
-      async function api(paramsObj){
-        var controller = new AbortController();
-        var timer = setTimeout(function(){ controller.abort(); }, 12000);
-        var r;
-        try {
-          r = await fetch(API + qs(Object.assign({ format:'json', token:token, pin:pin }, paramsObj)), { signal: controller.signal });
-        } finally {
-          clearTimeout(timer);
-        }
-        var j;
-        try {
-          j = await r.json();
-        } catch (_) {
-          throw new Error('Sunucudan gecersiz yanit alindi');
-        }
-        if (!r.ok) throw new Error(j.error || 'Istek basarisiz');
-        return j;
-      }
-
-      function renderDocs(data){
-        var root = document.getElementById('docs');
-        root.innerHTML = '<h3 class="panelTitle">Maliye Evraklari</h3>';
-        (data.sections || []).forEach(function(s, idx){
-          var accId = 'acc_' + idx;
-          var docsHtml = (s.documents || []).map(function(d){
-            var signed = d.signedUrl || '';
-            return '<div class="doc">' +
-              '<div><div class="docTitle">' + d.title + '</div><div class="muted">' + (d.description || '-') + '</div></div>' +
-              '<div class="docActions">' +
-                '<button onclick="window.open(\\'' + signed + '\\', \\'_blank\\')">Goruntule</button>' +
-                '<button class="secondary" onclick="downloadDoc(\\'' + signed + '\\')">Indir</button>' +
-                '<button class="secondary" onclick="printDoc(\\'' + signed + '\\')">Yazdir</button>' +
-                '<button class="secondary" onclick="sendPrinter(\\'' + d.id + '\\')">Yaziciya Gonder</button>' +
-              '</div>' +
-            '</div>';
-          }).join('');
-          var html = '<div class="accordion">' +
-            '<div class="accHead" onclick="toggleBody(\\'' + accId + '\\')"><span>' + s.name + '</span><span>' + (s.documents || []).length + ' evrak</span></div>' +
-            '<div class="accBody" id="' + accId + '">' + docsHtml + '</div></div>';
-          root.insertAdjacentHTML('beforeend', html);
-        });
-        if (!(data.sections || []).length) root.innerHTML = '<h3 class="panelTitle">Maliye Evraklari</h3><div class="empty">Gosterilecek evrak bulunamadi.</div>';
-      }
-
-      window.downloadDoc = function(url){
-        var a = document.createElement('a');
-        a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.download = '';
-        document.body.appendChild(a); a.click(); a.remove();
-      };
-      window.printDoc = function(url){
-        var w = window.open(url, '_blank', 'noopener');
-        if (!w) return;
-        setTimeout(function(){ try { w.print(); } catch(_) {} }, 1200);
-      };
-      window.sendPrinter = async function(documentId){
-        try{
-          await api({ view:'print', documentId:documentId });
-          alert('Yazici kuyruguna gonderildi.');
-        }catch(e){ alert((e && e.message) || 'Gonderilemedi'); }
-      };
-
-      function renderForms(items){
-        var box = document.getElementById('forms');
-        var list = items || [];
-        var rows = list.map(function(f, i){
-          return '<div class="doc">' +
-            '<div>' +
-              '<div class="docTitle">' + (i + 1) + '. ' + (f.full_name || 'Isimsiz') + '</div>' +
-              '<div class="muted">Kayit: ' + (f.created_at || '-') + '</div>' +
-              '<div class="muted">Oda: ' + (f.room_id || '-') + ' · Telefon: ' + (f.phone || '-') + '</div>' +
-              '<div class="muted">Kimlik: ' + (f.id_number || '-') + '</div>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-        box.innerHTML = '<h3 class="panelTitle">Musteri Gunluk Formlari (Sirali)</h3>' +
-          (rows || '<div class="empty">Gosterilecek musteri formu bulunamadi.</div>');
-      }
-
-      async function refreshAll(notifyOnUnlock){
-        if (!pin) return;
-        var documentsParams = { view:'documents' };
-        if (notifyOnUnlock) documentsParams.notify = '1';
-        var responses = await Promise.all([
-          api(documentsParams),
-          api({ view:'daily-forms' })
-        ]);
-        renderDocs(responses[0]);
-        renderForms(responses[1].items || []);
-        try {
-          var versionRes = await api({ view:'documents', mode:'version' });
-          lastVersion = versionRes && versionRes.version ? versionRes.version : null;
-        } catch (_) {}
-      }
-      window.refreshAll = refreshAll;
-
-      async function refreshIfChanged(){
-        if (!pin) return;
-        try {
-          var versionRes = await api({ view:'documents', mode:'version' });
-          var currentVersion = versionRes && versionRes.version ? versionRes.version : null;
-          if (!currentVersion) return;
-          if (!lastVersion) {
-            lastVersion = currentVersion;
-            return;
-          }
-          if (currentVersion !== lastVersion) {
-            await refreshAll(false);
-          }
-        } catch (_) {}
-      }
-
-      window.unlock = async function(){
-        pin = (document.getElementById('pin').value || '').trim();
-        if (!pin) return alert('PIN gerekli');
-        var msg = document.getElementById('messageBox');
-        var unlockBtn = document.getElementById('unlockBtn');
-        if (unlockBtn) unlockBtn.disabled = true;
-        msg.className = 'info show wait';
-        msg.textContent = 'PIN dogrulaniyor...';
-        try{
-          await refreshAll(true);
-          var pinCard = document.getElementById('pinCard');
-          if (pinCard) pinCard.style.display = 'none';
-          document.getElementById('contentArea').style.display = 'block';
-          var authState = document.getElementById('authState');
-          authState.textContent = 'Acik';
-          authState.classList.add('open');
-          msg.className = 'info show ok';
-          msg.textContent = 'Giris basarili. Evraklar yuklendi.';
-          if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-          autoRefreshTimer = setInterval(function(){ refreshIfChanged().catch(function(){}); }, 30000);
-        }catch(e){
-          var authStateError = document.getElementById('authState');
-          authStateError.textContent = 'Hatali PIN';
-          authStateError.classList.remove('open');
-          var pinCardError = document.getElementById('pinCard');
-          if (pinCardError) pinCardError.style.display = 'block';
-          msg.className = 'info show err';
-          msg.textContent = (e && e.message) || 'Erisim reddedildi';
-          alert((e && e.message) || 'PIN hatali veya baglanti sorunu var.');
-        } finally {
-          if (unlockBtn) unlockBtn.disabled = false;
-        }
-      };
-
-      var pinInput = document.getElementById('pin');
-      if (pinInput) {
-        pinInput.addEventListener('keydown', function(ev){
-          if (ev.key === 'Enter') {
-            ev.preventDefault();
-            window.unlock();
-          }
-        });
-      }
-
-      var unlockBtnEl = document.getElementById('unlockBtn');
-      if (unlockBtnEl) {
-        unlockBtnEl.addEventListener('click', function(){
-          window.unlock();
-        });
-      }
-
-      var refreshBtnEl = document.getElementById('refreshBtn');
-      if (refreshBtnEl) {
-        refreshBtnEl.addEventListener('click', function(){
-          window.refreshAll(false);
-        });
-      }
+    (function () {
+      var BASE = "https://sbydlcujsiqmifybqzsi.supabase.co/functions/v1/public-maliye";
+      var p = new URLSearchParams(window.location.search);
+      if (!p.get("token") && !p.get("t")) p.set("token", "valoria-maliye-qr");
+      var u = BASE + "?" + p.toString();
+      var a = document.getElementById("link");
+      if (a) a.href = u;
     })();
   </script>
 </body>

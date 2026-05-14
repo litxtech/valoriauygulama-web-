@@ -33,6 +33,7 @@ import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
 import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { MentionableText } from '@/components/MentionableText';
+import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 
 type PostRow = {
   id: string;
@@ -46,7 +47,7 @@ type PostRow = {
   lat?: number | null;
   lng?: number | null;
   location_label?: string | null;
-  staff: { full_name: string | null; department: string | null; verification_badge?: 'blue' | 'yellow' | null } | null;
+  staff: { full_name: string | null; department: string | null; verification_badge?: 'blue' | 'yellow' | null; profile_hidden_by_admin?: boolean | null } | null;
   guest: { full_name: string | null } | null;
   media_items?: { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number }[];
 };
@@ -79,7 +80,7 @@ type CommentRow = {
   guest_id?: string | null;
   content: string;
   created_at: string;
-  staff: { full_name: string | null; profile_image?: string | null } | null;
+  staff: { full_name: string | null; profile_image?: string | null; profile_hidden_by_admin?: boolean | null } | null;
   guest: { full_name: string | null; photo_url?: string | null } | null;
 };
 
@@ -139,7 +140,7 @@ export default function CustomerFeedPostDetail() {
       : { hiddenStaffIds: new Set<string>(), hiddenGuestIds: new Set<string>() };
     const { data, error: e } = await supabase
       .from('feed_posts')
-      .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, lat, lng, location_label, staff:staff_id(full_name, department, verification_badge, deleted_at), guest:guest_id(full_name, deleted_at)')
+      .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, lat, lng, location_label, staff:staff_id(full_name, department, verification_badge, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, deleted_at)')
       .eq('id', idNorm)
       .in('visibility', ['customers', 'guests_only'])
       .maybeSingle();
@@ -175,7 +176,7 @@ export default function CustomerFeedPostDetail() {
     if (!data) return;
     const [reactionsRes, commentsRes, myRes] = await Promise.all([
       supabase.from('feed_post_reactions').select('post_id').eq('post_id', idNorm),
-      supabase.from('feed_post_comments').select('id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)').eq('post_id', idNorm).order('created_at', { ascending: true }),
+      supabase.from('feed_post_comments').select('id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)').eq('post_id', idNorm).order('created_at', { ascending: true }),
       guestRow ? supabase.from('feed_post_reactions').select('post_id').eq('post_id', idNorm).eq('guest_id', guestRow.guest_id) : Promise.resolve({ data: [] as { post_id: string }[] }),
     ]);
     const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
@@ -307,14 +308,24 @@ export default function CustomerFeedPostDetail() {
     );
   }
 
-  const rawStaff = post.staff as { full_name?: string; department?: string; verification_badge?: 'blue' | 'yellow' | null } | null;
+  const rawStaff = post.staff as {
+    full_name?: string;
+    department?: string;
+    verification_badge?: 'blue' | 'yellow' | null;
+    profile_hidden_by_admin?: boolean | null;
+  } | null;
   const rawGuest = post.guest as { full_name?: string | null } | null;
   const staffInfo = Array.isArray(rawStaff) ? rawStaff[0] ?? null : rawStaff;
   const guestInfo = Array.isArray(rawGuest) ? rawGuest[0] ?? null : rawGuest;
   const authorName = staffInfo
-    ? (staffInfo.full_name?.trim() || t('visitorTypeStaff'))
+    ? displayStaffNameForViewer(
+        staffInfo.full_name ?? null,
+        staffInfo.profile_hidden_by_admin ?? null,
+        false,
+        t('visitorTypeStaff')
+      )
     : guestDisplayName(guestInfo?.full_name, t('guestDefaultName'));
-  const dept = staffInfo?.department;
+  const dept = staffInfo?.profile_hidden_by_admin ? null : staffInfo?.department;
   const badge = staffInfo?.verification_badge ?? null;
   const postMediaItems = buildFeedPostMediaItems(post);
   const imageUri = postMediaItems.length > 0 ? (postMediaItems[0].thumbnail_url || postMediaItems[0].media_url) : null;
@@ -554,11 +565,18 @@ export default function CustomerFeedPostDetail() {
             <Text style={styles.commentsTitle}>{t('feedCommentsTitle')}</Text>
             {topLevelComments.map((c) => {
               const isGuestComment = !c.staff_id && !!c.guest_id;
+              const staffHidden = !!(c.staff as { profile_hidden_by_admin?: boolean | null })?.profile_hidden_by_admin;
               const cAuthor = isGuestComment
                 ? guestDisplayName(c.guest?.full_name, '—')
-                : ((c.staff?.full_name ?? '—').trim() || '—');
+                : displayStaffNameForViewer(
+                    (c.staff as { full_name?: string | null } | null)?.full_name ?? null,
+                    staffHidden,
+                    false,
+                    '—'
+                  );
               const avatarUri = c.staff?.profile_image ?? c.guest?.photo_url ?? null;
-              const profileHref = c.staff_id ? `/customer/staff/${c.staff_id}` : c.guest_id ? `/customer/guest/${c.guest_id}` : null;
+              const profileHref =
+                c.staff_id && !staffHidden ? `/customer/staff/${c.staff_id}` : c.guest_id ? `/customer/guest/${c.guest_id}` : null;
               const canDelete = !!(myGuestId && c.guest_id && c.guest_id === myGuestId && !c.staff_id);
               return (
                 <View
@@ -623,7 +641,12 @@ export default function CustomerFeedPostDetail() {
                         <View style={styles.replyListWrap}>
                           {visibleReplies.map((r) => {
                             const rAuthor = r.staff
-                              ? ((r.staff.full_name ?? '—').trim() || '—')
+                              ? displayStaffNameForViewer(
+                                  (r.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null }).full_name ?? null,
+                                  !!(r.staff as { profile_hidden_by_admin?: boolean | null }).profile_hidden_by_admin,
+                                  false,
+                                  '—'
+                                )
                               : guestDisplayName(r.guest?.full_name, '—');
                             return (
                               <View key={r.id} style={styles.replyRow}>

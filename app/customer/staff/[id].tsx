@@ -80,6 +80,8 @@ type StaffDetail = {
   evaluation_insight?: string | null;
   social_links?: Record<string, string> | null;
   organization?: { name: string | null; kind: string | null } | null;
+  profile_hidden_by_admin?: boolean | null;
+  profile_visit_restricted?: boolean | null;
 };
 
 type Review = {
@@ -156,8 +158,10 @@ export default function StaffProfileScreen() {
       };
       const c = raw.profile_contact;
       const rawSocial = (raw as { social_links?: Record<string, string> | null }).social_links;
+      const visitRestricted = !!(raw as { profile_visit_restricted?: boolean }).profile_visit_restricted;
+      const profileHiddenByAdmin = !!(raw as { profile_hidden_by_admin?: boolean }).profile_hidden_by_admin;
       let joinFallback: { created_at: string | null; hire_date: string | null } | null = null;
-      if (!raw.created_at && !raw.hire_date) {
+      if (!visitRestricted && !raw.created_at && !raw.hire_date) {
         const { data: joinRow } = await supabase
           .from('staff')
           .select('created_at, hire_date')
@@ -177,16 +181,24 @@ export default function StaffProfileScreen() {
         show_email_to_guest: c?.show_email_to_guest ?? raw.show_email_to_guest,
         show_whatsapp_to_guest: c?.show_whatsapp_to_guest ?? raw.show_whatsapp_to_guest,
         social_links: rawSocial && typeof rawSocial === 'object' ? rawSocial : null,
+        profile_visit_restricted: visitRestricted,
+        profile_hidden_by_admin: profileHiddenByAdmin,
       };
-      const { data: orgRow } = await supabase
-        .from('staff')
-        .select('organization:organization_id(name,kind)')
-        .eq('id', id)
-        .maybeSingle();
-      staffData.organization = (orgRow as { organization?: { name: string | null; kind: string | null } | null } | null)?.organization ?? null;
+      if (!visitRestricted) {
+        const { data: orgRow } = await supabase
+          .from('staff')
+          .select('organization:organization_id(name,kind)')
+          .eq('id', id)
+          .maybeSingle();
+        staffData.organization = (orgRow as { organization?: { name: string | null; kind: string | null } | null } | null)?.organization ?? null;
+      } else {
+        staffData.organization = null;
+      }
       setStaff(staffData);
-      recordStaffProfileVisit(id).catch(() => {});
-      if (s.shift_id) {
+      if (!visitRestricted) {
+        recordStaffProfileVisit(id).catch(() => {});
+      }
+      if (!visitRestricted && s.shift_id) {
         const { data: shift } = await supabase
           .from('shifts')
           .select('start_time, end_time')
@@ -194,6 +206,11 @@ export default function StaffProfileScreen() {
           .single();
         setStaff((prev) => (prev ? { ...prev, shift: shift ?? null } : null));
       }
+      if (visitRestricted) {
+        setReviews([]);
+        setMyReview(null);
+        setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
+      } else {
       const { data: r } = await supabase
         .from('staff_reviews')
         .select('id, rating, comment, created_at, guest_id, stay_room_label, stay_nights_label')
@@ -279,6 +296,8 @@ export default function StaffProfileScreen() {
       } else {
         setMyReview(null);
       }
+      loadStaffEngagementStats(id).then(setEngagement).catch(() => {});
+    }
     } finally {
       setLoading(false);
     }
@@ -287,11 +306,6 @@ export default function StaffProfileScreen() {
   useEffect(() => {
     loadStaff();
   }, [loadStaff]);
-
-  useEffect(() => {
-    if (!id) return;
-    loadStaffEngagementStats(id).then(setEngagement).catch(() => {});
-  }, [id]);
 
   useEffect(() => {
     const now = new Date();
@@ -466,6 +480,7 @@ export default function StaffProfileScreen() {
     { value: engagement.comments, label: 'Yorum' },
     { value: engagement.visits, label: 'Ziyaret' },
   ];
+  const profileVisitRestricted = !!staff.profile_visit_restricted;
 
   return (
     <View style={styles.container}>
@@ -504,6 +519,7 @@ export default function StaffProfileScreen() {
           >
             <Ionicons name="chevron-back" size={24} color={theme.colors.white} />
           </TouchableOpacity>
+          {!profileVisitRestricted ? (
           <TouchableOpacity
             style={styles.coverActionBtn}
             onPress={() => setProfileMenuVisible(true)}
@@ -511,9 +527,16 @@ export default function StaffProfileScreen() {
           >
             <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.white} />
           </TouchableOpacity>
+          ) : <View style={{ width: 40 }} />}
         </View>
       </ProfileCover>
       <View style={styles.heroOverlap}>
+        {profileVisitRestricted ? (
+          <View style={styles.privacyBanner}>
+            <Ionicons name="eye-off-outline" size={22} color="#92400e" />
+            <Text style={styles.privacyBannerText}>{t('staffProfileHiddenByAdminBanner')}</Text>
+          </View>
+        ) : null}
         <TouchableOpacity activeOpacity={1} onPress={() => staff.profile_image && setAvatarModalVisible(true)}>
           <AvatarWithBadge badge={staff.verification_badge ?? null} avatarSize={HEADER_AVATAR_SIZE} badgeSize={18} showBadge={false}>
             {staff.profile_image ? (
@@ -527,6 +550,7 @@ export default function StaffProfileScreen() {
         </TouchableOpacity>
         <View style={styles.header}>
           <StaffNameWithBadge name={staff.full_name || t('visitorTypeStaff')} badge={staff.verification_badge ?? null} badgeSize={18} textStyle={styles.name} center />
+          {!profileVisitRestricted ? (
           <View style={styles.headerMetaRow}>
             <View style={styles.jobBadge}>
               <Text style={styles.jobBadgeText}>{staff.position || staff.department || '—'}</Text>
@@ -553,6 +577,7 @@ export default function StaffProfileScreen() {
               </TouchableOpacity>
             )}
           </View>
+          ) : null}
           <View style={styles.onlineRow}>
             <View style={[styles.dot, staff.is_online ? styles.dotOn : styles.dotOff]} />
             <Text style={styles.onlineText}>
@@ -560,7 +585,7 @@ export default function StaffProfileScreen() {
             </Text>
           </View>
         </View>
-        {daysWithUs != null ? (
+        {!profileVisitRestricted && daysWithUs != null ? (
           <TouchableOpacity activeOpacity={0.9} style={styles.tenureButtonWrap} onPress={() => setTenureModalVisible(true)}>
             <LinearGradient
               colors={['#0f766e', '#0ea5e9']}
@@ -577,9 +602,12 @@ export default function StaffProfileScreen() {
             </LinearGradient>
           </TouchableOpacity>
         ) : null}
+        {!profileVisitRestricted ? (
         <View style={styles.statsWrap}>
           <ProfileStatsCard items={statItems} />
         </View>
+        ) : null}
+        {!profileVisitRestricted ? (
         <View style={styles.headerActionsTop}>
           {showPhone && (
             <TouchableOpacity onPress={onCall} style={[styles.pillBtn, styles.pillBtnPhone]} activeOpacity={0.85}>
@@ -617,8 +645,11 @@ export default function StaffProfileScreen() {
             <Text style={styles.pillBtnText}>Mesaj</Text>
           </TouchableOpacity>
         </View>
+        ) : null}
       </View>
 
+      {!profileVisitRestricted ? (
+      <>
       {staff.bio ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>📝 {t('staffProfileAbout')}</Text>
@@ -723,6 +754,8 @@ export default function StaffProfileScreen() {
           );
         })}
       </View>
+      </>
+      ) : null}
       <View style={styles.bottomPad} />
 
       <ImagePreviewModal
@@ -1008,6 +1041,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 32, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
+  privacyBanner: {
+    width: '100%',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 12,
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    gap: 8,
+  },
+  privacyBannerText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#78350f',
+    fontWeight: '600',
+  },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   loadingText: { marginTop: 8, fontSize: 15, color: theme.colors.textMuted },
   errorText: { fontSize: 16, color: theme.colors.text },

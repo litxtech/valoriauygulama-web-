@@ -29,6 +29,10 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffReviewsFullModal } from '@/components/StaffEvaluationHub';
 import { loadStaffProfileForViewer } from '@/lib/loadStaffProfileForViewer';
+import {
+  buildRestrictedStaffProfileView,
+  shouldRestrictStaffProfileView,
+} from '@/lib/staffProfilePrivacy';
 import { recordStaffProfileVisit } from '@/lib/staffProfileVisits';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTranslation } from 'react-i18next';
@@ -76,6 +80,7 @@ type StaffProfile = {
   evaluation_responsibility?: number | null;
   evaluation_insight?: string | null;
   organization?: { name: string | null; kind: string | null } | null;
+  profile_hidden_by_admin?: boolean | null;
 };
 
 function formatReviewDateShort(iso: string) {
@@ -126,8 +131,15 @@ export default function StaffProfileViewScreen() {
         setLoading(false);
         return;
       }
-      const s = { ...data, shift: null } as StaffProfile;
-      if (data.shift_id) {
+      const rawHidden = !!(data as { profile_hidden_by_admin?: boolean }).profile_hidden_by_admin;
+      const restricted = shouldRestrictStaffProfileView({
+        profileHiddenByAdmin: rawHidden,
+        viewerStaffId: me?.id,
+        viewerRole: me?.role,
+        targetStaffId: id,
+      });
+      let s = { ...data, shift: null } as StaffProfile;
+      if (data.shift_id && !restricted) {
         const { data: shift } = await supabase
           .from('shifts')
           .select('start_time, end_time')
@@ -135,9 +147,17 @@ export default function StaffProfileViewScreen() {
           .single();
         s.shift = shift ?? null;
       }
+      if (restricted) {
+        s = buildRestrictedStaffProfileView(s);
+      }
       setProfile(s);
-      if (me?.id && me.id !== id) {
+      if (me?.id && me.id !== id && !restricted) {
         recordStaffProfileVisit(id).catch(() => {});
+      }
+      if (restricted) {
+        setReviews([]);
+        setLoading(false);
+        return;
       }
       const { data: r } = await supabase
         .from('staff_reviews')
@@ -196,12 +216,22 @@ export default function StaffProfileViewScreen() {
       setLoading(false);
     };
     load();
-  }, [id, me?.id]);
+  }, [id, me?.id, me?.role]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !profile) return;
+    const r = shouldRestrictStaffProfileView({
+      profileHiddenByAdmin: !!profile.profile_hidden_by_admin,
+      viewerStaffId: me?.id,
+      viewerRole: me?.role,
+      targetStaffId: id,
+    });
+    if (r) {
+      setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
+      return;
+    }
     loadStaffEngagementStats(id).then(setEngagement).catch(() => {});
-  }, [id]);
+  }, [id, profile?.id, profile?.profile_hidden_by_admin, me?.id, me?.role]);
 
   useEffect(() => {
     const now = new Date();
@@ -322,6 +352,12 @@ export default function StaffProfileViewScreen() {
     { value: engagement.comments, label: 'Yorum' },
     { value: engagement.visits, label: 'Ziyaret' },
   ];
+  const profileRestricted = shouldRestrictStaffProfileView({
+    profileHiddenByAdmin: !!profile.profile_hidden_by_admin,
+    viewerStaffId: me?.id,
+    viewerRole: me?.role,
+    targetStaffId: profile.id,
+  });
 
   return (
     <View style={styles.container}>
@@ -345,7 +381,7 @@ export default function StaffProfileViewScreen() {
           >
             <Ionicons name="chevron-back" size={24} color={theme.colors.white} />
           </TouchableOpacity>
-          {!isMe ? (
+          {!isMe && !profileRestricted ? (
             <TouchableOpacity
               style={styles.coverActionBtn}
               onPress={() => setProfileMenuVisible(true)}
@@ -357,6 +393,12 @@ export default function StaffProfileViewScreen() {
         </View>
       </ProfileCover>
       <View style={styles.heroOverlap}>
+        {profileRestricted ? (
+          <View style={styles.privacyBanner}>
+            <Ionicons name="eye-off-outline" size={22} color="#92400e" />
+            <Text style={styles.privacyBannerText}>{t('staffProfileHiddenByAdminBanner')}</Text>
+          </View>
+        ) : null}
         <TouchableOpacity activeOpacity={1} onPress={() => avatarUri && setAvatarModalVisible(true)}>
           <AvatarWithBadge badge={profile.verification_badge ?? null} avatarSize={HEADER_AVATAR_SIZE} badgeSize={18} showBadge={false}>
             {avatarUri ? (
@@ -370,6 +412,7 @@ export default function StaffProfileViewScreen() {
         </TouchableOpacity>
         <View style={styles.nameBlock}>
           <StaffNameWithBadge name={profile.full_name || '—'} badge={profile.verification_badge ?? null} badgeSize={18} textStyle={styles.name} center />
+          {!profileRestricted ? (
           <View style={styles.headerMetaRow}>
             <View style={styles.jobBadge}>
               <Text style={styles.jobBadgeText}>{profile.position || profile.department || '—'}</Text>
@@ -394,8 +437,9 @@ export default function StaffProfileViewScreen() {
               </TouchableOpacity>
             )}
           </View>
+          ) : null}
         </View>
-        {daysWithUs != null ? (
+        {!profileRestricted && daysWithUs != null ? (
           <TouchableOpacity activeOpacity={0.9} style={styles.tenureButtonWrap} onPress={() => setTenureModalVisible(true)}>
             <LinearGradient
               colors={['#0f766e', '#0ea5e9']}
@@ -412,10 +456,12 @@ export default function StaffProfileViewScreen() {
             </LinearGradient>
           </TouchableOpacity>
         ) : null}
+        {!profileRestricted ? (
         <View style={styles.statsWrap}>
           <ProfileStatsCard items={statItems} />
         </View>
-        {!isMe && (
+        ) : null}
+        {!isMe && !profileRestricted && (
           <View style={styles.headerActionsTop}>
             {!!profile.phone?.trim() && (
               <TouchableOpacity
@@ -463,7 +509,8 @@ export default function StaffProfileViewScreen() {
         )}
       </View>
       <View style={styles.body}>
-
+        {!profileRestricted ? (
+        <View>
         <View style={styles.quickStats}>
           {profile.department ? <StatPill label="Departman" value={profile.department} /> : null}
           {profile.position ? <StatPill label="Pozisyon" value={profile.position} /> : null}
@@ -507,15 +554,6 @@ export default function StaffProfileViewScreen() {
 
         <View style={styles.sectionSpacer} />
 
-        {profile.is_online != null && (
-          <View style={styles.onlineRow}>
-            <View style={[styles.onlineDot, profile.is_online && styles.onlineDotOn]} />
-            <Text style={styles.onlineText}>
-              {profile.is_online ? 'Çevrimiçi' : 'Çevrimdışı'}
-            </Text>
-          </View>
-        )}
-
         {profile.specialties?.length ? (
           <View style={styles.block}>
             <Text style={styles.blockTitle}>Uzmanlıklar</Text>
@@ -548,6 +586,17 @@ export default function StaffProfileViewScreen() {
             <Ionicons name="person" size={22} color={theme.colors.white} />
             <Text style={styles.chatBtnText}>Profilimi düzenle</Text>
           </TouchableOpacity>
+        )}
+        </View>
+        ) : null}
+
+        {profile.is_online != null && (
+          <View style={styles.onlineRow}>
+            <View style={[styles.onlineDot, profile.is_online && styles.onlineDotOn]} />
+            <Text style={styles.onlineText}>
+              {profile.is_online ? 'Çevrimiçi' : 'Çevrimdışı'}
+            </Text>
+          </View>
         )}
       </View>
 
@@ -763,6 +812,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.surface },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 32, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
+  privacyBanner: {
+    width: '100%',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 12,
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    gap: 8,
+  },
+  privacyBannerText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#78350f',
+    fontWeight: '600',
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',

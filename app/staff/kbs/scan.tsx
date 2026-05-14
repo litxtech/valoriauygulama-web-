@@ -59,8 +59,8 @@ function peekGateValidMrzFromLines(lines: string[]): { mrz: string; parsed: Pars
   return { mrz, parsed };
 }
 
-/** `onCameraReady` sonrası bu süre dolmadan otomatik kare örneklemesi başlamaz. */
-const MRZ_AUTO_CAPTURE_GRACE_MS = 1800;
+/** Otomatik tarama açıldıktan hemen sonra ilk kareyi geciktir (UI otursun). */
+const MRZ_ARM_FIRST_SAMPLE_DELAY_MS = 900;
 /** Otomatik mod: aynı MRZ hash’inin peş peşe doğrulanması (yanlış pozitif azaltma). */
 const MRZ_STREAK_AUTO_NEEDED = 2;
 const MRZ_STREAK_WINDOW_MS = 3800;
@@ -85,6 +85,9 @@ export default function KbsScanScreen() {
   const cameraReadyRef = useRef(false);
   /** Bu zaman damgasından önce otomatik kare örneklemesi yok (ms epoch). */
   const autoCaptureAllowedAfterRef = useRef(0);
+  /** Kullanıcı «Taramayı başlat» demeden otomatik döngü çalışmaz. */
+  const [liveScanArmed, setLiveScanArmed] = useState(false);
+  const liveScanArmedRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [stepLabel, setStepLabel] = useState<string | null>(null);
@@ -210,6 +213,8 @@ export default function KbsScanScreen() {
       cameraReadyRef.current = false;
       autoCaptureAllowedAfterRef.current = 0;
       setMrzDetectWarmup(false);
+      setLiveScanArmed(false);
+      liveScanArmedRef.current = false;
     }
   }, [cameraMounted]);
 
@@ -220,6 +225,9 @@ export default function KbsScanScreen() {
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
+  useEffect(() => {
+    liveScanArmedRef.current = liveScanArmed;
+  }, [liveScanArmed]);
   useEffect(() => {
     frameKindRef.current = frameKind;
   }, [frameKind]);
@@ -311,6 +319,7 @@ export default function KbsScanScreen() {
       if (busyRef.current) return;
 
       const manual = opts?.manual === true;
+      if (!manual && !liveScanArmedRef.current) return;
       if (!manual && Date.now() < autoCaptureAllowedAfterRef.current) return;
 
       setUpsertResult(null);
@@ -449,11 +458,12 @@ export default function KbsScanScreen() {
   useEffect(() => {
     if (!cameraMounted || !cameraReady || permStatus !== 'granted') return undefined;
     if (pendingSave) return undefined;
+    if (!liveScanArmed) return undefined;
     const id = setInterval(() => {
       void runLiveMrzSample();
     }, MRZ_LIVE_SAMPLE_MS);
     return () => clearInterval(id);
-  }, [cameraMounted, cameraReady, permStatus, pendingSave, runLiveMrzSample]);
+  }, [cameraMounted, cameraReady, permStatus, pendingSave, liveScanArmed, runLiveMrzSample]);
 
   const buildUpsertPayload = useCallback(
     (ps: { parsed: ParsedDocument; mrzLine: string }, deferReady: boolean) => {
@@ -516,6 +526,8 @@ export default function KbsScanScreen() {
           setPendingSave(null);
           setUpsertResult(local.data);
           setFrameKind('success');
+          setLiveScanArmed(false);
+          liveScanArmedRef.current = false;
           if (deferReady) {
             bumpQueued();
             registerQueuedFingerprint(
@@ -549,6 +561,8 @@ export default function KbsScanScreen() {
         setPendingSave(null);
         setUpsertResult(res.data);
         setFrameKind('success');
+        setLiveScanArmed(false);
+        liveScanArmedRef.current = false;
         if (deferReady) {
           bumpQueued();
           registerQueuedFingerprint(
@@ -597,6 +611,9 @@ export default function KbsScanScreen() {
     if (ok) {
       setUpsertResult(null);
       setFrameKind('hunting');
+      setLiveScanArmed(true);
+      liveScanArmedRef.current = true;
+      autoCaptureAllowedAfterRef.current = Date.now() + MRZ_ARM_FIRST_SAMPLE_DELAY_MS;
     }
   }, [savePendingToServer]);
 
@@ -611,6 +628,24 @@ export default function KbsScanScreen() {
     await savePendingToServer(false);
   }, [savePendingToServer]);
 
+  const armLiveScan = useCallback(() => {
+    setLiveScanArmed(true);
+    liveScanArmedRef.current = true;
+    autoCaptureAllowedAfterRef.current = Date.now() + MRZ_ARM_FIRST_SAMPLE_DELAY_MS;
+    setUpsertResult(null);
+    setFrameKind('hunting');
+  }, []);
+
+  const disarmLiveScan = useCallback(() => {
+    setLiveScanArmed(false);
+    liveScanArmedRef.current = false;
+    mrzStreakRef.current = 0;
+    lastStreakHashRef.current = null;
+    lastStreakTsRef.current = 0;
+    setMrzDetectWarmup(false);
+    setFrameKind('hunting');
+  }, []);
+
   const framePillText = useMemo(() => {
     if (frameKind === 'reading') {
       return stepLabel || t('kbsMrzScanBusy');
@@ -620,6 +655,7 @@ export default function KbsScanScreen() {
     }
     if (frameKind === 'hunting') {
       if (capturing) return t('kbsMrzScanBusy');
+      if (!liveScanArmed) return 'Otomatik tarama kapalı. «Taramayı başlat» veya tek kare.';
       if (mrzDetectWarmup) return 'MRZ aranıyor…';
       return 'Belgeyi MRZ alanı görünecek şekilde hizalayın.';
     }
@@ -637,7 +673,7 @@ export default function KbsScanScreen() {
       default:
         return t('kbsMrzScanAlignPassportIdMrz');
     }
-  }, [frameKind, stepLabel, t, mrzDetectWarmup, capturing]);
+  }, [frameKind, stepLabel, t, mrzDetectWarmup, capturing, liveScanArmed]);
 
   const fmt = (v: string | null | undefined) => (v != null && String(v).length > 0 ? String(v) : '—');
 
@@ -688,6 +724,8 @@ export default function KbsScanScreen() {
     setMrzDetectWarmup(false);
     setPendingSave(null);
     setFrameKind('hunting');
+    setLiveScanArmed(false);
+    liveScanArmedRef.current = false;
   }, []);
 
   if (!allowedMrz) {
@@ -750,7 +788,6 @@ export default function KbsScanScreen() {
             onCameraReady={() => {
               setCameraReady(true);
               cameraReadyRef.current = true;
-              autoCaptureAllowedAfterRef.current = Date.now() + MRZ_AUTO_CAPTURE_GRACE_MS;
             }}
             onMountError={() => {
               setCameraReady(false);
@@ -845,7 +882,11 @@ export default function KbsScanScreen() {
             />
           </View>
           <Text style={styles.frameHint}>
-            {pendingSave ? 'Bilgileri kontrol edin.' : 'Belgeyi MRZ alanı görünecek şekilde hizalayın.'}
+            {pendingSave
+              ? 'Bilgileri kontrol edin.'
+              : liveScanArmed
+                ? 'Belgeyi MRZ alanı görünecek şekilde hizalayın.'
+                : 'Hizalayın; otomatik kare yok. İsterseniz «Taramayı başlat» veya tek kare.'}
           </Text>
         </View>
 
@@ -860,24 +901,42 @@ export default function KbsScanScreen() {
           </View>
 
           {!pendingSave ? (
-            <View style={styles.autoRow}>
-              <Text style={styles.autoHint} numberOfLines={5}>
-                MRZ aranıyor… Belgeyi çerçeveye hizalayın. İki kez üst üste doğrulanınca okuma kilitlenir. Sorun
-                olursa kamera ile tek kare deneyin.
-              </Text>
-              <Pressable
-                onPress={() => void runLiveMrzSample({ manual: true })}
-                disabled={shutterDisabled}
-                style={({ pressed }) => [
-                  styles.manualFab,
-                  shutterDisabled && styles.manualFabDisabled,
-                  pressed && !shutterDisabled && { opacity: 0.88 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Manuel MRZ taraması"
-              >
-                {capturing ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={22} color="#fff" />}
-              </Pressable>
+            <View style={styles.autoCol}>
+              {!liveScanArmed ? (
+                <TouchableOpacity
+                  style={[styles.armScanBtn, (capturing || busy || !cameraReady) && { opacity: 0.55 }]}
+                  onPress={armLiveScan}
+                  disabled={capturing || busy || !cameraReady}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="scan-outline" size={22} color="#fff" />
+                  <Text style={styles.armScanBtnText}>Taramayı başlat</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.disarmBtn} onPress={disarmLiveScan} activeOpacity={0.85}>
+                  <Text style={styles.disarmBtnText}>Taramayı durdur</Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.autoRow}>
+                <Text style={styles.autoHint} numberOfLines={5}>
+                  {liveScanArmed
+                    ? 'MRZ aranıyor… İki kez üst üste doğrulanınca okuma kilitlenir. İsterseniz tek kare de deneyin.'
+                    : 'Önce hizalayın; otomatik kare yok. Tek kare ile anında deneme veya taramayı başlatın.'}
+                </Text>
+                <Pressable
+                  onPress={() => void runLiveMrzSample({ manual: true })}
+                  disabled={shutterDisabled}
+                  style={({ pressed }) => [
+                    styles.manualFab,
+                    shutterDisabled && styles.manualFabDisabled,
+                    pressed && !shutterDisabled && { opacity: 0.88 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Tek kare MRZ"
+                >
+                  {capturing ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={22} color="#fff" />}
+                </Pressable>
+              </View>
             </View>
           ) : (
             <Text style={styles.reviewMiniHint}>Aşağıdaki karttan bilgileri onaylayın.</Text>
@@ -1308,8 +1367,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
     paddingHorizontal: 2,
+    marginTop: 8,
+  },
+  autoCol: {
+    width: '100%',
+    gap: 8,
     marginTop: 2,
   },
+  armScanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#16a34a',
+    borderRadius: 14,
+    paddingVertical: 14,
+    width: '100%',
+  },
+  armScanBtnText: { color: '#fff', fontWeight: '900', fontSize: 16 },
+  disarmBtn: { alignItems: 'center', paddingVertical: 6 },
+  disarmBtnText: { color: 'rgba(255,255,255,0.92)', fontWeight: '800', fontSize: 14, textDecorationLine: 'underline' },
   autoHint: {
     flex: 1,
     color: 'rgba(255,255,255,0.92)',

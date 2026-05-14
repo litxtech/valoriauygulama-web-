@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { maskStaffDisplayNameForPrivacy } from '@/lib/staffProfilePrivacy';
 
 export type StaffStoryRow = {
   id: string;
@@ -14,6 +15,7 @@ export type StaffStoryRow = {
     full_name: string | null;
     profile_image: string | null;
     verification_badge?: 'blue' | 'yellow' | null;
+    profile_hidden_by_admin?: boolean | null;
   } | null;
 };
 
@@ -27,13 +29,16 @@ export type StaffStoryGroup = {
   has_unseen: boolean;
 };
 
-export async function loadActiveStaffStories(viewerStaffId?: string | null): Promise<StaffStoryGroup[]> {
+export async function loadActiveStaffStories(
+  viewerStaffId?: string | null,
+  viewerIsAdmin = false
+): Promise<StaffStoryGroup[]> {
   const nowIso = new Date().toISOString();
 
   const storiesPromise = supabase
     .from('feed_stories')
     .select(
-      'id, staff_id, media_type, media_url, thumbnail_url, caption, expires_at, created_at, duration_seconds, staff:staff_id(full_name, profile_image, verification_badge)'
+      'id, staff_id, media_type, media_url, thumbnail_url, caption, expires_at, created_at, duration_seconds, staff:staff_id(full_name, profile_image, verification_badge, profile_hidden_by_admin)'
     )
     .is('deleted_at', null)
     .gt('expires_at', nowIso)
@@ -66,7 +71,12 @@ export async function loadActiveStaffStories(viewerStaffId?: string | null): Pro
     }
     groupsMap.set(staffId, {
       staff_id: staffId,
-      author_name: story.staff?.full_name?.trim() || 'Personel',
+      author_name: (() => {
+        const raw = story.staff?.full_name?.trim() || '';
+        const hidden = !!story.staff?.profile_hidden_by_admin;
+        if (hidden && !viewerIsAdmin) return maskStaffDisplayNameForPrivacy(raw || null) || 'Personel';
+        return raw || 'Personel';
+      })(),
       author_avatar: story.staff?.profile_image ?? null,
       author_badge: story.staff?.verification_badge ?? null,
       stories: [story],

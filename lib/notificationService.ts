@@ -162,12 +162,16 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   // Push'u insert sonucundan bağımsız dene: RLS/insert hata verse bile (ör. beğeni/yorum) cihaz bildirimi kaybolmasın
   if (staffIds.length > 0 || guestIds.length > 0) {
     try {
+      const pushData: Record<string, unknown> = {
+        ...(data && typeof data === 'object' ? data : {}),
+        ...(notificationType ? { notificationType } : {}),
+      };
       await sendExpoPushToRecipients({
         guestIds: guestIds.length ? guestIds : undefined,
         staffIds: staffIds.length ? staffIds : undefined,
         title,
         body,
-        data,
+        data: pushData,
       });
     } catch (e) {
       log.warn('notificationService', 'push after sendNotification', e);

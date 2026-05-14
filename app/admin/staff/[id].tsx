@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,9 @@ import {
   Switch,
   Modal,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { adminTheme } from '@/constants/adminTheme';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 import * as Print from 'expo-print';
@@ -202,6 +204,7 @@ type StaffDetail = {
   certifications_summary?: string | null;
   kvkk_consent_at?: string | null;
   drives_vehicle?: boolean | null;
+  profile_hidden_by_admin?: boolean | null;
 };
 
 type StaffRelatedDocument = {
@@ -229,6 +232,101 @@ type PersonnelWarningRow = {
   acknowledgement_note: string | null;
   image_urls: unknown;
 };
+
+function SectionCard({
+  title,
+  subtitle,
+  icon,
+  children,
+  variant = 'default',
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  children: ReactNode;
+  variant?: 'default' | 'danger';
+}) {
+  const accent = variant === 'danger' ? adminTheme.colors.error : adminTheme.colors.primary;
+  const bubbleBg = variant === 'danger' ? adminTheme.colors.errorLight : adminTheme.colors.surfaceTertiary;
+  return (
+    <View style={[sectionStyles.card, variant === 'danger' && { borderLeftWidth: 4, borderLeftColor: accent }]}>
+      <View style={sectionStyles.cardHeader}>
+        {icon ? (
+          <View style={[sectionStyles.iconBubble, { backgroundColor: bubbleBg }]}>
+            <Ionicons name={icon} size={18} color={accent} />
+          </View>
+        ) : null}
+        <View style={sectionStyles.cardHeaderText}>
+          <Text style={sectionStyles.cardTitle}>{title}</Text>
+          {subtitle ? <Text style={sectionStyles.cardSubtitle}>{subtitle}</Text> : null}
+        </View>
+      </View>
+      <View style={sectionStyles.cardBody}>{children}</View>
+    </View>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <View style={sectionStyles.fieldBlock}>
+      <Text style={sectionStyles.fieldLabel}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  card: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: adminTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    marginBottom: adminTheme.spacing.lg,
+    ...adminTheme.shadow.sm,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: adminTheme.spacing.lg,
+    paddingTop: adminTheme.spacing.lg,
+    paddingBottom: adminTheme.spacing.sm,
+    gap: adminTheme.spacing.md,
+  },
+  iconBubble: {
+    width: 40,
+    height: 40,
+    borderRadius: adminTheme.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardHeaderText: { flex: 1, minWidth: 0 },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: adminTheme.colors.text,
+    letterSpacing: -0.2,
+  },
+  cardSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: adminTheme.colors.textMuted,
+    lineHeight: 18,
+  },
+  cardBody: {
+    paddingHorizontal: adminTheme.spacing.lg,
+    paddingBottom: adminTheme.spacing.lg,
+    paddingTop: adminTheme.spacing.xs,
+  },
+  fieldBlock: { marginBottom: adminTheme.spacing.md },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: adminTheme.colors.textSecondary,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+});
 
 export default function EditStaffScreen() {
   const router = useRouter();
@@ -275,6 +373,7 @@ export default function EditStaffScreen() {
   const [certifications_summary, setCertificationsSummary] = useState('');
   const [kvkk_consent_at, setKvkkConsentAt] = useState('');
   const [drives_vehicle, setDrivesVehicle] = useState(false);
+  const [profileHiddenByAdmin, setProfileHiddenByAdmin] = useState(false);
   const [nonAdminRole, setNonAdminRole] = useState<string>('receptionist');
   /** Uzak DB’de migration 211 uygulanmadıysa tenure_note yok; güncellemede göndermeyelim. */
   const [supportsTenureNoteColumn, setSupportsTenureNoteColumn] = useState(true);
@@ -292,6 +391,7 @@ export default function EditStaffScreen() {
   const [warnImageUrls, setWarnImageUrls] = useState<string[]>([]);
   const [warnImageUploading, setWarnImageUploading] = useState(false);
   const [issuingWarning, setIssuingWarning] = useState(false);
+  const [permissionsExpanded, setPermissionsExpanded] = useState(false);
 
   const loadPersonnelWarnings = useCallback(async () => {
     if (!id) return;
@@ -323,9 +423,9 @@ export default function EditStaffScreen() {
     if (!id) return;
     (async () => {
       const STAFF_SELECT_FULL =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, tenure_note, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle';
+        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, tenure_note, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
       const STAFF_SELECT_LEGACY =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle';
+        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
       let { data, error } = await supabase
         .from('staff')
         .select(STAFF_SELECT_FULL)
@@ -387,6 +487,7 @@ export default function EditStaffScreen() {
       setCertificationsSummary(s.certifications_summary ?? '');
       setKvkkConsentAt(s.kvkk_consent_at ?? '');
       setDrivesVehicle(s.drives_vehicle === true);
+      setProfileHiddenByAdmin(s.profile_hidden_by_admin === true);
     })().finally(() => setLoading(false));
   }, [id]);
 
@@ -657,6 +758,7 @@ export default function EditStaffScreen() {
         certifications_summary: certifications_summary.trim() || null,
         kvkk_consent_at: kvkk_consent_at.trim() || null,
         drives_vehicle,
+        profile_hidden_by_admin: profileHiddenByAdmin,
       };
       if (supportsTenureNoteColumn) {
         staffExtraUpdate.tenure_note = tenure_note.trim() || null;
@@ -774,7 +876,7 @@ export default function EditStaffScreen() {
   if (loading || !staff) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1a365d" />
+        <ActivityIndicator size="large" color={adminTheme.colors.primary} />
       </View>
     );
   }
@@ -782,427 +884,685 @@ export default function EditStaffScreen() {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <Text style={styles.sectionTitle}>👤 Çalışan düzenle</Text>
-
-        <Text style={styles.label}>Yeni şifre (boş bırakırsanız değişmez)</Text>
-        <TextInput
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          placeholder="••••••••"
-          secureTextEntry
-          placeholderTextColor="#9ca3af"
-        />
-
-        <Text style={styles.label}>Ad Soyad</Text>
-        <TextInput style={styles.input} value={full_name} onChangeText={setFullName} placeholder="Ad Soyad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>E-posta</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="E-posta"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          placeholderTextColor="#9ca3af"
-        />
-        <Text style={styles.label}>Telefon</Text>
-        <TextInput style={styles.input} value={phone} onChangeText={setPhone} placeholder="Telefon" keyboardType="phone-pad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>WhatsApp</Text>
-        <TextInput style={styles.input} value={whatsapp} onChangeText={setWhatsapp} placeholder="05551234567" keyboardType="phone-pad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Doğum tarihi</Text>
-        <TextInput style={styles.input} value={birth_date} onChangeText={setBirthDate} placeholder="YYYY-MM-DD" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>T.C. Kimlik</Text>
-        <TextInput style={styles.input} value={id_number} onChangeText={setIdNumber} placeholder="T.C. Kimlik" keyboardType="number-pad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Adres</Text>
-        <TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="Adres" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Acil durum kişisi</Text>
-        <TextInput style={styles.input} value={emergency_contact_name} onChangeText={setEmergencyContactName} placeholder="Ad Soyad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Acil durum telefonu</Text>
-        <TextInput style={styles.input} value={emergency_contact_phone} onChangeText={setEmergencyContactPhone} placeholder="0532 111 22 33" keyboardType="phone-pad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>2. yakın kişi</Text>
-        <TextInput style={styles.input} value={emergency_contact2_name} onChangeText={setEmergencyContact2Name} placeholder="Ad Soyad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>2. yakın telefonu</Text>
-        <TextInput style={styles.input} value={emergency_contact2_phone} onChangeText={setEmergencyContact2Phone} placeholder="05xx xxx xx xx" keyboardType="phone-pad" placeholderTextColor="#9ca3af" />
-
-        <Text style={styles.sectionTitle}>🏢 Çalışan bilgileri</Text>
-        <Text style={styles.label}>İşletme</Text>
-        <View style={styles.chips}>
-          {organizations.map((o) => (
-            <TouchableOpacity
-              key={o.id}
-              style={[styles.chip, organizationId === o.id && styles.chipActive]}
-              onPress={() => setOrganizationId(o.id)}
-            >
-              <Text style={[styles.chipText, organizationId === o.id && styles.chipTextActive]}>{o.name}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.sectionTitle}>🔑 Yönetici</Text>
-        <Text style={styles.label}>Tam admin (tüm yönetim paneli)</Text>
-        <View style={styles.rowSwitch}>
-          <Text style={[styles.label, { marginBottom: 0, flex: 1 }]}>
-            {isAdmin ? 'Bu kullanıcı tam admin.' : 'Kapalıysa kullanıcı admin panelini görmez.'}
-          </Text>
-          <Switch value={isAdmin} onValueChange={toggleFullAdmin} trackColor={{ false: '#cbd5e0', true: '#1a365d' }} thumbColor="#fff" />
+        <View style={styles.heroCard}>
+          <View style={styles.heroAvatar}>
+            <Text style={styles.heroAvatarText}>
+              {(full_name || '?')
+                .trim()
+                .slice(0, 2)
+                .toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.heroTextCol}>
+            <Text style={styles.heroName} numberOfLines={2}>
+              {full_name?.trim() ? full_name.trim() : 'İsimsiz personel'}
+            </Text>
+            <Text style={styles.heroMeta} numberOfLines={1}>
+              {email?.trim() ? email.trim() : 'E-posta yok'}
+            </Text>
+            <View style={styles.heroPills}>
+              <View style={[styles.heroPill, is_active ? styles.heroPillOn : styles.heroPillOff]}>
+                <Text style={[styles.heroPillText, is_active ? styles.heroPillTextOn : styles.heroPillTextOff]}>{is_active ? 'Aktif' : 'Pasif'}</Text>
+              </View>
+              {isAdmin ? (
+                <View style={[styles.heroPill, styles.heroPillAdmin]}>
+                  <Text style={styles.heroPillTextAdmin}>Admin</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
         </View>
 
-        {!isAdmin ? (
-          <>
-            <Text style={styles.label}>Rol</Text>
+        <SectionCard title="Hesap güvenliği" subtitle="Şifre boş bırakılırsa değişmez." icon="key-outline">
+          <Field label="Yeni şifre">
+            <TextInput
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••••"
+              secureTextEntry
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="Kimlik ve iletişim" subtitle="Temel kişisel bilgiler ve adres." icon="person-outline">
+          <Field label="Ad Soyad">
+            <TextInput
+              style={styles.input}
+              value={full_name}
+              onChangeText={setFullName}
+              placeholder="Ad Soyad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="E-posta">
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="E-posta"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Telefon">
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="Telefon"
+              keyboardType="phone-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="WhatsApp">
+            <TextInput
+              style={styles.input}
+              value={whatsapp}
+              onChangeText={setWhatsapp}
+              placeholder="05551234567"
+              keyboardType="phone-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Doğum tarihi">
+            <TextInput
+              style={styles.input}
+              value={birth_date}
+              onChangeText={setBirthDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="T.C. Kimlik">
+            <TextInput
+              style={styles.input}
+              value={id_number}
+              onChangeText={setIdNumber}
+              placeholder="T.C. Kimlik"
+              keyboardType="number-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Adres">
+            <TextInput
+              style={styles.input}
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Adres"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="Acil durum" subtitle="Birinci ve ikinci yakın kişi." icon="medkit-outline">
+          <Field label="1. yakın — ad soyad">
+            <TextInput
+              style={styles.input}
+              value={emergency_contact_name}
+              onChangeText={setEmergencyContactName}
+              placeholder="Ad Soyad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="1. yakın — telefon">
+            <TextInput
+              style={styles.input}
+              value={emergency_contact_phone}
+              onChangeText={setEmergencyContactPhone}
+              placeholder="0532 111 22 33"
+              keyboardType="phone-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="2. yakın — ad soyad">
+            <TextInput
+              style={styles.input}
+              value={emergency_contact2_name}
+              onChangeText={setEmergencyContact2Name}
+              placeholder="Ad Soyad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="2. yakın — telefon">
+            <TextInput
+              style={styles.input}
+              value={emergency_contact2_phone}
+              onChangeText={setEmergencyContact2Phone}
+              placeholder="05xx xxx xx xx"
+              keyboardType="phone-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="İşletme ve görev" subtitle="Organizasyon, rol ve çalışma profili." icon="briefcase-outline">
+          <Field label="İşletme">
             <View style={styles.chips}>
-              {ROLES.map((r) => (
+              {organizations.map((o) => (
                 <TouchableOpacity
-                  key={r.value}
-                  style={[styles.chip, role === r.value && styles.chipActive]}
-                  onPress={() => setRole(r.value)}
+                  key={o.id}
+                  style={[styles.chip, organizationId === o.id && styles.chipActive]}
+                  onPress={() => setOrganizationId(o.id)}
                 >
-                  <Text style={[styles.chipText, role === r.value && styles.chipTextActive]}>{r.label}</Text>
+                  <Text style={[styles.chipText, organizationId === o.id && styles.chipTextActive]}>{o.name}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-          </>
-        ) : (
-          <Text style={styles.hint}>
-            Tam admin açıkken rol otomatik <Text style={{ fontWeight: '700' }}>admin</Text> olur. Kapatırsanız önceki rolüne döner.
-          </Text>
-        )}
-        <Text style={styles.label}>Departman</Text>
-        <View style={styles.chips}>
-          {DEPARTMENTS.map((d) => (
-            <TouchableOpacity
-              key={d.value}
-              style={[styles.chip, department === d.value && styles.chipActive]}
-              onPress={() => setDepartment(d.value)}
-            >
-              <Text style={[styles.chipText, department === d.value && styles.chipTextActive]}>{d.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.label}>Pozisyon</Text>
-        <TextInput style={styles.input} value={position} onChangeText={setPosition} placeholder="Pozisyon" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>İşe başlama tarihi</Text>
-        <TextInput style={styles.input} value={hire_date} onChangeText={setHireDate} placeholder="YYYY-MM-DD" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Kıdem notu (profil göstergesi alt metni)</Text>
-        <TextInput
-          style={styles.input}
-          value={tenure_note}
-          onChangeText={setTenureNote}
-          placeholder="Örn: Ön büro kıdem sorumlusu"
-          placeholderTextColor="#9ca3af"
-        />
-        <Text style={styles.label}>Personel no</Text>
-        <TextInput style={styles.input} value={personnel_no} onChangeText={setPersonnelNo} placeholder="Personel no" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Ofis / Konum</Text>
-        <TextInput style={styles.input} value={office_location} onChangeText={setOfficeLocation} placeholder="Örn: 2. Kat Ofisi" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Hakkında</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={bio}
-          onChangeText={setBio}
-          placeholder="Personel hakkında kısa bilgi. Link eklerseniz profilde tıklanabilir görünür."
-          placeholderTextColor="#9ca3af"
-          multiline
-        />
-        <Text style={styles.label}>Başarılar (virgülle)</Text>
-        <TextInput style={styles.input} value={achievements} onChangeText={setAchievements} placeholder="Örn: Ayın Personeli 2024, En İyi Müşteri Yorumu" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>Geçmişte çalıştığı işler / deneyim</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={previous_work_experience}
-          onChangeText={setPreviousWorkExperience}
-          placeholder={'Örn:\n- 2021-2023 Resepsiyon\n- 2023-2025 Ön Büro'}
-          placeholderTextColor="#9ca3af"
-          multiline
-        />
-        <Text style={styles.sectionTitle}>💰 Maaş bilgileri</Text>
-        <Text style={styles.label}>Maaş (TL)</Text>
-        <TextInput style={styles.input} value={salary} onChangeText={setSalary} placeholder="Maaş" keyboardType="decimal-pad" placeholderTextColor="#9ca3af" />
-        <Text style={styles.label}>SGK no</Text>
-        <TextInput style={styles.input} value={sgk_no} onChangeText={setSgkNo} placeholder="SGK no" placeholderTextColor="#9ca3af" />
+          </Field>
 
-        <Text style={styles.sectionTitle}>📋 Ek seçenekler (İK)</Text>
-        <Text style={styles.label}>Sözleşme tipi</Text>
-        <View style={styles.chips}>
-          {CONTRACT_TYPES.map((c) => (
-            <TouchableOpacity
-              key={c.value || 'none'}
-              style={[styles.chip, contract_type === c.value && styles.chipActive]}
-              onPress={() => setContractType(c.value)}
-            >
-              <Text style={[styles.chipText, contract_type === c.value && styles.chipTextActive]} numberOfLines={2}>
-                {c.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.label}>İşten çıkış tarihi (varsa)</Text>
-        <TextInput
-          style={styles.input}
-          value={termination_date}
-          onChangeText={setTerminationDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor="#9ca3af"
-        />
-        <Text style={styles.label}>Dahili hat</Text>
-        <TextInput
-          style={styles.input}
-          value={internal_extension}
-          onChangeText={setInternalExtension}
-          placeholder="Örn: 204"
-          placeholderTextColor="#9ca3af"
-        />
-        <Text style={styles.label}>Sertifikalar / geçerlilik</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={certifications_summary}
-          onChangeText={setCertificationsSummary}
-          placeholder={'İlk yardım — 2026-12-01\nHijyen — 2025-06-15'}
-          placeholderTextColor="#9ca3af"
-          multiline
-        />
-        <Text style={styles.label}>KVKK onay tarihi</Text>
-        <TextInput
-          style={styles.input}
-          value={kvkk_consent_at}
-          onChangeText={setKvkkConsentAt}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor="#9ca3af"
-        />
-        <View style={styles.rowSwitch}>
-          <Text style={styles.label}>Ehliyet / araç kullanabilir</Text>
-          <Switch value={drives_vehicle} onValueChange={setDrivesVehicle} trackColor={{ false: '#cbd5e0', true: '#1a365d' }} thumbColor="#fff" />
-        </View>
-
-        <Text style={styles.sectionTitle}>⏰ Çalışma</Text>
-        <Text style={styles.label}>Vardiya</Text>
-        <View style={styles.chips}>
-          {SHIFT_TYPES.map((s) => (
-            <TouchableOpacity
-              key={s.value}
-              style={[styles.chip, shift_type === s.value && styles.chipActive]}
-              onPress={() => setShiftType(s.value)}
-            >
-              <Text style={[styles.chipText, shift_type === s.value && styles.chipTextActive]}>{s.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.label}>Çalışma günleri</Text>
-        <View style={styles.chips}>
-          {DAYS.map((d) => (
-            <TouchableOpacity key={d.value} style={[styles.chip, work_days.includes(d.value) && styles.chipActive]} onPress={() => toggleDay(d.value)}>
-              <Text style={[styles.chipText, work_days.includes(d.value) && styles.chipTextActive]}>{d.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.sectionTitle}>📱 Uygulama yetkileri</Text>
-        <View style={styles.rowSwitch}>
-          <Text style={[styles.label, { flex: 1, marginBottom: 0 }]}>
-            Bu personel misafirden mesaj alamaz
-          </Text>
-          <Switch
-            value={guestMessagesBlocked}
-            onValueChange={toggleGuestMessagesBlocked}
-            trackColor={{ false: '#cbd5e0', true: '#1a365d' }}
-            thumbColor="#fff"
-          />
-        </View>
-        <Text style={styles.hint}>
-          Açıksa, misafir ekranında "Güvenlik nedeniyle otel tarafından mesaja kapatıldı" uyarısı gösterilir.
-        </Text>
-        {APP_PERMISSIONS.filter((p) => p.key !== 'misafir_mesaj_alabilir').map((p) => (
-          <TouchableOpacity key={p.key} style={styles.checkRow} onPress={() => togglePermission(p.key)}>
-            <Text style={styles.checkbox}>{app_permissions[p.key] ? '☑' : '☐'}</Text>
-            <Text style={styles.checkLabel}>{p.label}</Text>
-          </TouchableOpacity>
-        ))}
-
-        <View style={styles.rowSwitch}>
-          <Text style={styles.label}>Aktif</Text>
-          <Switch value={is_active} onValueChange={setIsActive} trackColor={{ false: '#cbd5e0', true: '#1a365d' }} thumbColor="#fff" />
-        </View>
-
-        <Text style={styles.sectionTitle}>✓ Doğrulama rozeti (mavi / sarı tik)</Text>
-        <Text style={styles.label}>Tik verilen kullanıcı her yerde rozet ile görünür. Kaldırmak için "Yok" seçin.</Text>
-        <View style={styles.chips}>
-          <TouchableOpacity
-            style={[styles.chip, verification_badge === '' && styles.chipActive]}
-            onPress={() => setVerificationBadge('')}
-          >
-            <Text style={[styles.chipText, verification_badge === '' && styles.chipTextActive]}>Yok (kaldır)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.chip, verification_badge === 'blue' && styles.chipActive]}
-            onPress={() => setVerificationBadge('blue')}
-          >
-            <Text style={[styles.chipText, verification_badge === 'blue' && styles.chipTextActive]}>🔵 Mavi tik</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.chip, verification_badge === 'yellow' && styles.chipActive]}
-            onPress={() => setVerificationBadge('yellow')}
-          >
-            <Text style={[styles.chipText, verification_badge === 'yellow' && styles.chipTextActive]}>🟡 Sarı tik</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionTitle}>⚠️ Resmi uyarı (disiplin)</Text>
-        <Text style={styles.label}>
-          Personelde kalıcı kayıt oluşturur; sözlü ve üzeri seviyede uygulama açılışında tam ekran uyarı ve okundu onayı zorunludur.
-          Yıldızlı değerlendirme ile birlikte İK sürecinde kullanılabilir — ikisi ayrı kayıtlardır.
-        </Text>
-        <TouchableOpacity
-          style={styles.warnIssueBtn}
-          onPress={() => {
-            setWarnImageUrls([]);
-            setWarnModalOpen(true);
-          }}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.warnIssueBtnText}>Bu personele uyarı gönder</Text>
-        </TouchableOpacity>
-        {personnelWarningsLoading ? (
-          <ActivityIndicator size="small" color="#991b1b" style={{ marginVertical: 10 }} />
-        ) : personnelWarnings.length === 0 ? (
-          <Text style={styles.hint}>Henüz resmi uyarı kaydı yok.</Text>
-        ) : (
-          <View style={styles.warnList}>
-            {personnelWarnings.map((w) => {
-              const wImgs = personnelWarningImageList(w.image_urls);
-              return (
-              <View key={w.id} style={styles.warnCard}>
-                {wImgs.length > 0 ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.warnCardImages}>
-                    {wImgs.map((uri) => (
-                      <TouchableOpacity key={uri} onPress={() => setPreviewImageUri(uri)} activeOpacity={0.9}>
-                        <CachedImage uri={uri} style={styles.warnCardThumb} contentFit="cover" />
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                ) : null}
-                <View style={styles.warnCardTop}>
-                  <Text style={styles.warnSeverity}>{SEVERITY_LABEL_TR[w.severity]}</Text>
-                  <Text style={styles.warnDate}>{new Date(w.created_at).toLocaleString('tr-TR')}</Text>
-                </View>
-                {w.subject_line?.trim() ? (
-                  <Text style={styles.warnSubject}>{w.subject_line.trim()}</Text>
-                ) : null}
-                <Text style={styles.warnBodyPreview} numberOfLines={4}>
-                  {w.body.trim()}
-                </Text>
-                <Text style={styles.warnAck}>
-                  {w.acknowledged_at
-                    ? `Personel okudu: ${new Date(w.acknowledged_at).toLocaleString('tr-TR')}`
-                    : 'Personel henüz okundu onayı vermedi'}
-                </Text>
-                {w.acknowledgement_note?.trim() ? (
-                  <Text style={styles.warnAckNote}>Personel notu: {w.acknowledgement_note.trim()}</Text>
-                ) : null}
-              </View>
-              );
-            })}
+          <View style={styles.rowSwitch}>
+            <Text style={styles.switchLabel}>{isAdmin ? 'Tam admin (tüm yönetim paneli)' : 'Tam admin kapalı'}</Text>
+            <Switch
+              value={isAdmin}
+              onValueChange={toggleFullAdmin}
+              trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
+              thumbColor="#fff"
+            />
           </View>
-        )}
+          <Text style={styles.hintInline}>
+            {isAdmin ? 'Bu kullanıcı tam admin yetkisine sahip.' : 'Kapalıysa kullanıcı yönetim panelini görmez.'}
+          </Text>
 
-        <Text style={styles.sectionTitle}>⭐ Yönetim değerlendirmesi</Text>
-        <Text style={styles.label}>
-          Takım çalışması, disiplin, kurallara uyum vb. yıldızlı değerlendirme kaydı oluşturun; personel kendi ekranında görür.
-        </Text>
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => router.push(`/admin/staff/evaluation/${id}`)}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.primaryButtonText}>Değerlendirme ekranına git</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.sectionTitle}>📝 Admin notları</Text>
-        <Text style={styles.label}>Not (sadece admin görür)</Text>
-        <TextInput style={[styles.input, styles.textArea]} value={notes} onChangeText={setNotes} placeholder="Çalışkan, terfi düşünülebilir..." placeholderTextColor="#9ca3af" multiline />
-
-        <Text style={styles.sectionTitle}>📎 Personel evrakları</Text>
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() =>
-            router.push({
-              pathname: '/admin/documents/new',
-              params: {
-                relatedStaffId: id,
-                relatedStaffName: full_name || undefined,
-              },
-            })
-          }
-          activeOpacity={0.85}
-        >
-          <Text style={styles.primaryButtonText}>Sabıka kaydı / evrak yükle</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryButton} onPress={loadStaffDocuments} activeOpacity={0.8}>
-          <Text style={styles.secondaryButtonText}>Evrak listesini yenile</Text>
-        </TouchableOpacity>
-        {staffDocsLoading ? (
-          <ActivityIndicator size="small" color="#1a365d" style={{ marginTop: 8 }} />
-        ) : staffDocs.length === 0 ? (
-          <Text style={styles.hint}>Bu personele bağlı evrak yok.</Text>
-        ) : (
-          <View style={styles.docList}>
-            {staffDocs.map((doc) => {
-              const ver = doc.current_version_id ? staffDocVersions[doc.current_version_id] : undefined;
-              const isImage = ver ? isDocumentImageMime(ver.mime_type, ver.file_name, ver.file_path) : false;
-              const previewUrl = ver?.file_path ? staffDocPreviewUrlByPath[ver.file_path] : undefined;
-              return (
-                <View key={doc.id} style={styles.docCard}>
-                  {isImage && previewUrl ? (
-                    <TouchableOpacity
-                      style={styles.docThumb}
-                      onPress={() => setPreviewImageUri(previewUrl)}
-                      activeOpacity={0.85}
-                    >
-                      <CachedImage uri={previewUrl} style={styles.docThumbImage} contentFit="cover" />
-                    </TouchableOpacity>
-                  ) : (
-                    <View style={styles.docThumbFallback}>
-                      <Text style={styles.docThumbFallbackText}>DOSYA</Text>
-                    </View>
-                  )}
+          {!isAdmin ? (
+            <Field label="Rol">
+              <View style={styles.chips}>
+                {ROLES.map((r) => (
                   <TouchableOpacity
-                    style={{ flex: 1 }}
-                    onPress={() => router.push(`/admin/documents/${doc.id}`)}
-                    activeOpacity={0.8}
+                    key={r.value}
+                    style={[styles.chip, role === r.value && styles.chipActive]}
+                    onPress={() => setRole(r.value)}
                   >
-                    <Text style={styles.docTitle} numberOfLines={1}>{doc.title}</Text>
-                    <Text style={styles.docMeta} numberOfLines={1}>
-                      {ver?.file_name ?? 'Dosya'} · {new Date(doc.updated_at).toLocaleDateString('tr-TR')}
-                    </Text>
+                    <Text style={[styles.chipText, role === r.value && styles.chipTextActive]}>{r.label}</Text>
                   </TouchableOpacity>
-                </View>
-              );
-            })}
+                ))}
+              </View>
+            </Field>
+          ) : (
+            <Text style={styles.hint}>
+              Tam admin açıkken rol otomatik <Text style={{ fontWeight: '700' }}>admin</Text> olur. Kapatırsanız önceki rolüne döner.
+            </Text>
+          )}
+
+          <Field label="Departman">
+            <View style={styles.chips}>
+              {DEPARTMENTS.map((d) => (
+                <TouchableOpacity
+                  key={d.value}
+                  style={[styles.chip, department === d.value && styles.chipActive]}
+                  onPress={() => setDepartment(d.value)}
+                >
+                  <Text style={[styles.chipText, department === d.value && styles.chipTextActive]}>{d.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Field>
+
+          <Field label="Pozisyon">
+            <TextInput
+              style={styles.input}
+              value={position}
+              onChangeText={setPosition}
+              placeholder="Pozisyon"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="İşe başlama tarihi">
+            <TextInput
+              style={styles.input}
+              value={hire_date}
+              onChangeText={setHireDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Kıdem notu (profil alt metni)">
+            <TextInput
+              style={styles.input}
+              value={tenure_note}
+              onChangeText={setTenureNote}
+              placeholder="Örn: Ön büro kıdem sorumlusu"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Personel no">
+            <TextInput
+              style={styles.input}
+              value={personnel_no}
+              onChangeText={setPersonnelNo}
+              placeholder="Personel no"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Ofis / konum">
+            <TextInput
+              style={styles.input}
+              value={office_location}
+              onChangeText={setOfficeLocation}
+              placeholder="Örn: 2. Kat Ofisi"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Hakkında">
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Personel hakkında kısa bilgi. Link eklerseniz profilde tıklanabilir görünür."
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+          </Field>
+          <Field label="Başarılar (virgülle)">
+            <TextInput
+              style={styles.input}
+              value={achievements}
+              onChangeText={setAchievements}
+              placeholder="Örn: Ayın Personeli 2024, En İyi Müşteri Yorumu"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Geçmiş iş deneyimi">
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={previous_work_experience}
+              onChangeText={setPreviousWorkExperience}
+              placeholder={'Örn:\n- 2021-2023 Resepsiyon\n- 2023-2025 Ön Büro'}
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="Maaş ve SGK" icon="cash-outline">
+          <Field label="Maaş (TL)">
+            <TextInput
+              style={styles.input}
+              value={salary}
+              onChangeText={setSalary}
+              placeholder="Maaş"
+              keyboardType="decimal-pad"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="SGK no">
+            <TextInput
+              style={styles.input}
+              value={sgk_no}
+              onChangeText={setSgkNo}
+              placeholder="SGK no"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="İK ve sözleşme" subtitle="Sözleşme, çıkış, sertifika ve uyumluluk." icon="document-text-outline">
+          <Field label="Sözleşme tipi">
+            <View style={styles.chips}>
+              {CONTRACT_TYPES.map((c) => (
+                <TouchableOpacity
+                  key={c.value || 'none'}
+                  style={[styles.chip, contract_type === c.value && styles.chipActive]}
+                  onPress={() => setContractType(c.value)}
+                >
+                  <Text style={[styles.chipText, contract_type === c.value && styles.chipTextActive]} numberOfLines={2}>
+                    {c.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Field>
+          <Field label="İşten çıkış tarihi (varsa)">
+            <TextInput
+              style={styles.input}
+              value={termination_date}
+              onChangeText={setTerminationDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Dahili hat">
+            <TextInput
+              style={styles.input}
+              value={internal_extension}
+              onChangeText={setInternalExtension}
+              placeholder="Örn: 204"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <Field label="Sertifikalar / geçerlilik">
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={certifications_summary}
+              onChangeText={setCertificationsSummary}
+              placeholder={'İlk yardım — 2026-12-01\nHijyen — 2025-06-15'}
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+          </Field>
+          <Field label="KVKK onay tarihi">
+            <TextInput
+              style={styles.input}
+              value={kvkk_consent_at}
+              onChangeText={setKvkkConsentAt}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={adminTheme.colors.textMuted}
+            />
+          </Field>
+          <View style={styles.rowSwitch}>
+            <Text style={styles.switchLabel}>Ehliyet / araç kullanabilir</Text>
+            <Switch
+              value={drives_vehicle}
+              onValueChange={setDrivesVehicle}
+              trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
+              thumbColor="#fff"
+            />
           </View>
-        )}
+        </SectionCard>
 
-        <Text style={styles.sectionTitle}>🖨️ Personel Detay PDF</Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={previewPdf} activeOpacity={0.85}>
-          <Text style={styles.primaryButtonText}>PDF Önizle / Yazdır</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.primaryButton} onPress={downloadPdf} activeOpacity={0.85}>
-          <Text style={styles.primaryButtonText}>PDF Oluştur / İndir</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.primaryButton} onPress={sendToPrinter} activeOpacity={0.85}>
-          <Text style={styles.primaryButtonText}>Yazıcıya Mail Gönder</Text>
-        </TouchableOpacity>
+        <SectionCard title="Çalışma düzeni" subtitle="Vardiya ve haftalık günler." icon="time-outline">
+          <Field label="Vardiya">
+            <View style={styles.chips}>
+              {SHIFT_TYPES.map((s) => (
+                <TouchableOpacity
+                  key={s.value}
+                  style={[styles.chip, shift_type === s.value && styles.chipActive]}
+                  onPress={() => setShiftType(s.value)}
+                >
+                  <Text style={[styles.chipText, shift_type === s.value && styles.chipTextActive]}>{s.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Field>
+          <Field label="Çalışma günleri">
+            <View style={styles.chips}>
+              {DAYS.map((d) => (
+                <TouchableOpacity
+                  key={d.value}
+                  style={[styles.chip, work_days.includes(d.value) && styles.chipActive]}
+                  onPress={() => toggleDay(d.value)}
+                >
+                  <Text style={[styles.chipText, work_days.includes(d.value) && styles.chipTextActive]}>{d.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Field>
+        </SectionCard>
 
-        {saving ? (
-          <ActivityIndicator size="large" color="#1a365d" style={{ marginTop: 24 }} />
-        ) : (
-          <>
-            <TouchableOpacity style={styles.primaryButton} onPress={submit} disabled={saving}>
-              <Text style={styles.primaryButtonText}>💾 Kaydet</Text>
+        <SectionCard
+          title="Uygulama yetkileri"
+          subtitle="Modül erişimleri ve gizlilik. Detaylı izin listesini gerektiğinde açın."
+          icon="phone-portrait-outline"
+        >
+          <View style={styles.rowSwitch}>
+            <Text style={styles.switchLabel}>Misafirden mesaj alamaz</Text>
+            <Switch
+              value={guestMessagesBlocked}
+              onValueChange={toggleGuestMessagesBlocked}
+              trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+          <Text style={styles.hintInline}>
+            Açıksa misafir ekranında güvenlik uyarısı gösterilir.
+          </Text>
+
+          <View style={[styles.rowSwitch, { marginTop: 10 }]}>
+            <Text style={styles.switchLabel}>Gizli profil</Text>
+            <Switch
+              value={profileHiddenByAdmin}
+              onValueChange={setProfileHiddenByAdmin}
+              trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+          <Text style={styles.hintInline}>
+            Açıksa yalnızca fotoğraf ve maskeli ad görünür.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.expandToggle}
+            onPress={() => setPermissionsExpanded((v) => !v)}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.expandToggleText}>
+              {permissionsExpanded
+                ? 'Modül izinlerini gizle'
+                : `Modül izinlerini göster (${APP_PERMISSIONS.filter((p) => p.key !== 'misafir_mesaj_alabilir').length} kalem)`}
+            </Text>
+            <Ionicons name={permissionsExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={adminTheme.colors.primary} />
+          </TouchableOpacity>
+
+          {permissionsExpanded
+            ? APP_PERMISSIONS.filter((p) => p.key !== 'misafir_mesaj_alabilir').map((p) => (
+                <TouchableOpacity key={p.key} style={styles.checkRow} onPress={() => togglePermission(p.key)} activeOpacity={0.7}>
+                  <Ionicons
+                    name={app_permissions[p.key] ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={22}
+                    color={app_permissions[p.key] ? adminTheme.colors.primary : adminTheme.colors.textMuted}
+                    style={{ marginRight: 10 }}
+                  />
+                  <Text style={styles.checkLabel}>{p.label}</Text>
+                </TouchableOpacity>
+              ))
+            : null}
+
+          <View style={[styles.rowSwitch, { marginTop: 12 }]}>
+            <Text style={styles.switchLabel}>Hesap aktif</Text>
+            <Switch
+              value={is_active}
+              onValueChange={setIsActive}
+              trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        </SectionCard>
+
+        <SectionCard title="Doğrulama rozeti" subtitle="Mavi veya sarı tik; kaldırmak için Yok seçin." icon="checkmark-circle-outline">
+          <Field label="Rozet seçimi">
+            <View style={styles.chips}>
+              <TouchableOpacity
+                style={[styles.chip, verification_badge === '' && styles.chipActive]}
+                onPress={() => setVerificationBadge('')}
+              >
+                <Text style={[styles.chipText, verification_badge === '' && styles.chipTextActive]}>Yok</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.chip, verification_badge === 'blue' && styles.chipActive]}
+                onPress={() => setVerificationBadge('blue')}
+              >
+                <Text style={[styles.chipText, verification_badge === 'blue' && styles.chipTextActive]}>Mavi tik</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.chip, verification_badge === 'yellow' && styles.chipActive]}
+                onPress={() => setVerificationBadge('yellow')}
+              >
+                <Text style={[styles.chipText, verification_badge === 'yellow' && styles.chipTextActive]}>Sarı tik</Text>
+              </TouchableOpacity>
+            </View>
+          </Field>
+        </SectionCard>
+
+        <SectionCard
+          title="Resmi uyarı"
+          subtitle="Kalıcı kayıt; sözlü ve üzeri seviyede tam ekran onay. Yıldızlı değerlendirme ayrı kayıttır."
+          icon="warning-outline"
+          variant="danger"
+        >
+          <TouchableOpacity
+            style={styles.warnIssueBtn}
+            onPress={() => {
+              setWarnImageUrls([]);
+              setWarnModalOpen(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.warnIssueBtnText}>Bu personele uyarı gönder</Text>
+          </TouchableOpacity>
+          {personnelWarningsLoading ? (
+            <ActivityIndicator size="small" color={adminTheme.colors.error} style={{ marginVertical: 10 }} />
+          ) : personnelWarnings.length === 0 ? (
+            <Text style={styles.hint}>Henüz resmi uyarı kaydı yok.</Text>
+          ) : (
+            <View style={styles.warnList}>
+              {personnelWarnings.map((w) => {
+                const wImgs = personnelWarningImageList(w.image_urls);
+                return (
+                  <View key={w.id} style={styles.warnCard}>
+                    {wImgs.length > 0 ? (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.warnCardImages}>
+                        {wImgs.map((uri) => (
+                          <TouchableOpacity key={uri} onPress={() => setPreviewImageUri(uri)} activeOpacity={0.9}>
+                            <CachedImage uri={uri} style={styles.warnCardThumb} contentFit="cover" />
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    ) : null}
+                    <View style={styles.warnCardTop}>
+                      <Text style={styles.warnSeverity}>{SEVERITY_LABEL_TR[w.severity]}</Text>
+                      <Text style={styles.warnDate}>{new Date(w.created_at).toLocaleString('tr-TR')}</Text>
+                    </View>
+                    {w.subject_line?.trim() ? <Text style={styles.warnSubject}>{w.subject_line.trim()}</Text> : null}
+                    <Text style={styles.warnBodyPreview} numberOfLines={4}>
+                      {w.body.trim()}
+                    </Text>
+                    <Text style={styles.warnAck}>
+                      {w.acknowledged_at
+                        ? `Personel okudu: ${new Date(w.acknowledged_at).toLocaleString('tr-TR')}`
+                        : 'Personel henüz okundu onayı vermedi'}
+                    </Text>
+                    {w.acknowledgement_note?.trim() ? (
+                      <Text style={styles.warnAckNote}>Personel notu: {w.acknowledgement_note.trim()}</Text>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Yönetim değerlendirmesi" subtitle="Yıldızlı kayıt; personel kendi ekranında görür." icon="star-outline">
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() => router.push(`/admin/staff/evaluation/${id}`)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryButtonText}>Değerlendirme ekranına git</Text>
+          </TouchableOpacity>
+        </SectionCard>
+
+        <SectionCard title="Admin notları" subtitle="Yalnızca yönetici görür." icon="clipboard-outline">
+          <Field label="Not">
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Çalışkan, terfi düşünülebilir..."
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+          </Field>
+        </SectionCard>
+
+        <SectionCard title="Personel evrakları" subtitle="Sabıka ve diğer belgeler." icon="attach-outline">
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[styles.primaryButton, styles.actionRowBtn]}
+              onPress={() =>
+                router.push({
+                  pathname: '/admin/documents/new',
+                  params: {
+                    relatedStaffId: id,
+                    relatedStaffName: full_name || undefined,
+                  },
+                })
+              }
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryButtonText}>Evrak yükle</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => router.back()} disabled={saving}>
-              <Text style={styles.secondaryButtonText}>İptal</Text>
+            <TouchableOpacity style={[styles.outlineButton, styles.actionRowBtn]} onPress={loadStaffDocuments} activeOpacity={0.8}>
+              <Text style={styles.outlineButtonText}>Yenile</Text>
             </TouchableOpacity>
-          </>
-        )}
+          </View>
+          {staffDocsLoading ? (
+            <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginTop: 8 }} />
+          ) : staffDocs.length === 0 ? (
+            <Text style={styles.hint}>Bu personele bağlı evrak yok.</Text>
+          ) : (
+            <View style={styles.docList}>
+              {staffDocs.map((doc) => {
+                const ver = doc.current_version_id ? staffDocVersions[doc.current_version_id] : undefined;
+                const isImage = ver ? isDocumentImageMime(ver.mime_type, ver.file_name, ver.file_path) : false;
+                const previewUrl = ver?.file_path ? staffDocPreviewUrlByPath[ver.file_path] : undefined;
+                return (
+                  <View key={doc.id} style={styles.docCard}>
+                    {isImage && previewUrl ? (
+                      <TouchableOpacity
+                        style={styles.docThumb}
+                        onPress={() => setPreviewImageUri(previewUrl)}
+                        activeOpacity={0.85}
+                      >
+                        <CachedImage uri={previewUrl} style={styles.docThumbImage} contentFit="cover" />
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.docThumbFallback}>
+                        <Text style={styles.docThumbFallbackText}>DOSYA</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      style={{ flex: 1 }}
+                      onPress={() => router.push(`/admin/documents/${doc.id}`)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.docTitle} numberOfLines={1}>
+                        {doc.title}
+                      </Text>
+                      <Text style={styles.docMeta} numberOfLines={1}>
+                        {ver?.file_name ?? 'Dosya'} · {new Date(doc.updated_at).toLocaleDateString('tr-TR')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Personel PDF" subtitle="Önizleme, indirme ve yazıcı e-postası." icon="print-outline">
+          <TouchableOpacity style={styles.secondaryPill} onPress={previewPdf} activeOpacity={0.85}>
+            <Ionicons name="eye-outline" size={18} color={adminTheme.colors.primary} style={{ marginRight: 8 }} />
+            <Text style={styles.secondaryPillText}>Önizle / yazdır</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryPill} onPress={downloadPdf} activeOpacity={0.85}>
+            <Ionicons name="download-outline" size={18} color={adminTheme.colors.primary} style={{ marginRight: 8 }} />
+            <Text style={styles.secondaryPillText}>Oluştur / indir</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryPill} onPress={sendToPrinter} activeOpacity={0.85}>
+            <Ionicons name="mail-outline" size={18} color={adminTheme.colors.primary} style={{ marginRight: 8 }} />
+            <Text style={styles.secondaryPillText}>Yazıcıya e-posta</Text>
+          </TouchableOpacity>
+        </SectionCard>
+
+        <View style={styles.footerCard}>
+          {saving ? (
+            <ActivityIndicator size="large" color={adminTheme.colors.primary} style={{ marginVertical: 16 }} />
+          ) : (
+            <>
+              <TouchableOpacity style={styles.primaryButton} onPress={submit} disabled={saving} activeOpacity={0.88}>
+                <View style={styles.primaryButtonInner}>
+                  <Ionicons name="save-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+                  <Text style={styles.primaryButtonText}>Kaydet</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => router.back()} disabled={saving}>
+                <Text style={styles.secondaryButtonText}>İptal</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </ScrollView>
       <Modal visible={warnModalOpen} transparent animationType="fade" onRequestClose={() => !issuingWarning && setWarnModalOpen(false)}>
         <View style={styles.warnModalBackdrop}>
@@ -1296,34 +1656,149 @@ export default function EditStaffScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f7fafc' },
-  content: { padding: 24, paddingBottom: 48 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1a202c', marginTop: 20, marginBottom: 12 },
-  label: { fontSize: 14, fontWeight: '600', color: '#4a5568', marginBottom: 6 },
-  input: {
-    backgroundColor: '#fff',
+  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  content: { padding: adminTheme.spacing.lg, paddingBottom: 40 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: adminTheme.colors.surfaceSecondary },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text, marginTop: 20, marginBottom: 12 },
+  label: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.textSecondary, marginBottom: 6 },
+  heroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: adminTheme.radius.lg,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
+    borderColor: adminTheme.colors.border,
+    padding: adminTheme.spacing.lg,
+    marginBottom: adminTheme.spacing.lg,
+    gap: adminTheme.spacing.md,
+    ...adminTheme.shadow.md,
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: adminTheme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroAvatarText: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  heroTextCol: { flex: 1, minWidth: 0 },
+  heroName: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, letterSpacing: -0.3 },
+  heroMeta: { marginTop: 4, fontSize: 14, color: adminTheme.colors.textMuted },
+  heroPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  heroPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: adminTheme.radius.full },
+  heroPillOn: { backgroundColor: adminTheme.colors.successLight },
+  heroPillOff: { backgroundColor: adminTheme.colors.surfaceTertiary },
+  heroPillAdmin: { backgroundColor: adminTheme.colors.infoLight },
+  heroPillText: { fontSize: 12, fontWeight: '700' },
+  heroPillTextOn: { color: adminTheme.colors.success },
+  heroPillTextOff: { color: adminTheme.colors.textMuted },
+  heroPillTextAdmin: { color: adminTheme.colors.info, fontSize: 12, fontWeight: '700' },
+  switchLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: adminTheme.colors.text,
+    marginRight: 12,
+    lineHeight: 20,
+  },
+  hintInline: {
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+    marginTop: -8,
+    marginBottom: 4,
+    lineHeight: 17,
+  },
+  expandToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: adminTheme.radius.md,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+  },
+  expandToggleText: { fontSize: 14, fontWeight: '700', color: adminTheme.colors.primary, flex: 1, marginRight: 8 },
+  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 4 },
+  actionRowBtn: { flex: 1, marginTop: 0 },
+  outlineButton: {
+    paddingVertical: 14,
+    borderRadius: adminTheme.radius.md,
+    borderWidth: 1.5,
+    borderColor: adminTheme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: adminTheme.colors.surface,
+  },
+  outlineButtonText: { color: adminTheme.colors.primary, fontSize: 15, fontWeight: '700' },
+  secondaryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    marginBottom: 8,
+  },
+  secondaryPillText: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
+  footerCard: {
+    marginTop: 8,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  primaryButtonInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  input: {
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: adminTheme.radius.md,
     padding: 14,
     fontSize: 16,
-    marginBottom: 16,
+    color: adminTheme.colors.text,
+    marginBottom: 0,
   },
-  textArea: { minHeight: 80 },
-  rowSwitch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#e2e8f0' },
-  chipActive: { backgroundColor: '#1a365d' },
-  chipText: { color: '#4a5568', fontWeight: '500' },
+  textArea: { minHeight: 88, textAlignVertical: 'top' },
+  rowSwitch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 0 },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: adminTheme.radius.sm,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  chipActive: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  chipText: { color: adminTheme.colors.textSecondary, fontWeight: '600', fontSize: 13 },
   chipTextActive: { color: '#fff' },
-  checkRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: adminTheme.radius.sm,
+  },
   checkbox: { fontSize: 18, marginRight: 10 },
-  checkLabel: { fontSize: 15, color: '#374151' },
-  primaryButton: { backgroundColor: '#1a365d', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
-  primaryButtonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  secondaryButton: { paddingVertical: 16, alignItems: 'center' },
-  secondaryButtonText: { color: '#718096', fontSize: 16 },
+  checkLabel: { fontSize: 14, color: adminTheme.colors.text, flex: 1, lineHeight: 20 },
+  primaryButton: {
+    backgroundColor: adminTheme.button.primaryBg,
+    paddingVertical: 16,
+    borderRadius: adminTheme.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    ...adminTheme.shadow.sm,
+  },
+  primaryButtonText: { color: adminTheme.button.primaryText, fontSize: 17, fontWeight: '700' },
+  secondaryButton: { paddingVertical: 14, alignItems: 'center' },
+  secondaryButtonText: { color: adminTheme.colors.textMuted, fontSize: 16, fontWeight: '600' },
   docList: { marginTop: 6, marginBottom: 8, gap: 10 },
   docCard: {
     flexDirection: 'row',

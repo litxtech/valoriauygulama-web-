@@ -688,6 +688,8 @@ const resources = {
       customerProfilePermissionsMenuSub: 'Kamera, bildirim, konum',
       customerProfileGuestSubtitle: 'Giriş yaparak rezervasyon ve mesajlarınıza erişin.',
       staffProfileNotFound: 'Personel bulunamadı',
+      staffProfileHiddenByAdminBanner:
+        'Yönetici bu personeli gizli hesaba aldı. Yalnızca profil fotoğrafı ve maskeli ad görünür; tam profil ve yorumlardaki profil bağlantıları kapalıdır.',
       staffProfileAbout: 'Hakkında',
       staffProfileBasicInfo: 'Temel bilgiler',
       staffProfileSpecialties: 'Uzmanlıklar',
@@ -2179,6 +2181,8 @@ const resources = {
       customerProfilePermissionsMenuSub: 'Camera, notifications, location',
       customerProfileGuestSubtitle: 'Sign in to access reservations and messages.',
       staffProfileNotFound: 'Team member not found',
+      staffProfileHiddenByAdminBanner:
+        'An administrator placed this team member in a hidden profile. Only the profile photo and a masked name are shown; the full profile and profile links from comments are unavailable.',
       staffProfileAbout: 'About',
       staffProfileBasicInfo: 'Details',
       staffProfileSpecialties: 'Specialties',

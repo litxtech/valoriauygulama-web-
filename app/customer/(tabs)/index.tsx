@@ -57,6 +57,7 @@ import { complaintsText } from '@/lib/complaintsI18n';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { loadActiveStaffStories, markStoryAsViewedForGuest, type StaffStoryGroup } from '@/lib/staffStories';
 import { MentionableText } from '@/components/MentionableText';
+import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 
 type CustomerCommentRow = {
   id: string;
@@ -64,7 +65,7 @@ type CustomerCommentRow = {
   guest_id?: string | null;
   content: string;
   created_at: string;
-  staff: { full_name: string | null; profile_image?: string | null } | null;
+  staff: { full_name: string | null; profile_image?: string | null; profile_hidden_by_admin?: boolean | null } | null;
   guest: { full_name: string | null; photo_url?: string | null } | null;
 };
 
@@ -79,6 +80,7 @@ type StaffRow = {
   work_status: string | null;
   verification_badge?: 'blue' | 'yellow' | null;
   role?: string | null;
+  profile_hidden_by_admin?: boolean | null;
 };
 
 type HotelInfoRow = {
@@ -109,6 +111,7 @@ type FeedPost = {
     profile_image?: string | null;
     verification_badge?: 'blue' | 'yellow' | null;
     organization?: { name?: string | null; kind?: string | null } | null;
+    profile_hidden_by_admin?: boolean | null;
   } | null;
   guest: { full_name: string | null; photo_url?: string | null } | null;
 };
@@ -493,7 +496,7 @@ export default function CustomerHome() {
       (async () => {
         const { data } = await supabase
           .from('staff')
-          .select('id, full_name, department, organization:organization_id(name, kind), profile_image, is_online, last_active, work_status, verification_badge, email, role')
+          .select('id, full_name, department, organization:organization_id(name, kind), profile_image, is_online, last_active, work_status, verification_badge, email, role, profile_hidden_by_admin')
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('is_online', { ascending: false })
@@ -514,6 +517,7 @@ export default function CustomerHome() {
               work_status: r.work_status,
               verification_badge: r.verification_badge,
               role: r.role,
+              profile_hidden_by_admin: r.profile_hidden_by_admin ?? null,
             });
           } else {
             const existing = byKey.get(key)!;
@@ -533,7 +537,7 @@ export default function CustomerHome() {
       supabase.from('hotel_info').select('id, name, description, address, stars').limit(1).maybeSingle(),
       supabase
         .from('feed_posts')
-        .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, post_tag, lat, lng, location_label, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, organization:organization_id(name, kind)), guest:guest_id(full_name, photo_url, deleted_at)')
+        .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, post_tag, lat, lng, location_label, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, profile_hidden_by_admin, organization:organization_id(name, kind)), guest:guest_id(full_name, photo_url, deleted_at)')
         .eq('visibility', 'customers')
         .order('created_at', { ascending: false })
         .limit(10),
@@ -574,7 +578,7 @@ export default function CustomerHome() {
     const facilities = facilitiesRes.data ?? [];
     setFacilities(facilities);
     try {
-      const groups = await loadActiveStaffStories();
+      const groups = await loadActiveStaffStories(undefined, false);
       setStoryGroups(groups);
     } catch {
       setStoryGroups([]);
@@ -588,7 +592,7 @@ export default function CustomerHome() {
     if (ids.length > 0) {
       const [reactionsRes, commentsRes, myReactionsRes] = await Promise.all([
         supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-        supabase.from('feed_post_comments').select('post_id, id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
+        supabase.from('feed_post_comments').select('post_id, id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
         guestId ? supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('guest_id', guestId) : Promise.resolve({ data: [] as { post_id: string }[] }),
       ]);
       const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
@@ -1242,6 +1246,12 @@ export default function CustomerHome() {
           const presenceColor = staff.is_online ? theme.colors.success : theme.colors.error;
           const storyGIdx = storyGroupIndexByStaffId.get(staff.id);
           const hasStory = storyGIdx !== undefined;
+          const displayName = displayStaffNameForViewer(
+            staff.full_name,
+            staff.profile_hidden_by_admin ?? null,
+            false,
+            t('visitorTypeStaff')
+          );
           return (
             <View key={staff.id} style={styles.staffCard}>
               <View style={styles.staffCardInner}>
@@ -1265,7 +1275,7 @@ export default function CustomerHome() {
                         <CachedImage uri={staff.profile_image} style={styles.staffCardAvatar} contentFit="cover" />
                       ) : (
                         <View style={[styles.staffCardAvatar, styles.staffCardPlaceholder]}>
-                          <Text style={styles.staffCardLetter}>{(staff.full_name || 'P').charAt(0).toUpperCase()}</Text>
+                          <Text style={styles.staffCardLetter}>{(displayName || 'P').charAt(0).toUpperCase()}</Text>
                         </View>
                       )}
                     </AvatarWithBadge>
@@ -1287,11 +1297,13 @@ export default function CustomerHome() {
                   style={styles.staffCardTextBlock}
                 >
                   <StaffNameWithBadge
-                    name={staff.full_name?.split(' ')[0] || t('visitorTypeStaff')}
+                    name={displayName.split(/\s+/)[0] || t('visitorTypeStaff')}
                     badge={staff.verification_badge ?? null}
                     textStyle={styles.staffCardName}
                   />
-                  <Text style={styles.staffCardDept} numberOfLines={1}>{staff.department || '—'}</Text>
+                  <Text style={styles.staffCardDept} numberOfLines={1}>
+                    {staff.profile_hidden_by_admin ? '—' : staff.department || '—'}
+                  </Text>
                   {staff.organization?.name ? (
                     <Text style={styles.staffCardOrg} numberOfLines={2}>
                       {staff.organization.name}
@@ -1335,18 +1347,28 @@ export default function CustomerHome() {
               profile_image?: string | null;
               verification_badge?: 'blue' | 'yellow' | null;
               organization?: { name?: string | null; kind?: string | null } | null;
+              profile_hidden_by_admin?: boolean | null;
             } | null;
             const rawGuest = post.guest;
             const staffInfo = Array.isArray(rawStaff) ? rawStaff[0] ?? null : rawStaff;
             const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) ?? null : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
 
             const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
-            const authorName = staffInfo ? (staffInfo.full_name?.trim() || t('visitorTypeStaff')) : guestDisplayName(guestInfo?.full_name, t('visitorTypeGuest'));
+            const authorName = staffInfo
+              ? displayStaffNameForViewer(
+                  staffInfo.full_name ?? null,
+                  staffInfo.profile_hidden_by_admin ?? null,
+                  false,
+                  t('visitorTypeStaff')
+                )
+              : guestDisplayName(guestInfo?.full_name, t('visitorTypeGuest'));
             const orgName = staffInfo?.organization?.name?.trim() || null;
             const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
             const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
             const roleLabel = staffInfo
-              ? [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ')
+              ? staffInfo.profile_hidden_by_admin
+                ? '—'
+                : [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ')
               : t('visitorTypeGuest');
             const authorBadge = staffInfo?.verification_badge ?? null;
             const authorAvatarUrl = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
@@ -1420,7 +1442,12 @@ export default function CustomerHome() {
               .slice(-2)
               .map((c) => ({
                 author: c.staff
-                  ? ((c.staff as { full_name?: string | null } | null)?.full_name?.trim() || t('visitorTypeStaff'))
+                  ? displayStaffNameForViewer(
+                      (c.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
+                      (c.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
+                      false,
+                      t('visitorTypeStaff')
+                    )
                   : guestDisplayName((c.guest as { full_name?: string | null } | null)?.full_name, t('visitorTypeGuest')),
                 text: (c.content ?? '').trim(),
               }))

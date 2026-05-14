@@ -338,6 +338,48 @@ function RootLayoutInner() {
       return;
     }
 
+    const pickWarningId = (d: Record<string, unknown>): string => {
+      const w = d.warningId ?? d.warning_id;
+      return typeof w === 'string' ? w.trim() : '';
+    };
+    const screenRaw = data.screen;
+    const screenStr = typeof screenRaw === 'string' ? screenRaw.trim() : '';
+    if (
+      notificationType === 'staff_personnel_warning' ||
+      screenStr === '/staff/warnings' ||
+      screenStr.startsWith('/staff/warnings')
+    ) {
+      const wid = pickWarningId(data);
+      try {
+        if (wid) {
+          router.push({ pathname: '/staff/warnings', params: { focus: wid } });
+        } else {
+          router.push('/staff/warnings');
+        }
+      } catch (e) {
+        log.warn('RootLayout', 'notification personnel warning route push failed', {
+          warningId: wid,
+          error: (e as Error)?.message,
+        });
+      }
+      return;
+    }
+    if (notificationType === 'staff_personnel_warning_ack') {
+      const sidRaw = data.subjectStaffId ?? data.subject_staff_id;
+      const sid = typeof sidRaw === 'string' ? sidRaw.trim() : '';
+      if (sid) {
+        try {
+          router.push({ pathname: '/admin/staff/[id]', params: { id: sid } } as never);
+        } catch (e) {
+          log.warn('RootLayout', 'notification warning ack route push failed', {
+            subjectStaffId: sid,
+            error: (e as Error)?.message,
+          });
+        }
+      }
+      return;
+    }
+
     if (isInternalPath) {
       const convFromPayload = parseConversationIdFromNotificationPayload(data);
       const messageHref = resolveMessagePushHref(url, convFromPayload);
