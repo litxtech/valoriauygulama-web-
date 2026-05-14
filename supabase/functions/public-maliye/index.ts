@@ -187,7 +187,7 @@ function renderPage(token: string) {
           <div class="title">Maliye Evrak Merkezi</div>
           <div class="subtitle">Sayin denetim gorevlisi, gerekli belgeler bu portalda cekmeceli yapida sunulmaktadir.</div>
         </div>
-        <div class="badge">Valoria Hotel · Resmi Dokuman Portalı</div>
+        <div class="badge">Valoria Hotel | Resmi Dokuman Portali</div>
       </div>
     </div>
 
@@ -408,27 +408,27 @@ function renderPage(token: string) {
     }
 
     async function loadForms(){
-      if (!pin) return alert("Önce PIN ile portalı açın.");
+      if (!pin) return alert("Once PIN ile portali acin.");
       const day = document.getElementById("dayFilter").value;
       const month = document.getElementById("monthFilter").value;
       const res = await api({ format: "json", view: "daily-forms", date: day || "", month: month || "" });
       const box = document.getElementById("forms");
       box.style.display = "block";
       box.innerHTML = "<h3 style='margin:0 0 8px'>Gunluk Musteri Formlari</h3>" + (res.items || []).map((f) =>
-        '<div class="doc"><div class="docTitle">' + (f.full_name || "İsimsiz") + '</div><div class="muted">' +
-        (f.created_at || "-") + ' · Oda: ' + (f.room_id || "-") +
+        '<div class="doc"><div class="docTitle">' + (f.full_name || "Isimsiz") + '</div><div class="muted">' +
+        (f.created_at || "-") + ' / Oda: ' + (f.room_id || "-") +
         '</div></div>'
       ).join("");
     }
 
     async function loadLatest(){
-      if (!pin) return alert("Önce PIN ile portalı açın.");
+      if (!pin) return alert("Once PIN ile portali acin.");
       const res = await api({ format: "json", view: "latest-form" });
       const f = res.item;
       const box = document.getElementById("forms");
       box.style.display = "block";
       box.innerHTML = "<h3 style='margin:0 0 8px'>Son Musteri Formu</h3>" + (f ? '<div class="doc"><div class="docTitle">' +
-        (f.full_name || "İsimsiz") + '</div><div class="muted">' + (f.created_at || "-") + "</div></div>" : "<p>Kayıt yok.</p>");
+        (f.full_name || "Isimsiz") + '</div><div class="muted">' + (f.created_at || "-") + "</div></div>" : "<p>Kayit yok.</p>");
     }
 
     function bindDocsDelegation(){
@@ -605,7 +605,7 @@ Deno.serve(async (req: Request) => {
     (sections ?? []).forEach((s) => sectionMap.set(s.id, { id: s.id, name: s.name, documents: [] }));
     (docs ?? []).forEach((d) => {
       const sid = d.maliye_section_id ?? "other";
-      if (!sectionMap.has(sid)) sectionMap.set(sid, { id: sid, name: "Diğer Evraklar", documents: [] });
+      if (!sectionMap.has(sid)) sectionMap.set(sid, { id: sid, name: "Diger Evraklar", documents: [] });
       sectionMap.get(sid)!.documents.push({
         id: d.id,
         title: d.title,
