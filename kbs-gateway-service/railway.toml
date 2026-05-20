@@ -1,0 +1,10 @@
+# Railway: Root Directory = kbs-gateway-service
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install --no-audit --no-fund && npm run build"
+
+[deploy]
+startCommand = "node dist/app/server.js"
+healthcheckPath = "/gateway/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
