@@ -799,6 +799,7 @@ function RootLayoutInner() {
         <Stack.Screen name="permissions" options={{ headerShown: true, title: t('permissions') }} />
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="guest" options={{ headerShown: false }} />
+        <Stack.Screen name="menu" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
         <Stack.Screen
           name="admin"

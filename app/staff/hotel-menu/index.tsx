@@ -11,6 +11,7 @@ export default function StaffHotelMenuScreen() {
       mode="staff"
       detailHref={(id) => `/staff/hotel-menu/${id}`}
       showManage={canManage}
+      showPublicQr
       manageHref="/staff/hotel-menu/manage"
     />
   );

@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
+import { useAuthStore } from '@/stores/authStore';
+import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
 import {
   View,
   Text,
@@ -41,6 +43,7 @@ type Props = {
   detailHref: (id: string) => Href;
   manageHref?: Href;
   showManage?: boolean;
+  showPublicQr?: boolean;
 };
 
 function groupByCategory(items: HotelKitchenMenuItemWithImages[]): MenuSection[] {
@@ -57,9 +60,10 @@ function groupByCategory(items: HotelKitchenMenuItemWithImages[]): MenuSection[]
   return order.map((title) => ({ title, data: map.get(title)! }));
 }
 
-export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManage }: Props) {
+export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManage, showPublicQr }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
+  const staff = useAuthStore((s) => s.staff);
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -69,6 +73,7 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
 
   const cacheKey = 'list:available';
 
@@ -198,6 +203,13 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
         </View>
       </LinearGradient>
 
+      {showPublicQr && staff?.organization_id ? (
+        <TouchableOpacity style={styles.qrOutlineBtn} onPress={() => setQrOpen(true)} activeOpacity={0.88}>
+          <Ionicons name="qr-code-outline" size={20} color={menuUi.accentDeep} />
+          <Text style={styles.qrOutlineBtnText}>{t('publicKitchenMenuQrTitle')}</Text>
+        </TouchableOpacity>
+      ) : null}
+
       {showManage && manageHref ? (
         <TouchableOpacity style={styles.manageBtn} onPress={() => router.push(manageHref)} activeOpacity={0.88}>
           <LinearGradient
@@ -326,6 +338,15 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
         initialIndex={lightbox?.index ?? 0}
         onClose={() => setLightbox(null)}
       />
+
+      {showPublicQr ? (
+        <HotelKitchenMenuQrSheet
+          visible={qrOpen}
+          organizationId={staff?.organization_id}
+          organizationName={staff?.organization?.name}
+          onClose={() => setQrOpen(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -382,7 +403,21 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 8,
   },
-  manageBtn: { marginHorizontal: 16, marginTop: 14, borderRadius: 14, overflow: 'hidden', ...menuUi.shadowSm },
+  qrOutlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: menuUi.cardBg,
+    borderWidth: 2,
+    borderColor: menuUi.accent,
+  },
+  qrOutlineBtnText: { color: menuUi.accentDeep, fontWeight: '700', fontSize: 15 },
+  manageBtn: { marginHorizontal: 16, marginTop: 10, borderRadius: 14, overflow: 'hidden', ...menuUi.shadowSm },
   manageBtnGrad: {
     flexDirection: 'row',
     alignItems: 'center',
