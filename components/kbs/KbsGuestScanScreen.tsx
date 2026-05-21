@@ -89,9 +89,9 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
       const item = mapLockPayloadToGuestItem({
         sessionId: session.id,
         payload,
-        documentSerialNo: (payload.parsed as { documentSeries?: string }).documentSeries ?? null,
-        fatherName: (payload.parsed as { fatherName?: string }).fatherName ?? null,
-        motherName: (payload.parsed as { motherName?: string }).motherName ?? null,
+        documentSerialNo: payload.parsed.documentSeries ?? null,
+        fatherName: payload.parsed.fatherName ?? null,
+        motherName: payload.parsed.motherName ?? null,
       });
       useGuestScanSessionStore.getState().setPendingConfirmItem(item);
       router.push({

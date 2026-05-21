@@ -12,7 +12,9 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
@@ -66,6 +68,21 @@ const FILTER_LABELS: Record<StockFilter, string> = {
   critical: 'Kritik (≤3)',
   empty: 'Stoksuz',
 };
+
+type IonIcon = ComponentProps<typeof Ionicons>['name'];
+
+const FILTER_OPTIONS: { value: StockFilter; label: string; icon: IonIcon; activeBg: string }[] = [
+  { value: 'all', label: 'Tümü', icon: 'grid-outline', activeBg: '#1e3a5f' },
+  { value: 'in_stock', label: 'Stokta', icon: 'checkmark-circle-outline', activeBg: '#047857' },
+  { value: 'critical', label: 'Kritik', icon: 'warning-outline', activeBg: '#b45309' },
+  { value: 'empty', label: 'Stoksuz', icon: 'close-circle-outline', activeBg: '#b91c1c' },
+];
+
+function stockLevelMeta(current: number): { label: string; color: string; bg: string } {
+  if (current <= 0) return { label: 'Stoksuz', color: '#b91c1c', bg: '#fee2e2' };
+  if (current <= 3) return { label: 'Kritik', color: '#b45309', bg: '#fef3c7' };
+  return { label: 'Yeterli', color: '#047857', bg: '#d1fae5' };
+}
 
 type Props = {
   /** Ürün kartına tıklanınca açılacak ürün detay path öneki, örn. /admin/stock/product veya /staff/stock/product */
@@ -158,11 +175,40 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
     return list;
   }, [products, nameSearch, stockFilter]);
 
+  const filterCounts = useMemo(() => {
+    let inStock = 0;
+    let critical = 0;
+    let empty = 0;
+    for (const p of products) {
+      const cur = p.current_stock ?? 0;
+      if (cur > 0) inStock++;
+      if (cur <= 3) critical++;
+      if (cur <= 0) empty++;
+    }
+    return { all: products.length, in_stock: inStock, critical, empty };
+  }, [products]);
+
+  const summary = useMemo(() => {
+    let ok = 0;
+    let low = 0;
+    let out = 0;
+    for (const p of products) {
+      const cur = p.current_stock ?? 0;
+      if (cur <= 0) out++;
+      else if (cur <= 3) low++;
+      else ok++;
+    }
+    return { ok, low, out, total: products.length };
+  }, [products]);
+
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Yükleniyor...</Text>
+        <View style={styles.loadingIconWrap}>
+          <Ionicons name="layers-outline" size={32} color={theme.colors.primary} />
+        </View>
+        <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 16 }} />
+        <Text style={styles.loadingText}>Envanter yükleniyor…</Text>
       </View>
     );
   }
@@ -217,51 +263,84 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.searchRow}>
+      <View style={styles.toolbar}>
         <View style={styles.searchWrap}>
-          <Ionicons name="search" size={18} color={theme.colors.textMuted} />
+          <Ionicons name="search" size={20} color={theme.colors.textMuted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="İsme göre ara..."
+            placeholder="Ürün adı ara..."
             placeholderTextColor={theme.colors.textMuted}
             value={nameSearch}
             onChangeText={setNameSearch}
           />
+          {nameSearch.length > 0 ? (
+            <TouchableOpacity onPress={() => setNameSearch('')} hitSlop={10}>
+              <Ionicons name="close-circle" size={20} color={theme.colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
         </View>
         <TouchableOpacity
           style={[styles.pdfBtn, pdfExporting && styles.pdfBtnDisabled]}
           onPress={exportPdf}
           disabled={pdfExporting}
-          activeOpacity={0.85}
+          activeOpacity={0.88}
         >
           {pdfExporting ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color="#0f766e" />
           ) : (
             <>
-              <Ionicons name="document-text-outline" size={20} color="#fff" />
+              <Ionicons name="document-text-outline" size={20} color="#0f766e" />
               <Text style={styles.pdfBtnText}>PDF</Text>
             </>
           )}
         </TouchableOpacity>
       </View>
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Stoğa göre:</Text>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.statsRow}
+        style={styles.statsScroll}
+      >
+        <View style={styles.statPill}>
+          <Text style={styles.statVal}>{summary.total}</Text>
+          <Text style={styles.statLbl}>Ürün</Text>
+        </View>
+        <View style={[styles.statPill, styles.statOk]}>
+          <Text style={[styles.statVal, { color: '#047857' }]}>{summary.ok}</Text>
+          <Text style={styles.statLbl}>Yeterli</Text>
+        </View>
+        <View style={[styles.statPill, styles.statWarn]}>
+          <Text style={[styles.statVal, { color: '#b45309' }]}>{summary.low}</Text>
+          <Text style={styles.statLbl}>Kritik</Text>
+        </View>
+        <View style={[styles.statPill, styles.statDanger]}>
+          <Text style={[styles.statVal, { color: '#b91c1c' }]}>{summary.out}</Text>
+          <Text style={styles.statLbl}>Stoksuz</Text>
+        </View>
+      </ScrollView>
+
+      <View style={styles.filterSection}>
+        <Text style={styles.filterTitle}>Filtrele</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChips}>
-          {[
-            { value: 'all' as StockFilter, label: 'Tümü' },
-            { value: 'in_stock' as StockFilter, label: 'Stokta var' },
-            { value: 'critical' as StockFilter, label: 'Kritik' },
-            { value: 'empty' as StockFilter, label: 'Stoksuz' },
-          ].map((opt) => (
-            <TouchableOpacity
-              key={opt.value}
-              style={[styles.chip, stockFilter === opt.value && styles.chipActive]}
-              onPress={() => setStockFilter(opt.value)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.chipText, stockFilter === opt.value && styles.chipTextActive]}>{opt.label}</Text>
-            </TouchableOpacity>
-          ))}
+          {FILTER_OPTIONS.map((opt) => {
+            const active = stockFilter === opt.value;
+            const count = filterCounts[opt.value];
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.chip, active && { backgroundColor: opt.activeBg, borderColor: opt.activeBg }]}
+                onPress={() => setStockFilter(opt.value)}
+                activeOpacity={0.88}
+              >
+                <Ionicons name={opt.icon} size={16} color={active ? '#fff' : theme.colors.textSecondary} />
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                <View style={[styles.chipCount, active && styles.chipCountActive]}>
+                  <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>{count}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
@@ -271,48 +350,86 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.colors.primary} />}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.sectionTitle}>📦 Tüm stoklar ({filtered.length})</Text>
+        <View style={styles.listHeader}>
+          <View style={styles.listHeaderIcon}>
+            <LinearGradient colors={['#0f766e', '#14b8a6']} style={styles.listHeaderGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+              <Ionicons name="layers" size={18} color="#fff" />
+            </LinearGradient>
+          </View>
+          <View style={styles.listHeaderText}>
+            <Text style={styles.sectionTitle}>Envanter</Text>
+            <Text style={styles.sectionSub}>{filtered.length} ürün görüntüleniyor</Text>
+          </View>
+        </View>
+
         {filtered.length === 0 ? (
-          <Text style={styles.emptyText}>Ürün bulunamadı veya filtreye uygun kayıt yok.</Text>
+          <View style={styles.emptyBox}>
+            <Ionicons name="cube-outline" size={48} color={theme.colors.textMuted} />
+            <Text style={styles.emptyTitle}>Ürün bulunamadı</Text>
+            <Text style={styles.emptyText}>Aramayı veya filtreyi değiştirmeyi deneyin.</Text>
+          </View>
         ) : (
           <View style={styles.grid}>
             {filtered.map((p) => {
               const cur = p.current_stock ?? 0;
-              const isLow = cur <= 3;
+              const level = stockLevelMeta(cur);
               const lastMov = lastMovementByProductId[p.id];
               const previewUrl = p.image_url ?? lastPhotoByProductId[p.id] ?? null;
+              const catObj = Array.isArray(p.category) ? p.category[0] : p.category;
+              const categoryName =
+                catObj && typeof catObj === 'object' && 'name' in catObj ? String((catObj as { name: string }).name) : null;
+              const isIn = lastMov?.movement_type === 'in';
+              const staffName = (lastMov?.staff as { full_name?: string } | null)?.full_name?.trim();
               return (
                 <TouchableOpacity
                   key={p.id}
-                  style={[styles.card, isLow && styles.cardCritical]}
+                  style={styles.card}
                   onPress={() => router.push(productHref(p.id) as any)}
-                  activeOpacity={0.85}
+                  activeOpacity={0.88}
                 >
                   <View style={styles.cardImageWrap}>
                     {previewUrl ? (
                       <CachedImage uri={previewUrl} style={styles.cardImage} contentFit="cover" />
                     ) : (
-                      <View style={styles.cardImagePlaceholder}>
-                        <Ionicons name="cube-outline" size={28} color={theme.colors.textMuted} />
-                      </View>
+                      <LinearGradient colors={['#f1f5f9', '#e2e8f0']} style={styles.cardImagePlaceholder}>
+                        <Ionicons name="cube-outline" size={32} color={theme.colors.textMuted} />
+                      </LinearGradient>
                     )}
+                    <View style={[styles.stockBadge, { backgroundColor: level.bg }]}>
+                      <Text style={[styles.stockBadgeText, { color: level.color }]}>{level.label}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.cardName} numberOfLines={2}>{p.name}</Text>
-                  <Text style={[styles.cardStock, isLow && styles.cardStockCritical]}>
-                    Stok: {cur} {p.unit ?? 'adet'}{isLow ? ' ⚠️' : ''}
+                  <Text style={styles.cardName} numberOfLines={2}>
+                    {p.name}
                   </Text>
+                  {categoryName ? (
+                    <Text style={styles.cardCategory} numberOfLines={1}>
+                      {categoryName}
+                    </Text>
+                  ) : null}
+                  <View style={styles.stockRow}>
+                    <Text style={styles.cardStock}>
+                      {cur} <Text style={styles.cardUnit}>{p.unit ?? 'adet'}</Text>
+                    </Text>
+                  </View>
                   {lastMov ? (
                     <View style={styles.lastMovWrap}>
-                      <Text style={styles.lastMovLabel}>Son işlem:</Text>
-                      <Text style={styles.lastMovText}>
-                        {lastMov.movement_type === 'in' ? '📥' : '📤'} {lastMov.movement_type === 'in' ? '+' : '-'}{lastMov.quantity} · {formatShortDateTimeForPdf(lastMov.created_at)}
-                      </Text>
-                      {lastMov.staff && (lastMov.staff as { full_name?: string }).full_name ? (
-                        <Text style={styles.lastMovStaff}>👤 {(lastMov.staff as { full_name: string }).full_name}</Text>
-                      ) : null}
+                      <View style={[styles.lastMovIcon, { backgroundColor: isIn ? '#d1fae5' : '#ffedd5' }]}>
+                        <Ionicons name={isIn ? 'arrow-down' : 'arrow-up'} size={12} color={isIn ? '#047857' : '#b45309'} />
+                      </View>
+                      <View style={styles.lastMovBody}>
+                        <Text style={styles.lastMovText} numberOfLines={1}>
+                          {isIn ? 'Giriş' : 'Çıkış'} {isIn ? '+' : '-'}
+                          {lastMov.quantity}
+                        </Text>
+                        <Text style={styles.lastMovMeta} numberOfLines={1}>
+                          {formatShortDateTime(lastMov.created_at)}
+                          {staffName ? ` · ${staffName}` : ''}
+                        </Text>
+                      </View>
                     </View>
                   ) : (
-                    <Text style={styles.lastMovNone}>— Son işlem yok</Text>
+                    <Text style={styles.lastMovNone}>Son işlem yok</Text>
                   )}
                 </TouchableOpacity>
               );
@@ -326,63 +443,169 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  loadingText: { marginTop: 12, fontSize: 15, color: theme.colors.textSecondary },
-  searchRow: {
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  loadingIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#f0fdfa',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: { marginTop: 12, fontSize: 15, fontWeight: '600', color: theme.colors.textSecondary },
+  toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     backgroundColor: theme.colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.borderLight,
+    ...theme.shadows.sm,
   },
-  searchWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.backgroundSecondary, borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10 },
-  searchInput: { flex: 1, fontSize: 15, color: theme.colors.text },
+  searchWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  searchInput: { flex: 1, fontSize: 15, fontWeight: '500', color: theme.colors.text },
   pdfBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#f0fdfa',
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
-    minWidth: 88,
+    paddingVertical: 11,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#99f6e4',
+    minWidth: 80,
     justifyContent: 'center',
   },
-  pdfBtnDisabled: { opacity: 0.7 },
-  pdfBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  filterRow: { paddingVertical: 10, paddingLeft: 16, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.borderLight },
-  filterLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary, marginBottom: 8 },
-  filterChips: { flexDirection: 'row', gap: 8, paddingRight: 16 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.full, backgroundColor: theme.colors.borderLight },
-  chipActive: { backgroundColor: theme.colors.primary },
-  chipText: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
+  pdfBtnDisabled: { opacity: 0.65 },
+  pdfBtnText: { color: '#0f766e', fontWeight: '800', fontSize: 14 },
+  statsScroll: { backgroundColor: theme.colors.surface, maxHeight: 72 },
+  statsRow: { paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  statPill: {
+    minWidth: 88,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  statOk: { borderColor: '#a7f3d0', backgroundColor: '#f0fdf4' },
+  statWarn: { borderColor: '#fde68a', backgroundColor: '#fffbeb' },
+  statDanger: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  statVal: { fontSize: 18, fontWeight: '800', color: theme.colors.text },
+  statLbl: { fontSize: 10, fontWeight: '700', color: theme.colors.textMuted, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+  filterSection: {
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderLight,
+  },
+  filterTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: theme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  filterChips: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingRight: 24 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  chipText: { fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary },
   chipTextActive: { color: '#fff' },
+  chipCount: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: theme.colors.borderLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  chipCountActive: { backgroundColor: 'rgba(255,255,255,0.28)' },
+  chipCountText: { fontSize: 11, fontWeight: '800', color: theme.colors.textMuted },
+  chipCountTextActive: { color: '#fff' },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 24 },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: theme.colors.text, marginBottom: 12 },
-  emptyText: { fontSize: 14, color: theme.colors.textMuted, fontStyle: 'italic' },
+  scrollContent: { padding: 16, paddingBottom: 32 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
+  listHeaderIcon: { borderRadius: 12, overflow: 'hidden', ...theme.shadows.sm },
+  listHeaderGrad: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  listHeaderText: { flex: 1 },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: theme.colors.text, letterSpacing: -0.2 },
+  sectionSub: { fontSize: 13, fontWeight: '600', color: theme.colors.textMuted, marginTop: 2 },
+  emptyBox: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24 },
+  emptyTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginTop: 14 },
+  emptyText: { fontSize: 14, color: theme.colors.textMuted, textAlign: 'center', marginTop: 6, lineHeight: 20 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
   card: {
     width: CARD_WIDTH,
     backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
+    borderRadius: 16,
     padding: 10,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
+    ...theme.shadows.md,
   },
-  cardCritical: { borderLeftWidth: 4, borderLeftColor: theme.colors.error },
-  cardImageWrap: { width: '100%', aspectRatio: 1, borderRadius: theme.radius.md, overflow: 'hidden', backgroundColor: theme.colors.borderLight },
+  cardImageWrap: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: theme.colors.borderLight,
+  },
   cardImage: { width: '100%', height: '100%' },
   cardImagePlaceholder: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontSize: 13, fontWeight: '700', color: theme.colors.text, marginTop: 8, minHeight: 36 },
-  cardStock: { fontSize: 12, color: theme.colors.textMuted, marginTop: 4 },
-  cardStockCritical: { color: theme.colors.error, fontWeight: '600' },
-  lastMovWrap: { marginTop: 8, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.borderLight },
-  lastMovLabel: { fontSize: 10, fontWeight: '600', color: theme.colors.textMuted },
-  lastMovText: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
-  lastMovStaff: { fontSize: 10, color: theme.colors.textMuted, marginTop: 2 },
-  lastMovNone: { fontSize: 11, color: theme.colors.textMuted, marginTop: 8, fontStyle: 'italic' },
+  stockBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  stockBadgeText: { fontSize: 10, fontWeight: '800' },
+  cardName: { fontSize: 13, fontWeight: '800', color: theme.colors.text, marginTop: 10, minHeight: 34, lineHeight: 17 },
+  cardCategory: { fontSize: 11, fontWeight: '600', color: theme.colors.textMuted, marginTop: 2 },
+  stockRow: { marginTop: 6 },
+  cardStock: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
+  cardUnit: { fontSize: 12, fontWeight: '600', color: theme.colors.textMuted },
+  lastMovWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderLight,
+  },
+  lastMovIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  lastMovBody: { flex: 1, minWidth: 0 },
+  lastMovText: { fontSize: 11, fontWeight: '700', color: theme.colors.text },
+  lastMovMeta: { fontSize: 10, color: theme.colors.textMuted, marginTop: 2 },
+  lastMovNone: { fontSize: 10, color: theme.colors.textMuted, marginTop: 10, fontStyle: 'italic' },
 });

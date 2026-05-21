@@ -1,7 +1,7 @@
 import { parse } from 'mrz';
 import type { ParsedDocument } from './types';
 import { mrzSixDigitsToIso } from './mrzDates';
-import { sanitizePersonName, splitFullNameToFirstLast } from '@/lib/guestScan/personNameUtils';
+import { finalizeMrzPersonNames } from '@/lib/scanner/mrzPersonNames';
 
 function cleanMrz(raw: string): string {
   return raw
@@ -161,64 +161,7 @@ function resolveMrzDocumentNumber(args: {
   return { documentNumber: mrzDocNo, documentSeries: null };
 }
 
-/** Ad alanında tüm verilen adlar; soyad ayrı — ikisi de tam yazılmaz. */
-function finalizeMrzPersonNames(args: {
-  firstNameRaw: string | null;
-  lastNameRaw: string | null;
-  fullNameRaw: string | null;
-}): Pick<ParsedDocument, 'firstName' | 'lastName' | 'fullName' | 'middleName'> {
-  let firstName = sanitizePersonName(args.firstNameRaw);
-  let lastName = sanitizePersonName(args.lastNameRaw);
-  const fullNameFromField = sanitizePersonName(args.fullNameRaw);
-
-  if (firstName && lastName) {
-    const fn = firstName.toUpperCase();
-    const ln = lastName.toUpperCase();
-    const combined = `${fn} ${ln}`.trim();
-    if (fn === ln) {
-      const split = splitFullNameToFirstLast(firstName);
-      firstName = split.firstName;
-      lastName = split.lastName;
-    } else if (fn === combined || ln === combined) {
-      const split = splitFullNameToFirstLast(fn.length >= ln.length ? firstName : lastName);
-      firstName = split.firstName;
-      lastName = split.lastName;
-    } else if (fn.includes(` ${ln}`) && fn.replace(` ${ln}`, '').trim().length >= 2) {
-      firstName = sanitizePersonName(fn.replace(` ${ln}`, '').trim());
-    } else if (ln.includes(` ${fn}`) && ln.replace(` ${fn}`, '').trim().length >= 2) {
-      lastName = sanitizePersonName(ln.replace(` ${fn}`, '').trim());
-    }
-  }
-
-  if ((!firstName || !lastName) && fullNameFromField) {
-    const split = splitFullNameToFirstLast(fullNameFromField);
-    firstName = firstName ?? split.firstName;
-    lastName = lastName ?? split.lastName;
-  }
-
-  if (!lastName && firstName) {
-    const split = splitFullNameToFirstLast(firstName);
-    if (split.lastName) {
-      firstName = split.firstName;
-      lastName = split.lastName;
-    }
-  }
-
-  if (!firstName && lastName) {
-    const split = splitFullNameToFirstLast(lastName);
-    if (split.firstName) {
-      firstName = split.firstName;
-      lastName = split.lastName;
-    }
-  }
-
-  const fullName =
-    [firstName, lastName].filter(Boolean).join(' ').trim() || fullNameFromField || null;
-
-  return { firstName, lastName, fullName, middleName: null };
-}
-
-export function parseMrzToNormalized(rawMrz: string): ParsedDocument & { documentSeries?: string | null } {
+export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
   const raw = cleanMrz(rawMrz);
   const warnings: string[] = [];
 
@@ -232,16 +175,18 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument & { documen
     const lastNameRaw = fields.lastName ?? fields.surname ?? null;
     const fullNameRaw = fields.name ? String(fields.name) : null;
 
-    const names = finalizeMrzPersonNames({
-      firstNameRaw: firstNameRaw ? String(firstNameRaw) : null,
-      lastNameRaw: lastNameRaw ? String(lastNameRaw) : null,
-      fullNameRaw,
-    });
-
     const issuingRaw =
       fields.issuingState ?? fields.issuingCountry ?? fields.issuer ?? null;
     const issuingCountryCode = issuingRaw ? String(issuingRaw).toUpperCase() : null;
     const nationalityCode = fields.nationality ? String(fields.nationality).toUpperCase() : null;
+
+    const names = finalizeMrzPersonNames({
+      firstNameRaw: firstNameRaw ? String(firstNameRaw) : null,
+      lastNameRaw: lastNameRaw ? String(lastNameRaw) : null,
+      fullNameRaw,
+      nationalityCode,
+      issuingCountryCode,
+    });
 
     const { documentNumber, documentSeries } = resolveMrzDocumentNumber({
       documentType,

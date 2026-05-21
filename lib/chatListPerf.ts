@@ -1,45 +1,58 @@
 import { useEffect, useState } from 'react';
 import { InteractionManager, Platform, type FlatListProps } from 'react-native';
 
-/** Sohbet FlatList — Android'de görünür alan dışını kırp, ilk boyamayı sınırla. */
+/** Sohbet FlatList — inverted: odaya girince alttan başlar, üstten kayma yok. */
 export const CHAT_FLAT_LIST_PROPS: Partial<FlatListProps<unknown>> = Platform.select({
   android: {
-    initialNumToRender: 10,
-    maxToRenderPerBatch: 6,
-    windowSize: 6,
-    updateCellsBatchingPeriod: 48,
-    removeClippedSubviews: true,
+    inverted: true,
+    initialNumToRender: 18,
+    maxToRenderPerBatch: 10,
+    windowSize: 11,
+    updateCellsBatchingPeriod: 50,
+    removeClippedSubviews: false,
   },
   ios: {
-    initialNumToRender: 14,
+    inverted: true,
+    initialNumToRender: 16,
     maxToRenderPerBatch: 10,
-    windowSize: 9,
+    windowSize: 10,
+    removeClippedSubviews: false,
   },
   default: {},
 }) ?? {};
 
-/**
- * Android: odaya girince tüm videoların HLS preload'unu ertele (kasma azalır).
- * iOS: hemen true.
- */
-export function useChatHeavyMediaReady(conversationId: string | undefined, loading: boolean): boolean {
-  const [ready, setReady] = useState(Platform.OS === 'ios');
+/** Medya satırları layout'u için kısa gecikme; scroll'u yeniden tetiklemez. */
+export function useChatHeavyMediaReady(
+  conversationId: string | undefined,
+  loading: boolean,
+  opts?: { hasVideos?: boolean }
+): boolean {
+  const [ready, setReady] = useState(!loading);
+  const deferMs = opts?.hasVideos ? (Platform.OS === 'android' ? 200 : 100) : 32;
 
   useEffect(() => {
-    setReady(Platform.OS === 'ios');
-  }, [conversationId]);
-
-  useEffect(() => {
-    if (Platform.OS === 'ios' || loading) return;
+    if (!conversationId) {
+      setReady(false);
+      return;
+    }
+    if (loading) {
+      setReady(false);
+      return;
+    }
     let cancelled = false;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const mark = () => {
       if (!cancelled) setReady(true);
+    };
+    const task = InteractionManager.runAfterInteractions(() => {
+      timers.push(setTimeout(mark, deferMs));
     });
     return () => {
       cancelled = true;
       (task as { cancel?: () => void })?.cancel?.();
+      timers.forEach((id) => clearTimeout(id));
     };
-  }, [conversationId, loading]);
+  }, [conversationId, loading, deferMs]);
 
   return ready;
 }

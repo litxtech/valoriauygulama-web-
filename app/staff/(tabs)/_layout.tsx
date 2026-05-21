@@ -25,14 +25,17 @@ import {
 } from '@/components/header/StaffFeedHeaderControls';
 import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
 import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
-import { buildStaffHamburgerMenuLayout, type StaffQuickSlotSignals } from '@/lib/staffHamburgerMenu';
-import { quickAccessBadgeForId } from '@/lib/staffHamburgerQuickSlot';
+import { buildStaffHamburgerMenuLayout } from '@/lib/staffHamburgerMenu';
 import { staffRoleLabel } from '@/lib/staffAssignments';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
 import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import {
+  scheduleStaffMessagingUnreadRefresh,
+  subscribeMessagingUnreadLive,
+} from '@/lib/messagingUnreadSync';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -117,7 +120,6 @@ export default function StaffTabsLayout() {
   const [menuVisible, setMenuVisible] = useState(false);
   /** İlk açılışa kadar ağır menü ağacını mount etme (Android başlangıç jank’i). */
   const [menuSheetMounted, setMenuSheetMounted] = useState(false);
-  const [menuSessionTasksBadge, setMenuSessionTasksBadge] = useState(0);
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
   const canKbsMrz = canStaffUseMrzScan(staff);
@@ -173,6 +175,16 @@ export default function StaffTabsLayout() {
     };
   }, [staff?.id, bumpNewAssignFromRealtime, refreshNewAssignHint]);
 
+  // Mesaj rozeti: sohbet listesine girmeden tab menüde (realtime)
+  useEffect(() => {
+    if (!staff?.id) return;
+    const staffId = staff.id;
+    const unsub = subscribeMessagingUnreadLive(staffId, () => {
+      scheduleStaffMessagingUnreadRefresh(staffId);
+    });
+    return unsub;
+  }, [staff?.id]);
+
   useEffect(() => {
     if (!staff?.id) return;
     const channel = supabase
@@ -190,17 +202,6 @@ export default function StaffTabsLayout() {
     };
   }, [staff?.id, loadBoardList]);
 
-  const menuQuickSignals = useMemo<StaffQuickSlotSignals>(
-    () => ({
-      newAssignmentCount: newAssignCount,
-      unreadMessages: unreadMessagesCount,
-      boardHasUnread,
-      boardUnreadCount,
-      adminWarningCount: adminWarningCount,
-    }),
-    [newAssignCount, unreadMessagesCount, boardHasUnread, boardUnreadCount, adminWarningCount]
-  );
-
   const menuLayout = useMemo(
     () =>
       buildStaffHamburgerMenuLayout(
@@ -213,8 +214,7 @@ export default function StaffTabsLayout() {
               kbs_access_enabled: staff.kbs_access_enabled,
               department: staff.department,
             }
-          : null,
-        menuQuickSignals
+          : null
       ),
     [
       t,
@@ -223,7 +223,6 @@ export default function StaffTabsLayout() {
       staff?.hidden_menu_item_ids,
       staff?.kbs_access_enabled,
       staff?.department,
-      menuQuickSignals,
     ]
   );
 
@@ -235,7 +234,7 @@ export default function StaffTabsLayout() {
       void loadBoardList(staff.id);
       if (staff.role === 'admin') refreshAdminWarning(staff.id);
       void refreshNewAssignHint(staff.id);
-    }, 180000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
 
@@ -264,7 +263,6 @@ export default function StaffTabsLayout() {
 
   const closeMenu = () => {
     setMenuVisible(false);
-    setMenuSessionTasksBadge(0);
   };
 
   const handleMenuPress = () => {
@@ -272,15 +270,12 @@ export default function StaffTabsLayout() {
     setMenuVisible((wasOpen) => {
       const opening = !wasOpen;
       if (opening) {
-        if (newAssignCount > 0) setMenuSessionTasksBadge(newAssignCount);
         const staffId = staff?.id;
         if (staffId) {
           setTimeout(() => {
             void markNewAssignMenuOpened(staffId);
           }, 0);
         }
-      } else {
-        setMenuSessionTasksBadge(0);
       }
       return opening;
     });
@@ -589,8 +584,6 @@ export default function StaffTabsLayout() {
           router.push('/staff/profile' as Href);
         }}
         layout={menuLayout}
-        menuQuickSignals={menuQuickSignals}
-        menuSessionTasksBadge={menuSessionTasksBadge}
         onSelect={(href) => {
           closeMenu();
           router.push(href as never);

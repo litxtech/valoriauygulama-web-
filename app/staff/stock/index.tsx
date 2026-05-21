@@ -10,9 +10,12 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
@@ -50,6 +53,130 @@ type MovementRow = {
   product: { name: string } | null;
   staff: { full_name: string | null } | null;
 };
+
+type IonIcon = ComponentProps<typeof Ionicons>['name'];
+
+type StockHubAction = {
+  key: string;
+  label: string;
+  sub: string;
+  icon: IonIcon;
+  route: string;
+  colors?: [string, string];
+  tint?: string;
+  tintBg?: string;
+  layout: 'hero' | 'gradient' | 'surface';
+};
+
+const STOCK_HUB_ACTIONS: StockHubAction[] = [
+  {
+    key: 'barcode',
+    label: 'Barkod',
+    sub: 'Okut ve ürünü bul',
+    icon: 'scan',
+    colors: ['#1e3a8a', '#2563eb'],
+    route: '/staff/stock/scan',
+    layout: 'hero',
+  },
+  {
+    key: 'in',
+    label: 'Stok girişi',
+    sub: 'Depoya ekle',
+    icon: 'arrow-down-circle',
+    colors: ['#065f46', '#10b981'],
+    route: '/staff/stock/entry',
+    layout: 'gradient',
+  },
+  {
+    key: 'out',
+    label: 'Stok çıkışı',
+    sub: 'Kullanım / satış',
+    icon: 'arrow-up-circle',
+    colors: ['#b45309', '#f59e0b'],
+    route: '/staff/stock/exit',
+    layout: 'gradient',
+  },
+  {
+    key: 'mine',
+    label: 'Stoklarım',
+    sub: 'Hareket geçmişim',
+    icon: 'folder-open-outline',
+    tint: '#6d28d9',
+    tintBg: '#ede9fe',
+    route: '/staff/stock/my-movements',
+    layout: 'surface',
+  },
+  {
+    key: 'all',
+    label: 'Tüm stoklar',
+    sub: 'Tam envanter listesi',
+    icon: 'layers',
+    tint: '#0f766e',
+    tintBg: '#ccfbf1',
+    route: '/staff/stock/all',
+    layout: 'surface',
+  },
+];
+
+function StockHubActionButton({ action, onPress }: { action: StockHubAction; onPress: () => void }) {
+  if (action.layout === 'hero') {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.hubHero, pressed && styles.hubPressed]}
+        android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+      >
+        <LinearGradient colors={action.colors!} style={styles.hubHeroGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.5 }}>
+          <View style={styles.hubHeroIcon}>
+            <Ionicons name={action.icon} size={28} color="#fff" />
+          </View>
+          <View style={styles.hubHeroText}>
+            <Text style={styles.hubHeroLabel}>{action.label}</Text>
+            <Text style={styles.hubHeroSub}>{action.sub}</Text>
+          </View>
+          <View style={styles.hubHeroArrow}>
+            <Ionicons name="chevron-forward" size={22} color="rgba(255,255,255,0.95)" />
+          </View>
+        </LinearGradient>
+      </Pressable>
+    );
+  }
+
+  if (action.layout === 'gradient') {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.hubHalf, pressed && styles.hubPressed]}
+        android_ripple={{ color: 'rgba(255,255,255,0.15)' }}
+      >
+        <LinearGradient colors={action.colors!} style={styles.hubHalfGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+          <View style={styles.hubHalfIcon}>
+            <Ionicons name={action.icon} size={26} color="#fff" />
+          </View>
+          <Text style={styles.hubHalfLabel}>{action.label}</Text>
+          <Text style={styles.hubHalfSub}>{action.sub}</Text>
+        </LinearGradient>
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.hubSurface, pressed && styles.hubSurfacePressed]}
+      android_ripple={{ color: theme.colors.borderLight }}
+    >
+      <View style={[styles.hubSurfaceIcon, { backgroundColor: action.tintBg }]}>
+        <Ionicons name={action.icon} size={22} color={action.tint} />
+      </View>
+      <View style={styles.hubSurfaceText}>
+        <Text style={styles.hubSurfaceLabel}>{action.label}</Text>
+        <Text style={styles.hubSurfaceSub}>{action.sub}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} />
+    </Pressable>
+  );
+}
 
 export default function StaffStockListScreen() {
   const router = useRouter();
@@ -122,27 +249,34 @@ export default function StaffStockListScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.topActions}>
-        <TouchableOpacity style={styles.smallBtn} onPress={() => router.push('/staff/stock/scan')} activeOpacity={0.8}>
-          <Ionicons name="barcode-outline" size={18} color="#fff" />
-          <Text style={styles.smallBtnText}>Barkod</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.smallBtn} onPress={() => router.push('/staff/stock/entry')} activeOpacity={0.8}>
-          <Ionicons name="download-outline" size={18} color="#fff" />
-          <Text style={styles.smallBtnText}>Stok Girişi</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.smallBtn} onPress={() => router.push('/staff/stock/exit')} activeOpacity={0.8}>
-          <Ionicons name="log-out-outline" size={18} color="#fff" />
-          <Text style={styles.smallBtnText}>Stok Çıkışı</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.allStocksBtn} onPress={() => router.push('/staff/stock/my-movements')} activeOpacity={0.8}>
-          <Ionicons name="list-outline" size={18} color={theme.colors.primary} />
-          <Text style={styles.allStocksBtnText}>Stoklarım</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.allStocksBtn} onPress={() => router.push('/staff/stock/all')} activeOpacity={0.8}>
-          <Ionicons name="layers-outline" size={18} color={theme.colors.primary} />
-          <Text style={styles.allStocksBtnText}>Tüm Stoklar</Text>
-        </TouchableOpacity>
+      <View style={styles.actionsPanel}>
+        <Text style={styles.actionsTitle}>Stok işlemleri</Text>
+        <View style={styles.hubGrid}>
+          <StockHubActionButton
+            action={STOCK_HUB_ACTIONS[0]}
+            onPress={() => router.push(STOCK_HUB_ACTIONS[0].route as never)}
+          />
+          <View style={styles.hubHalfRow}>
+            <StockHubActionButton
+              action={STOCK_HUB_ACTIONS[1]}
+              onPress={() => router.push(STOCK_HUB_ACTIONS[1].route as never)}
+            />
+            <StockHubActionButton
+              action={STOCK_HUB_ACTIONS[2]}
+              onPress={() => router.push(STOCK_HUB_ACTIONS[2].route as never)}
+            />
+          </View>
+          <View style={styles.hubHalfRow}>
+            <StockHubActionButton
+              action={STOCK_HUB_ACTIONS[3]}
+              onPress={() => router.push(STOCK_HUB_ACTIONS[3].route as never)}
+            />
+            <StockHubActionButton
+              action={STOCK_HUB_ACTIONS[4]}
+              onPress={() => router.push(STOCK_HUB_ACTIONS[4].route as never)}
+            />
+          </View>
+        </View>
       </View>
 
       <View style={styles.searchWrap}>
@@ -323,39 +457,106 @@ export default function StaffStockListScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  topActions: {
-    flexDirection: 'row',
-    flexWrap: 'nowrap',
-    padding: 10,
-    gap: 6,
+  actionsPanel: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
     backgroundColor: theme.colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.borderLight,
+    ...theme.shadows.sm,
   },
-  smallBtn: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
+  actionsTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: theme.colors.textSecondary,
+    letterSpacing: 0.2,
+    marginBottom: 12,
+  },
+  hubGrid: { gap: 10 },
+  hubPressed: { opacity: 0.92, transform: [{ scale: 0.985 }] },
+  hubHero: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    ...theme.shadows.md,
+    ...(Platform.OS === 'android' ? { elevation: 4 } : {}),
+  },
+  hubHeroGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    gap: 14,
+    minHeight: 76,
+  },
+  hubHeroIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
   },
-  smallBtnText: { color: '#fff', fontWeight: '700', fontSize: 10 },
-  allStocksBtn: {
+  hubHeroText: { flex: 1, minWidth: 0 },
+  hubHeroLabel: { fontSize: 17, fontWeight: '800', color: '#fff' },
+  hubHeroSub: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.88)', marginTop: 3 },
+  hubHeroArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubHalfRow: { flexDirection: 'row', gap: 10 },
+  hubHalf: {
     flex: 1,
-    minWidth: 0,
+    borderRadius: 16,
+    overflow: 'hidden',
+    ...theme.shadows.md,
+  },
+  hubHalfGrad: {
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'flex-start',
+    minHeight: 118,
+    justifyContent: 'space-between',
+  },
+  hubHalfIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  hubHalfLabel: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  hubHalfSub: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.9)', marginTop: 2 },
+  hubSurface: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     backgroundColor: theme.colors.surface,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    ...theme.shadows.sm,
+  },
+  hubSurfacePressed: { backgroundColor: theme.colors.backgroundSecondary },
+  hubSurfaceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
-    borderWidth: 2,
-    borderColor: theme.colors.primary,
   },
-  allStocksBtnText: { color: theme.colors.primary, fontWeight: '700', fontSize: 10 },
+  hubSurfaceText: { flex: 1, minWidth: 0 },
+  hubSurfaceLabel: { fontSize: 14, fontWeight: '800', color: theme.colors.text },
+  hubSurfaceSub: { fontSize: 11, fontWeight: '600', color: theme.colors.textMuted, marginTop: 2 },
   sonIslemlerBtn: {
     flexDirection: 'row',
     alignItems: 'center',

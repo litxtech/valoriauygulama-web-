@@ -296,6 +296,26 @@ export async function getExpoPushTokenAsync(): Promise<string | null> {
       log.warn('notificationsPush', 'Push izni verilmedi');
       return null;
     }
+    if (Platform.OS === 'ios') {
+      const ios = (await Notifications.getPermissionsAsync()).ios;
+      if (ios && ios.allowsAlert === false) {
+        log.warn(
+          'notificationsPush',
+          'iOS: uyarı/banner kapalı — Ayarlar > Valoria > Bildirimler > Bildirimlere İzin Ver'
+        );
+      }
+      if (ios && ios.allowsBadge === false) {
+        log.warn('notificationsPush', 'iOS: rozet izni kapalı');
+      }
+      try {
+        const native = await Notifications.getDevicePushTokenAsync();
+        if (!native?.data) {
+          log.warn('notificationsPush', 'iOS APNs device token alınamadı — native dev client yeniden derleyin');
+        }
+      } catch (e) {
+        log.warn('notificationsPush', 'getDevicePushTokenAsync', e);
+      }
+    }
     const projectId = (Constants.expoConfig as { extra?: { eas?: { projectId?: string } } } | null)?.extra?.eas?.projectId;
 
     if (Platform.OS === 'ios') {

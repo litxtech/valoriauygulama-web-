@@ -37,6 +37,14 @@ export default function AuditSessionDetailScreen() {
 
   const s = detail.session;
   const cat = s.category as { name?: string } | null;
+  const mediaByItemId = new Map<string, typeof detail.media>();
+  const sessionMedia = detail.media.filter((m) => !m.session_item_id);
+  for (const m of detail.media) {
+    if (!m.session_item_id) continue;
+    const list = mediaByItemId.get(m.session_item_id) ?? [];
+    list.push(m);
+    mediaByItemId.set(m.session_item_id, list);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.pad}>
@@ -64,6 +72,7 @@ export default function AuditSessionDetailScreen() {
       <Text style={styles.section}>Kriterler</Text>
       {detail.items.map((it) => {
         const lost = it.max_points - it.points_awarded;
+        const itemMedia = mediaByItemId.get(it.id) ?? [];
         return (
           <AdminCard key={it.id} style={styles.row}>
             <Text style={styles.rowTitle}>{it.criterion?.title ?? 'Kriter'}</Text>
@@ -77,15 +86,33 @@ export default function AuditSessionDetailScreen() {
               {lost > 0 ? ` (−${lost})` : ''}
             </Text>
             {it.comment ? <Text style={styles.muted}>{it.comment}</Text> : null}
+            {itemMedia.length > 0 ? (
+              <View style={styles.itemMediaBlock}>
+                <Text style={styles.itemMediaLabel}>Kanıt</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {itemMedia.map((m) => (
+                    <TouchableOpacity key={m.id} onPress={() => Linking.openURL(m.url)}>
+                      {m.media_type === 'image' ? (
+                        <CachedImage uri={m.url} style={styles.mediaThumb} />
+                      ) : (
+                        <View style={[styles.mediaThumb, styles.videoBox]}>
+                          <Ionicons name="play-circle" size={32} color="#fff" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
           </AdminCard>
         );
       })}
 
-      {detail.media.length > 0 ? (
+      {sessionMedia.length > 0 ? (
         <>
-          <Text style={styles.section}>Medya</Text>
+          <Text style={styles.section}>Genel medya</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {detail.media.map((m) => (
+            {sessionMedia.map((m) => (
               <TouchableOpacity key={m.id} onPress={() => Linking.openURL(m.url)}>
                 {m.media_type === 'image' ? (
                   <CachedImage uri={m.url} style={styles.mediaThumb} />
@@ -120,6 +147,14 @@ const styles = StyleSheet.create({
   },
   row: { marginBottom: 8 },
   rowTitle: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
-  mediaThumb: { width: 120, height: 120, borderRadius: 10, marginRight: 10 },
+  itemMediaBlock: { marginTop: 10 },
+  itemMediaLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: adminTheme.colors.textSecondary,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  mediaThumb: { width: 96, height: 96, borderRadius: 10, marginRight: 10 },
   videoBox: { backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' },
 });

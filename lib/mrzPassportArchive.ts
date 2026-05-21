@@ -4,7 +4,10 @@ export type MrzArchiveGuest = {
   full_name: string | null;
   first_name: string | null;
   last_name: string | null;
+  birth_date?: string | null;
 } | null;
+
+export type MrzArchivePeriod = 'all' | 'today' | 'week';
 
 export type MrzArchiveSearchable = {
   created_at: string;
@@ -61,18 +64,51 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   other: 'belge',
 };
 
-/** Ad, soyad, tam ad, belge no ve tür ile arama. */
-export function filterMrzArchiveRows<T extends MrzArchiveSearchable>(rows: T[], query: string): T[] {
+function formatBirthForSearch(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = iso.slice(0, 10);
+  const [y, m, day] = d.split('-');
+  return `${d} ${day}.${m}.${y} ${day}/${m}/${y}`.toLowerCase();
+}
+
+/** Ad, soyad, belge no, TC (11 hane), doğum tarihi ve tür ile arama. */
+export function filterMrzArchiveRows<T extends MrzArchiveSearchable>(
+  rows: T[],
+  query: string,
+  guestBirthDate?: (row: T) => string | null | undefined
+): T[] {
   const q = normalizeSearchToken(query);
   if (!q) return rows;
   const tokens = q.split(' ').filter(Boolean);
   return rows.filter((row) => {
     const name = normalizeSearchToken(guestDisplayName(row.guest ?? null));
     const docNo = normalizeSearchToken(row.document_number ?? '');
+    const docNoDigits = (row.document_number ?? '').replace(/\D/g, '');
     const docType = DOC_TYPE_LABEL[row.document_type] ?? row.document_type;
-    const haystack = `${name} ${docNo} ${docType}`.trim();
-    return tokens.every((tok) => haystack.includes(tok));
+    const birth = formatBirthForSearch(guestBirthDate?.(row) ?? row.guest?.birth_date ?? null);
+    const haystack = `${name} ${docNo} ${docNoDigits} ${birth} ${docType}`.trim();
+    return tokens.every((tok) => {
+      const t = normalizeSearchToken(tok);
+      if (/^\d{11}$/.test(t.replace(/\D/g, '')) && docNoDigits.includes(t.replace(/\D/g, ''))) return true;
+      return haystack.includes(t);
+    });
   });
+}
+
+/** Bugün / son 7 gün / tümü. */
+export function filterMrzArchiveByPeriod<T extends MrzArchiveSearchable>(
+  rows: T[],
+  period: MrzArchivePeriod
+): T[] {
+  if (period === 'all') return rows;
+  const today = todayKey();
+  if (period === 'today') {
+    return rows.filter((r) => dayKeyFromIso(r.created_at) === today);
+  }
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  cutoff.setHours(0, 0, 0, 0);
+  return rows.filter((r) => new Date(r.created_at) >= cutoff);
 }
 
 /** Bugün, dün ve tarih başlıklarıyla grupla (en yeni gün üstte). */
@@ -124,6 +160,28 @@ export function formatArchiveDayTitle(
   });
 }
 
+export function scanStatusLabelTr(status: string): string {
+  const m: Record<string, string> = {
+    draft: 'Taslak',
+    scanned: 'Okutuldu',
+    incomplete: 'Eksik',
+    ready_to_submit: 'Bildirime hazır',
+    submitted: 'Bildirildi',
+    checkout_pending: 'Çıkış bekliyor',
+    checked_out: 'Çıkış yapıldı',
+    failed: 'Hata',
+  };
+  return m[status] ?? status;
+}
+
+export function scanStatusColor(status: string): string {
+  if (status === 'submitted' || status === 'checked_out') return '#059669';
+  if (status === 'ready_to_submit') return '#2563eb';
+  if (status === 'failed') return '#dc2626';
+  if (status === 'scanned') return '#d97706';
+  return '#64748b';
+}
+
 export function documentTypeLabelTr(documentType: string): string {
   const m: Record<string, string> = {
     passport: 'Pasaport',
@@ -132,4 +190,12 @@ export function documentTypeLabelTr(documentType: string): string {
     other: 'Belge',
   };
   return m[documentType] ?? documentType;
+}
+
+export function genderLabelTr(gender: string | null | undefined): string {
+  if (!gender) return '';
+  if (gender === 'M') return 'Erkek';
+  if (gender === 'F') return 'Kadın';
+  if (gender === 'X') return 'Diğer';
+  return gender;
 }

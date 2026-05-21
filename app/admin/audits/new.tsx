@@ -25,7 +25,7 @@ import {
   type AuditCategoryRow,
   type AuditCriterionRow,
 } from '@/lib/audit';
-import { AUDIT_MEDIA_BUCKET, MAX_AUDIT_MEDIA } from '@/lib/auditMedia';
+import { AUDIT_MEDIA_BUCKET, MAX_AUDIT_MEDIA, MAX_CRITERION_AUDIT_MEDIA } from '@/lib/auditMedia';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
@@ -59,7 +59,7 @@ export default function NewAuditScreen() {
   const [areaNote, setAreaNote] = useState('');
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<Set<string>>(new Set());
-  const [pendingMedia, setPendingMedia] = useState<PendingMedia[]>([]);
+  const [criterionMedia, setCriterionMedia] = useState<Record<string, PendingMedia[]>>({});
   const [criteriaError, setCriteriaError] = useState<string | null>(null);
   const [criteriaLoading, setCriteriaLoading] = useState(false);
 
@@ -102,6 +102,7 @@ export default function NewAuditScreen() {
       for (const c of data) init[c.id] = c.max_points;
       setScores(init);
       setComments({});
+      setCriterionMedia({});
       setCriteriaLoading(false);
     },
     [orgId]
@@ -120,15 +121,25 @@ export default function NewAuditScreen() {
     });
   };
 
-  const pickMedia = async (fromCamera: boolean) => {
-    if (pendingMedia.length >= MAX_AUDIT_MEDIA) {
-      Alert.alert('Limit', `En fazla ${MAX_AUDIT_MEDIA} dosya.`);
+  const totalCriterionMedia = useMemo(
+    () => Object.values(criterionMedia).reduce((n, arr) => n + arr.length, 0),
+    [criterionMedia]
+  );
+
+  const pickCriterionMedia = async (criterionId: string, criterionTitle: string, fromCamera: boolean) => {
+    const current = criterionMedia[criterionId]?.length ?? 0;
+    if (current >= MAX_CRITERION_AUDIT_MEDIA) {
+      Alert.alert('Limit', `${criterionTitle} için en fazla ${MAX_CRITERION_AUDIT_MEDIA} dosya.`);
+      return;
+    }
+    if (totalCriterionMedia >= MAX_AUDIT_MEDIA) {
+      Alert.alert('Limit', `Toplam en fazla ${MAX_AUDIT_MEDIA} kanıt dosyası.`);
       return;
     }
     const granted = fromCamera
       ? await ensureCameraPermission({
           title: 'Kamera',
-          message: 'Denetim kanıtı için kamera gerekir.',
+          message: 'Kriter kanıtı için kamera gerekir.',
           settingsMessage: 'Ayarlardan kamera iznini açın.',
         })
       : await ensureMediaLibraryPermission({
@@ -137,6 +148,9 @@ export default function NewAuditScreen() {
           settingsMessage: 'Ayarlardan galeri iznini açın.',
         });
     if (!granted) return;
+    const roomLeftCriterion = MAX_CRITERION_AUDIT_MEDIA - current;
+    const roomLeftTotal = MAX_AUDIT_MEDIA - totalCriterionMedia;
+    const take = Math.min(roomLeftCriterion, roomLeftTotal, fromCamera ? 1 : roomLeftCriterion);
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.85 })
       : await ImagePicker.launchImageLibraryAsync({
@@ -145,11 +159,25 @@ export default function NewAuditScreen() {
           quality: 0.85,
         });
     if (result.canceled || !result.assets?.length) return;
-    const added: PendingMedia[] = result.assets.slice(0, MAX_AUDIT_MEDIA - pendingMedia.length).map((a) => ({
+    const added: PendingMedia[] = result.assets.slice(0, take).map((a) => ({
       uri: a.uri,
       type: (a.type === 'video' ? 'video' : 'image') as 'image' | 'video',
     }));
-    setPendingMedia((p) => [...p, ...added]);
+    setCriterionMedia((prev) => ({
+      ...prev,
+      [criterionId]: [...(prev[criterionId] ?? []), ...added],
+    }));
+  };
+
+  const removeCriterionMedia = (criterionId: string, index: number) => {
+    setCriterionMedia((prev) => {
+      const list = [...(prev[criterionId] ?? [])];
+      list.splice(index, 1);
+      const next = { ...prev };
+      if (list.length) next[criterionId] = list;
+      else delete next[criterionId];
+      return next;
+    });
   };
 
   const submit = async () => {
@@ -167,15 +195,22 @@ export default function NewAuditScreen() {
     }
     setSaving(true);
     try {
-      const mediaUrls: { url: string; mediaType: 'image' | 'video' }[] = [];
-      for (const m of pendingMedia) {
-        const { publicUrl } = await uploadUriToPublicBucket({
-          bucketId: AUDIT_MEDIA_BUCKET,
-          uri: m.uri,
-          kind: m.type === 'video' ? 'video' : 'image',
-          subfolder: 'sessions',
-        });
-        mediaUrls.push({ url: publicUrl, mediaType: m.type });
+      const mediaUrls: {
+        url: string;
+        mediaType: 'image' | 'video';
+        criterionId: string;
+      }[] = [];
+      for (const c of criteria) {
+        const pending = criterionMedia[c.id] ?? [];
+        for (const m of pending) {
+          const { publicUrl } = await uploadUriToPublicBucket({
+            bucketId: AUDIT_MEDIA_BUCKET,
+            uri: m.uri,
+            kind: m.type === 'video' ? 'video' : 'image',
+            subfolder: `sessions/${c.id}`,
+          });
+          mediaUrls.push({ url: publicUrl, mediaType: m.type, criterionId: c.id });
+        }
       }
 
       const { sessionId, sessionScore, error } = await createAndSubmitAuditSession({
@@ -258,6 +293,7 @@ export default function NewAuditScreen() {
         {criteria.map((c) => {
           const maxPts = Number(c.max_points) || 1;
           const current = Math.round(scores[c.id] ?? maxPts);
+          const mediaForCriterion = criterionMedia[c.id] ?? [];
           return (
           <AdminCard key={c.id} style={styles.criterionCard}>
             <View style={styles.criterionHead}>
@@ -311,6 +347,52 @@ export default function NewAuditScreen() {
               value={comments[c.id] ?? ''}
               onChangeText={(t) => setComments((cm) => ({ ...cm, [c.id]: t }))}
             />
+
+            <Text style={styles.evidenceLabel}>Kanıt — puan gerekçesi (isteğe bağlı)</Text>
+            <View style={styles.mediaRow}>
+              <TouchableOpacity
+                style={styles.mediaBtn}
+                onPress={() => pickCriterionMedia(c.id, c.title, true)}
+              >
+                <Ionicons name="camera-outline" size={20} color={adminTheme.colors.accent} />
+                <Text style={styles.mediaBtnText}>Kamera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.mediaBtn}
+                onPress={() => pickCriterionMedia(c.id, c.title, false)}
+              >
+                <Ionicons name="images-outline" size={20} color={adminTheme.colors.accent} />
+                <Text style={styles.mediaBtnText}>Galeri</Text>
+              </TouchableOpacity>
+              {mediaForCriterion.length > 0 ? (
+                <Text style={styles.mediaCount}>
+                  {mediaForCriterion.length}/{MAX_CRITERION_AUDIT_MEDIA}
+                </Text>
+              ) : null}
+            </View>
+            {mediaForCriterion.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.criterionThumbScroll}>
+                {mediaForCriterion.map((m, i) => (
+                  <View key={`${m.uri}-${i}`} style={styles.thumbWrap}>
+                    {m.type === 'image' ? (
+                      <CachedImage uri={m.uri} style={styles.thumb} />
+                    ) : (
+                      <View style={[styles.thumb, styles.videoThumb]}>
+                        <Ionicons name="videocam" size={24} color="#fff" />
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      style={styles.thumbRemove}
+                      onPress={() => removeCriterionMedia(c.id, i)}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#dc2626" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.evidenceHint}>Bu kriter için fotoğraf veya video ekleyebilirsiniz.</Text>
+            )}
           </AdminCard>
           );
         })}
@@ -338,36 +420,11 @@ export default function NewAuditScreen() {
           </TouchableOpacity>
         ))}
 
-        <Text style={styles.label}>Fotoğraf / video</Text>
-        <View style={styles.mediaRow}>
-          <TouchableOpacity style={styles.mediaBtn} onPress={() => pickMedia(true)}>
-            <Ionicons name="camera-outline" size={22} color={adminTheme.colors.accent} />
-            <Text style={styles.mediaBtnText}>Kamera</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.mediaBtn} onPress={() => pickMedia(false)}>
-            <Ionicons name="images-outline" size={22} color={adminTheme.colors.accent} />
-            <Text style={styles.mediaBtnText}>Galeri</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {pendingMedia.map((m, i) => (
-            <View key={`${m.uri}-${i}`} style={styles.thumbWrap}>
-              {m.type === 'image' ? (
-                <CachedImage uri={m.uri} style={styles.thumb} />
-              ) : (
-                <View style={[styles.thumb, styles.videoThumb]}>
-                  <Ionicons name="videocam" size={28} color="#fff" />
-                </View>
-              )}
-              <TouchableOpacity
-                style={styles.thumbRemove}
-                onPress={() => setPendingMedia((p) => p.filter((_, j) => j !== i))}
-              >
-                <Ionicons name="close-circle" size={22} color="#dc2626" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </ScrollView>
+        {totalCriterionMedia > 0 ? (
+          <Text style={styles.totalMediaHint}>
+            Toplam {totalCriterionMedia} kanıt dosyası eklendi (en fazla {MAX_AUDIT_MEDIA}).
+          </Text>
+        ) : null}
 
         <AdminButton title={saving ? 'Kaydediliyor…' : 'Denetimi gönder'} onPress={submit} disabled={saving} />
       </ScrollView>
@@ -404,6 +461,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: adminTheme.colors.text,
   },
+  evidenceLabel: {
+    marginTop: 12,
+    fontSize: 12,
+    fontWeight: '700',
+    color: adminTheme.colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  evidenceHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+    fontStyle: 'italic',
+  },
+  mediaCount: {
+    marginLeft: 'auto',
+    fontSize: 12,
+    fontWeight: '700',
+    color: adminTheme.colors.textMuted,
+  },
+  criterionThumbScroll: { marginTop: 8 },
+  totalMediaHint: {
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
   areaInput: {
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
@@ -417,7 +501,7 @@ const styles = StyleSheet.create({
   },
   staffRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
   staffName: { flex: 1, fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
-  mediaRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  mediaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' },
   mediaBtn: {
     flexDirection: 'row',
     alignItems: 'center',

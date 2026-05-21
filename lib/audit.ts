@@ -218,7 +218,13 @@ export async function fetchAuditSessionDetail(sessionId: string): Promise<{
     criterion: { title: string; is_critical: boolean } | null;
   }[];
   staff: { staff_id: string; role: string; full_name: string | null }[];
-  media: { id: string; media_type: string; url: string; caption: string | null }[];
+  media: {
+    id: string;
+    media_type: string;
+    url: string;
+    caption: string | null;
+    session_item_id: string | null;
+  }[];
   error?: string;
 }> {
   const [sRes, iRes, stRes, mRes] = await Promise.all([
@@ -241,7 +247,7 @@ export async function fetchAuditSessionDetail(sessionId: string): Promise<{
     supabase.from('audit_session_staff').select('staff_id, role').eq('session_id', sessionId),
     supabase
       .from('audit_session_media')
-      .select('id, media_type, url, caption')
+      .select('id, media_type, url, caption, session_item_id')
       .eq('session_id', sessionId)
       .order('sort_order'),
   ]);
@@ -296,7 +302,13 @@ export async function fetchAuditSessionDetail(sessionId: string): Promise<{
       const row = r as { staff_id: string; role: string };
       return { ...row, full_name: nameMap[row.staff_id] ?? null };
     }),
-    media: (mRes.data ?? []) as { id: string; media_type: string; url: string; caption: string | null }[],
+    media: (mRes.data ?? []) as {
+      id: string;
+      media_type: string;
+      url: string;
+      caption: string | null;
+      session_item_id: string | null;
+    }[],
   };
 }
 
@@ -315,7 +327,12 @@ export async function createAndSubmitAuditSession(params: {
   areaNote?: string;
   staffIds: string[];
   criterionScores: CriterionScoreInput[];
-  mediaUrls: { url: string; mediaType: 'image' | 'video'; caption?: string }[];
+  mediaUrls: {
+    url: string;
+    mediaType: 'image' | 'video';
+    caption?: string;
+    criterionId: string;
+  }[];
 }): Promise<{ sessionId?: string; sessionScore?: number; error?: string }> {
   const ym = monthKey();
   const { data: sess, error: sessErr } = await supabase
@@ -334,18 +351,26 @@ export async function createAndSubmitAuditSession(params: {
   if (sessErr || !sess) return { error: sessErr?.message ?? 'Oturum oluşturulamadı' };
   const sessionId = sess.id as string;
 
+  const itemIdByCriterion = new Map<string, string>();
   if (params.criterionScores.length) {
-    const { error: itemsErr } = await supabase.from('audit_session_items').insert(
-      params.criterionScores.map((c) => ({
-        session_id: sessionId,
-        criterion_id: c.criterionId,
-        points_awarded: c.pointsAwarded,
-        max_points: c.maxPoints,
-        weight: c.weight,
-        comment: c.comment?.trim() || null,
-      }))
-    );
+    const { data: insertedItems, error: itemsErr } = await supabase
+      .from('audit_session_items')
+      .insert(
+        params.criterionScores.map((c) => ({
+          session_id: sessionId,
+          criterion_id: c.criterionId,
+          points_awarded: c.pointsAwarded,
+          max_points: c.maxPoints,
+          weight: c.weight,
+          comment: c.comment?.trim() || null,
+        }))
+      )
+      .select('id, criterion_id');
     if (itemsErr) return { error: itemsErr.message };
+    for (const row of insertedItems ?? []) {
+      const r = row as { id: string; criterion_id: string };
+      itemIdByCriterion.set(r.criterion_id, r.id);
+    }
   }
 
   if (params.staffIds.length) {
@@ -363,6 +388,7 @@ export async function createAndSubmitAuditSession(params: {
     const { error: medErr } = await supabase.from('audit_session_media').insert(
       params.mediaUrls.map((m, i) => ({
         session_id: sessionId,
+        session_item_id: itemIdByCriterion.get(m.criterionId) ?? null,
         media_type: m.mediaType,
         url: m.url,
         caption: m.caption?.trim() || null,

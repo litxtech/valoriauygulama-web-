@@ -5,11 +5,17 @@ export type ParsedDocument = {
   lastName: string | null;
   middleName: string | null;
   documentNumber: string | null;
+  /** T.C. kimlik kart seri no (MRZ / OCR). */
+  documentSeries?: string | null;
   nationalityCode: string | null;
   issuingCountryCode: string | null;
   birthDate: string | null;
   expiryDate: string | null;
   gender: 'M' | 'F' | 'X' | null;
+  motherName?: string | null;
+  fatherName?: string | null;
+  /** Ön yüz OCR — EVLİ / BEKAR vb. */
+  maritalStatus?: 'married' | 'single' | null;
   rawMrz: string | null;
   confidence: number | null;
   checksumsValid: boolean | null;

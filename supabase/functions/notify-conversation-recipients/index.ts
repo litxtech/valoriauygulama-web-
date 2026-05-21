@@ -118,7 +118,7 @@ Deno.serve(async (req: Request) => {
     const titleTrim = title.trim();
     const bodyTrim = messageBody?.trim() ?? null;
     const displayBody = expoDisplayBody(bodyTrim);
-    const payload = { ...data, screen: "messages" };
+    const payload = { ...data, screen: "messages", notificationType: "message" };
 
     // Mesaj için sadece push; "Bildirimler" listesine (notifications tablosu) kayıt eklenmez — çift kayıt önlenir.
     // Simge sayacı: app_badge_total_* = okunmamış notifications + okunmamış mesajlar (yeni mesaj zaten tabloda).

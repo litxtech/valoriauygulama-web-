@@ -127,13 +127,6 @@ export default function CustomerMessagesScreen() {
     setLoading(false);
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      setUnreadCount(0);
-      return () => {};
-    }, [setUnreadCount])
-  );
-
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!appToken) return;
     const name = item.name || t('chatConversationFallback');

@@ -25,6 +25,8 @@ export function AdminOrganizationPicker({
     organizations,
     selectedOrganizationId: storeOrgId,
     setSelectedOrganizationId,
+    hydrateSelectedOrganization,
+    orgHydrated,
     loadOrganizations,
     loadedAt,
   } = useAdminOrgStore();
@@ -39,10 +41,31 @@ export function AdminOrganizationPicker({
 
   useEffect(() => {
     if (value != null || onChange) return;
+    if (orgHydrated) return;
+    void hydrateSelectedOrganization({ canUseAll, ownOrganizationId });
+  }, [
+    canUseAll,
+    ownOrganizationId,
+    value,
+    onChange,
+    orgHydrated,
+    hydrateSelectedOrganization,
+  ]);
+
+  useEffect(() => {
+    if (value != null || onChange || orgHydrated) return;
     if (!canUseAll && ownOrganizationId && storeOrgId !== ownOrganizationId) {
       setSelectedOrganizationId(ownOrganizationId);
     }
-  }, [canUseAll, ownOrganizationId, storeOrgId, setSelectedOrganizationId, value, onChange]);
+  }, [
+    canUseAll,
+    ownOrganizationId,
+    storeOrgId,
+    setSelectedOrganizationId,
+    value,
+    onChange,
+    orgHydrated,
+  ]);
 
   const options = useMemo(() => {
     if (!canUseAll) {

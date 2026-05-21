@@ -6,6 +6,11 @@ import {
   sanitizePersonName,
   splitFullNameToFirstLast,
 } from '@/lib/guestScan/personNameUtils';
+import {
+  correctSwappedMrzNames,
+  mrzNamesLookSwapped,
+  mrzNamesLookValid,
+} from '@/lib/scanner/mrzPersonNames';
 
 const TC_RE = /\b([1-9]\d{10})\b/;
 const DATE_RE = /\b(\d{2})[./](\d{2})[./](\d{4})\b/;
@@ -38,7 +43,12 @@ export type TurkishIdOcrExtras = {
   documentSeries: string | null;
   motherName: string | null;
   fatherName: string | null;
+  maritalStatus?: 'married' | 'single' | null;
 };
+
+const MARITAL_LINE_RE = /^(?:medeni\s*hal|civil\s*status|marital\s*status)/i;
+const MARITAL_EVLI_RE = /\b(?:evli|married)\b/i;
+const MARITAL_BEKAR_RE = /\b(?:bekar|single|unmarried)\b/i;
 
 function normLines(lines: string[]): string[] {
   return normalizeOcrLines(lines);
@@ -159,6 +169,24 @@ export function extractParentNamesFromOcr(lines: string[]): { motherName: string
   return { motherName, fatherName };
 }
 
+/** Kimlik ön yüz — medeni hal (EVLİ / BEKAR). */
+export function extractMaritalStatusFromOcr(lines: string[]): 'married' | 'single' | null {
+  const L = normLines(lines);
+  for (let i = 0; i < L.length; i++) {
+    const line = L[i]!;
+    if (!MARITAL_LINE_RE.test(line) && !MARITAL_EVLI_RE.test(line) && !MARITAL_BEKAR_RE.test(line)) {
+      continue;
+    }
+    const chunk = `${line} ${L[i + 1] ?? ''}`;
+    if (MARITAL_EVLI_RE.test(chunk)) return 'married';
+    if (MARITAL_BEKAR_RE.test(chunk)) return 'single';
+  }
+  const joined = L.join(' ');
+  if (/\bMEDEN[Iİ]\s*HAL[Iİ]?\s*[:\s]*EVL[Iİ]/i.test(joined)) return 'married';
+  if (/\bMEDEN[Iİ]\s*HAL[Iİ]?\s*[:\s]*BEKAR/i.test(joined)) return 'single';
+  return null;
+}
+
 /** Ad / soyad — etiketli satırlar, MRZ’siz ön yüz. */
 export function extractNamesFromOcr(lines: string[]): { firstName: string | null; lastName: string | null } {
   const L = normLines(lines);
@@ -276,22 +304,43 @@ function mergeNameFields(
   const fromFull = splitFullNameToFirstLast(parsed.fullName);
   const fromIdFull = splitFullNameToFirstLast(id.fullName);
 
-  const firstName = coalescePersonName(
-    parsed.firstName,
-    parsed.middleName ? `${parsed.firstName ?? ''} ${parsed.middleName}`.trim() : null,
-    ocrNames.firstName,
-    id.firstName,
-    fromFull.firstName,
-    fromIdFull.firstName
-  );
+  const mrzCorrected = correctSwappedMrzNames({
+    firstName: parsed.firstName,
+    lastName: parsed.lastName,
+    nationalityCode: parsed.nationalityCode,
+    issuingCountryCode: parsed.issuingCountryCode,
+  });
 
-  const lastName = coalescePersonName(
-    parsed.lastName,
-    ocrNames.lastName,
-    id.lastName,
-    fromFull.lastName,
-    fromIdFull.lastName
-  );
+  const ocrLabeled =
+    isUsablePersonName(ocrNames.firstName) && isUsablePersonName(ocrNames.lastName);
+  const preferOcrNames =
+    ocrLabeled &&
+    (mrzNamesLookSwapped(parsed.firstName, parsed.lastName) ||
+      !mrzNamesLookValid(parsed.firstName, parsed.lastName));
+
+  const mrzGiven = parsed.middleName
+    ? `${mrzCorrected.firstName ?? ''} ${parsed.middleName}`.trim()
+    : mrzCorrected.firstName;
+
+  const firstName = preferOcrNames
+    ? ocrNames.firstName
+    : coalescePersonName(
+        mrzGiven,
+        ocrNames.firstName,
+        id.firstName,
+        fromFull.firstName,
+        fromIdFull.firstName
+      );
+
+  const lastName = preferOcrNames
+    ? ocrNames.lastName
+    : coalescePersonName(
+        mrzCorrected.lastName,
+        ocrNames.lastName,
+        id.lastName,
+        fromFull.lastName,
+        fromIdFull.lastName
+      );
 
   const fullName =
     [firstName, lastName].filter(Boolean).join(' ').trim() ||
@@ -384,6 +433,8 @@ export function enrichParsedWithIdCardOcr(
   }
 
   const names = mergeNameFields(parsed, id, lines);
+  const parents = extractParentNamesFromOcr(lines);
+  const maritalStatus = extractMaritalStatusFromOcr(lines);
 
   let documentType = parsed.documentType;
   if (documentType === 'other' && (id.documentType === 'residence_permit' || detectTemporaryProtection(lines))) {
@@ -407,8 +458,9 @@ export function enrichParsedWithIdCardOcr(
     nationalityCode: natCode,
     issuingCountryCode: issuing,
     documentSeries: serial,
-    motherName: null,
-    fatherName: null,
+    motherName: parents.motherName,
+    fatherName: parents.fatherName,
+    maritalStatus: maritalStatus ?? parsed.maritalStatus ?? null,
     confidence: parsed.confidence ?? id.confidence,
   };
 }

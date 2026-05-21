@@ -11,6 +11,10 @@ import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { guestListConversations } from '@/lib/messagingApi';
+import {
+  scheduleGuestMessagingUnreadRefresh,
+  subscribeMessagingUnreadLive,
+} from '@/lib/messagingUnreadSync';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { savePushTokenForGuest } from '@/lib/notificationsPush';
 import { theme } from '@/constants/theme';
@@ -241,6 +245,16 @@ export default function CustomerTabsLayout() {
       });
     });
   }, [appToken, refreshNotifications, setUnreadCount]);
+
+  // Mesaj rozeti: sohbet listesine girmeden tab menüde (realtime)
+  useEffect(() => {
+    if (!appToken) return;
+    const token = appToken;
+    const unsub = subscribeMessagingUnreadLive(token, () => {
+      scheduleGuestMessagingUnreadRefresh(token);
+    });
+    return unsub;
+  }, [appToken]);
 
   return (
     <Tabs

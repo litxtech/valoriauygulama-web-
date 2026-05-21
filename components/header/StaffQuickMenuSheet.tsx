@@ -19,11 +19,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
-import { ProfileQuickAccessCard } from '@/components/ProfileQuickAccessCard';
 import { FastPress } from '@/components/ui/FastPress';
 import { pds } from '@/constants/personelDesignSystem';
 import { hapticImpactLight, hapticSelection } from '@/lib/hapticsSafe';
-import { quickAccessBadgeForId, type StaffQuickSlotSignals } from '@/lib/staffHamburgerQuickSlot';
 import type {
   StaffHamburgerMenuItem,
   StaffHamburgerMenuLayout,
@@ -47,8 +45,6 @@ type Props = {
   identity?: StaffMenuIdentity | null;
   onProfilePress?: () => void;
   layout?: StaffHamburgerMenuLayout | null;
-  menuQuickSignals?: StaffQuickSlotSignals;
-  menuSessionTasksBadge?: number;
   onSelect: (href: string) => void;
 };
 
@@ -56,8 +52,6 @@ type Props = {
 const DRAWER_W = Math.min(392, Math.round(Dimensions.get('window').width * 0.92));
 const DRAWER_RADIUS = 26;
 const H_PAD = 16;
-const QUICK_GAP = 8;
-const QUICK_COLS = 3;
 const SEARCH_MIN_ITEMS = 9;
 const IS_ANDROID = Platform.OS === 'android';
 
@@ -279,22 +273,12 @@ export function StaffQuickMenuSheet({
   identity,
   onProfilePress,
   layout,
-  menuQuickSignals,
-  menuSessionTasksBadge = 0,
   onSelect,
 }: Props) {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
-  const signals = menuQuickSignals ?? {
-    newAssignmentCount: 0,
-    unreadMessages: 0,
-    boardHasUnread: false,
-    boardUnreadCount: 0,
-    adminWarningCount: 0,
-  };
 
   const primary = layout?.primary ?? null;
-  const quickAccess = layout?.quickAccess ?? [];
   const sections = layout?.sections ?? [];
 
   const sectionItemCount = useMemo(
@@ -306,8 +290,6 @@ export function StaffQuickMenuSheet({
     () => filterSections(sections, searchQuery),
     [sections, searchQuery]
   );
-
-  const quickCardWidth = (DRAWER_W - H_PAD * 2 - QUICK_GAP * (QUICK_COLS - 1)) / QUICK_COLS;
 
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
@@ -429,35 +411,6 @@ export function StaffQuickMenuSheet({
           >
             {primary ? (
               <PrimaryActionButton item={primary} onPress={() => go(onSelect, primary.href)} />
-            ) : null}
-
-            {quickAccess.length > 0 ? (
-              <View style={styles.quickSection}>
-                <View style={styles.sectionLabelRow}>
-                  <View style={styles.sectionLabelDot} />
-                  <Text style={styles.sectionLabel}>{t('quickAccess')}</Text>
-                </View>
-                {layout?.promotedQuickId ? (
-                  <Text style={styles.quickPromoHint}>{t('staffMenuQuickPromoHint')}</Text>
-                ) : null}
-                <View style={styles.quickGrid}>
-                  {quickAccess.map((item) => (
-                    <ProfileQuickAccessCard
-                      key={item.id}
-                      label={item.label}
-                      icon={item.icon}
-                      accent={item.accent}
-                      width={quickCardWidth}
-                      compact
-                      badge={quickAccessBadgeForId(item.id, signals, menuSessionTasksBadge)}
-                      promoted={item.promoted}
-                      promotedLabel={item.promoted ? t('newBtn') : undefined}
-                      animated={item.promoted && !IS_ANDROID}
-                      onPress={() => go(onSelect, item.href)}
-                    />
-                  ))}
-                </View>
-              </View>
             ) : null}
 
             {showSearch ? (
@@ -741,22 +694,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#6d28d9',
     letterSpacing: 0.15,
-  },
-  quickSection: {
-    marginBottom: 14,
-  },
-  quickPromoHint: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#a78bfa',
-    marginTop: -6,
-    marginBottom: 10,
-    lineHeight: 16,
-  },
-  quickGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: QUICK_GAP,
   },
   searchWrap: {
     flexDirection: 'row',

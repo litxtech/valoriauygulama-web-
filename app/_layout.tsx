@@ -36,6 +36,12 @@ import {
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
+import {
+  bumpMessagingUnreadOnPush,
+  isMessagePushPayload,
+  scheduleGuestMessagingUnreadRefresh,
+  scheduleStaffMessagingUnreadRefresh,
+} from '@/lib/messagingUnreadSync';
 import { useStaffBoardStore } from '@/stores/staffBoardStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -48,6 +54,7 @@ import {
   isStaffMealMenuDailyNotification,
   staffMealMenuNotificationHref,
 } from '@/lib/staffMealMenuNotification';
+import { registerBackgroundNotificationTask } from '@/lib/backgroundNotificationTask';
 
 if (Platform.OS !== 'web') {
   SplashScreen.preventAutoHideAsync();
@@ -212,6 +219,7 @@ function RootLayoutInner() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     void initPushNotificationsPresentation();
+    void registerBackgroundNotificationTask();
   }, []);
 
   // LayoutAnimation.configureNext native callback sızıntısını önle (yazarken donma / 501 pending callbacks)
@@ -565,11 +573,18 @@ function RootLayoutInner() {
         notification.request.content.data && typeof notification.request.content.data === 'object'
           ? (notification.request.content.data as Record<string, unknown>)
           : undefined;
+      if (isMessagePushPayload(payload)) {
+        bumpMessagingUnreadOnPush(payload);
+      }
       const { staff } = useAuthStore.getState();
       if (staff) {
         void (async () => {
           await useStaffNotificationStore.getState().refresh();
-          await useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
+          if (isMessagePushPayload(payload)) {
+            scheduleStaffMessagingUnreadRefresh(staff.id, 0);
+          } else {
+            await useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
+          }
           const nt =
             typeof payload?.notificationType === 'string'
               ? payload.notificationType
@@ -585,7 +600,10 @@ function RootLayoutInner() {
           await useGuestNotificationStore.getState().refresh();
           await useGuestMessagingStore.getState().loadStoredToken();
           const token = useGuestMessagingStore.getState().appToken;
-          if (token) {
+          if (!token) return;
+          if (isMessagePushPayload(payload)) {
+            scheduleGuestMessagingUnreadRefresh(token, 0);
+          } else {
             const { guestListConversations } = await import('@/lib/messagingApi');
             const list = await guestListConversations(token);
             const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);

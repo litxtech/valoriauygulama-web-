@@ -252,7 +252,17 @@ export default function StaffLayout() {
       />
       <Stack.Screen
         name="profile/passports"
-        options={{ title: t('staffPassportsTitle'), headerBackTitle: t('back') }}
+        options={{
+          title: '',
+          headerTitle: '',
+          headerTransparent: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTintColor: '#fff',
+          headerBackTitle: t('back'),
+          headerLeft: () => <StaffStackBackButton tintColor="#fff" accessibilityLabel={t('back')} />,
+          contentStyle: { backgroundColor: '#fffbeb' },
+        }}
       />
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />

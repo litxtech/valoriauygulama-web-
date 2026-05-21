@@ -36,7 +36,11 @@ import {
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
 import { mergeChatMessagesCapped, replaceChatMessage, upsertIncomingChatMessage, latestMessageCreatedAtIso, capChatMessageList, type Message } from '@/lib/messaging';
-import { scheduleSnapChatListToEndAfterOpen, snapChatListToEnd } from '@/lib/chatListScroll';
+import {
+  CHAT_LIST_INVERTED_CONTENT_STYLE,
+  scrollChatListToLatest,
+  useInvertedChatListItems,
+} from '@/lib/chatListScroll';
 import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import { theme } from '@/constants/theme';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
@@ -326,18 +330,22 @@ export default function StaffChatScreen() {
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const [allStaffMuted, setAllStaffMuted] = useState(false);
   const listRef = useRef<FlatList>(null);
-  const initialScrollDoneRef = useRef(false);
   const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
-  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading);
+  const chatHasVideosEarly = useMemo(
+    () => messages.some((m) => m.message_type === 'video'),
+    [messages]
+  );
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading, {
+    hasVideos: chatHasVideosEarly,
+  });
 
   useEffect(() => {
     setMessages([]);
-    initialScrollDoneRef.current = false;
     setLoading(true);
   }, [conversationId]);
 
@@ -445,6 +453,7 @@ export default function StaffChatScreen() {
   const isAdmin = staff?.role === 'admin';
   const isGroup = conversationType === 'group';
   const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
+  const invertedChatListItems = useInvertedChatListItems(chatListItems);
   const canEditGroup = isAdmin && isGroup;
   const screenshotSenderName =
     staff?.full_name?.trim() || staff?.email?.trim() || t('chatMessageSenderStaff');
@@ -488,7 +497,7 @@ export default function StaffChatScreen() {
           ownSenderId: staff.id,
           onLocalMessage: (msg) => {
             setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff!.id }));
-            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+            setTimeout(() => scrollChatListToLatest(listRef, true), 100);
           },
           reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff!.id),
         }
@@ -592,14 +601,11 @@ export default function StaffChatScreen() {
     winWidth,
   ]);
 
-  const openScrollCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!staff || !conversationId) {
       setLoading(false);
       return;
     }
-    openScrollCleanupRef.current?.();
-    openScrollCleanupRef.current = null;
     (async () => {
       const seedFromMemory = staffChatMemoryCache[conversationId]?.messages ?? [];
       const afterIso = latestMessageCreatedAtIso(seedFromMemory);
@@ -613,13 +619,6 @@ export default function StaffChatScreen() {
         if (list.length === 0) {
           staffMarkConversationRead(conversationId, staff.id);
           setLoading(false);
-          const cached = staffChatMemoryCache[conversationId]?.messages ?? [];
-          if (cached.length > 0) {
-            openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
-              hasImages: cached.some((m) => m.message_type === 'image'),
-              hasVideos: cached.some((m) => m.message_type === 'video'),
-            });
-          }
           return;
         }
       } else {
@@ -632,15 +631,7 @@ export default function StaffChatScreen() {
       });
       staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
-      openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
-        hasImages: list.some((m: Message) => m.message_type === 'image'),
-        hasVideos: list.some((m: Message) => m.message_type === 'video'),
-      });
     })();
-    return () => {
-      openScrollCleanupRef.current?.();
-      openScrollCleanupRef.current = null;
-    };
   }, [staff?.id, conversationId]);
 
   const prefetchKeyRef = useRef('');
@@ -669,7 +660,7 @@ export default function StaffChatScreen() {
         ) {
           prefetchTranslations([(newMsg.content ?? '').trim()]);
         }
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
       },
       {
         onMessageDeleted: (messageId) => {
@@ -744,7 +735,7 @@ export default function StaffChatScreen() {
       mentions: mentions.length ? mentions : [],
     };
     setMessages((prev) => [...prev, optimistic]);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    setTimeout(() => scrollChatListToLatest(listRef, true), 50);
     try {
       const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
         conversationId,
@@ -787,7 +778,7 @@ export default function StaffChatScreen() {
           router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
           return;
         }
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       } else {
         setInput(text);
         setPendingMentions(mentions);
@@ -830,7 +821,7 @@ export default function StaffChatScreen() {
         setMessages((prev) =>
           sentMessages.reduce((acc, m) => upsertIncomingChatMessage(acc, m, { ownSenderId: staff.id }), prev)
         );
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       }
       if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
@@ -870,7 +861,7 @@ export default function StaffChatScreen() {
           data: { conversationId: convId, url: `/staff/chat/${convId}` },
         }).catch(() => {});
         setMessages((prev) => upsertIncomingChatMessage(prev, sentMessages[0], { ownSenderId: staff.id }));
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       } else if (failed) Alert.alert(t('error'), t('imageSendFailed'));
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
@@ -988,7 +979,7 @@ export default function StaffChatScreen() {
             data: { conversationId: convId, url: `/staff/chat/${convId}` },
           })
         );
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       },
       onBatchComplete: ({ failed, lastError }) => {
         if (failed > 0) {
@@ -998,7 +989,7 @@ export default function StaffChatScreen() {
     });
     try {
       await sendChatVideoFromPickerWithSession(actor, source, handlers);
-      listRef.current?.scrollToEnd({ animated: true });
+      scrollChatListToLatest(listRef, true);
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('chatVideoSendFailed'));
     }
@@ -1091,15 +1082,11 @@ export default function StaffChatScreen() {
       >
         <FlatList
           ref={listRef}
-          data={chatListItems}
+          data={invertedChatListItems}
           keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[CHAT_LIST_INVERTED_CONTENT_STYLE, styles.listContent]}
           showsVerticalScrollIndicator={false}
           {...CHAT_FLAT_LIST_PROPS}
-          onContentSizeChange={() => {
-            if (messages.length === 0 || initialScrollDoneRef.current) return;
-            snapChatListToEnd(listRef);
-          }}
           renderItem={({ item }) => {
             const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
             if (msg.message_type === 'screenshot_notice') {
@@ -1138,7 +1125,7 @@ export default function StaffChatScreen() {
             );
           }}
           ListEmptyComponent={
-            <View style={styles.emptyWrap}>
+            <View style={[styles.emptyWrap, styles.emptyWrapInverted]}>
               <View style={styles.emptyIcon}>
                 <Ionicons name="chatbubble-outline" size={40} color={theme.colors.textMuted} />
               </View>
@@ -1568,6 +1555,9 @@ const styles = StyleSheet.create({
   emptyWrap: {
     alignItems: 'center',
     paddingVertical: 48,
+  },
+  emptyWrapInverted: {
+    transform: [{ scaleY: -1 }],
   },
   emptyIcon: {
     width: 72,

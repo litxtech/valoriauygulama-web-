@@ -564,9 +564,10 @@ export function subscribeToTypingPresence(
   };
 }
 
+/** @deprecated Prefer subscribeMessagingUnreadLive from messagingUnreadSync */
 export function subscribeToConversationList(staffId: string, onUpdate: () => void) {
-  return supabase
-    .channel('conv_list')
+  const channel = supabase
+    .channel(`conv_list_${staffId}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'messages' },
@@ -578,6 +579,11 @@ export function subscribeToConversationList(staffId: string, onUpdate: () => voi
       () => onUpdate()
     )
     .subscribe();
+  return {
+    unsubscribe: () => {
+      void supabase.removeChannel(channel);
+    },
+  };
 }
 
 // ----- Guest (app_token) -----

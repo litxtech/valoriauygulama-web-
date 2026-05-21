@@ -220,6 +220,29 @@ export default function KbsGuestConfirmScreen() {
         onChange={(v) => patch({ nationality: v, country: v })}
         issue={issueFields.has('nationality')}
       />
+      {draft.guestType === 'foreign' || draft.documentType === 'passport' ? (
+        <FieldRow
+          label={t('kbsGuestExpiryDate')}
+          value={draft.passportExpiryDate ? formatIsoDateTr(draft.passportExpiryDate) : ''}
+          onChange={(v) => patch({ passportExpiryDate: v })}
+          issue={issueFields.has('passportExpiryDate')}
+        />
+      ) : null}
+      {draft.guestType === 'foreign' ? (
+        <FieldRow
+          label={t('kbsGuestGender')}
+          value={
+            draft.gender === 'M' ? 'E' : draft.gender === 'F' ? 'K' : draft.gender === 'X' ? 'X' : ''
+          }
+          onChange={(v) => {
+            const u = v.trim().toUpperCase();
+            const g =
+              u === 'E' || u === 'M' || u === 'ERKEK' ? 'M' : u === 'K' || u === 'F' || u === 'KADIN' ? 'F' : u === 'X' ? 'X' : null;
+            patch({ gender: g });
+          }}
+          issue={issueFields.has('gender')}
+        />
+      ) : null}
       <FieldRow
         label={t('kbsGuestFather')}
         value={draft.fatherName ?? ''}

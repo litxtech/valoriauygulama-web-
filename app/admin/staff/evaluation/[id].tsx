@@ -30,7 +30,8 @@ export default function AdminStaffEvaluationScreen() {
   const { id: staffId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { t } = useTranslation();
-  const authStaffId = useAuthStore((s) => s.staff?.id);
+  const authStaff = useAuthStore((s) => s.staff);
+  const authStaffId = authStaff?.id;
 
   const [loading, setLoading] = useState(true);
   const [staffName, setStaffName] = useState<string>('');
@@ -102,11 +103,22 @@ export default function AdminStaffEvaluationScreen() {
       Alert.alert(t('error'), t('mgmtEvalLoginRequired'));
       return;
     }
+    if (authStaff?.role !== 'admin') {
+      Alert.alert(t('error'), t('mgmtEvalAdminOnly'));
+      return;
+    }
+    if (staffId === authStaffId) {
+      Alert.alert(t('error'), t('mgmtEvalSelfNotAllowed'));
+      return;
+    }
     setSaving(true);
     try {
+      const { data: evaluatorId, error: rpcErr } = await supabase.rpc('auth_active_staff_id');
+      if (rpcErr) throw rpcErr;
+      const resolvedEvaluatorId = (evaluatorId as string | null) ?? authStaffId;
       const payload = {
         staff_id: staffId,
-        evaluator_staff_id: authStaffId,
+        evaluator_staff_id: resolvedEvaluatorId,
         period_title: periodTitle.trim() || null,
         period_start: periodStart.trim() || null,
         period_end: periodEnd.trim() || null,

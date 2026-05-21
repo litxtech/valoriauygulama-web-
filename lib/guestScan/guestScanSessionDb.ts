@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
-import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
+import { OPS_SCHEMA_NOT_EXPOSED_MSG, resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
+import { isOpsSchemaNotExposedError } from '@/lib/supabaseTransientErrors';
 import type { GuestScanItem, GuestScanSession, GuestScanSessionType } from '@/lib/guestScan/types';
 
 function rowToItem(row: Record<string, unknown>): GuestScanItem {
@@ -56,7 +57,12 @@ export async function createGuestScanSessionDb(
     .select('id, session_type, status, room_no, checkin_at, checkout_at')
     .single();
 
-  if (error || !data) return { ok: false, message: error?.message ?? 'Oturum oluşturulamadı' };
+  if (error || !data) {
+    if (error && isOpsSchemaNotExposedError(error)) {
+      return { ok: false, message: OPS_SCHEMA_NOT_EXPOSED_MSG };
+    }
+    return { ok: false, message: error?.message ?? 'Oturum oluşturulamadı' };
+  }
 
   return {
     ok: true,

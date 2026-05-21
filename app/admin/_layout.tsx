@@ -387,6 +387,7 @@ export default function AdminLayout() {
       <Stack.Screen name="map" options={{ headerShown: false }} />
       <Stack.Screen name="accounting" options={{ headerShown: false }} />
       <Stack.Screen name="audits" options={{ headerShown: false }} />
+      <Stack.Screen name="performance" options={{ headerShown: false }} />
       <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/[id]" options={{ title: 'Çek detayı', headerRight: renderHeaderRight }} />

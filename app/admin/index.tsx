@@ -150,6 +150,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/lost-found', icon: 'briefcase-outline', label: 'Emanet / Buluntu' },
       { href: '/admin/facility-journal', icon: 'clipboard-outline', label: 'Tesis günlüğü' },
       { href: '/admin/audits', icon: 'clipboard-outline', label: 'Denetim panosu' },
+      { href: '/admin/performance', icon: 'trophy-outline', label: 'Ayın en iyi personeli' },
       { href: '/admin/contracts', icon: 'document-outline', label: 'Sözleşmeler' },
       { href: '/admin/contracts/contact-directory', icon: 'call-outline', label: 'İletişim rehberi' },
       { href: '/admin/contracts/all', icon: 'document-text-outline', label: 'Tüm Sözleşmelerim' },

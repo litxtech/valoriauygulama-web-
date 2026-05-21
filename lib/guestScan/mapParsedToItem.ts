@@ -38,10 +38,7 @@ export function mapLockPayloadToGuestItem(args: {
   if ((parsed.confidence ?? 1) < CONF_WARN) lowConfidenceFields.push('documentNumber');
   if (!parsed.firstName || !parsed.lastName) lowConfidenceFields.push('name');
 
-  const serial =
-    args.documentSerialNo ??
-    (parsed as ParsedDocument & { documentSeries?: string }).documentSeries ??
-    null;
+  const serial = args.documentSerialNo ?? parsed.documentSeries ?? null;
 
   const item: GuestScanItem = {
     id: newId(),
@@ -52,14 +49,15 @@ export function mapLockPayloadToGuestItem(args: {
     firstName: parsed.firstName,
     lastName: parsed.lastName,
     identityNo: guestType !== 'foreign' ? parsed.documentNumber : null,
-    passportNo: guestType === 'foreign' || docType === 'passport' ? parsed.documentNumber : null,
+    passportNo:
+      docType === 'passport' || guestType === 'foreign' ? (parsed.documentNumber ?? null) : null,
     documentSerialNo: serial,
     birthDate: parsed.birthDate,
     gender: parsed.gender,
     nationality: parsed.nationalityCode,
     country: parsed.issuingCountryCode ?? parsed.nationalityCode,
-    motherName: args.motherName ?? (parsed as { motherName?: string }).motherName ?? null,
-    fatherName: args.fatherName ?? (parsed as { fatherName?: string }).fatherName ?? null,
+    motherName: args.motherName ?? parsed.motherName ?? null,
+    fatherName: args.fatherName ?? parsed.fatherName ?? null,
     passportExpiryDate: parsed.expiryDate,
     rawMrz: mrz ?? parsed.rawMrz,
     rawOcr: rawOcr ?? null,

@@ -7,14 +7,21 @@ export type MrzRecentDocRow = {
   document_type: string;
   document_number: string | null;
   nationality_code: string | null;
+  issuing_country_code: string | null;
   expiry_date: string | null;
   raw_mrz: string | null;
+  parsed_payload: Record<string, unknown> | null;
+  scan_confidence: number | null;
   scan_status: string;
   guest_id: string;
   guest?: {
     full_name: string | null;
     first_name: string | null;
     last_name: string | null;
+    middle_name: string | null;
+    birth_date: string | null;
+    nationality_code: string | null;
+    gender: string | null;
   } | null;
 };
 
@@ -33,7 +40,7 @@ export async function loadMrzRecentDocuments(): Promise<
     .schema('ops')
     .from('guest_documents')
     .select(
-      'id, created_at, document_type, document_number, nationality_code, expiry_date, raw_mrz, scan_status, guest_id'
+      'id, created_at, document_type, document_number, nationality_code, issuing_country_code, expiry_date, raw_mrz, parsed_payload, scan_confidence, scan_status, guest_id'
     )
     .eq('hotel_id', hotelId)
     .not('raw_mrz', 'is', null)
@@ -48,21 +55,21 @@ export async function loadMrzRecentDocuments(): Promise<
     document_type: string;
     document_number: string | null;
     nationality_code: string | null;
+    issuing_country_code: string | null;
     expiry_date: string | null;
     raw_mrz: string | null;
+    parsed_payload: Record<string, unknown> | null;
+    scan_confidence: number | null;
     scan_status: string;
   }>;
   const gids = [...new Set(list.map((d) => d.guest_id).filter(Boolean))] as string[];
 
-  const guestMap: Record<
-    string,
-    { full_name: string | null; first_name: string | null; last_name: string | null }
-  > = {};
+  const guestMap: Record<string, NonNullable<MrzRecentDocRow['guest']>> = {};
   if (gids.length) {
     const { data: guests, error: e1 } = await supabase
       .schema('ops')
       .from('guests')
-      .select('id, full_name, first_name, last_name')
+      .select('id, full_name, first_name, last_name, middle_name, birth_date, nationality_code, gender')
       .in('id', gids);
     if (e1) return { ok: false, message: e1.message, code: 'DB' };
     for (const g of guests ?? []) {
@@ -71,11 +78,19 @@ export async function loadMrzRecentDocuments(): Promise<
         full_name: string | null;
         first_name: string | null;
         last_name: string | null;
+        middle_name: string | null;
+        birth_date: string | null;
+        nationality_code: string | null;
+        gender: string | null;
       };
       guestMap[row.id] = {
         full_name: row.full_name,
         first_name: row.first_name,
         last_name: row.last_name,
+        middle_name: row.middle_name,
+        birth_date: row.birth_date,
+        nationality_code: row.nationality_code,
+        gender: row.gender,
       };
     }
   }

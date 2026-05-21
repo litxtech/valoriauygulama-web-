@@ -15,15 +15,20 @@ export type ExpoPushMessageInput = {
 
 export function buildExpoPushMessage(input: ExpoPushMessageInput): Record<string, unknown> {
   const data = { ...(input.data ?? {}), app_badge: input.badge };
-  return {
+  const msg: Record<string, unknown> = {
     to: input.to,
     title: input.title.trim(),
     body: input.body,
     badge: input.badge,
     priority: "high",
-    interruptionLevel: input.interruptionLevel ?? "active",
     channelId: input.channelId ?? "valoria_urgent",
     sound: input.sound === undefined ? "default" : input.sound,
     data,
+    // iOS: arka planda kısa JS uyanışı (rozet + task) — alert ile birlikte gönderilebilir.
+    _contentAvailable: true,
   };
+  if (input.interruptionLevel) {
+    msg.interruptionLevel = input.interruptionLevel;
+  }
+  return msg;
 }

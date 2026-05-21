@@ -206,7 +206,6 @@ export default function StaffMessagesTabScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setUnreadCount(0);
       const hasCache = conversationListCache.length > 0;
       const isCacheFresh = Date.now() - conversationListCacheUpdatedAt < LIST_CACHE_TTL_MS;
       if (!hasCache || conversationListDirty || !isCacheFresh) {

@@ -1553,15 +1553,17 @@ export default function EditStaffScreen() {
           )}
         </SectionCard>
 
-        <SectionCard title="Yönetim değerlendirmesi" subtitle="Yıldızlı kayıt; personel kendi ekranında görür." icon="star-outline">
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => router.push(`/admin/staff/evaluation/${id}`)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.primaryButtonText}>Değerlendirme ekranına git</Text>
-          </TouchableOpacity>
-        </SectionCard>
+        {isAdmin ? (
+          <SectionCard title="Yönetim değerlendirmesi" subtitle="Yıldızlı kayıt; personel kendi ekranında görür." icon="star-outline">
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => router.push(`/admin/staff/evaluation/${id}`)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryButtonText}>Değerlendirme ekranına git</Text>
+            </TouchableOpacity>
+          </SectionCard>
+        ) : null}
 
         <SectionCard title="Admin notları" subtitle="Yalnızca yönetici görür." icon="clipboard-outline">
           <Field label="Not">

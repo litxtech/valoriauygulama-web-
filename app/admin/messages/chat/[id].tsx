@@ -42,7 +42,11 @@ import {
   capChatMessageList,
   type Message,
 } from '@/lib/messaging';
-import { scheduleSnapChatListToEndAfterOpen, snapChatListToEnd } from '@/lib/chatListScroll';
+import {
+  CHAT_LIST_INVERTED_CONTENT_STYLE,
+  scrollChatListToLatest,
+  useInvertedChatListItems,
+} from '@/lib/chatListScroll';
 import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
 import { Ionicons } from '@expo/vector-icons';
@@ -296,14 +300,19 @@ export default function AdminChatScreen() {
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const listRef = useRef<FlatList>(null);
-  const initialScrollDoneRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
-  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading);
+  const chatHasVideosEarly = useMemo(
+    () => messages.some((m) => m.message_type === 'video'),
+    [messages]
+  );
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading, {
+    hasVideos: chatHasVideosEarly,
+  });
   const inputRowExtra = Platform.OS === 'android' ? -20 : 56;
   const bottomInset = getEffectiveBottomInset(insets);
   const chatInputBottomPad = getChatInputBottomPadding(insets);
@@ -312,13 +321,13 @@ export default function AdminChatScreen() {
 
   useEffect(() => {
     setMessages([]);
-    initialScrollDoneRef.current = false;
     setLoading(true);
   }, [conversationId]);
 
   const isAdmin = staff?.role === 'admin';
   const isGroup = conversationType === 'group';
   const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
+  const invertedChatListItems = useInvertedChatListItems(chatListItems);
   const canEditGroup = isAdmin && isGroup;
   const screenshotSenderName =
     staff?.full_name?.trim() || staff?.email?.trim() || t('chatMessageSenderStaff');
@@ -362,7 +371,7 @@ export default function AdminChatScreen() {
           ownSenderId: staff.id,
           onLocalMessage: (msg) => {
             setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff!.id }));
-            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+            setTimeout(() => scrollChatListToLatest(listRef, true), 100);
           },
           reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff!.id),
         }
@@ -423,28 +432,17 @@ export default function AdminChatScreen() {
     setShowGroupSettings(true);
   };
 
-  const openScrollCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!staff || !conversationId) {
       setLoading(false);
       return;
     }
-    openScrollCleanupRef.current?.();
-    openScrollCleanupRef.current = null;
     (async () => {
       const list = await staffGetMessages(conversationId, 50, undefined, staff.id);
       setMessages(capChatMessageList(list));
       staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
-      openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
-        hasImages: list.some((m: Message) => m.message_type === 'image'),
-        hasVideos: list.some((m: Message) => m.message_type === 'video'),
-      });
     })();
-    return () => {
-      openScrollCleanupRef.current?.();
-      openScrollCleanupRef.current = null;
-    };
   }, [staff, conversationId]);
 
   useEffect(() => {
@@ -457,7 +455,7 @@ export default function AdminChatScreen() {
           if (withoutTemp.some((m) => m.id === newMsg.id)) return prev;
           return [...withoutTemp, newMsg];
         });
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
       },
       {
         onMessageDeleted: (messageId) => {
@@ -533,7 +531,7 @@ export default function AdminChatScreen() {
       mentions: mentions.length ? mentions : [],
     };
     setMessages((prev) => [...prev, optimistic]);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    setTimeout(() => scrollChatListToLatest(listRef, true), 50);
     try {
       const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
         conversationId,
@@ -573,7 +571,7 @@ export default function AdminChatScreen() {
           router.replace({ pathname: '/admin/messages/chat/[id]', params: { id: nextConversationId } });
           return;
         }
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       } else {
         setInput(text);
         setPendingMentions(mentions);
@@ -615,7 +613,7 @@ export default function AdminChatScreen() {
         }).catch(() => {});
         const list = await staffGetMessages(convId, 50, undefined, staff.id);
         setMessages(list);
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       }
       if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
@@ -656,7 +654,7 @@ export default function AdminChatScreen() {
         }).catch(() => {});
         const list = await staffGetMessages(convId, 50, undefined, staff.id);
         setMessages(list);
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       } else if (failed) Alert.alert(t('error'), t('imageSendFailed'));
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
@@ -716,7 +714,7 @@ export default function AdminChatScreen() {
             data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
           })
         );
-        listRef.current?.scrollToEnd({ animated: true });
+        scrollChatListToLatest(listRef, true);
       },
       onBatchComplete: ({ failed, lastError }) => {
         if (failed > 0) {
@@ -726,7 +724,7 @@ export default function AdminChatScreen() {
     });
     try {
       await sendChatVideoFromPickerWithSession(actor, source, handlers);
-      listRef.current?.scrollToEnd({ animated: true });
+      scrollChatListToLatest(listRef, true);
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('chatVideoSendFailed'));
     }
@@ -858,9 +856,9 @@ export default function AdminChatScreen() {
       <FlatList
         keyboardShouldPersistTaps="handled"
         ref={listRef}
-        data={chatListItems}
+        data={invertedChatListItems}
         keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[CHAT_LIST_INVERTED_CONTENT_STYLE, styles.listContent]}
         {...CHAT_FLAT_LIST_PROPS}
         ListHeaderComponent={
           canEditGroup ? (
@@ -914,11 +912,11 @@ export default function AdminChatScreen() {
             />
           );
         }}
-        ListEmptyComponent={<Text style={styles.empty}>{t('chatNoMessagesYet')}</Text>}
-        onContentSizeChange={() => {
-          if (messages.length === 0 || initialScrollDoneRef.current) return;
-          snapChatListToEnd(listRef);
-        }}
+        ListEmptyComponent={
+          <View style={styles.emptyInverted}>
+            <Text style={styles.empty}>{t('chatNoMessagesYet')}</Text>
+          </View>
+        }
       />
       {typingNames.length > 0 ? (
         <View style={styles.typingRow}>
@@ -1163,6 +1161,7 @@ const styles = StyleSheet.create({
   headerAvatarInitial: { color: '#fff', fontSize: 14, fontWeight: '700' },
   headerTitleText: { fontSize: 17, fontWeight: '700', color: MESSAGING_COLORS.text, flex: 1, minWidth: 0 },
   empty: { textAlign: 'center', color: MESSAGING_COLORS.textSecondary, marginTop: 24 },
+  emptyInverted: { transform: [{ scaleY: -1 }] },
   typingRow: { paddingHorizontal: 12, paddingVertical: 4, paddingBottom: 2, minHeight: 22, backgroundColor: '#fff' },
   typingText: { fontSize: 12, color: MESSAGING_COLORS.textSecondary },
   typingMultiRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },

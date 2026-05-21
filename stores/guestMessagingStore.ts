@@ -15,6 +15,7 @@ interface GuestMessagingState {
   unreadCount: number;
   setAppToken: (token: string | null) => Promise<void>;
   setUnreadCount: (n: number) => void;
+  bumpUnread: (delta?: number) => void;
   loadStoredToken: () => Promise<void>;
 }
 
@@ -34,6 +35,9 @@ export const useGuestMessagingStore = create<GuestMessagingState>((set, get) => 
   },
 
   setUnreadCount: (n) => set({ unreadCount: n }),
+
+  bumpUnread: (delta = 1) =>
+    set((s) => ({ unreadCount: Math.min(999, Math.max(0, s.unreadCount + delta)) })),
 
   loadStoredToken: async () => {
     const stored = await AsyncStorage.getItem(KEY);

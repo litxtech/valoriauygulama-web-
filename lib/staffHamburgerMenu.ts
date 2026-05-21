@@ -3,11 +3,6 @@ import { canSeeBreakfastModule } from '@/lib/breakfastConfirm';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import {
-  orderQuickAccessIds,
-  resolvePromotedQuickId,
-  type StaffQuickSlotSignals,
-} from '@/lib/staffHamburgerQuickSlot';
-import {
   canAccessDocumentManagement,
   canAccessIncidentReports,
   canAccessFacilityJournal,
@@ -85,6 +80,7 @@ const ACCENTS: Record<string, string> = {
   warnings: '#dc2626',
   finance: '#0369a1',
   audits: '#7c3aed',
+  staff_month_best: '#d97706',
 };
 
 function normHref(href: string): string {
@@ -358,7 +354,7 @@ export function buildStaffHamburgerMenuSections(
     });
   }
   if (canStaffUseMrzScan(staff)) {
-    push('tools', {
+    push('nav', {
       id: 'passports',
       label: t('staffPassportsTitle'),
       href: '/staff/profile/passports',
@@ -415,6 +411,13 @@ export function buildStaffHamburgerMenuSections(
       href: '/admin/audits',
       icon: 'clipboard-outline',
       accent: ACCENTS.audits,
+    });
+    push('admin', {
+      id: 'staff_month_best',
+      label: t('perfStaffOfMonth'),
+      href: '/admin/performance',
+      icon: 'trophy-outline',
+      accent: ACCENTS.staff_month_best,
     });
     push('admin', {
       id: 'transfer_a',
@@ -512,73 +515,26 @@ export function flattenStaffHamburgerMenu(sections: StaffHamburgerMenuSection[])
   return sections.flatMap((s) => s.items);
 }
 
-export type StaffHamburgerQuickAccessEntry = StaffHamburgerMenuItem & {
-  /** Öncelikli sinyal — 4. slotta vurgulanır */
-  promoted?: boolean;
-};
-
 export type StaffHamburgerMenuLayout = {
   /** Tam genişlik üst buton (ör. acil durum) */
   primary: StaffHamburgerMenuItem | null;
-  /** Üst hızlı erişim — sık kullanılan 4 kısayol (dinamik sıra) */
-  quickAccess: StaffHamburgerQuickAccessEntry[];
-  /** Gezinti / modüller / yönetim — primary ve quickAccess hariç */
+  /** Gezinti / modüller / yönetim — primary hariç */
   sections: StaffHamburgerMenuSection[];
-  /** Hangi modül öne çıkarıldı (yoksa varsayılan sıra) */
-  promotedQuickId: string | null;
 };
 
-export type { StaffQuickSlotSignals };
-
-function pickByIds(all: StaffHamburgerMenuItem[], ids: string[]): StaffHamburgerMenuItem[] {
-  const map = new Map(all.map((i) => [i.id, i]));
-  const out: StaffHamburgerMenuItem[] = [];
-  for (const id of ids) {
-    const item = map.get(id);
-    if (item) out.push(item);
-  }
-  return out;
-}
-
-/** Menü: acil + hızlı erişim üstte; kalan öğeler bölüm başlıklarıyla. */
+/** Menü: acil üstte; kalan öğeler bölüm başlıklarıyla. */
 export function buildStaffHamburgerMenuLayout(
   t: (key: string) => string,
-  staff: StaffHamburgerStaff | null | undefined,
-  signals?: StaffQuickSlotSignals | null
+  staff: StaffHamburgerStaff | null | undefined
 ): StaffHamburgerMenuLayout {
   const rawSections = buildStaffHamburgerMenuSections(t, staff);
   const all = flattenStaffHamburgerMenu(rawSections);
   const isAdmin = staff?.role === 'admin';
-  const canLf = canAccessLostFound(staff);
 
   const primaryId = isAdmin ? null : 'emergency';
-  const defaultQuickIds = isAdmin
-    ? canLf
-      ? ['lost_found_new', 'missing', 'admin_tab', 'tasks']
-      : ['missing', 'admin_tab', 'tasks', 'board']
-    : canLf
-      ? ['lost_found_new', 'missing', 'tasks', 'board']
-      : ['missing', 'tasks', 'board', 'attendance'];
-
-  const availableIds = new Set(all.map((i) => i.id));
-  const promotedQuickId =
-    signals != null ? resolvePromotedQuickId(isAdmin, signals, availableIds) : null;
-  const quickIds = orderQuickAccessIds(defaultQuickIds, promotedQuickId);
-
   const primary = primaryId ? all.find((i) => i.id === primaryId) ?? null : null;
   const used = new Set<string>();
   if (primary) used.add(primary.id);
-
-  const quickAccess = pickByIds(all, quickIds)
-    .filter((i) => {
-      if (used.has(i.id)) return false;
-      used.add(i.id);
-      return true;
-    })
-    .map((item) => ({
-      ...item,
-      promoted: promotedQuickId != null && item.id === promotedQuickId,
-    }));
 
   const sections = rawSections
     .map((section) => ({
@@ -587,5 +543,5 @@ export function buildStaffHamburgerMenuLayout(
     }))
     .filter((s) => s.items.length > 0);
 
-  return { primary, quickAccess, sections, promotedQuickId };
+  return { primary, sections };
 }

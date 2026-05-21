@@ -53,6 +53,7 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'contracts_staff', labelTr: 'Sözleşmeler (personel)', section: 'tools' },
   { id: 'admin_tab', labelTr: 'Yönetim sekmesi', section: 'admin' },
   { id: 'audits', labelTr: 'Denetim panosu', section: 'admin' },
+  { id: 'staff_month_best', labelTr: 'Ayın en iyi personeli', section: 'admin' },
   { id: 'transfer_a', labelTr: 'Transfer & tur (yönetim)', section: 'admin' },
   { id: 'dining_a', labelTr: 'Yemek & mekanlar (yönetim)', section: 'admin' },
   { id: 'area_guide', labelTr: 'Bölge rehberi (admin)', section: 'admin' },

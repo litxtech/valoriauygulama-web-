@@ -31,6 +31,7 @@ const baseConfig = {
     buildNumber: '18',
     newArchEnabled: true,
     infoPlist: {
+      UIBackgroundModes: ['remote-notification'],
       NSCameraUsageDescription:
         'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
