@@ -20,10 +20,11 @@ import { CachedImage } from '@/components/CachedImage';
 import {
   sortWarningsByUrgency,
   type StaffPersonnelWarningSeverity,
-  SEVERITY_DESC_TR,
-  SEVERITY_LABEL_TR,
   STAFF_WARNING_GATE_SEVERITIES,
 } from '@/lib/staffPersonnelWarnings';
+import { useTranslation } from 'react-i18next';
+import { formatLocaleDateTime } from '@/lib/date';
+import { personnelWarnSeverityDesc, personnelWarnSeverityLabel } from '@/lib/i18nLookup';
 
 type WarningRow = {
   id: string;
@@ -64,6 +65,7 @@ export function PersonnelWarningGate({
   staffId: string;
   subjectDisplayName?: string | null;
 }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [queue, setQueue] = useState<WarningRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -148,7 +150,7 @@ export function PersonnelWarningGate({
       const issuerId = current.issued_by_staff_id;
       if (issuerId && issuerId !== staffId) {
         const subj = subjectDisplayName?.trim() || 'Personel';
-        const sev = SEVERITY_LABEL_TR[current.severity];
+        const sev = personnelWarnSeverityLabel(current.severity);
         let body = `${subj} uyarıyı okudu ve onayladı. (${sev})`;
         const note = ackNote.trim();
         if (note) {
@@ -182,12 +184,12 @@ export function PersonnelWarningGate({
   const title =
     current.subject_line?.trim() ||
     (current.severity === 'final'
-      ? 'Son uyarı — iş ilişiği riski'
+      ? t('personnelWarnGateTitle_final')
       : current.severity === 'severe'
-        ? 'Ciddi disiplin uyarısı'
+        ? t('personnelWarnGateTitle_severe')
         : current.severity === 'written'
-          ? 'Yazılı uyarı kaydı'
-          : 'Sözlü uyarı kaydı');
+          ? t('personnelWarnGateTitle_written')
+          : t('personnelWarnGateTitle_verbal'));
 
   const images = parseImageUrls(current.image_urls);
   const useSplit = images.length > 0 && SCREEN_W >= 380;
@@ -203,15 +205,15 @@ export function PersonnelWarningGate({
           <View style={styles.iconCircle}>
             <Ionicons name="alert-circle" size={44} color="#fecaca" />
           </View>
-          <Text style={styles.kicker}>YÖNETİM UYARISI</Text>
+          <Text style={styles.kicker}>{t('personnelWarnGateKicker')}</Text>
           <Text style={styles.title}>{title}</Text>
           <View style={styles.badgeRow}>
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>{SEVERITY_LABEL_TR[current.severity]}</Text>
+              <Text style={styles.badgeText}>{personnelWarnSeverityLabel(current.severity)}</Text>
             </View>
-            <Text style={styles.dateText}>{new Date(current.created_at).toLocaleString('tr-TR')}</Text>
+            <Text style={styles.dateText}>{formatLocaleDateTime(current.created_at)}</Text>
           </View>
-          <Text style={styles.severityExpl}>{SEVERITY_DESC_TR[current.severity]}</Text>
+          <Text style={styles.severityExpl}>{personnelWarnSeverityDesc(current.severity)}</Text>
 
           {useSplit ? (
             <View style={styles.splitRow}>

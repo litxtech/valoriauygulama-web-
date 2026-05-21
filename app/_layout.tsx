@@ -3,13 +3,14 @@ import '@/lib/weakRefPolyfill';
 import i18n, { LANG_STORAGE_KEY, LANGUAGES } from '../i18n';
 import { getDeviceLanguageCode } from '@/lib/deviceLocale';
 import { Stack, useRouter, usePathname } from 'expo-router';
+import { saveLastRoute } from '@/lib/lastRoutePersistence';
+import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, View, Animated, StyleSheet, Platform, LayoutAnimation, I18nManager, InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
-import { saveLastRoute } from '@/lib/lastRoutePersistence';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
 import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
@@ -34,17 +35,23 @@ import {
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
+import { useStaffBoardStore } from '@/stores/staffBoardStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { initChatVideoUploadSession } from '@/lib/chatVideoUploadSession';
+import {
+  isStaffMealMenuDailyNotification,
+  staffMealMenuNotificationHref,
+} from '@/lib/staffMealMenuNotification';
 
 if (Platform.OS !== 'web') {
   SplashScreen.preventAutoHideAsync();
 }
-log.info('RootLayout', 'app başlatılıyor');
+if (__DEV__) log.info('RootLayout', 'app başlatılıyor');
 
 const WEB_BG = '#1a365d';
 
@@ -83,9 +90,109 @@ function resolveMessagePushHref(
   return null;
 }
 
+const ROUTE_SAVE_DEBOUNCE_MS = 400;
+
+async function refreshBadgeCountsFromStores(): Promise<void> {
+  const staff = useAuthStore.getState().staff;
+  if (staff) {
+    await useStaffNotificationStore.getState().refresh();
+    await useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
+    const n = useStaffNotificationStore.getState().unreadCount;
+    const m = useStaffUnreadMessagesStore.getState().unreadCount;
+    void setOsAppIconBadgeCount(Math.min(999, n + m));
+    return;
+  }
+  await useGuestNotificationStore.getState().refresh();
+  await useGuestMessagingStore.getState().loadStoredToken();
+  const token = useGuestMessagingStore.getState().appToken;
+  if (token) {
+    const { guestListConversations } = await import('@/lib/messagingApi');
+    const list = await guestListConversations(token);
+    const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
+    useGuestMessagingStore.getState().setUnreadCount(total);
+  }
+  const n = useGuestNotificationStore.getState().unreadCount;
+  const m = useGuestMessagingStore.getState().unreadCount;
+  void setOsAppIconBadgeCount(Math.min(999, n + m));
+}
+
+/** Navigasyon — kök layout yeniden render etmesin. */
+function LastRouteTracker() {
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      void saveLastRoute(pathname);
+    }, ROUTE_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') void saveLastRoute(pathnameRef.current);
+    });
+    return () => sub.remove();
+  }, []);
+
+  return null;
+}
+
+/** Simge rozeti — unread store güncellemeleri Stack'i yeniden çizmesin. */
+function AppIconBadgeSync() {
+  const staff = useAuthStore((s) => s.staff);
+  const staffUnread = useStaffNotificationStore((s) => s.unreadCount);
+  const guestUnread = useGuestNotificationStore((s) => s.unreadCount);
+  const staffMsgUnread = useStaffUnreadMessagesStore((s) => s.unreadCount);
+  const guestMsgUnread = useGuestMessagingStore((s) => s.unreadCount);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isExpoGo) return;
+    const notif = staff ? staffUnread : guestUnread;
+    const msg = staff ? staffMsgUnread : guestMsgUnread;
+    void setOsAppIconBadgeCount(Math.min(999, notif + msg));
+  }, [staff?.id, staff, staffUnread, guestUnread, staffMsgUnread, guestMsgUnread]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isExpoGo) return;
+    return subscribeAppForegroundDebounced(() => {
+      void refreshBadgeCountsFromStores();
+    });
+  }, []);
+
+  useEffect(() => {
+    const staffId = staff?.id;
+    if (!staffId) return;
+    void useStaffNotificationStore.getState().refresh();
+    void useStaffUnreadMessagesStore.getState().refreshUnread(staffId);
+  }, [staff?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isExpoGo || staff) return;
+    void useGuestNotificationStore.getState().refresh();
+    void (async () => {
+      await useGuestMessagingStore.getState().loadStoredToken();
+      const token = useGuestMessagingStore.getState().appToken;
+      if (!token) return;
+      const { guestListConversations } = await import('@/lib/messagingApi');
+      const list = await guestListConversations(token);
+      const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
+      useGuestMessagingStore.getState().setUnreadCount(total);
+    })();
+  }, [staff]);
+
+  return null;
+}
+
 function RootLayoutInner() {
   const { t } = useTranslation();
-  const [showSplashLogo, setShowSplashLogo] = useState(true);
+  const [showSplashLogo, setShowSplashLogo] = useState(Platform.OS !== 'web');
   const openingOverlayOpacity = useRef(new Animated.Value(0)).current;
   const dotPhase = useRef(new Animated.Value(0)).current;
   const dotTopY = dotPhase.interpolate({ inputRange: [0, 1], outputRange: [-9, 9] });
@@ -119,45 +226,62 @@ function RootLayoutInner() {
       };
     }
   }, []);
-  // Açılış: ortada 2 nokta; Android’de kısa + sayfa altta görünsün (opak örtü yok)
+  const loopAnimRef = useRef<Animated.CompositeAnimation | null>(null);
+  const fadeOutOverlay = useRef(() => {
+    if (Platform.OS === 'web') return;
+    loopAnimRef.current?.stop();
+    loopAnimRef.current = null;
+    dotPhase.stopAnimation?.();
+    const fadeOutMs = Platform.OS === 'android' ? 32 : 40;
+    Animated.timing(openingOverlayOpacity, { toValue: 0, duration: fadeOutMs, useNativeDriver: true }).start(() =>
+      setShowSplashLogo(false)
+    );
+  }).current;
+
+  // Açılış: ortada 2 nokta — oturum/personel kontrolü bitene kadar (girişli kullanıcıda) açık kalır
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const isAndroid = Platform.OS === 'android';
-    let loopAnim: { stop: () => void } | null = null;
-    let endTimer: ReturnType<typeof setTimeout> | undefined;
+    const dotHalfMs = 80;
+    const fadeInMs = isAndroid ? 16 : 24;
 
-    const dotHalfMs = 120;
-    const overlayTotalMs = 200;
-    const fadeInMs = isAndroid ? 24 : 40;
-    const fadeOutMs = isAndroid ? 48 : 60;
-    const startDelayMs = 0;
+    openingOverlayOpacity.setValue(0);
+    dotPhase.setValue(0);
+    setShowSplashLogo(true);
+    Animated.timing(openingOverlayOpacity, { toValue: 1, duration: fadeInMs, useNativeDriver: true }).start();
+    loopAnimRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotPhase, { toValue: 1, duration: dotHalfMs, useNativeDriver: true }),
+        Animated.timing(dotPhase, { toValue: 0, duration: dotHalfMs, useNativeDriver: true }),
+      ])
+    );
+    loopAnimRef.current.start();
 
-    const startTimer = setTimeout(() => {
-      loopAnim = Animated.loop(
+    return () => {
+      loopAnimRef.current?.stop();
+    };
+  }, [openingOverlayOpacity, dotPhase]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (authBootPending) {
+      setShowSplashLogo(true);
+      openingOverlayOpacity.setValue(1);
+      loopAnimRef.current?.stop();
+      const dotHalfMs = 80;
+      loopAnimRef.current = Animated.loop(
         Animated.sequence([
           Animated.timing(dotPhase, { toValue: 1, duration: dotHalfMs, useNativeDriver: true }),
           Animated.timing(dotPhase, { toValue: 0, duration: dotHalfMs, useNativeDriver: true }),
         ])
       );
-      openingOverlayOpacity.setValue(0);
-      dotPhase.setValue(0);
-      Animated.timing(openingOverlayOpacity, { toValue: 1, duration: fadeInMs, useNativeDriver: true }).start();
-      loopAnim.start();
-      endTimer = setTimeout(() => {
-        loopAnim?.stop();
-        dotPhase.stopAnimation?.();
-        Animated.timing(openingOverlayOpacity, { toValue: 0, duration: fadeOutMs, useNativeDriver: true }).start(() =>
-          setShowSplashLogo(false)
-        );
-      }, overlayTotalMs);
-    }, startDelayMs);
-
-    return () => {
-      clearTimeout(startTimer);
-      if (endTimer) clearTimeout(endTimer);
-      loopAnim?.stop();
-    };
-  }, [openingOverlayOpacity, dotPhase]);
+      loopAnimRef.current.start();
+      return;
+    }
+    const quickMs = user ? 0 : 120;
+    const t = setTimeout(() => fadeOutOverlay(), quickMs);
+    return () => clearTimeout(t);
+  }, [authBootPending, user, fadeOutOverlay, openingOverlayOpacity, dotPhase]);
 
   // Dil: Önce kaydedilmiş tercih, yoksa cihaz dili; böylece uygulama tam seçilen dilde açılır
   // Arapça için RTL: dil değişince yönü güncelle (uygulama yeniden başlatıldığında tam uygulanır)
@@ -187,91 +311,22 @@ function RootLayoutInner() {
       .catch((e) => log.error('RootLayout', 'SplashScreen hatası', e));
   }, []);
   const router = useRouter();
-  const pathname = usePathname();
   const setQR = useGuestFlowStore((s) => s.setQR);
+  const user = useAuthStore((s) => s.user);
   const staff = useAuthStore((s) => s.staff);
-  const staffUnread = useStaffNotificationStore((s) => s.unreadCount);
-  const guestUnread = useGuestNotificationStore((s) => s.unreadCount);
-  const staffMsgUnread = useStaffUnreadMessagesStore((s) => s.unreadCount);
-  const guestMsgUnread = useGuestMessagingStore((s) => s.unreadCount);
-
-  // Simge rozeti = okunmamış in-app bildirimler + okunmamış mesajlar (mesaj push'u notifications tablosuna yazılmaz).
-  useEffect(() => {
-    if (Platform.OS === 'web' || isExpoGo) return;
-    const notif = staff ? staffUnread : guestUnread;
-    const msg = staff ? staffMsgUnread : guestMsgUnread;
-    void setOsAppIconBadgeCount(Math.min(999, notif + msg));
-  }, [staff?.id, staff, staffUnread, guestUnread, staffMsgUnread, guestMsgUnread]);
-
-  // Oturum açılınca veya uygulama tekrar ön plana gelince badge için store sayımını tazele (await bittikten sonra rozet = yarışsız)
-  useEffect(() => {
-    if (Platform.OS === 'web' || isExpoGo) return;
-    const onActive = (state: string) => {
-      if (state !== 'active') return;
-      void (async () => {
-        const s = useAuthStore.getState().staff;
-        if (s) {
-          await useStaffNotificationStore.getState().refresh();
-          await useStaffUnreadMessagesStore.getState().refreshUnread(s.id);
-          const n = useStaffNotificationStore.getState().unreadCount;
-          const m = useStaffUnreadMessagesStore.getState().unreadCount;
-          void setOsAppIconBadgeCount(Math.min(999, n + m));
-        } else {
-          await useGuestNotificationStore.getState().refresh();
-          await useGuestMessagingStore.getState().loadStoredToken();
-          const token = useGuestMessagingStore.getState().appToken;
-          if (token) {
-            const { guestListConversations } = await import('@/lib/messagingApi');
-            const list = await guestListConversations(token);
-            const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
-            useGuestMessagingStore.getState().setUnreadCount(total);
-          }
-          const n = useGuestNotificationStore.getState().unreadCount;
-          const m = useGuestMessagingStore.getState().unreadCount;
-          void setOsAppIconBadgeCount(Math.min(999, n + m));
-        }
-      })();
-    };
-    const sub = AppState.addEventListener('change', onActive);
-    return () => sub.remove();
-  }, []);
-
-  useEffect(() => {
-    if (!staff?.id) return;
-    void useStaffNotificationStore.getState().refresh();
-    void useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
-  }, [staff?.id]);
-
-  useEffect(() => {
-    if (Platform.OS === 'web' || isExpoGo || staff) return;
-    void useGuestNotificationStore.getState().refresh();
-    void (async () => {
-      await useGuestMessagingStore.getState().loadStoredToken();
-      const token = useGuestMessagingStore.getState().appToken;
-      if (!token) return;
-      const { guestListConversations } = await import('@/lib/messagingApi');
-      const list = await guestListConversations(token);
-      const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
-      useGuestMessagingStore.getState().setUnreadCount(total);
-    })();
-  }, [staff]);
-
-  // Uygulama arka plana gidince / tekrar açılınca son ekrana dönmek için rotayı sakla
-  useEffect(() => {
-    saveLastRoute(pathname);
-  }, [pathname]);
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'background') saveLastRoute(pathname);
-    });
-    return () => sub.remove();
-  }, [pathname]);
+  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
+  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
+  const authBootPending = !!user && !staffCheckComplete && !staffCheckUnavailable;
 
   useEffect(() => {
     const sub = initAuthListener();
     return () => {
       sub?.data?.subscription?.unsubscribe?.();
     };
+  }, []);
+
+  useEffect(() => {
+    initChatVideoUploadSession();
   }, []);
 
   // iOS: push token listener at app start (SDK 53+ workaround)
@@ -314,6 +369,11 @@ function RootLayoutInner() {
         : typeof data.notification_type === 'string'
           ? data.notification_type
           : '';
+    const screenPath = typeof data.screen === 'string' ? data.screen.trim() : '';
+    if (screenPath.startsWith('/')) {
+      safePush(screenPath);
+      return;
+    }
     const rawUrl = data?.url && typeof data.url === 'string' ? data.url.trim() : '';
     const url = rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
       ? (() => {
@@ -335,6 +395,17 @@ function RootLayoutInner() {
       url === '/staff/cleaning-plan'
     ) {
       safePush('/staff/cleaning-plan');
+      return;
+    }
+
+    if (isStaffMealMenuDailyNotification(data)) {
+      try {
+        router.push(staffMealMenuNotificationHref(data));
+      } catch (e) {
+        log.warn('RootLayout', 'notification meal menu route push failed', {
+          error: (e as Error)?.message,
+        });
+      }
       return;
     }
 
@@ -478,11 +549,24 @@ function RootLayoutInner() {
   useEffect(() => {
     const remove = addNotificationReceivedListener((notification) => {
       void applyBadgeFromExpoNotificationPayload(notification);
+      const payload =
+        notification.request.content.data && typeof notification.request.content.data === 'object'
+          ? (notification.request.content.data as Record<string, unknown>)
+          : undefined;
       const { staff } = useAuthStore.getState();
       if (staff) {
         void (async () => {
           await useStaffNotificationStore.getState().refresh();
           await useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
+          const nt =
+            typeof payload?.notificationType === 'string'
+              ? payload.notificationType
+              : typeof payload?.notification_type === 'string'
+                ? payload.notification_type
+                : '';
+          if (nt === 'staff_board_announcement' || nt === 'admin_announcement') {
+            await useStaffBoardStore.getState().loadList(staff.id);
+          }
           const n = useStaffNotificationStore.getState().unreadCount;
           const m = useStaffUnreadMessagesStore.getState().unreadCount;
           void setOsAppIconBadgeCount(Math.min(999, n + m));
@@ -687,6 +771,8 @@ function RootLayoutInner() {
   return (
     <React.Fragment>
       <StatusBar style="auto" />
+      <LastRouteTracker />
+      <AppIconBadgeSync />
       <OfflineBanner />
       {showSplashLogo ? (
         <Animated.View
@@ -714,7 +800,14 @@ function RootLayoutInner() {
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="guest" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
-        <Stack.Screen name="admin" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="admin"
+          options={{
+            headerShown: false,
+            /** Kaydırarak tüm /admin yığınını kapatma — personel sekmesinde “Yönetim Paneli” placeholder’a düşmesin */
+            gestureEnabled: false,
+          }}
+        />
         <Stack.Screen name="staff" options={{ headerShown: false }} />
         <Stack.Screen name="join" options={{ headerShown: true, title: t('staffApplication') }} />
         <Stack.Screen name="go-to-notifications" options={{ headerShown: false }} />

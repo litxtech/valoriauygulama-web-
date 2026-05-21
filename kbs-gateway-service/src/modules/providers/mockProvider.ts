@@ -4,7 +4,8 @@ import type {
   ProviderResponse,
   ProviderTestResponse,
   SubmitCheckInPayload,
-  SubmitCheckOutPayload
+  SubmitCheckOutPayload,
+  SubmitDeletePayload
 } from './types.js';
 
 export class MockOfficialProvider implements OfficialSubmissionProvider {
@@ -27,6 +28,13 @@ export class MockOfficialProvider implements OfficialSubmissionProvider {
     return {
       externalReference: `mock-checkout-${payload.transactionId}`,
       summary: { message: 'Mock check-out accepted' }
+    };
+  }
+
+  async submitDelete(payload: SubmitDeletePayload, _credentials: ProviderCredentials): Promise<ProviderResponse> {
+    return {
+      externalReference: `mock-delete-${payload.transactionId}`,
+      summary: { message: 'Mock delete accepted' }
     };
   }
 

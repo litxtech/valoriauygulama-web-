@@ -218,14 +218,13 @@ export default function StaffStockEntryScreen() {
       Alert.alert(t('error'), error.message);
       return;
     }
-    const { sendBulkToStaff } = await import('@/lib/notificationService');
-    sendBulkToStaff({
-      target: 'all_staff',
+    const { notifyAdminPanel } = await import('@/lib/notificationService');
+    void notifyAdminPanel({
       title: `📦 ${t('pendingApproval')}`,
-      body: 'Yeni stok girişi kaydedildi; onay bekleniyor.',
-      createdByStaffId: staff.id,
+      body: `${product?.name ?? (productNameFree.trim() || 'Ürün')} · stok girişi onay bekliyor.`,
+      href: '/admin/stock/approvals',
       notificationType: 'stock_pending_approval',
-    }).catch(() => {});
+    });
     Alert.alert(t('saved'), t('pendingApproval'), [
       { text: t('ok'), onPress: () => router.replace('/staff/stock/entry') },
     ]);

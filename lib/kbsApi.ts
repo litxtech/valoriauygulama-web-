@@ -1,7 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import Constants from 'expo-constants';
+import { edgeInvokeToApiResult } from '@/lib/functionsError';
+import { isDnsOrUnreachableBridgeError, isPlaceholderKbsGatewayError } from '@/lib/kbsBridgeErrors';
 
-/** Debug: köprü Supabase Edge `ops-proxy` → Hetzner KBS gateway (KBS’ye doğrudan değil). */
+/** Debug: köprü Supabase Edge `ops-proxy` → Railway KBS ops (KBS’ye doğrudan değil). */
 function getKbsBridgeLabel(): string {
   const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
   const pub = (extra.public ?? {}) as Record<string, unknown>;
@@ -88,7 +90,7 @@ function normalizeInvokePayload(raw: unknown): unknown {
         error: {
           code: 'GATEWAY_HTML',
           message:
-            'Sunucu JSON yerine HTML hata sayfası döndü. Genelde VPS’teki gateway sürümü eski (bu route yok) veya yanlış porta istek gidiyor. VPS’te `railway-service` klasöründe: npm run build && pm2 restart; KBS_GATEWAY_URL’nin doğru IP:port olduğundan emin olun.',
+            'Sunucu JSON yerine HTML döndü. Railway kbs-ops Root Directory `railway-service` mi? /health JSON vermeli. KBS_GATEWAY_URL = ops public URL (https://....railway.app).',
           details: snippet,
         },
       };
@@ -98,7 +100,7 @@ function normalizeInvokePayload(raw: unknown): unknown {
       ok: false,
       error: {
         code: 'NON_JSON',
-        message: 'Gateway yanıtı geçerli JSON değil (köprü veya VPS çıktısını kontrol edin).',
+        message: 'Gateway yanıtı geçerli JSON değil (Railway kbs-ops / Supabase ops-proxy kontrol edin).',
         details: snippet.slice(0, 800),
       },
     };
@@ -142,6 +144,24 @@ function normalizeKbsPath(path: string): string {
   return path.trim().replace(/[\s\u00a0]+/g, '');
 }
 
+const OPS_PROXY_TIMEOUT_MS = 28_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} (${Math.round(ms / 1000)} sn)`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 async function invokeOpsProxy<T>(method: 'GET' | 'POST', path: string, payload?: unknown): Promise<ApiResult<T>> {
   const token = await getAccessToken();
   if (!token) return { ok: false, error: { code: 'AUTH', message: 'Not authenticated' } };
@@ -154,20 +174,48 @@ async function invokeOpsProxy<T>(method: 'GET' | 'POST', path: string, payload?:
   const url = `functions/v1/ops-proxy`;
   lastApiDebug = { ts: new Date().toISOString(), method, url, note: 'invoke_sent' };
 
-  const { data, error } = await supabase.functions.invoke('ops-proxy', {
-    body: method === 'GET' ? { method: 'GET', path: pathNorm } : { method: 'POST', path: pathNorm, payload: payload ?? {} },
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let data: unknown;
+  let error: { message?: string } | null = null;
+  try {
+    const invoked = await withTimeout(
+      supabase.functions.invoke('ops-proxy', {
+        body: method === 'GET' ? { method: 'GET', path: pathNorm } : { method: 'POST', path: pathNorm, payload: payload ?? {} },
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      OPS_PROXY_TIMEOUT_MS,
+      'KBS köprü yanıt vermedi'
+    );
+    data = invoked.data;
+    error = invoked.error;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    lastApiDebug = { ts: new Date().toISOString(), method, url, note: 'invoke_timeout', bodyPreview: msg.slice(0, 500) };
+    return { ok: false, error: { code: 'TIMEOUT', message: msg } };
+  }
 
   if (error) {
+    const parsed = await edgeInvokeToApiResult<T>({ data, error });
+    const rawMsg = parsed.ok ? '' : parsed.error.message;
     lastApiDebug = {
       ts: new Date().toISOString(),
       method,
       url,
       note: 'invoke_error',
-      bodyPreview: error.message?.slice(0, 500),
+      bodyPreview: rawMsg.slice(0, 500),
     };
-    return { ok: false, error: { code: 'EDGE', message: error.message } };
+    if (!parsed.ok && (isPlaceholderKbsGatewayError(rawMsg) || isDnsOrUnreachableBridgeError(rawMsg))) {
+      return {
+        ok: false,
+        error: {
+          code: 'CONFIG',
+          message:
+            'KBS köprü adresi yanlış. Supabase → Secrets: KBS_GATEWAY_URL = Railway ops URL (ör. https://valoriahotel-production.up.railway.app), sonra ops-proxy deploy.',
+          details: rawMsg,
+        },
+      };
+    }
+    if (!parsed.ok) return parsed;
+    return { ok: false, error: { code: 'EDGE', message: rawMsg || 'Edge function error', details: rawMsg } };
   }
 
   const preview =
@@ -177,7 +225,29 @@ async function invokeOpsProxy<T>(method: 'GET' | 'POST', path: string, payload?:
         ? JSON.stringify(data).slice(0, 400)
         : String(data).slice(0, 400);
   lastApiDebug = { ts: new Date().toISOString(), method, url, note: 'invoke_ok', bodyPreview: preview };
-  return coerceApiResult<T>(data);
+  const result = coerceApiResult<T>(data);
+  if (!result.ok && result.error.code === 'CONFIG') {
+    return result;
+  }
+  if (
+    !result.ok &&
+    (result.error.code === 'PROXY_ERROR' ||
+      isPlaceholderKbsGatewayError(result.error.message) ||
+      isDnsOrUnreachableBridgeError(result.error.message))
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'CONFIG',
+        message:
+          result.error.message.includes('senin_sunucu') || isPlaceholderKbsGatewayError(result.error.message)
+            ? result.error.message
+            : 'KBS köprüsüne ulaşılamadı. Supabase KBS_GATEWAY_URL = Railway ops URL; deploy/RAILWAY_KURULUM.md',
+        details: result.error.details ?? result.error.message,
+      },
+    };
+  }
+  return result;
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {

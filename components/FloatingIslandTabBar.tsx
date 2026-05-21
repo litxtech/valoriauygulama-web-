@@ -1,42 +1,90 @@
-import { View, StyleSheet, Platform } from 'react-native';
-import { BottomTabBar } from '@react-navigation/bottom-tabs';
+import { useCallback, useContext } from 'react';
+import { View, StyleSheet, Platform, type LayoutChangeEvent } from 'react-native';
+import { BottomTabBar, BottomTabBarHeightCallbackContext } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IOS_TAB_BAR_FLOAT_MARGIN } from '@/constants/floatingTabBarMetrics';
+import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 
-const ISLAND_RADIUS = 28;
-const HORIZONTAL_INSET = 14;
+const ISLAND_RADIUS = 22;
+const IOS_HORIZONTAL_INSET = 10;
 
 export type FloatingIslandTabBarProps = BottomTabBarProps & {
-  /** Ada arka planı (expo-blur bazı build’lerde “Unimplemented component” verdiği için düz yüzey) */
   surfaceColor: string;
-  /** İnce dış çerçeve */
   borderColor?: string;
 };
 
 /**
- * Tam genişlik düz tab yerine: kenarlardan içeri alınmış, gölgeli yüzen ada.
- * Blur kullanılmıyor — ExpoBlurView / New Architecture uyumsuzluğunda kırmızı hata bandı oluşmasın.
+ * Android: tam genişlik, sistem navigasyon inset’i BottomTabBar’da (eskisi gibi birleşir).
+ * iOS: kompakt yüzen ada, alta yakın.
  */
 export function FloatingIslandTabBar({
   surfaceColor,
   borderColor = 'rgba(15, 23, 42, 0.08)',
+  insets: navInsets,
   ...props
 }: FloatingIslandTabBarProps) {
-  const insets = useSafeAreaInsets();
-  const bottomGap = Math.max(insets.bottom, 10) + 8;
+  const safeInsets = useSafeAreaInsets();
+  const rawBottom = navInsets?.bottom ?? safeInsets.bottom;
+  const resolvedInsets = {
+    top: navInsets?.top ?? safeInsets.top,
+    right: navInsets?.right ?? safeInsets.right,
+    bottom: Platform.OS === 'android' ? getEffectiveBottomInset({ bottom: rawBottom }) : rawBottom,
+    left: navInsets?.left ?? safeInsets.left,
+  };
+  const onTabBarHeightChange = useContext(BottomTabBarHeightCallbackContext);
 
-  const bar = (
-    <BottomTabBar
-      {...props}
-      insets={{ top: 0, right: 0, bottom: 0, left: 0 }}
-    />
+  const handleShellLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      onTabBarHeightChange?.(e.nativeEvent.layout.height);
+    },
+    [onTabBarHeightChange]
   );
 
+  if (Platform.OS === 'android') {
+    return (
+      <View
+        onLayout={handleShellLayout}
+        style={[styles.androidShell, { backgroundColor: surfaceColor, borderTopColor: borderColor }]}
+      >
+        <BottomTabBar
+          {...props}
+          insets={{
+            top: 0,
+            right: resolvedInsets.right,
+            bottom: resolvedInsets.bottom,
+            left: resolvedInsets.left,
+          }}
+        />
+      </View>
+    );
+  }
+
   return (
-    <View style={[styles.shell, { backgroundColor: surfaceColor, paddingBottom: bottomGap, paddingHorizontal: HORIZONTAL_INSET }]}>
+    <View
+      onLayout={handleShellLayout}
+      style={[
+        styles.iosShell,
+        {
+          backgroundColor: surfaceColor,
+          paddingBottom: IOS_TAB_BAR_FLOAT_MARGIN,
+          paddingHorizontal: IOS_HORIZONTAL_INSET,
+        },
+      ]}
+    >
       <View style={styles.shadowHost}>
         <View style={[styles.ring, { borderColor }]}>
-          <View style={[styles.islandFill, { backgroundColor: surfaceColor }]}>{bar}</View>
+          <View style={[styles.islandFill, { backgroundColor: surfaceColor }]}>
+            <BottomTabBar
+              {...props}
+              insets={{
+                top: 0,
+                right: 0,
+                bottom: resolvedInsets.bottom,
+                left: 0,
+              }}
+            />
+          </View>
         </View>
       </View>
     </View>
@@ -44,24 +92,20 @@ export function FloatingIslandTabBar({
 }
 
 const styles = StyleSheet.create({
-  /** Navigator şeffaf alanında “fazladan şerit”; ada ile aynı yüzey rengiyle doldurulur */
-  shell: {
+  androidShell: {
+    width: '100%',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    elevation: 2,
+  },
+  iosShell: {
     width: '100%',
   },
   shadowHost: {
     borderRadius: ISLAND_RADIUS,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#0f172a',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.14,
-        shadowRadius: 22,
-      },
-      android: {
-        elevation: 16,
-      },
-      default: {},
-    }),
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
   },
   ring: {
     borderRadius: ISLAND_RADIUS,

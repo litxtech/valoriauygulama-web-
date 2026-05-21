@@ -1,47 +1,77 @@
-import { useFocusEffect } from 'expo-router';
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef } from 'react';
-import { View, ActivityIndicator, StyleSheet, InteractionManager } from 'react-native';
-import { onStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import { useFocusEffect, usePathname, useRouter } from 'expo-router';
+import { useCallback, useRef } from 'react';
+import { View, ActivityIndicator, StyleSheet, Text, InteractionManager, TouchableOpacity } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import type { Href } from 'expo-router';
+import { clearAdminAutoOpenSuppress, isAdminAutoOpenSuppressed } from '@/lib/staffAdminTabNavigation';
 
 /**
- * Admin yetkili personel bu sekmeye tıkladığında doğrudan yönetim paneline gider.
- * Tab bar'da sadece role === 'admin' iken görünür.
+ * Admin sekmesi: bilinçli girişte /admin açılır.
+ * Panelden geri çıkıldıktan sonra otomatik yeniden açılmaz (suppress).
  */
 export default function StaffAdminTabRedirect() {
   const router = useRouter();
-  const navigatedRef = useRef(false);
+  const pathname = usePathname();
+  const { t } = useTranslation();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
-  useEffect(
-    () =>
-      onStaffExitedAdminPanelFromRoot(() => {
-        navigatedRef.current = false;
-      }),
-    []
+  const isInAdminStack = Boolean(pathname?.startsWith('/admin'));
+  const lastPushAtRef = useRef(0);
+
+  const openAdminPanel = useCallback(() => {
+    clearAdminAutoOpenSuppress();
+    if (pathnameRef.current?.startsWith('/admin')) return;
+    const now = Date.now();
+    if (now - lastPushAtRef.current < 500) return;
+    lastPushAtRef.current = now;
+    router.push('/admin');
+  }, [router]);
+
+  /** Panelden çıkıldıktan sonra (native pop vb.) bu sekmede “Yönetim Paneli” ekranında takılma */
+  useFocusEffect(
+    useCallback(() => {
+      if (!pathnameRef.current?.startsWith('/admin') && isAdminAutoOpenSuppressed()) {
+        router.replace('/staff/(tabs)' as Href);
+        return;
+      }
+    }, [router])
   );
 
   useFocusEffect(
     useCallback(() => {
-      // Tab focus anında anında replace bazı Android/Fabric sürümlerinde mount yarışına düşürebiliyor.
-      // Bir sonraki interaction frame'e ertelemek genelde stabil.
-      if (navigatedRef.current) return;
-      navigatedRef.current = true;
+      if (pathnameRef.current?.startsWith('/admin')) return;
+      if (isAdminAutoOpenSuppressed()) return;
+
+      let cancelled = false;
       const task = InteractionManager.runAfterInteractions(() => {
-        // push: tab navigator ağacını korur; replace ile tab ekranı "koparılıp" yeniden eklenirken oluşan
-        // native mount hatalarını azaltır.
+        if (cancelled) return;
+        if (pathnameRef.current?.startsWith('/admin')) return;
+        if (isAdminAutoOpenSuppressed()) return;
+        const now = Date.now();
+        if (now - lastPushAtRef.current < 500) return;
+        lastPushAtRef.current = now;
         router.push('/admin');
       });
+
       return () => {
-        // navigatedRef burada sıfırlanmamalı: /admin açılırken tab blur olur; sıfırlanırsa geri dönüşte
-        // aynı odakta /admin yeniden push edilir (Android'de geri tuşu zorlanır).
+        cancelled = true;
         (task as { cancel?: () => void })?.cancel?.();
       };
     }, [router])
   );
 
+  if (isInAdminStack) {
+    return <View style={styles.placeholder} />;
+  }
+
   return (
     <View style={styles.placeholder}>
       <ActivityIndicator size="large" color="#b8860b" />
+      <Text style={styles.hint}>{t('managementPanel')}</Text>
+      <TouchableOpacity style={styles.retryBtn} onPress={openAdminPanel} activeOpacity={0.85}>
+        <Text style={styles.retryText}>Panele git</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -52,5 +82,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f3f4f6',
+    gap: 12,
+    padding: 24,
+  },
+  hint: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#b8860b',
+  },
+  retryText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

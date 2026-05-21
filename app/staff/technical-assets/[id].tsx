@@ -25,6 +25,7 @@ import {
 import { canOperateTechnicalAssets, hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
+import { TechAssetUsageGuide } from '@/components/technicalAssets/TechAssetUsageGuide';
 
 export default function TechnicalAssetDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -133,6 +134,8 @@ export default function TechnicalAssetDetailScreen() {
         {asset.category_label} · {criticalityLabel(asset.criticality)} · Durum: {asset.status}
       </Text>
       {locLine ? <Text style={styles.loc}>📍 {locLine}</Text> : null}
+
+      <TechAssetUsageGuide text={asset.usage_guide_text} videoUrl={asset.usage_guide_video_url} />
 
       {photos.length ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow}>

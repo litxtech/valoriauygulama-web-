@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePathname, useRouter } from 'expo-router';
+import { useNavigation, usePathname, useRouter } from 'expo-router';
+import { navigateAdminBack, ADMIN_TABS_FALLBACK } from '@/lib/adminStackBack';
+import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { adminTheme } from '@/constants/adminTheme';
 import { listIncidentReports, type IncidentReportRow } from '@/lib/incidentReports';
 
@@ -17,8 +19,10 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function AdminIncidentReportsScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const pathname = usePathname();
-  const basePath = pathname.startsWith('/staff') ? '/staff/incident-reports' : '/admin/incident-reports';
+  const isStaffRoute = pathname?.startsWith('/staff') ?? false;
+  const basePath = isStaffRoute ? '/staff/incident-reports' : '/admin/incident-reports';
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reports, setReports] = useState<IncidentReportRow[]>([]);
@@ -60,7 +64,15 @@ export default function AdminIncidentReportsScreen() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       <View style={styles.topRow}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() =>
+            isStaffRoute
+              ? navigateStaffBack(router, navigation, pathname, STAFF_TABS_FALLBACK)
+              : navigateAdminBack(router, navigation, pathname, ADMIN_TABS_FALLBACK)
+          }
+          activeOpacity={0.85}
+        >
           <Ionicons name="arrow-back" size={16} color={adminTheme.colors.text} />
           <Text style={styles.backBtnText}>Geri</Text>
         </TouchableOpacity>

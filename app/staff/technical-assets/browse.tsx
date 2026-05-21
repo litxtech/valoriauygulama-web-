@@ -14,7 +14,8 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
-import { criticalityLabel, type TechCriticality } from '@/lib/technicalAssets';
+import { Ionicons } from '@expo/vector-icons';
+import { criticalityLabel, techAssetHasUsageGuide, type TechCriticality } from '@/lib/technicalAssets';
 
 type Row = {
   id: string;
@@ -23,6 +24,8 @@ type Row = {
   criticality: string;
   status: string;
   building_id: string;
+  usage_guide_text: string | null;
+  usage_guide_video_url: string | null;
 };
 
 type BuildingChip = { id: string; name: string };
@@ -43,7 +46,11 @@ export default function TechnicalAssetsBrowseScreen() {
   const [critFilter, setCritFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    let q = supabase.from('tech_assets').select('id, name, asset_code, criticality, status, building_id').order('name', { ascending: true }).limit(500);
+    let q = supabase
+      .from('tech_assets')
+      .select('id, name, asset_code, criticality, status, building_id, usage_guide_text, usage_guide_video_url')
+      .order('name', { ascending: true })
+      .limit(500);
     if (buildingId) q = q.eq('building_id', buildingId);
     if (statusFilter) q = q.eq('status', statusFilter);
     if (critFilter) q = q.eq('criticality', critFilter);
@@ -152,7 +159,14 @@ export default function TechnicalAssetsBrowseScreen() {
       }
       renderItem={({ item }) => (
         <TouchableOpacity style={styles.card} onPress={() => router.push(`/staff/technical-assets/${item.id}`)} activeOpacity={0.85}>
-          <Text style={styles.cardTitle}>{item.name}</Text>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle}>{item.name}</Text>
+            {techAssetHasUsageGuide(item) ? (
+              <View style={styles.guideBadge}>
+                <Ionicons name="school-outline" size={14} color="#1d4ed8" />
+              </View>
+            ) : null}
+          </View>
           <Text style={styles.cardCode}>{item.asset_code}</Text>
           <Text style={styles.cardMeta}>
             {criticalityLabel(item.criticality as TechCriticality)} · {item.status}
@@ -197,6 +211,15 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+  },
+  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  guideBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#dbeafe',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
   cardCode: { fontSize: 13, color: '#64748b', marginTop: 4, fontFamily: 'monospace' },

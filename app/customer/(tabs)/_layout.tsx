@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
@@ -10,10 +11,12 @@ import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { guestListConversations } from '@/lib/messagingApi';
+import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { savePushTokenForGuest } from '@/lib/notificationsPush';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar, appTabBarCustomer, vibrantIconColor } from '@/constants/tabBarTheme';
+import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { CachedImage } from '@/components/CachedImage';
 import { AppTabBarCenterMessageButton } from '@/components/AppTabBarCenterMessageButton';
 import { complaintsText } from '@/lib/complaintsI18n';
@@ -161,18 +164,6 @@ function FeedCreateHeaderButton() {
   );
 }
 
-function CuteHeaderTitle({ text }: { text: string }) {
-  return (
-    <View style={styles.cuteHeaderWrap}>
-      <Text style={styles.cuteHeaderEmoji}>✨</Text>
-      <Text style={styles.cuteHeaderText} numberOfLines={1}>
-        {text}
-      </Text>
-      <Text style={styles.cuteHeaderEmoji}>🌿</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   feedCreateBtn: {
     marginLeft: 8,
@@ -180,25 +171,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cuteHeaderWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(99,102,241,0.12)',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(99,102,241,0.22)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  cuteHeaderText: { fontSize: 14, fontWeight: '800', color: '#312e81', letterSpacing: 0.2 },
-  cuteHeaderEmoji: { fontSize: 13 },
 });
 
 export default function CustomerTabsLayout() {
   const { t } = useTranslation();
-  const tabBarHeight = 58 + 8;
-  const tabBarPaddingBottom = 8;
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = getFloatingTabBarTotalHeight(insets);
+  const tabBarInnerHeight = getFloatingTabBarInnerHeight();
+  const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
+  const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
   const { appToken, setUnreadCount, loadStoredToken, unreadCount: guestMsgUnread } = useGuestMessagingStore();
   const refreshNotifications = useGuestNotificationStore((s) => s.refresh);
@@ -248,19 +229,17 @@ export default function CustomerTabsLayout() {
     }, [refreshNotifications])
   );
 
-  // Android: uygulama ön plana gelince tab rozetleri hemen güncellensin (ilgili sekmeye girmeden)
+  // Android: ön plana gelince tab rozetleri (debounce — resume anında UI donmasın)
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
+    if (!appToken) return;
+    const token = appToken;
+    return subscribeAppForegroundDebounced(() => {
       refreshNotifications();
-      if (appToken) {
-        guestListConversations(appToken).then((list) => {
-          const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
-          setUnreadCount(total);
-        });
-      }
+      guestListConversations(token).then((list) => {
+        const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+        setUnreadCount(total);
+      });
     });
-    return () => sub.remove();
   }, [appToken, refreshNotifications, setUnreadCount]);
 
   return (
@@ -268,9 +247,11 @@ export default function CustomerTabsLayout() {
       tabBar={(props) => (
         <FloatingIslandTabBar {...props} surfaceColor={appTabBar.background} borderColor={appTabBar.border} />
       )}
-      screenOptions={{
-        /** Varsayılan lazy: true ilk sekme tıklanınca mount + yükleme flicker’ı; hepsini erken mount et */
-        lazy: false,
+      screenOptions={({ route }) => {
+        const feedTab = route.name === 'index';
+        return {
+        /** iOS: erken mount. Android: lazy — tüm sekmeleri aynı anda yükleme. */
+        lazy: Platform.OS === 'android',
         detachInactiveScreens: false,
         tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: appTabBar.fallbackActive,
@@ -279,8 +260,9 @@ export default function CustomerTabsLayout() {
           backgroundColor: 'transparent',
           borderTopWidth: 0,
           height: tabBarHeight,
-          paddingTop: 6,
+          paddingTop: tabBarPaddingTop,
           paddingBottom: tabBarPaddingBottom,
+          minHeight: tabBarInnerHeight,
           elevation: 0,
           shadowOpacity: 0,
         },
@@ -306,18 +288,22 @@ export default function CustomerTabsLayout() {
           borderBottomColor: IG_HEADER_BORDER,
         },
         headerShadowVisible: false,
-        headerTitleAlign: 'center',
+        headerTitleAlign: 'center' as const,
         headerTintColor: IG_HEADER_FG,
         headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarColor: IG_HEADER_BG, statusBarStyle: 'dark' } : null),
-        headerLeftContainerStyle: { paddingLeft: 6, minWidth: 88 },
-        headerRightContainerStyle: { paddingRight: 6, minWidth: 88 },
-        headerRight: () => (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <NotificationBellHeaderButton />
-            <AdminPanelHeaderButton />
-          </View>
-        ),
+        ...(Platform.OS === 'android' ? { statusBarColor: IG_HEADER_BG, statusBarStyle: 'dark' as const } : null),
+        headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 88 } : { paddingLeft: 0, minWidth: 0 },
+        headerRightContainerStyle: feedTab ? { paddingRight: 6, minWidth: 88 } : { paddingRight: 0, minWidth: 0 },
+        headerRight: feedTab
+          ? () => (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <NotificationBellHeaderButton />
+                <AdminPanelHeaderButton />
+              </View>
+            )
+          : () => null,
+        headerLeft: feedTab ? () => <FeedCreateHeaderButton /> : () => null,
+      };
       }}
     >
       <Tabs.Screen
@@ -326,7 +312,6 @@ export default function CustomerTabsLayout() {
           title: t('home'),
           headerTitle: '',
           headerShown: true,
-          headerLeft: () => <FeedCreateHeaderButton />,
           tabBarActiveTintColor: appTabBarCustomer.index,
           tabBarLabel: t('home'),
           tabBarIcon: ({ focused }) => (
@@ -407,7 +392,10 @@ export default function CustomerTabsLayout() {
             </View>
           ),
           tabBarShowLabel: false,
-          tabBarLabel: t('messages'),
+          tabBarItemStyle: {
+            justifyContent: 'center',
+            alignItems: 'center',
+          },
           tabBarButton: (props) => (
             <AppTabBarCenterMessageButton
               {...props}
@@ -415,7 +403,7 @@ export default function CustomerTabsLayout() {
               accessibilityLabel={t('messages')}
             />
           ),
-          tabBarIcon: () => <View style={{ width: 1, height: 1, opacity: 0 }} />,
+          tabBarIcon: () => null,
         }}
       />
       <Tabs.Screen
@@ -463,7 +451,7 @@ export default function CustomerTabsLayout() {
         name="personel"
         options={{
           title: t('staffTab'),
-          headerTitle: () => <CuteHeaderTitle text={t('staffAppTitle')} />,
+          headerTitle: '',
           tabBarActiveTintColor: appTabBarCustomer.personel,
           tabBarLabel: t('staffTab'),
           tabBarIcon: ({ focused }) => (

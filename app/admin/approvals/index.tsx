@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   View,
   Text,
@@ -13,19 +13,29 @@ import {
   TextInput,
   type ViewStyle,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
+import { AdminOrganizationPicker } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { sendNotification } from '@/lib/notificationService';
 import { formatDateShort } from '@/lib/date';
 import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
 import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
-import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import {
+  approvalsCacheKey,
+  getApprovalsCache,
+  getApprovalsCacheAgeMs,
+  setApprovalsCache,
+} from '@/lib/adminApprovalsCache';
+
+/** Liste için yeterli; tam kayıt detayda veya lazy yüklenir. */
+const LIST_LIMIT = 40;
+const FOCUS_REFRESH_MS = 30_000;
 
 const DEPT_LABELS: Record<string, string> = {
   housekeeping: 'Temizlik',
@@ -58,17 +68,77 @@ type UnifiedItem = {
   title: string;
   fromLine: string;
   whyLine: string;
+  orgLine: string | null;
+  organizationId: string | null;
   extraLines: string[];
   raw: unknown;
 };
 
-const KIND_META: Record<Kind, { label: string; color: string; icon: ComponentProps<typeof Ionicons>['name'] }> = {
-  staff_app: { label: 'Personel başvurusu', color: '#2563eb', icon: 'person-add-outline' },
-  stock: { label: 'Stok onayı', color: '#16a34a', icon: 'cube-outline' },
-  expense: { label: 'Harcama', color: '#ca8a04', icon: 'wallet-outline' },
-  report: { label: 'Paylaşım bildirimi', color: '#dc2626', icon: 'flag-outline' },
-  contract: { label: 'Sözleşme (check-in bekliyor)', color: '#7c3aed', icon: 'document-text-outline' },
+type KindMeta = {
+  label: string;
+  shortLabel: string;
+  color: string;
+  bg: string;
+  grad: [string, string];
+  icon: ComponentProps<typeof Ionicons>['name'];
 };
+
+const KIND_ORDER: Kind[] = ['staff_app', 'stock', 'expense', 'report', 'contract'];
+
+const KIND_META: Record<Kind, KindMeta> = {
+  staff_app: {
+    label: 'Personel başvurusu',
+    shortLabel: 'Başvuru',
+    color: '#2563eb',
+    bg: '#eff6ff',
+    grad: ['#3b82f6', '#1d4ed8'],
+    icon: 'person-add-outline',
+  },
+  stock: {
+    label: 'Stok onayı',
+    shortLabel: 'Stok',
+    color: '#16a34a',
+    bg: '#ecfdf5',
+    grad: ['#22c55e', '#15803d'],
+    icon: 'cube-outline',
+  },
+  expense: {
+    label: 'Harcama',
+    shortLabel: 'Harcama',
+    color: '#ca8a04',
+    bg: '#fffbeb',
+    grad: ['#f59e0b', '#b45309'],
+    icon: 'wallet-outline',
+  },
+  report: {
+    label: 'Paylaşım bildirimi',
+    shortLabel: 'Bildirim',
+    color: '#dc2626',
+    bg: '#fef2f2',
+    grad: ['#ef4444', '#b91c1c'],
+    icon: 'flag-outline',
+  },
+  contract: {
+    label: 'Sözleşme (check-in bekliyor)',
+    shortLabel: 'Sözleşme',
+    color: '#7c3aed',
+    bg: '#f5f3ff',
+    grad: ['#8b5cf6', '#6d28d9'],
+    icon: 'document-text-outline',
+  },
+};
+
+function relativeTimeTr(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'Az önce';
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins} dk önce`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} sa önce`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days} gün önce`;
+  return formatDateShort(iso);
+}
 
 const ROOM_STATUS_LABELS: Record<string, string> = {
   available: 'Müsait',
@@ -138,12 +208,26 @@ type ContractRoomRow = {
 
 type StaffPickRow = { id: string; full_name: string | null; department: string | null };
 
+function orgNameFromJoin(row: { organization?: { name?: string } | { name?: string }[] | null } | null) {
+  const o = row?.organization;
+  if (!o) return null;
+  const one = Array.isArray(o) ? o[0] : o;
+  return one?.name?.trim() || null;
+}
+
 export default function AdminApprovalsHubScreen() {
   const router = useRouter();
   const { staff: me } = useAuthStore();
-  const { selectedOrganizationId } = useAdminOrgStore();
-  const [items, setItems] = useState<UnifiedItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
+  const orgScopedForCache = canUseAll ? null : me?.organization_id ?? null;
+  const initialCacheKey = approvalsCacheKey(canUseAll, orgScopedForCache);
+  const initialCached = getApprovalsCache(initialCacheKey, true) as UnifiedItem[] | null;
+  /** Onay merkezi: muhasebe/global işletme seçiminden bağımsız; varsayılan tüm bekleyenler */
+  const [orgFilter, setOrgFilter] = useState<string | 'all'>('all');
+  const autoOrgPickedRef = useRef(false);
+  const loadInFlightRef = useRef(false);
+  const [items, setItems] = useState<UnifiedItem[]>(initialCached ?? []);
+  const [loading, setLoading] = useState(!(initialCached && initialCached.length > 0));
   const [refreshing, setRefreshing] = useState(false);
   const [detail, setDetail] = useState<UnifiedItem | null>(null);
   const [acting, setActing] = useState(false);
@@ -155,40 +239,62 @@ export default function AdminApprovalsHubScreen() {
   const [contractSelectedRoomId, setContractSelectedRoomId] = useState<string | null>(null);
   const [contractPriceInput, setContractPriceInput] = useState('');
   const [contractNightsInput, setContractNightsInput] = useState('');
+  const [kindFilter, setKindFilter] = useState<Kind | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [stockDetailPhotos, setStockDetailPhotos] = useState<{
+    staff_image: string | null;
+    photo_proof: string | null;
+  } | null>(null);
 
-  const load = useCallback(async () => {
-    const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
-    const orgId = canUseAll ? selectedOrganizationId : me?.organization_id;
-    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (loadInFlightRef.current) return;
+    const orgScoped = canUseAll ? null : me?.organization_id ?? null;
+    const cacheKey = approvalsCacheKey(canUseAll, orgScoped);
+
+    if (!opts?.silent) {
+      const stale = getApprovalsCache(cacheKey, true) as UnifiedItem[] | null;
+      if (stale?.length) {
+        setItems(stale);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+    }
+
+    loadInFlightRef.current = true;
+    try {
     let appsQuery = supabase
       .from('staff_applications')
       .select('id, full_name, email, phone, applied_department, experience, created_at')
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
-      .limit(100);
-    if (orgScoped) appsQuery = appsQuery.eq('organization_id', orgScoped);
+      .limit(LIST_LIMIT);
     let stocksQuery = supabase
       .from('stock_movements')
-      .select('id, product_id, movement_type, quantity, staff_image, photo_proof, notes, created_at, product:stock_products(name, unit, current_stock), staff:staff_id(full_name)')
+      .select(
+        'id, product_id, movement_type, quantity, notes, created_at, organization_id, product:stock_products(name, unit), staff:staff_id(full_name), organization:organization_id(name)'
+      )
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(LIST_LIMIT);
     if (orgScoped) stocksQuery = stocksQuery.eq('organization_id', orgScoped);
     let expensesQuery = supabase
       .from('staff_expenses')
       .select(
-        'id, amount, description, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name)'
+        'id, amount, description, status, expense_date, created_at, staff_id, organization_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)'
       )
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(LIST_LIMIT);
     if (orgScoped) expensesQuery = expensesQuery.eq('organization_id', orgScoped);
     let contractsQuery = supabase
       .from('contract_acceptances')
-      .select('id, token, room_id, contract_lang, accepted_at, guest_id, guests(full_name), rooms(room_number)')
+      .select(
+        'id, token, room_id, contract_lang, accepted_at, guest_id, organization_id, guests(full_name), rooms(room_number), organization:organization_id(name)'
+      )
       .is('assigned_staff_id', null)
       .order('accepted_at', { ascending: false })
-      .limit(100);
+      .limit(LIST_LIMIT);
     if (orgScoped) contractsQuery = contractsQuery.eq('organization_id', orgScoped);
     const [
       apps,
@@ -203,11 +309,11 @@ export default function AdminApprovalsHubScreen() {
       supabase
         .from('feed_post_reports')
         .select(
-          'id, post_id, reporter_staff_id, reporter_guest_id, reason, details, status, created_at, feed_posts(id, title, media_type), staff!reporter_staff_id(id, full_name, department), guests!reporter_guest_id(id, full_name)'
+          'id, post_id, reporter_staff_id, reporter_guest_id, reason, details, status, created_at, feed_posts(id, title), staff!reporter_staff_id(full_name), guests!reporter_guest_id(full_name)'
         )
         .eq('status', 'pending')
         .order('created_at', { ascending: false })
-        .limit(100),
+        .limit(LIST_LIMIT),
       contractsQuery,
     ]);
 
@@ -230,6 +336,8 @@ export default function AdminApprovalsHubScreen() {
         title: r.full_name,
         fromLine: `E-posta: ${r.email}`,
         whyLine: `Başvurulan birim: ${DEPT_LABELS[r.applied_department] ?? r.applied_department}`,
+        orgLine: 'Genel başvuru',
+        organizationId: null,
         extraLines: [
           r.phone ? `Tel: ${r.phone}` : '',
           r.experience ? `Deneyim: ${r.experience}` : '',
@@ -238,9 +346,10 @@ export default function AdminApprovalsHubScreen() {
       });
     }
 
-    for (const m of (stocks.data ?? []) as unknown as Movement[]) {
+    for (const m of (stocks.data ?? []) as unknown as (Movement & { organization_id?: string; organization?: { name?: string } | null })[]) {
       const prod = m.product as { name?: string; unit?: string | null } | null;
       const st = m.staff as { full_name?: string } | null;
+      const orgName = orgNameFromJoin(m);
       list.push({
         kind: 'stock',
         id: m.id,
@@ -248,13 +357,19 @@ export default function AdminApprovalsHubScreen() {
         title: `${m.movement_type === 'in' ? 'Giriş' : 'Çıkış'} · ${prod?.name ?? 'Ürün'}`,
         fromLine: `Personel: ${st?.full_name ?? '—'}`,
         whyLine: `Miktar: ${m.movement_type === 'in' ? '+' : '-'}${m.quantity} ${prod?.unit ?? 'adet'}`,
+        orgLine: orgName,
+        organizationId: m.organization_id ?? null,
         extraLines: [m.notes ? `Not: ${m.notes}` : ''].filter(Boolean),
         raw: m,
       });
     }
 
-    for (const e of (expenses.data ?? []) as unknown as ExpenseRow[]) {
+    for (const e of (expenses.data ?? []) as unknown as (ExpenseRow & {
+      organization_id?: string;
+      organization?: { name?: string } | null;
+    })[]) {
       const s = e.staff as { full_name?: string; department?: string } | null;
+      const orgName = orgNameFromJoin(e);
       list.push({
         kind: 'expense',
         id: e.id,
@@ -262,6 +377,8 @@ export default function AdminApprovalsHubScreen() {
         title: fmtMoney(Number(e.amount)),
         fromLine: `Personel: ${s?.full_name ?? '—'} (${s?.department ?? '—'})`,
         whyLine: `Tarih: ${formatDateShort(e.expense_date)} · Kategori: ${e.category?.name ?? '—'}`,
+        orgLine: orgName,
+        organizationId: e.organization_id ?? null,
         extraLines: [e.description ? `Açıklama: ${e.description}` : ''].filter(Boolean),
         raw: e,
       });
@@ -279,17 +396,23 @@ export default function AdminApprovalsHubScreen() {
         title: r.feed_posts?.title?.trim() || 'Paylaşım bildirimi',
         fromLine: reporter,
         whyLine: `Sebep: ${REPORT_REASONS[r.reason] ?? r.reason}`,
+        orgLine: null,
+        organizationId: null,
         extraLines: [r.details ? `Detay: ${r.details}` : ''].filter(Boolean),
         raw: r,
       });
     }
 
     for (const c of contracts.data ?? []) {
-      const row = c as unknown as ContractApprovalRow;
+      const row = c as unknown as ContractApprovalRow & {
+        organization_id?: string;
+        organization?: { name?: string } | null;
+      };
       const g = Array.isArray(row.guests) ? row.guests[0] : row.guests;
       const rm = row.rooms;
       const roomObj = Array.isArray(rm) ? rm[0] : rm;
       const roomLabel = row.room_id ? roomObj?.room_number ?? '—' : null;
+      const orgName = orgNameFromJoin(row);
       list.push({
         kind: 'contract',
         id: row.id,
@@ -299,6 +422,8 @@ export default function AdminApprovalsHubScreen() {
         whyLine: row.guest_id
           ? 'Check-in tamamlanmadı: oda ve maliye bilgisini buradan girebilir veya personele devredebilirsiniz.'
           : 'Misafir kaydı yok; sorumlu personel ataması yapılabilir.',
+        orgLine: orgName,
+        organizationId: row.organization_id ?? null,
         extraLines: [
           `Token: ${row.token.slice(0, 12)}…`,
           ...(roomLabel != null ? [`Oda: ${roomLabel}`] : []),
@@ -308,12 +433,39 @@ export default function AdminApprovalsHubScreen() {
     }
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    setApprovalsCache(cacheKey, list);
     setItems(list);
-  }, [me?.app_permissions?.super_admin, me?.organization_id, selectedOrganizationId]);
+
+    if (canUseAll && !autoOrgPickedRef.current && list.length > 0) {
+      const orgIds = new Set(list.map((i) => i.organizationId).filter(Boolean) as string[]);
+      if (orgIds.size === 1) {
+        autoOrgPickedRef.current = true;
+        setOrgFilter([...orgIds][0]);
+      }
+    }
+    } catch {
+      /* önbellek / önceki liste kalır */
+    } finally {
+      loadInFlightRef.current = false;
+      setLoading(false);
+    }
+  }, [canUseAll, me?.organization_id]);
 
   useEffect(() => {
-    load().finally(() => setLoading(false));
+    void load({ silent: Boolean(initialCached?.length) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ilk açılış + org değişimi load içinde
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const orgScoped = canUseAll ? null : me?.organization_id ?? null;
+      const key = approvalsCacheKey(canUseAll, orgScoped);
+      const age = getApprovalsCacheAgeMs(key);
+      if (age == null) return;
+      if (age < FOCUS_REFRESH_MS) return;
+      void load({ silent: true });
+    }, [canUseAll, load, me?.organization_id])
+  );
 
   useEffect(() => {
     if (detail?.kind !== 'contract') {
@@ -337,15 +489,19 @@ export default function AdminApprovalsHubScreen() {
         if (!error) setContractStaffList((data ?? []) as StaffPickRow[]);
       });
     setContractRoomsLoading(true);
-    void supabase
+    const row = detail.raw as ContractApprovalRow & { organization_id?: string };
+    let roomsQuery = supabase
       .from('rooms')
       .select('id, room_number, floor, status, price_per_night')
       .order('room_number')
-      .then(({ data, error }) => {
-        setContractRoomsLoading(false);
-        if (!error) setContractRooms((data ?? []) as ContractRoomRow[]);
-      });
-    const row = detail.raw as ContractApprovalRow;
+      .limit(120);
+    if (row.organization_id) {
+      roomsQuery = roomsQuery.eq('organization_id', row.organization_id);
+    }
+    void roomsQuery.then(({ data, error }) => {
+      setContractRoomsLoading(false);
+      if (!error) setContractRooms((data ?? []) as ContractRoomRow[]);
+    });
     if (row.room_id) {
       setContractSelectedRoomId(row.room_id);
     } else {
@@ -358,9 +514,30 @@ export default function AdminApprovalsHubScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await load({ silent: true });
     setRefreshing(false);
   };
+
+  useEffect(() => {
+    if (detail?.kind !== 'stock') {
+      setStockDetailPhotos(null);
+      return;
+    }
+    const m = detail.raw as Movement;
+    if (m.staff_image || m.photo_proof) {
+      setStockDetailPhotos({ staff_image: m.staff_image, photo_proof: m.photo_proof });
+      return;
+    }
+    setStockDetailPhotos(null);
+    void supabase
+      .from('stock_movements')
+      .select('staff_image, photo_proof')
+      .eq('id', detail.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setStockDetailPhotos(data);
+      });
+  }, [detail?.id, detail?.kind]);
 
   const expenseSummary = (e: ExpenseRow) =>
     `${fmtMoney(Number(e.amount))} · ${formatDateShort(e.expense_date)} · ${e.category?.name ?? '—'}`;
@@ -621,6 +798,20 @@ export default function AdminApprovalsHubScreen() {
     setActing(false);
   };
 
+  const visibleItems = useMemo(() => {
+    if (!canUseAll || orgFilter === 'all') return items;
+    return items.filter((i) => !i.organizationId || i.organizationId === orgFilter);
+  }, [canUseAll, items, orgFilter]);
+
+  const pendingByOrg = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const i of items) {
+      if (!i.organizationId) continue;
+      map[i.organizationId] = (map[i.organizationId] ?? 0) + 1;
+    }
+    return map;
+  }, [items]);
+
   const counts = useMemo(() => {
     const c: Record<Kind, number> = {
       staff_app: 0,
@@ -629,9 +820,23 @@ export default function AdminApprovalsHubScreen() {
       report: 0,
       contract: 0,
     };
-    for (const i of items) c[i.kind]++;
+    for (const i of visibleItems) c[i.kind]++;
     return c;
-  }, [items]);
+  }, [visibleItems]);
+
+  const totalPending = visibleItems.length;
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLocaleLowerCase('tr-TR');
+    return visibleItems.filter((it) => {
+      if (kindFilter !== 'all' && it.kind !== kindFilter) return false;
+      if (!q) return true;
+      const hay = [it.title, it.fromLine, it.whyLine, it.orgLine ?? '', ...it.extraLines]
+        .join(' ')
+        .toLocaleLowerCase('tr-TR');
+      return hay.includes(q);
+    });
+  }, [visibleItems, kindFilter, searchQuery]);
 
   const renderDetailActions = () => {
     if (!detail || !me) return null;
@@ -642,7 +847,11 @@ export default function AdminApprovalsHubScreen() {
             style={styles.primaryBtn}
             onPress={() => {
               setDetail(null);
-              router.push({ pathname: '/admin/staff/approve/[id]', params: { id: detail.id } });
+              const orgId = detail.organizationId;
+              router.push({
+                pathname: '/admin/staff/approve/[id]',
+                params: orgId ? { id: detail.id, organizationId: orgId } : { id: detail.id },
+              });
             }}
           >
             <Text style={styles.primaryBtnText}>Başvuruyu aç ve onayla</Text>
@@ -840,8 +1049,8 @@ export default function AdminApprovalsHubScreen() {
   const stockPhotos = (d: UnifiedItem) => {
     if (d.kind !== 'stock') return null;
     const m = d.raw as Movement;
-    const u1 = m.staff_image;
-    const u2 = m.photo_proof;
+    const u1 = stockDetailPhotos?.staff_image ?? m.staff_image;
+    const u2 = stockDetailPhotos?.photo_proof ?? m.photo_proof;
     if (!u1 && !u2) return null;
     return (
       <View style={styles.photoRow}>
@@ -859,67 +1068,212 @@ export default function AdminApprovalsHubScreen() {
     );
   };
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={adminTheme.colors.primary} />
-      </View>
-    );
-  }
+  const detailMeta = detail ? KIND_META[detail.kind] : null;
+  const showListSkeleton = loading && items.length === 0;
 
   return (
     <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
       >
+        {loading && items.length > 0 ? (
+          <View style={styles.syncBanner}>
+            <ActivityIndicator size="small" color={adminTheme.colors.accent} />
+            <Text style={styles.syncBannerText}>Liste güncelleniyor…</Text>
+          </View>
+        ) : null}
         <AdminOrganizationPicker
-          canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
+          canUseAll={canUseAll}
           ownOrganizationId={me?.organization_id}
+          value={orgFilter}
+          onChange={setOrgFilter}
+          pendingCounts={pendingByOrg}
         />
-        <AdminCard padded>
-          <Text style={styles.lead}>
-            Bekleyen personel başvuruları, stok hareketleri, harcamalar, paylaşım bildirimleri ve check-in bekleyen sözleşme onayları tek
-            listede. Bir satıra dokunun; kaynağı, kim ve neden bilgisini görün, uygun aksiyonu seçin.
+
+        <LinearGradient
+          colors={['#0f172a', '#134e4a', '#0f766e']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.hero}
+        >
+          <View style={styles.heroRow}>
+            <View style={styles.heroIconWrap}>
+              <Ionicons name="shield-checkmark" size={28} color="#fff" />
+            </View>
+            <View style={styles.heroTextCol}>
+              <Text style={styles.heroKicker}>Yönetim · Onay merkezi</Text>
+              <View style={styles.heroCountRow}>
+                <Text style={styles.heroCount}>{totalPending}</Text>
+                <Text style={styles.heroCountUnit}>bekleyen</Text>
+              </View>
+            </View>
+            {totalPending > 0 ? (
+              <View style={styles.heroPulse}>
+                <View style={styles.heroPulseDot} />
+                <Text style={styles.heroPulseText}>Aktif</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.heroSub}>
+            {totalPending > 0
+              ? 'Başvuru, stok, harcama, bildirim ve sözleşmeler tek akışta. Karta dokunarak onaylayın.'
+              : 'Şu an bekleyen kayıt yok. Yeni talepler burada görünecek.'}
           </Text>
-          <View style={styles.chipRow}>
-            {(['staff_app', 'stock', 'expense', 'report', 'contract'] as Kind[]).map((k) => (
-              <View key={k} style={[styles.chip, { borderColor: KIND_META[k].color }]}>
-                <Text style={[styles.chipText, { color: KIND_META[k].color }]}>
-                  {KIND_META[k].label}: {counts[k]}
-                </Text>
+        </LinearGradient>
+
+        <View style={styles.searchWrap}>
+          <Ionicons name="search-outline" size={18} color={adminTheme.colors.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="İsim, ürün, tutar veya işletme ara…"
+            placeholderTextColor={adminTheme.colors.textMuted}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={10}>
+              <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.kindStatRow}
+          style={styles.kindStatScroll}
+        >
+          <TouchableOpacity
+            style={[styles.kindStatCard, kindFilter === 'all' && styles.kindStatCardActive]}
+            onPress={() => setKindFilter('all')}
+            activeOpacity={0.85}
+          >
+            <View style={[styles.kindStatIcon, { backgroundColor: '#e2e8f0' }]}>
+              <Ionicons name="layers-outline" size={20} color={adminTheme.colors.primary} />
+            </View>
+            <Text style={styles.kindStatCount}>{totalPending}</Text>
+            <Text style={styles.kindStatLabel}>Tümü</Text>
+          </TouchableOpacity>
+          {KIND_ORDER.map((k) => {
+            const meta = KIND_META[k];
+            const active = kindFilter === k;
+            return (
+              <TouchableOpacity
+                key={k}
+                style={[styles.kindStatCard, active && styles.kindStatCardActive, active && { borderColor: meta.color }]}
+                onPress={() => setKindFilter((prev) => (prev === k ? 'all' : k))}
+                activeOpacity={0.85}
+              >
+                <LinearGradient colors={meta.grad} style={styles.kindStatIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                  <Ionicons name={meta.icon} size={18} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.kindStatCount, { color: meta.color }]}>{counts[k]}</Text>
+                <Text style={styles.kindStatLabel}>{meta.shortLabel}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.listSectionHead}>
+          <Text style={styles.listSectionTitle}>
+            {kindFilter === 'all' ? 'Bekleyen işlemler' : KIND_META[kindFilter].label}
+          </Text>
+          <Text style={styles.listSectionMeta}>
+            {filteredItems.length === visibleItems.length
+              ? `${filteredItems.length} kayıt`
+              : `${filteredItems.length} / ${visibleItems.length}`}
+          </Text>
+        </View>
+
+        {showListSkeleton ? (
+          <>
+            {[0, 1, 2].map((i) => (
+              <View key={`sk-${i}`} style={styles.skeletonCard}>
+                <View style={styles.skeletonIcon} />
+                <View style={styles.skeletonBody}>
+                  <View style={[styles.skeletonLine, { width: '40%' }]} />
+                  <View style={[styles.skeletonLine, { width: '85%', marginTop: 10 }]} />
+                  <View style={[styles.skeletonLine, { width: '65%', marginTop: 8 }]} />
+                </View>
               </View>
             ))}
+          </>
+        ) : visibleItems.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="checkmark-done-circle-outline" size={48} color="#0f766e" />
+            </View>
+            <Text style={styles.emptyTitle}>Bekleyen onay yok</Text>
+            <Text style={styles.emptySub}>Personel başvurusu, stok hareketi veya harcama geldiğinde bu listede görünür.</Text>
           </View>
-        </AdminCard>
-
-        {items.length === 0 ? (
-          <AdminCard padded>
-            <Text style={styles.empty}>Şu an onay bekleyen kayıt yok.</Text>
-          </AdminCard>
+        ) : filteredItems.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="search-outline" size={40} color={adminTheme.colors.textMuted} />
+            </View>
+            <Text style={styles.emptyTitle}>Sonuç bulunamadı</Text>
+            <Text style={styles.emptySub}>Arama veya filtre kriterlerini değiştirmeyi deneyin.</Text>
+            <TouchableOpacity
+              style={styles.emptyResetBtn}
+              onPress={() => {
+                setSearchQuery('');
+                setKindFilter('all');
+              }}
+            >
+              <Text style={styles.emptyResetBtnText}>Filtreleri temizle</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-          items.map((it) => {
+          filteredItems.map((it, idx) => {
             const meta = KIND_META[it.kind];
+            const isUrgent = Date.now() - new Date(it.created_at).getTime() > 48 * 60 * 60 * 1000;
             return (
-              <TouchableOpacity key={`${it.kind}-${it.id}`} style={styles.itemCard} onPress={() => setDetail(it)} activeOpacity={0.85}>
-                <View style={[styles.kindBar, { backgroundColor: meta.color }]} />
+              <TouchableOpacity
+                key={`${it.kind}-${it.id}`}
+                style={[styles.itemCard, idx === 0 && styles.itemCardFirst]}
+                onPress={() => setDetail(it)}
+                activeOpacity={0.88}
+              >
+                <LinearGradient colors={meta.grad} style={styles.itemIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                  <Ionicons name={meta.icon} size={22} color="#fff" />
+                </LinearGradient>
                 <View style={styles.itemBody}>
                   <View style={styles.itemHead}>
-                    <Ionicons name={meta.icon} size={20} color={meta.color} />
-                    <Text style={styles.kindLabel}>{meta.label}</Text>
-                    <Text style={styles.itemDate}>{new Date(it.created_at).toLocaleString('tr-TR')}</Text>
+                    <View style={[styles.kindPill, { backgroundColor: meta.bg }]}>
+                      <Text style={[styles.kindPillText, { color: meta.color }]}>{meta.shortLabel}</Text>
+                    </View>
+                    <Text style={styles.itemDate}>{relativeTimeTr(it.created_at)}</Text>
+                    {isUrgent ? (
+                      <View style={styles.urgentPill}>
+                        <Text style={styles.urgentPillText}>48s+</Text>
+                      </View>
+                    ) : null}
                   </View>
                   <Text style={styles.itemTitle} numberOfLines={2}>
                     {it.title}
                   </Text>
-                  <Text style={styles.itemMeta} numberOfLines={2}>
+                  {it.orgLine ? (
+                    <View style={styles.orgBadge}>
+                      <Ionicons name="business-outline" size={12} color={adminTheme.colors.accent} />
+                      <Text style={styles.orgBadgeText} numberOfLines={1}>
+                        {it.orgLine}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <Text style={styles.itemMeta} numberOfLines={1}>
                     {it.fromLine}
                   </Text>
                   <Text style={styles.itemWhy} numberOfLines={2}>
                     {it.whyLine}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color={adminTheme.colors.textMuted} style={styles.chevron} />
+                <View style={styles.itemChevronWrap}>
+                  <Ionicons name="chevron-forward" size={18} color={adminTheme.colors.textMuted} />
+                </View>
               </TouchableOpacity>
             );
           })
@@ -929,25 +1283,54 @@ export default function AdminApprovalsHubScreen() {
       <Modal visible={!!detail} animationType="slide" transparent onRequestClose={() => setDetail(null)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalSheet}>
-            {detail ? (
+            {detail && detailMeta ? (
               <>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{KIND_META[detail.kind].label}</Text>
-                  <TouchableOpacity onPress={() => setDetail(null)} hitSlop={12}>
-                    <Ionicons name="close" size={26} color={adminTheme.colors.text} />
+                <View style={styles.modalHandle} />
+                <LinearGradient colors={detailMeta.grad} style={styles.modalHero} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  <View style={styles.modalHeroIcon}>
+                    <Ionicons name={detailMeta.icon} size={24} color="#fff" />
+                  </View>
+                  <View style={styles.modalHeroText}>
+                    <Text style={styles.modalHeroKind}>{detailMeta.label}</Text>
+                    <Text style={styles.modalHeroTime}>{relativeTimeTr(detail.created_at)}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setDetail(null)} hitSlop={12}>
+                    <Ionicons name="close" size={22} color="#fff" />
                   </TouchableOpacity>
-                </View>
-                <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+                </LinearGradient>
+                <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                   <Text style={styles.modalH1}>{detail.title}</Text>
-                  <Text style={styles.modalLine}>{detail.fromLine}</Text>
-                  <Text style={styles.modalLine}>{detail.whyLine}</Text>
-                  {detail.extraLines.map((line, i) => (
-                    <Text key={i} style={styles.modalExtra}>
-                      {line}
-                    </Text>
-                  ))}
+                  {detail.orgLine ? (
+                    <View style={styles.modalOrgRow}>
+                      <Ionicons name="business-outline" size={16} color={adminTheme.colors.accent} />
+                      <Text style={styles.modalOrgText}>{detail.orgLine}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.modalInfoCard}>
+                    <View style={styles.modalInfoRow}>
+                      <Ionicons name="person-outline" size={16} color={adminTheme.colors.textMuted} />
+                      <Text style={styles.modalInfoText}>{detail.fromLine}</Text>
+                    </View>
+                    <View style={[styles.modalInfoRow, styles.modalInfoRowLast]}>
+                      <Ionicons name="information-circle-outline" size={16} color={adminTheme.colors.textMuted} />
+                      <Text style={styles.modalInfoText}>{detail.whyLine}</Text>
+                    </View>
+                  </View>
+                  {detail.extraLines.length > 0 ? (
+                    <View style={styles.modalExtras}>
+                      {detail.extraLines.map((line, i) => (
+                        <Text key={i} style={styles.modalExtra}>
+                          {line}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
                   {stockPhotos(detail)}
+                  {acting ? (
+                    <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
+                  ) : null}
                   {renderDetailActions()}
+                  <View style={{ height: 24 }} />
                 </ScrollView>
               </>
             ) : null}
@@ -960,67 +1343,307 @@ export default function AdminApprovalsHubScreen() {
   );
 }
 
+const cardShadow = (Platform.OS === 'ios' ? adminTheme.shadow.md : { elevation: 3 }) as ViewStyle;
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  lead: { fontSize: 14, color: adminTheme.colors.textSecondary, lineHeight: 20, marginBottom: 12 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderWidth: 1,
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingHint: { fontSize: 14, color: adminTheme.colors.textMuted },
+  scrollContent: { padding: 16, paddingBottom: 48 },
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 10,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  syncBannerText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  skeletonCard: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderRadius: adminTheme.radius.lg,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  skeletonIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+  },
+  skeletonBody: { flex: 1 },
+  skeletonLine: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+  },
+  hero: {
+    borderRadius: adminTheme.radius.xl,
+    padding: 18,
+    marginBottom: 14,
+    ...cardShadow,
+  },
+  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  heroIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTextCol: { flex: 1, minWidth: 0 },
+  heroKicker: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.75)', letterSpacing: 0.3 },
+  heroCountRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 2 },
+  heroCount: { fontSize: 36, fontWeight: '900', color: '#fff', letterSpacing: -1 },
+  heroCountUnit: { fontSize: 15, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
+  heroPulse: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 20,
   },
-  chipText: { fontSize: 12, fontWeight: '700' },
-  empty: { textAlign: 'center', color: adminTheme.colors.textMuted, paddingVertical: 12 },
+  heroPulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4ade80' },
+  heroPulseText: { fontSize: 11, fontWeight: '800', color: '#fff' },
+  heroSub: { fontSize: 13, color: 'rgba(255,255,255,0.82)', lineHeight: 19, marginTop: 12 },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: adminTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
+    marginBottom: 12,
+    ...adminTheme.shadow.sm,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: adminTheme.colors.text, padding: 0 },
+  kindStatScroll: { marginHorizontal: -16, marginBottom: 14 },
+  kindStatRow: { paddingHorizontal: 16, gap: 10 },
+  kindStatCard: {
+    width: 88,
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: adminTheme.radius.lg,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    ...adminTheme.shadow.sm,
+  },
+  kindStatCardActive: {
+    borderColor: adminTheme.colors.primary,
+    backgroundColor: '#f8fafc',
+  },
+  kindStatIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  kindStatIconGrad: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  kindStatCount: { fontSize: 20, fontWeight: '900', color: adminTheme.colors.text },
+  kindStatLabel: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.textMuted, marginTop: 2 },
+  listSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  listSectionTitle: { fontSize: 17, fontWeight: '800', color: adminTheme.colors.text },
+  listSectionMeta: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  emptyCard: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: adminTheme.radius.xl,
+    padding: 28,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    ...cardShadow,
+  },
+  emptyIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 6 },
+  emptySub: { fontSize: 14, color: adminTheme.colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+  emptyResetBtn: {
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: adminTheme.colors.primary,
+  },
+  emptyResetBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   itemCard: {
     flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: adminTheme.colors.surface,
     borderRadius: adminTheme.radius.lg,
     marginBottom: 10,
-    overflow: 'hidden',
+    padding: 12,
+    gap: 12,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    ...((Platform.OS === 'ios' ? adminTheme.shadow.sm : { elevation: 2 }) as ViewStyle),
+    ...cardShadow,
   },
-  kindBar: { width: 4 },
-  itemBody: { flex: 1, padding: 12, minWidth: 0 },
-  itemHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  kindLabel: { flex: 1, fontSize: 12, fontWeight: '800', color: adminTheme.colors.textMuted },
-  itemDate: { fontSize: 11, color: adminTheme.colors.textMuted },
-  itemTitle: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text },
+  itemCardFirst: {
+    borderColor: 'rgba(15,118,110,0.35)',
+  },
+  itemIconGrad: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemBody: { flex: 1, minWidth: 0 },
+  itemHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' },
+  kindPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  kindPillText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  itemDate: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
+  urgentPill: {
+    backgroundColor: adminTheme.colors.errorLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  urgentPillText: { fontSize: 9, fontWeight: '800', color: adminTheme.colors.error },
+  itemTitle: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text, lineHeight: 21 },
+  orgBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: 'rgba(180,83,9,0.1)',
+  },
+  orgBadgeText: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.accent, maxWidth: 200 },
   itemMeta: { fontSize: 13, color: adminTheme.colors.textSecondary, marginTop: 4 },
-  itemWhy: { fontSize: 13, color: adminTheme.colors.text, marginTop: 2 },
-  chevron: { alignSelf: 'center', paddingRight: 8 },
+  itemWhy: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 3, lineHeight: 17 },
+  itemChevronWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(15,23,42,0.55)',
     justifyContent: 'flex-end',
   },
   modalSheet: {
     backgroundColor: adminTheme.colors.surface,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    maxHeight: '88%',
-    paddingBottom: 28,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    maxHeight: '92%',
+    overflow: 'hidden',
   },
-  modalHeader: {
+  modalHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: adminTheme.colors.border,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  modalHero: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingVertical: 16,
+    gap: 12,
+  },
+  modalHeroIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalHeroText: { flex: 1, minWidth: 0 },
+  modalHeroKind: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  modalHeroTime: { fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalScroll: { paddingHorizontal: 16, paddingTop: 16, maxHeight: '72%' },
+  modalH1: { fontSize: 22, fontWeight: '900', color: adminTheme.colors.text, marginBottom: 10, letterSpacing: -0.3 },
+  modalOrgRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: adminTheme.colors.warningLight,
+    borderRadius: 10,
+  },
+  modalOrgText: { flex: 1, fontSize: 13, fontWeight: '700', color: adminTheme.colors.accent },
+  modalInfoCard: {
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderRadius: adminTheme.radius.lg,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  modalInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingBottom: 10,
+    marginBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: adminTheme.colors.border,
   },
-  modalTitle: { fontSize: 17, fontWeight: '800', color: adminTheme.colors.text },
-  modalScroll: { paddingHorizontal: 16, paddingTop: 12 },
-  modalH1: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 10 },
-  modalLine: { fontSize: 15, color: adminTheme.colors.text, marginBottom: 8, lineHeight: 22 },
-  modalExtra: { fontSize: 14, color: adminTheme.colors.textSecondary, marginBottom: 6 },
+  modalInfoRowLast: { borderBottomWidth: 0, marginBottom: 0, paddingBottom: 0 },
+  modalInfoText: { flex: 1, fontSize: 14, color: adminTheme.colors.text, lineHeight: 20 },
+  modalExtras: {
+    marginBottom: 12,
+    paddingLeft: 4,
+  },
+  modalExtra: { fontSize: 13, color: adminTheme.colors.textSecondary, marginBottom: 4, lineHeight: 18 },
   photoRow: { flexDirection: 'row', gap: 8, marginVertical: 12 },
   thumb: { width: 88, height: 88, borderRadius: 10 },
   rowBtns: { gap: 10, marginTop: 16 },

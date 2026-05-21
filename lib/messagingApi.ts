@@ -144,11 +144,17 @@ export async function staffListConversations(staffId: string): Promise<Conversat
   return list;
 }
 
+export type StaffGetMessagesOpts = {
+  /** Sunucuda bundan sonra oluşan mesajlar (önbellekten girişte tam listeyi yeniden çekmemek için). */
+  afterCreatedAt?: string;
+};
+
 export async function staffGetMessages(
   conversationId: string,
   limit = 50,
   beforeId?: string,
-  staffId?: string
+  staffId?: string,
+  opts?: StaffGetMessagesOpts
 ): Promise<Message[]> {
   let staffCreatedAt: string | null = null;
   if (staffId) {
@@ -168,22 +174,39 @@ export async function staffGetMessages(
   if (beforeId) {
     const { data: before } = await supabase.from('messages').select('created_at').eq('id', beforeId).single();
     if (before?.created_at) q = q.lt('created_at', (before as { created_at: string }).created_at);
+  } else if (opts?.afterCreatedAt?.trim()) {
+    q = q.gt('created_at', opts.afterCreatedAt.trim());
   }
   const { data, error } = await q;
   if (error) return [];
   return (data ?? []).reverse() as Message[];
 }
 
-export async function staffSendMessage(
+export async function resolveStaffConversationIdForSend(
   conversationId: string,
+  staffId: string
+): Promise<string> {
+  return resolveStaffConversationForSend(conversationId, staffId);
+}
+
+export async function resolveGuestConversationIdForSend(
+  appToken: string,
+  conversationId: string
+): Promise<string> {
+  return (await resolveGuestConversationForSend(appToken, conversationId)) ?? conversationId;
+}
+
+async function staffInsertMessage(
+  resolvedConversationId: string,
   staffId: string,
   staffName: string,
   staffAvatar: string | null,
   content: string,
-  messageType: 'text' | 'image' | 'file' | 'voice' = 'text',
-  mediaUrl?: string
-): Promise<{ data: Message | null; error: string | null; conversationId: string }> {
-  const resolvedConversationId = await resolveStaffConversationForSend(conversationId, staffId);
+  messageType: 'text' | 'image' | 'file' | 'voice' | 'video',
+  mediaUrl?: string,
+  mediaThumbnail?: string | null,
+  mentions?: import('@/lib/messaging').ChatMention[] | null
+): Promise<{ data: Message | null; error: string | null }> {
   const { data, error } = await supabase
     .from('messages')
     .insert({
@@ -195,15 +218,85 @@ export async function staffSendMessage(
       message_type: messageType,
       content: content || null,
       media_url: mediaUrl || null,
+      media_thumbnail: mediaThumbnail?.trim() ? mediaThumbnail.trim() : null,
+      mentions: mentions?.length ? mentions : [],
     })
     .select()
     .single();
-  if (error) return { data: null, error: error.message, conversationId: resolvedConversationId };
-  await supabase
+  if (error) return { data: null, error: error.message };
+  void supabase
     .from('conversations')
     .update({ last_message_id: data.id, last_message_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', resolvedConversationId);
-  return { data: data as Message, error: null, conversationId: resolvedConversationId };
+    .eq('id', resolvedConversationId)
+    .then(() => {})
+    .catch(() => {});
+  return { data: data as Message, error: null };
+}
+
+export async function staffSendMessage(
+  conversationId: string,
+  staffId: string,
+  staffName: string,
+  staffAvatar: string | null,
+  content: string,
+  messageType: 'text' | 'image' | 'file' | 'voice' | 'video' = 'text',
+  mediaUrl?: string,
+  mediaThumbnail?: string | null,
+  resolvedConversationId?: string,
+  mentions?: import('@/lib/messaging').ChatMention[] | null
+): Promise<{ data: Message | null; error: string | null; conversationId: string }> {
+  const convId =
+    resolvedConversationId ?? (await resolveStaffConversationForSend(conversationId, staffId));
+  const { data, error } = await staffInsertMessage(
+    convId,
+    staffId,
+    staffName,
+    staffAvatar,
+    content,
+    messageType,
+    mediaUrl,
+    mediaThumbnail,
+    mentions
+  );
+  return { data, error, conversationId: convId };
+}
+
+export async function staffListMentionParticipants(
+  conversationId: string
+): Promise<import('@/lib/chatMentions').ChatMentionParticipant[]> {
+  const { data, error } = await supabase.rpc('messaging_list_mention_participants_staff', {
+    p_conversation_id: conversationId,
+  });
+  if (error || !data) return [];
+  return (data as import('@/lib/chatMentions').ChatMentionParticipant[]).map((row) => ({
+    participant_id: row.participant_id,
+    participant_type: row.participant_type as import('@/lib/messaging').ParticipantType,
+    display_name: row.display_name,
+    avatar: row.avatar ?? null,
+  }));
+}
+
+export async function guestListMentionParticipants(
+  appToken: string,
+  conversationId: string
+): Promise<import('@/lib/chatMentions').ChatMentionParticipant[]> {
+  const { data, error } = await supabase.rpc('messaging_list_mention_participants_guest', {
+    p_app_token: appToken,
+    p_conversation_id: conversationId,
+  });
+  if (error || !data) return [];
+  return (data as import('@/lib/chatMentions').ChatMentionParticipant[]).map((row) => ({
+    participant_id: row.participant_id,
+    participant_type: row.participant_type as import('@/lib/messaging').ParticipantType,
+    display_name: row.display_name,
+    avatar: row.avatar ?? null,
+  }));
+}
+
+export async function patchChatMessageThumbnail(messageId: string, thumbnailUrl: string): Promise<void> {
+  const url = thumbnailUrl.trim();
+  if (!url) return;
+  await supabase.from('messages').update({ media_thumbnail: url }).eq('id', messageId);
 }
 
 async function resolveStaffConversationForSend(conversationId: string, staffId: string): Promise<string> {
@@ -394,7 +487,10 @@ export async function staffDeleteMessage(
 export function subscribeToMessages(
   conversationId: string,
   onMessage: (m: Message) => void,
-  options?: { onMessageDeleted?: (messageId: string) => void }
+  options?: {
+    onMessageDeleted?: (messageId: string) => void;
+    onMessageUpdated?: (m: Message) => void;
+  }
 ) {
   const channel = supabase
     .channel(`messages:${conversationId}`)
@@ -404,18 +500,25 @@ export function subscribeToMessages(
       (payload) => {
         onMessage(payload.new as Message);
       }
-    );
-  if (options?.onMessageDeleted) {
-    channel.on(
+    )
+    .on(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
       (payload) => {
-        const row = payload.new as { id: string; is_deleted?: boolean };
-        if (row?.is_deleted) options.onMessageDeleted?.(row.id);
+        const row = payload.new as Message & { is_deleted?: boolean };
+        if (row?.is_deleted) {
+          options?.onMessageDeleted?.(row.id);
+          return;
+        }
+        options?.onMessageUpdated?.(row as Message);
       }
     );
-  }
-  return channel.subscribe();
+  channel.subscribe();
+  return {
+    unsubscribe() {
+      void supabase.removeChannel(channel);
+    },
+  };
 }
 
 export type TypingPresenceState = { displayName: string; userId: string };
@@ -499,12 +602,19 @@ export async function guestGetConversationHeader(
   return { name: r?.display_name || 'Sohbet', avatar: r?.display_avatar ?? null };
 }
 
-export async function guestGetMessages(appToken: string, conversationId: string, limit = 50, beforeId?: string): Promise<Message[]> {
+export async function guestGetMessages(
+  appToken: string,
+  conversationId: string,
+  limit = 50,
+  beforeId?: string,
+  afterCreatedAt?: string | null
+): Promise<Message[]> {
   const { data, error } = await supabase.rpc('messaging_get_messages_guest', {
     p_app_token: appToken,
     p_conversation_id: conversationId,
     p_limit: limit,
     p_before_id: beforeId ?? null,
+    p_after_created_at: afterCreatedAt?.trim() ? afterCreatedAt.trim() : null,
   });
   if (error || !data) return [];
   return (Array.isArray(data) ? data : [data]) as Message[];
@@ -514,22 +624,28 @@ export async function guestSendMessage(
   appToken: string,
   conversationId: string,
   content: string,
-  messageType: 'text' | 'image' | 'file' | 'voice' = 'text',
-  mediaUrl?: string | null
+  messageType: 'text' | 'image' | 'file' | 'voice' | 'video' = 'text',
+  mediaUrl?: string | null,
+  mediaThumbnail?: string | null,
+  resolvedConversationId?: string,
+  mentions?: import('@/lib/messaging').ChatMention[] | null
 ): Promise<{ messageId: string | null; conversationId: string | null }> {
-  const resolvedConversationId = await resolveGuestConversationForSend(appToken, conversationId);
+  const convId =
+    resolvedConversationId ?? (await resolveGuestConversationForSend(appToken, conversationId)) ?? conversationId;
   const { data, error } = await supabase.rpc('messaging_send_message_guest', {
     p_app_token: appToken,
-    p_conversation_id: resolvedConversationId ?? conversationId,
+    p_conversation_id: convId,
     p_content: content,
     p_message_type: messageType,
     p_media_url: mediaUrl ?? null,
+    p_media_thumbnail: mediaThumbnail?.trim() ? mediaThumbnail.trim() : null,
+    p_mentions: mentions?.length ? mentions : [],
   });
   if (error) {
     log.warn('messagingApi', 'guestSendMessage RPC', error.message, error.code, error.details);
   }
-  if (error || data == null) return { messageId: null, conversationId: resolvedConversationId ?? conversationId };
-  return { messageId: data as string, conversationId: resolvedConversationId ?? conversationId };
+  if (error || data == null) return { messageId: null, conversationId: convId };
+  return { messageId: data as string, conversationId: convId };
 }
 
 async function resolveGuestConversationForSend(appToken: string, conversationId: string): Promise<string | null> {

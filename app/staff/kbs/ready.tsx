@@ -3,6 +3,8 @@ import { useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost } from '@/lib/kbsApi';
+import { assignKbsRoom, fetchKbsOpsRooms } from '@/lib/kbsStaffOpsEdge';
+import { kbsQueryOptions } from '@/lib/kbsReactQuery';
 import { useTranslation } from 'react-i18next';
 
 export default function ReadyToSubmitScreen() {
@@ -11,10 +13,11 @@ export default function ReadyToSubmitScreen() {
   const roomsQ = useQuery({
     queryKey: ['kbs', 'rooms'],
     queryFn: async () => {
-      const res = await apiGet<any[]>('/rooms');
+      const res = await fetchKbsOpsRooms();
       if (!res.ok) throw new Error(res.error.message);
       return res.data ?? [];
     },
+    ...kbsQueryOptions,
   });
 
   const q = useQuery({
@@ -24,6 +27,7 @@ export default function ReadyToSubmitScreen() {
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
     },
+    ...kbsQueryOptions,
   });
 
   const assignRoom = async (guestDocumentId: string) => {
@@ -38,7 +42,7 @@ export default function ReadyToSubmitScreen() {
     const actions = rooms.slice(0, 30).map((r) => ({
       text: String(r.room_number),
       onPress: async () => {
-        const res = await apiPost('/stay/assign-room', { guestDocumentId, roomId: r.id });
+        const res = await assignKbsRoom({ guestDocumentId, roomId: r.id });
         if (!res.ok) Alert.alert(t('kbsRoomAssignTitle'), res.error.message);
         else Alert.alert(t('kbsRoomAssignedTitle'), `${t('kbsRoomLabel')}: ${r.room_number}`);
       },
@@ -60,7 +64,7 @@ export default function ReadyToSubmitScreen() {
   };
 
   const roomCount = roomsQ.data?.length ?? 0;
-  const roomsLoading = roomsQ.isLoading || roomsQ.isFetching;
+  const roomsLoading = roomsQ.isPending;
 
   return (
     <View style={styles.container}>
@@ -116,7 +120,7 @@ export default function ReadyToSubmitScreen() {
           </View>
         )}
         ListEmptyComponent={
-          <Text style={styles.empty}>{q.isLoading ? t('loading') : t('kbsReadyEmpty')}</Text>
+          <Text style={styles.empty}>{q.isPending ? t('loading') : q.isError ? '' : t('kbsReadyEmpty')}</Text>
         }
       />
     </View>

@@ -54,12 +54,42 @@ export function hasBreakfastConfirmCreatePermission(staff: StaffPermissionSlice)
   return staff.app_permissions?.kahvalti_teyit_olustur === true;
 }
 
+/** Emanet / buluntu: kayıt oluşturma, liste, teslim (admin veya emanet_buluntu yetkisi). */
+export function canAccessLostFound(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const perms = staff.app_permissions ?? {};
+  return perms.emanet_buluntu === true || perms.lost_found === true;
+}
+
 /** Tutanak Sistemi: personel olusturma/listeleme, admin tam yonetim */
 export function canAccessIncidentReports(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
   const perms = staff.app_permissions ?? {};
   return perms.incident_reports === true || perms.tutanaklar === true;
+}
+
+/** Aylık personel yemek listesi oluşturma / düzenleme (mutfak vb.). */
+export function canManageStaffMealMenu(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.yemek_listesi_olustur === true;
+}
+
+/** Otel mutfağı menüsü: yemek/içecek ekleme, fiyat, görsel (oda servisi / dış mekan rehberinden ayrı). */
+export function canManageHotelKitchenMenu(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.otel_mutfak_menu === true;
+}
+
+/** Günlük mutfak onayı (yemek yapıldı / numune / muhafaza). */
+export function canSubmitMealMenuKitchenConfirm(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const p = staff.app_permissions ?? {};
+  return p.yemek_listesi_mutfak_onay === true || p.yemek_listesi_olustur === true;
 }
 
 /** Personel uygulaması: Teknik QR / Akıllı envanter modülüne giriş (QR okuma + talimatlar). */

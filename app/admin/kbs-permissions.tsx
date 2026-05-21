@@ -1,10 +1,23 @@
 import { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert, Switch, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  RefreshControl,
+  Alert,
+  Switch,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { theme } from '@/constants/theme';
 import { apiGet, apiPost } from '@/lib/kbsApi';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
+import { kbsQueryOptions } from '@/lib/kbsReactQuery';
+import { AdminButton } from '@/components/admin';
 
 type PermissionCatalogItem = { code: string; name: string; description?: string | null };
 type UserRow = {
@@ -27,7 +40,8 @@ export default function AdminKbsPermissionsScreen() {
       const res = await apiGet<PermissionCatalogItem[]>('/admin/permission-catalog');
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
-    }
+    },
+    ...kbsQueryOptions,
   });
 
   const usersQ = useQuery({
@@ -36,7 +50,8 @@ export default function AdminKbsPermissionsScreen() {
       const res = await apiGet<UserRow[]>('/admin/users-with-permissions');
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
-    }
+    },
+    ...kbsQueryOptions,
   });
 
   const codes = useMemo(() => (catalogQ.data ?? []).map((p) => p.code), [catalogQ.data]);
@@ -76,7 +91,12 @@ export default function AdminKbsPermissionsScreen() {
     }
   };
 
-  const refreshing = catalogQ.isFetching || usersQ.isFetching;
+  const initialLoading = catalogQ.isPending || usersQ.isPending;
+  const loadError =
+    catalogQ.isError || usersQ.isError
+      ? (catalogQ.error as Error)?.message ?? (usersQ.error as Error)?.message ?? t('requestFailed')
+      : null;
+  const refreshing = (catalogQ.isFetching || usersQ.isFetching) && !initialLoading;
   const onRefresh = async () => {
     await Promise.all([catalogQ.refetch(), usersQ.refetch()]);
   };
@@ -86,6 +106,25 @@ export default function AdminKbsPermissionsScreen() {
       <Text style={styles.title}>{t('adminKbsPermissionsTitle')}</Text>
       <Text style={styles.p}>{t('adminKbsPermissionsIntro')}</Text>
       {!kbsUi ? <Text style={styles.banner}>{t('adminKbsStaffTabDisabledBanner')}</Text> : null}
+
+      {initialLoading ? (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator color={theme.colors.primary} />
+          <Text style={styles.loadingText}>{t('adminUsersLoading')}</Text>
+        </View>
+      ) : null}
+
+      {loadError ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{loadError}</Text>
+          <AdminButton
+            title={t('feedRetryButton')}
+            onPress={() => void onRefresh()}
+            variant="outline"
+            size="sm"
+          />
+        </View>
+      ) : null}
 
       <FlatList
         data={usersQ.data ?? []}
@@ -139,7 +178,9 @@ export default function AdminKbsPermissionsScreen() {
           </View>
         )}
         ListEmptyComponent={
-          <Text style={styles.empty}>{usersQ.isLoading ? t('adminUsersLoading') : t('adminUsersEmpty')}</Text>
+          !initialLoading && !loadError ? (
+            <Text style={styles.empty}>{t('adminUsersEmpty')}</Text>
+          ) : null
         }
       />
     </View>
@@ -161,6 +202,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   empty: { color: theme.colors.textSecondary, marginTop: 12 },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  loadingText: { color: theme.colors.textSecondary, fontSize: 14 },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  errorText: { color: '#991b1b', fontSize: 13, lineHeight: 18 },
   card: { backgroundColor: theme.colors.surface, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.borderLight, padding: 12, marginBottom: 10, gap: 10 },
   userRow: { gap: 8 },
   userTitle: { fontWeight: '900', color: theme.colors.text },

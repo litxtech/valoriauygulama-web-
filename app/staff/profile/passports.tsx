@@ -12,7 +12,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
-import { apiGet } from '@/lib/kbsApi';
+import { loadMrzRecentDocuments } from '@/lib/loadMrzRecentDocuments';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import {
@@ -63,23 +63,13 @@ export default function StaffPassportsMrzScreen() {
     else setLoading(true);
     setErr(null);
     try {
-      const res = await apiGet<DocRow[]>('/documents/mrz-recent');
+      const res = await loadMrzRecentDocuments();
       if (!res.ok) {
-        const raw = (res.error.message || '').toLowerCase();
-        const unreachable =
-          raw.includes('connection refused') ||
-          raw.includes('tcp connect') ||
-          raw.includes('econnrefused') ||
-          raw.includes('network request failed') ||
-          raw.includes('failed to connect') ||
-          raw.includes('errno 111');
-        setErr(
-          unreachable ? t('staffPassportsGatewayDown') : res.error.message || t('unknownError')
-        );
+        setErr(res.code === 'NO_APP_USER' ? t('staffPassportsNoAppUser') : res.message || t('unknownError'));
         setRows([]);
         return;
       }
-      setRows(Array.isArray(res.data) ? res.data : []);
+      setRows(res.data);
     } catch (e) {
       const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
       const unreachable =

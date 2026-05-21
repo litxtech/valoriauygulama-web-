@@ -1,65 +1,72 @@
 /**
- * Profil (misafir + personel) “Profilim” bölümü — ortak renk ve ölçüler.
+ * Profil (misafir + personel) — ortak renk, gölge ve ölçüler.
+ * Yumuşak kontrast, göz yormayan yüzeyler.
  */
 export const profileScreenTheme = {
-  /** Ana gradient (marka) */
-  gradient: { start: '#667EEA', end: '#F093FB' },
-  bg: '#F9FAFB',
+  /** Ana gradient (marka) — düşük doygunluk */
+  gradient: { start: '#6366F1', end: '#8B5CF6' },
+  bg: '#F1F5F9',
   card: '#FFFFFF',
-  text: '#111827',
-  subtext: '#6B7280',
-  /** Kart ikonları (sırayla dönen veya atama için) */
+  cardMuted: '#F8FAFC',
+  text: '#1E293B',
+  subtext: '#64748B',
+  border: 'rgba(15, 23, 42, 0.07)',
+  borderStrong: 'rgba(15, 23, 42, 0.11)',
+  /** Kart ikonları */
   accent: {
-    blue: '#3B82F6',
-    green: '#10B981',
-    orange: '#F59E0B',
-    purple: '#8B5CF6',
-    red: '#EF4444',
+    blue: '#4F46E5',
+    green: '#059669',
+    orange: '#D97706',
+    purple: '#7C3AED',
+    red: '#DC2626',
   },
-  /** Üst renk alanı (hero) */
   hero: {
     height: 180,
     bottomRadius: 24,
   },
-  /** “Floating” avatar */
   avatar: {
     size: 88,
     border: 4,
   },
-  iconBg: 'rgba(102, 126, 234, 0.1)',
-  /** İstatistik kartı gölge (React Native) */
+  iconBg: 'rgba(99, 102, 241, 0.09)',
+  /** Ortak kart kabuğu */
+  cardShell: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.07)',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 16,
+    elevation: 2,
+  },
   statShadow: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    elevation: 4,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.05,
+    shadowRadius: 18,
+    elevation: 3,
   },
-  /** Avatar hafif gölge (bonus) */
   avatarShadow: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
     shadowRadius: 20,
-    elevation: 10,
+    elevation: 8,
   },
-  /**
-   * Kapak foto – çerçeve (Profilim + ziyaret). Tam genişlik; üst sıfıra; yuvarlama sadece altta.
-   */
   coverFrame: {
-    /** Yan boşluk: 0 = kapak ekran genişliğine kadar, gri şerit kalkar */
     inset: 0,
-    /** Alt köşe; üst 0 (üstte komşu / ekran hizası) */
     radiusBottom: 20,
-    borderW: 1.5,
-    border: 'rgba(15, 23, 42, 0.12)',
+    borderW: 1,
+    border: 'rgba(15, 23, 42, 0.08)',
     marginTop: 0,
   },
   coverFrameShadow: {
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.14,
-    shadowRadius: 30,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 8,
   },
 } as const;

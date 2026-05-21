@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, AppState, Modal, Pressable, Platform, ScrollView } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
+import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, type Href } from 'expo-router';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,36 +9,39 @@ import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar } from '@/constants/tabBarTheme';
+import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { AppTabBarCenterMessageButton } from '@/components/AppTabBarCenterMessageButton';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
+import { useStaffBoardStore } from '@/stores/staffBoardStore';
 import { useAdminWarningStore } from '@/stores/adminWarningStore';
+import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintStore';
+import { StaffBoardHeaderEye } from '@/components/header/StaffHeaderActions';
+import {
+  StaffFeedHeaderLeft,
+  StaffFeedHeaderRight,
+  feedHeaderSideMinWidth,
+} from '@/components/header/StaffFeedHeaderControls';
+import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
+import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
+import { buildStaffHamburgerMenuLayout, type StaffQuickSlotSignals } from '@/lib/staffHamburgerMenu';
+import { quickAccessBadgeForId } from '@/lib/staffHamburgerQuickSlot';
+import { staffRoleLabel } from '@/lib/staffAssignments';
+import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
+import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
-import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
-import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
-import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
 
 const IG_HEADER_FG = pds.text;
-const IG_HEADER_BORDER = pds.borderLight;
 
 function TabBarScaledIcon({ focused, children }: { focused: boolean; children: ReactNode }) {
   return <View style={{ transform: [{ scale: focused ? 1.1 : 1 }] }}>{children}</View>;
-}
-
-function CuteHeaderTitle({ text }: { text: string }) {
-  return (
-    <LinearGradient colors={['#6366f1', '#22c55e']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cuteHeaderChip}>
-      <Ionicons name="sparkles-outline" size={14} color="#fff" />
-      <Text style={styles.cuteHeaderChipText} numberOfLines={1}>
-        {text}
-      </Text>
-    </LinearGradient>
-  );
 }
 
 function StaffProfileTabIcon({ color: _c, focused }: { color: string; focused: boolean }) {
@@ -72,52 +76,7 @@ function StaffProfileBackToHome() {
 }
 
 const HEADER_CTRL = 34;
-/** iOS: sol + ve sağ ikon satırı; 40px buton 34px kaba sığmayınca dikey taşma oluyordu */
-const HEADER_ROW_H = 44;
 
-function NotificationBellHeaderButton() {
-  const router = useRouter();
-  const unreadCount = useStaffNotificationStore((s) => s.unreadCount);
-  return (
-    <TouchableOpacity
-      onPress={() => router.push('/staff/notifications')}
-      style={styles.headerNotifyWrap}
-      activeOpacity={0.8}
-      hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-    >
-      <View>
-        <Ionicons name="notifications-outline" size={24} color={IG_HEADER_FG} />
-        {unreadCount > 0 ? (
-          <View
-            style={{
-              position: 'absolute',
-              top: -2,
-              right: -2,
-              minWidth: 16,
-              height: 16,
-              borderRadius: 8,
-              backgroundColor: pds.blue,
-              justifyContent: 'center',
-              alignItems: 'center',
-              paddingHorizontal: 4,
-            }}
-          >
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-type StaffMenuItem = {
-  label: string;
-  href: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  accent: string;
-};
 
 function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['staff']): boolean {
   if (!staff) return false;
@@ -134,114 +93,241 @@ function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['sta
 
 
 export default function StaffTabsLayout() {
-  const { t, i18n } = useTranslation();
-  const tabBarHeight = 58 + 8;
-  const tabBarPaddingBottom = 8;
+  const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = getFloatingTabBarTotalHeight(insets);
+  const tabBarInnerHeight = getFloatingTabBarInnerHeight();
+  const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
+  const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
+  const refreshBoard = useStaffBoardStore((s) => s.refresh);
+  const loadBoardList = useStaffBoardStore((s) => s.loadList);
   const unreadMessagesCount = useStaffUnreadMessagesStore((s) => s.unreadCount);
   const refreshUnreadMessages = useStaffUnreadMessagesStore((s) => s.refreshUnread);
   const adminWarningCount = useAdminWarningStore((s) => s.count);
   const refreshAdminWarning = useAdminWarningStore((s) => s.refresh);
+  const newAssignMenuLabel = useStaffNewAssignmentHintStore((s) => s.showHamburgerLabel);
+  const newAssignCount = useStaffNewAssignmentHintStore((s) => s.pendingCount);
+  const refreshNewAssignHint = useStaffNewAssignmentHintStore((s) => s.refresh);
+  const markNewAssignMenuOpened = useStaffNewAssignmentHintStore((s) => s.markHamburgerMenuOpened);
+  const bumpNewAssignFromRealtime = useStaffNewAssignmentHintStore((s) => s.bumpFromRealtime);
+  const boardHasUnread = useStaffBoardStore((s) => s.hasUnread);
+  const boardUnreadCount = useStaffBoardStore((s) => s.unreadCount);
   const router = useRouter();
   const [menuVisible, setMenuVisible] = useState(false);
+  /** İlk açılışa kadar ağır menü ağacını mount etme (Android başlangıç jank’i). */
+  const [menuSheetMounted, setMenuSheetMounted] = useState(false);
+  const [menuSessionTasksBadge, setMenuSessionTasksBadge] = useState(0);
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
   const canKbsMrz = canStaffUseMrzScan(staff);
   const showHeaderFabMenu = canCreateFeed || canKbsMrz;
+
   useEffect(() => {
     if (!staff?.id) return;
+    const staffId = staff.id;
+    const isAdmin = staff.role === 'admin';
+    // Android: rozet API’lerini seri başlat — aynı anda 4–5 istek UI’ı kilitliyordu
+    if (Platform.OS === 'android') {
+      refreshNotifications();
+      const t1 = setTimeout(() => refreshUnreadMessages(staffId), 150);
+      const t2 = setTimeout(() => void loadBoardList(staffId), 300);
+      const t3 = setTimeout(() => {
+        if (isAdmin) refreshAdminWarning(staffId);
+        void refreshNewAssignHint(staffId);
+      }, 450);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
     refreshNotifications();
-    refreshUnreadMessages(staff.id);
-    if (staff.role === 'admin') refreshAdminWarning(staff.id);
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, refreshAdminWarning]);
+    refreshUnreadMessages(staffId);
+    void loadBoardList(staffId);
+    if (isAdmin) refreshAdminWarning(staffId);
+    void refreshNewAssignHint(staffId);
+  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
 
-  const langCode = (i18n.language || '').toLowerCase();
-  const isArabic = langCode.startsWith('ar');
-  const isTurkish = langCode.startsWith('tr');
-  const attendanceLabel = isArabic ? 'متابعة الدوام' : (isTurkish ? 'Mesai Takibi' : 'Attendance');
-  const missingItemsLabel = t('screenMissingItems');
-  const cleaningLabel = isArabic ? 'التنظيف' : (isTurkish ? 'Temizlik' : 'Cleaning');
+  useEffect(() => {
+    if (!staff?.id) return;
+    const staffId = staff.id;
+    const channel = supabase
+      .channel(`staff_assign_live_${staffId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'staff_assignments',
+          filter: `assigned_staff_id=eq.${staffId}`,
+        },
+        () => {
+          bumpNewAssignFromRealtime();
+          void refreshNewAssignHint(staffId);
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [staff?.id, bumpNewAssignFromRealtime, refreshNewAssignHint]);
 
-  const menuItems: StaffMenuItem[] = [
-    { label: t('staffHome'), href: '/staff', icon: 'home-outline', accent: '#2563eb' },
-    { label: t('mapTab'), href: '/staff/map', icon: 'map-outline', accent: '#0d9488' },
-    { label: t('tasks'), href: '/staff/tasks', icon: 'checkbox-outline', accent: '#7c3aed' },
-    { label: attendanceLabel, href: '/staff/attendance', icon: 'time-outline', accent: '#0369a1' },
-    { label: missingItemsLabel, href: '/staff/missing-items', icon: 'alert-circle-outline', accent: '#dc2626' },
-    { label: 'Yemek listesi', href: '/staff/meal-menu', icon: 'fast-food-outline', accent: '#ea580c' },
-    ...(staff?.role === 'admin'
-      ? []
-      : [{ label: t('screenEmergency'), href: '/staff/emergency', icon: 'warning-outline', accent: '#ea580c' }]),
-    { label: t('messages'), href: '/staff/messages', icon: 'chatbubbles-outline', accent: '#2563eb' },
-    ...(staff?.role === 'admin' || staff?.app_permissions?.yarin_oda_temizlik_listesi
-      ? [{ label: cleaningLabel, href: '/staff/cleaning-plan', icon: 'checkbox-outline' as const, accent: '#0f766e' }]
-      : []),
-    { label: t('adminGuests'), href: '/staff/guests', icon: 'people-outline', accent: '#0ea5e9' },
-    ...(staff?.role === 'admin'
-      ? []
-      : [
-          { label: t('transferTourNavTitle'), href: '/staff/transfer-tour', icon: 'car-outline', accent: '#0f766e' },
-          { label: t('diningVenuesNavTitle'), href: '/staff/dining-venues', icon: 'restaurant-outline', accent: '#b45309' },
-        ]),
-    { label: t('stockTab'), href: '/staff/stock', icon: 'cube-outline', accent: '#16a34a' },
-    { label: t('myProfile'), href: '/staff/profile', icon: 'person-circle-outline', accent: '#6366f1' },
-  ];
+  useEffect(() => {
+    if (!staff?.id) return;
+    const channel = supabase
+      .channel(`staff_board_live_${staff.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'announcements' },
+        () => {
+          void loadBoardList(staff.id);
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [staff?.id, loadBoardList]);
 
-  if (isKbsUiEnabled() && (staff?.role === 'admin' || staff?.kbs_access_enabled !== false)) {
-    menuItems.push({ label: t('kbsNavOperation'), href: '/staff/kbs', icon: 'scan-outline', accent: '#0f766e' });
-  }
-  if (staff && hasTechnicalAssetsStaffAccess(staff)) {
-    menuItems.push({
-      label: 'Teknik QR Envanter',
-      href: '/staff/technical-assets',
-      icon: 'layers-outline',
-      accent: '#b8860b',
-    });
-  }
-  if (staff?.role === 'admin') {
-    menuItems.push({ label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: '#7c3aed' });
-  }
+  const menuQuickSignals = useMemo<StaffQuickSlotSignals>(
+    () => ({
+      newAssignmentCount: newAssignCount,
+      unreadMessages: unreadMessagesCount,
+      boardHasUnread,
+      boardUnreadCount,
+      adminWarningCount: adminWarningCount,
+    }),
+    [newAssignCount, unreadMessagesCount, boardHasUnread, boardUnreadCount, adminWarningCount]
+  );
+
+  const menuLayout = useMemo(
+    () =>
+      buildStaffHamburgerMenuLayout(
+        t,
+        staff
+          ? {
+              role: staff.role,
+              app_permissions: staff.app_permissions,
+              kbs_access_enabled: staff.kbs_access_enabled,
+              department: staff.department,
+            }
+          : null,
+        menuQuickSignals
+      ),
+    [
+      t,
+      staff?.role,
+      staff?.app_permissions,
+      staff?.kbs_access_enabled,
+      staff?.department,
+      menuQuickSignals,
+    ]
+  );
 
   useEffect(() => {
     if (!staff?.id) return;
     const interval = setInterval(() => {
       refreshNotifications();
       refreshUnreadMessages(staff.id);
+      void loadBoardList(staff.id);
       if (staff.role === 'admin') refreshAdminWarning(staff.id);
+      void refreshNewAssignHint(staff.id);
     }, 180000);
     return () => clearInterval(interval);
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, refreshAdminWarning]);
+  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
 
-  // Android: uygulama ön plana gelince tab rozetleri hemen güncellensin (ilgili sekmeye girmeden)
+  // Android: ön plana gelince tab rozetleri güncellensin (debounce — aynı anda 4 ağ isteği UI’ı kilitlemesin)
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || !staff?.id) return;
+    if (!staff?.id) return;
+    const staffId = staff.id;
+    const isAdmin = staff.role === 'admin';
+    return subscribeAppForegroundDebounced(() => {
       refreshNotifications();
-      refreshUnreadMessages(staff.id);
-      if (staff.role === 'admin') refreshAdminWarning(staff.id);
+      refreshUnreadMessages(staffId);
+      void loadBoardList(staffId);
+      if (isAdmin) refreshAdminWarning(staffId);
+      void refreshNewAssignHint(staffId);
     });
-    return () => sub.remove();
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, refreshAdminWarning]);
+  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
+
+  const shareFabLabel =
+    canCreateFeed && canKbsMrz
+      ? t('staffFabCreateAll')
+      : canCreateFeed
+        ? t('staffFabCreatePostOrStory')
+        : t('staffFabCreateMrzOnly');
+
+  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu, canKbsMrz);
+
+  const closeMenu = () => {
+    setMenuVisible(false);
+    setMenuSessionTasksBadge(0);
+  };
+
+  const handleMenuPress = () => {
+    setMenuSheetMounted(true);
+    setMenuVisible((wasOpen) => {
+      const opening = !wasOpen;
+      if (opening) {
+        if (newAssignCount > 0) setMenuSessionTasksBadge(newAssignCount);
+        const staffId = staff?.id;
+        if (staffId) {
+          setTimeout(() => {
+            void markNewAssignMenuOpened(staffId);
+          }, 0);
+        }
+      } else {
+        setMenuSessionTasksBadge(0);
+      }
+      return opening;
+    });
+  };
+
+  const renderFeedHeaderLeft = () => (
+    <StaffFeedHeaderLeft
+      menuOpen={menuVisible}
+      onMenuPress={handleMenuPress}
+      menuHighlightLabel={newAssignMenuLabel ? t('newBtn') : null}
+      showShare={showHeaderFabMenu}
+      onSharePress={() => setFabVisible(true)}
+      shareAccessibilityLabel={shareFabLabel}
+    />
+  );
+
+  const renderFeedHeaderRight = () => (
+    <StaffFeedHeaderRight
+      showMrz={canKbsMrz}
+      onMrzPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)}
+    />
+  );
+
+  const isStaffFeedTab = (routeName: string) => routeName === 'index';
 
   return (
     <>
+    <StaffBoardAnnouncementToast />
     <Tabs
       tabBar={(props) => (
         <FloatingIslandTabBar {...props} surfaceColor={pds.cardBg} borderColor={pds.borderLight} />
       )}
       screenListeners={({ route }) => ({
         tabPress: () => {
-          if (route.name !== 'admin') {
+          if (route.name === 'admin') {
+            clearAdminAutoOpenSuppress();
+          } else {
             signalStaffExitedAdminPanelFromRoot();
           }
         },
       })}
-      screenOptions={{
-        /** Varsayılan lazy: true ilk sekme tıklanınca mount + yükleme flicker’ı; hepsini erken mount et */
-        lazy: false,
-        /** Sekme değişince feed’in unmount olmaması — avatar/liste yeniden “boş→dolu” flicker’ını azaltır */
-        detachInactiveScreens: false,
+      screenOptions={({ route }) => {
+        const feedTab = isStaffFeedTab(route.name);
+        return {
+        /** iOS: tüm sekmeler erken mount (flicker önleme). Android: lazy — aynı anda feed+stok+mesaj mount etmesin. */
+        lazy: Platform.OS === 'android',
+        /** Android: ziyaret edilmeyen sekmeyi bellekten ayır. iOS: feed flicker önleme için tut. */
+        detachInactiveScreens: Platform.OS === 'android',
         tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: pds.indigo,
         tabBarInactiveTintColor: pds.subtext,
@@ -249,8 +335,9 @@ export default function StaffTabsLayout() {
           backgroundColor: 'transparent',
           borderTopWidth: 0,
           height: tabBarHeight,
-          paddingTop: 8,
+          paddingTop: tabBarPaddingTop,
           paddingBottom: tabBarPaddingBottom,
+          minHeight: tabBarInnerHeight,
           elevation: 0,
           shadowOpacity: 0,
         },
@@ -279,96 +366,33 @@ export default function StaffTabsLayout() {
         },
         headerTransparent: false,
         headerShadowVisible: false,
-        headerTitleAlign: 'center',
+        headerTitleAlign: 'center' as const,
         headerTintColor: IG_HEADER_FG,
         headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarColor: 'rgba(255,255,255,0.96)', statusBarStyle: 'dark' } : null),
-        headerLeftContainerStyle: { paddingLeft: 2, minWidth: HEADER_CTRL * 2 + 8 },
-        headerRightContainerStyle: { paddingRight: 2, minWidth: HEADER_CTRL * 2 + 8 },
-        headerRight: () => (
-          <View style={styles.headerActionsRow}>
-            {canKbsMrz ? (
-              <TouchableOpacity
-                onPress={() => router.push('/staff/mrz-scan' as never)}
-                style={styles.headerMrzIconBtn}
-                activeOpacity={0.82}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                accessibilityLabel={t('kbsNavScanSerial')}
-              >
-                <Ionicons name="scan-outline" size={21} color={IG_HEADER_FG} />
-              </TouchableOpacity>
-            ) : null}
-            <NotificationBellHeaderButton />
-            <TouchableOpacity
-              onPress={() => setMenuVisible(true)}
-              style={styles.headerIconBtn}
-              activeOpacity={0.7}
-              hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
-              accessibilityLabel={t('more')}
-            >
-              <Ionicons name="menu-outline" size={26} color={IG_HEADER_FG} />
-            </TouchableOpacity>
-          </View>
-        ),
-        headerLeft: () =>
-          showHeaderFabMenu ? (
-            <View style={styles.headerLeftRow}>
-              <TouchableOpacity
-                onPress={() => setFabVisible(true)}
-                style={styles.headerCtaAdd}
-                activeOpacity={0.88}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel={
-                  canCreateFeed && canKbsMrz
-                    ? t('staffFabCreateAll')
-                    : canCreateFeed
-                      ? t('staffFabCreatePostOrStory')
-                      : t('staffFabCreateMrzOnly')
-                }
-              >
-                <LinearGradient
-                  colors={pds.gradientCta}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.headerCtaAddGrad}
-                >
-                  <Ionicons name="add" size={24} color="#fff" />
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          ) : null,
+        ...(Platform.OS === 'android' ? { statusBarColor: 'rgba(255,255,255,0.96)', statusBarStyle: 'dark' as const } : null),
+        headerLeftContainerStyle: feedTab
+          ? { paddingLeft: 2, minWidth: feedHeaderSideW }
+          : { paddingLeft: 0, minWidth: 0 },
+        headerRightContainerStyle: feedTab
+          ? { paddingRight: 4, backgroundColor: 'transparent', minWidth: feedHeaderSideW }
+          : { paddingRight: 0, minWidth: 0 },
+        headerRight: feedTab ? renderFeedHeaderRight : () => null,
+        headerLeft: feedTab ? renderFeedHeaderLeft : () => null,
+      };
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: '',
-          headerTitle: () => <CuteHeaderTitle text={t('staffTab')} />,
-          headerRight: () => (
-            <View style={styles.headerActionsRow}>
-              {canKbsMrz ? (
-                <TouchableOpacity
-                  onPress={() => router.push('/staff/mrz-scan' as never)}
-                  style={styles.headerMrzIconBtn}
-                  activeOpacity={0.82}
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  accessibilityLabel={t('kbsNavScanSerial')}
-                >
-                  <Ionicons name="scan-outline" size={21} color={IG_HEADER_FG} />
-                </TouchableOpacity>
-              ) : null}
-              <NotificationBellHeaderButton />
-              <TouchableOpacity
-                onPress={() => setMenuVisible(true)}
-                style={styles.headerIconBtn}
-                activeOpacity={0.7}
-                hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
-                accessibilityLabel={t('more')}
-              >
-                <Ionicons name="menu-outline" size={26} color={IG_HEADER_FG} />
-              </TouchableOpacity>
-            </View>
-          ),
+          headerTitle: () => <StaffBoardHeaderEye />,
+          headerTitleAlign: 'center',
+          headerTitleContainerStyle: {
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
+          },
           tabBarActiveTintColor: pds.indigo,
           tabBarLabel: t('staffTab'),
           tabBarIcon: ({ focused }) => (
@@ -425,7 +449,10 @@ export default function StaffTabsLayout() {
           headerTitle: t('teamChat'),
           tabBarActiveTintColor: pds.indigo,
           tabBarShowLabel: false,
-          tabBarLabel: t('messages'),
+          tabBarItemStyle: {
+            justifyContent: 'center',
+            alignItems: 'center',
+          },
           tabBarButton: (props) => (
             <AppTabBarCenterMessageButton
               {...props}
@@ -433,10 +460,7 @@ export default function StaffTabsLayout() {
               accessibilityLabel={t('messages')}
             />
           ),
-          tabBarItemStyle: {
-            paddingHorizontal: 2,
-          },
-          tabBarIcon: () => <View style={{ width: 1, height: 1, opacity: 0 }} />,
+          tabBarIcon: () => null,
         }}
       />
       <Tabs.Screen
@@ -564,122 +588,53 @@ export default function StaffTabsLayout() {
         }}
       />
     </Tabs>
-    <Modal
-      visible={menuVisible}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setMenuVisible(false)}
-    >
-      <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
-        <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
-          <LinearGradient colors={['#0f172a', '#1d4ed8']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.menuHero}>
-            <Text style={styles.menuHeroTitle}>{t('more')}</Text>
-            <Text style={styles.menuHeroSub}>
-              {isArabic ? 'الوصول إلى كل الشاشات بلمسة واحدة' : 'One-tap access to all screens'}
-            </Text>
-          </LinearGradient>
-          <ScrollView style={styles.menuScroll} contentContainerStyle={styles.menuScrollContent} showsVerticalScrollIndicator={false}>
-            {menuItems.map((item, idx) => (
-              <TouchableOpacity
-                key={item.href}
-                style={[styles.menuItemCard, idx === menuItems.length - 1 && styles.menuItemLast]}
-                activeOpacity={0.78}
-                onPress={() => {
-                  setMenuVisible(false);
-                  router.push(item.href as never);
-                }}
-              >
-                <View style={[styles.menuIconBadge, { backgroundColor: `${item.accent}22`, borderColor: `${item.accent}50` }]}>
-                  <Ionicons name={item.icon} size={20} color={item.accent} />
-                </View>
-                <Text style={styles.menuItemText}>{item.label}</Text>
-                <Ionicons name="chevron-forward" size={18} color="rgba(15,23,42,0.35)" />
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
-    <Modal
+    {menuSheetMounted ? (
+      <StaffQuickMenuSheet
+        visible={menuVisible}
+        onClose={closeMenu}
+        closeLabel={t('close')}
+        identity={
+          staff
+            ? {
+                fullName: staff.full_name,
+                profileImage: staff.profile_image ?? null,
+                roleLabel: staffRoleLabel(staff.role),
+                department: staff.department,
+                organizationName: staff.organization?.name ?? null,
+              }
+            : null
+        }
+        onProfilePress={() => {
+          closeMenu();
+          router.push('/staff/profile' as Href);
+        }}
+        layout={menuLayout}
+        menuQuickSignals={menuQuickSignals}
+        menuSessionTasksBadge={menuSessionTasksBadge}
+        onSelect={(href) => {
+          closeMenu();
+          router.push(href as never);
+        }}
+      />
+    ) : null}
+    <StaffFeedShareSheet
       visible={fabVisible}
-      transparent
-      animationType="slide"
-      onRequestClose={() => setFabVisible(false)}
-    >
-      <Pressable style={styles.menuOverlay} onPress={() => setFabVisible(false)}>
-        <Pressable style={styles.shareSheet} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.shareTitle}>
-            {canCreateFeed && canKbsMrz
-              ? t('staffFabShareAndKbs')
-              : canKbsMrz && !canCreateFeed
-                ? t('kbsNavOperation')
-                : t('share')}
-          </Text>
-          {canCreateFeed ? (
-            <>
-              <TouchableOpacity
-                style={styles.shareCard}
-                activeOpacity={0.9}
-                onPress={() => {
-                  setFabVisible(false);
-                  router.push('/staff/feed/new' as never);
-                }}
-              >
-                <LinearGradient colors={pds.gradientCta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.shareIconWrapGrad}>
-                  <Ionicons name="images-outline" size={20} color="#fff" />
-                </LinearGradient>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.shareCardTitle}>{t('post')}</Text>
-                  <Text style={styles.shareCardSub}>{t('staffFabPostSub')}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.shareCard, !canKbsMrz && styles.shareCardLast]}
-                activeOpacity={0.9}
-                onPress={() => {
-                  setFabVisible(false);
-                  router.push('/staff/feed/story-new' as never);
-                }}
-              >
-                <LinearGradient colors={pds.gradientPremium} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.shareIconWrapGrad}>
-                  <Ionicons name="sparkles-outline" size={20} color="#fff" />
-                </LinearGradient>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.shareCardTitle}>{t('story')}</Text>
-                  <Text style={styles.shareCardSub}>{t('staffFabStorySub')}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-              </TouchableOpacity>
-            </>
-          ) : null}
-          {canKbsMrz ? (
-            <TouchableOpacity
-              style={[styles.shareCard, styles.shareCardLast]}
-              activeOpacity={0.9}
-              onPress={() => {
-                setFabVisible(false);
-                router.push('/staff/mrz-scan' as never);
-              }}
-            >
-              <LinearGradient
-                colors={['#0f766e', '#0369a1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.shareIconWrapGrad}
-              >
-                <Ionicons name="scan-outline" size={20} color="#fff" />
-              </LinearGradient>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.shareCardTitle}>{t('staffPassportsTitle')}</Text>
-                <Text style={styles.shareCardSub}>{t('staffFabMrzSub')}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-            </TouchableOpacity>
-          ) : null}
-        </Pressable>
-      </Pressable>
-    </Modal>
+      onClose={() => setFabVisible(false)}
+      canCreateFeed={canCreateFeed}
+      canKbsMrz={canKbsMrz}
+      onPost={() => {
+        setFabVisible(false);
+        router.push('/staff/feed/new' as never);
+      }}
+      onStory={() => {
+        setFabVisible(false);
+        router.push('/staff/feed/story-new' as never);
+      }}
+      onMrz={() => {
+        setFabVisible(false);
+        router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never);
+      }}
+    />
     </>
   );
 }
@@ -705,171 +660,10 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  headerLeftRow: {
-    marginLeft: 4,
-    height: HEADER_ROW_H,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    transform: [{ translateY: -5 }],
-  },
-  headerMrzIconBtn: {
-    width: HEADER_CTRL,
-    height: HEADER_CTRL,
-    marginRight: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: IG_HEADER_BORDER,
-    backgroundColor: '#fff',
-  },
-  headerCtaAdd: {
-    minWidth: HEADER_CTRL,
-    minHeight: HEADER_ROW_H,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerCtaAddGrad: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: HEADER_ROW_H,
-    marginRight: 2,
-  },
-  headerNotifyWrap: {
-    width: HEADER_CTRL,
-    height: HEADER_CTRL,
-    marginRight: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(2,6,23,0.55)',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 20,
-  },
-  menuSheet: {
-    width: '100%',
-    maxHeight: '82%',
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: IG_HEADER_BORDER,
-    overflow: 'hidden',
-    ...theme.shadows.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 8,
-    paddingTop: 0,
-    paddingBottom: 0,
-  },
-  menuHero: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 13,
-  },
-  menuHeroTitle: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  menuHeroSub: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: '600',
-  },
-  menuScroll: { maxHeight: '100%' },
-  menuScrollContent: { padding: 10, paddingBottom: 12 },
-  menuItemCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    marginBottom: 8,
-    borderRadius: 13,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  menuIconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  menuItemLast: {
-    marginBottom: 0,
-  },
-  menuItemText: {
-    flex: 1,
-    color: IG_HEADER_FG,
-    fontSize: 15,
-    fontWeight: '700',
-  },
   headerIconBtn: {
     minWidth: HEADER_CTRL,
     minHeight: HEADER_CTRL,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shareSheet: {
-    marginTop: 'auto',
-    backgroundColor: theme.colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 26,
-    borderTopWidth: 1,
-    borderColor: theme.colors.borderLight,
-  },
-  shareTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, marginBottom: 12 },
-  shareCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    marginBottom: 10,
-  },
-  shareCardLast: {
-    marginBottom: 0,
-  },
-  shareIconWrapGrad: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shareCardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
-  shareCardSub: { marginTop: 2, fontSize: 12, color: theme.colors.textMuted, fontWeight: '600' },
-  cuteHeaderChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  cuteHeaderChipText: { color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.2 },
 });

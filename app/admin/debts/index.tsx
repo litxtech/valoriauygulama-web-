@@ -22,6 +22,7 @@ import {
   type DebtCategory,
   type DebtStatus,
 } from '@/lib/finance';
+import { debtOrgPerspectiveLine } from '@/lib/financeLedger';
 import { formatDateShort } from '@/lib/date';
 
 type Row = {
@@ -129,6 +130,11 @@ export default function AdminDebtsIndex() {
           canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
           ownOrganizationId={me?.organization_id}
         />
+        <TouchableOpacity style={styles.backHub} onPress={() => router.push('/admin/accounting')} activeOpacity={0.8}>
+          <Ionicons name="calculator-outline" size={18} color={adminTheme.colors.primary} />
+          <Text style={styles.backHubText}>Muhasebe özet</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.newBtn} onPress={() => router.push('/admin/debts/new')} activeOpacity={0.9}>
           <Ionicons name="add-circle-outline" size={22} color="#fff" />
           <Text style={styles.newBtnText}>Yeni borç / alacak</Text>
@@ -148,6 +154,27 @@ export default function AdminDebtsIndex() {
                   <Text style={styles.cat}>{DEBT_CATEGORY_LABELS[r.category]}</Text>
                   <Text style={styles.st}>{DEBT_STATUS_LABELS[r.status]}</Text>
                 </View>
+                {(() => {
+                  const { line, tone } = debtOrgPerspectiveLine({
+                    borrowerIsOrg: r.borrower_is_organization,
+                    lenderIsOrg: r.lender_is_organization,
+                    borrowerName: partyBorrow(r),
+                    lenderName: partyLend(r),
+                    amountRemaining: Number(r.amount_remaining),
+                  });
+                  return (
+                    <Text
+                      style={[
+                        styles.perspective,
+                        tone === 'receivable' && styles.toneRec,
+                        tone === 'payable' && styles.tonePay,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {line}
+                    </Text>
+                  );
+                })()}
                 <Text style={styles.parties}>
                   Borçlu: {partyBorrow(r)} · Alacaklı: {partyLend(r)}
                 </Text>
@@ -183,6 +210,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   newBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  backHub: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  backHubText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
+  perspective: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text, marginTop: 6 },
+  toneRec: { color: '#15803d' },
+  tonePay: { color: '#b45309' },
   empty: { textAlign: 'center', color: adminTheme.colors.textMuted, marginTop: 24 },
   card: { marginBottom: 10 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

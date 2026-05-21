@@ -27,7 +27,7 @@ import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import { canAccessTechnicalAssetsAdminRoutes } from '@/lib/staffPermissions';
 import { log } from '@/lib/logger';
-import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import { exitAdminPanelToStaffTabs } from '@/lib/staffAdminTabNavigation';
 
 type Stats = {
   roomsTotal: number;
@@ -111,6 +111,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/stock', icon: 'cube-outline', label: 'Stok yönetimi' },
       { href: '/admin/stock/all', icon: 'layers-outline', label: 'Tüm stoklar' },
       { href: '/admin/stock/approvals', icon: 'checkmark-done-outline', label: 'Onay bekleyenler', badge: 0 },
+      { href: '/admin/accounting', icon: 'calculator-outline', label: 'Muhasebe (gelir / gider)', badge: 0 },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
       { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
       { href: '/admin/meal-menu', icon: 'restaurant-outline', label: 'Aylık yemek listesi' },
@@ -146,12 +147,14 @@ const SECTIONS: Section[] = [
       { href: '/admin/maliye', icon: 'shield-outline', label: 'Maliye Evrak Merkezi' },
       { href: '/admin/incident-reports', icon: 'document-text-outline', label: 'Tutanaklar' },
       { href: '/admin/missing-items', icon: 'alert-circle-outline', label: 'Eksik Var' },
+      { href: '/admin/lost-found', icon: 'briefcase-outline', label: 'Emanet / Buluntu' },
+      { href: '/admin/audits', icon: 'clipboard-outline', label: 'Denetim panosu' },
       { href: '/admin/contracts', icon: 'document-outline', label: 'Sözleşmeler' },
       { href: '/admin/contracts/contact-directory', icon: 'call-outline', label: 'İletişim rehberi' },
       { href: '/admin/contracts/all', icon: 'document-text-outline', label: 'Tüm Sözleşmelerim' },
       { href: '/admin/staff', icon: 'person-add-outline', label: 'Çalışan ekleme', badge: 0 },
       { href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' },
-      { href: '/admin/organizations', icon: 'business-outline', label: 'Otel/Organization yönetimi' },
+      { href: '/admin/organizations', icon: 'business-outline', label: 'İşletme yönetimi' },
       { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR tasarımları' },
     ],
   },
@@ -369,7 +372,7 @@ export default function AdminDashboard() {
         guestsQuery = guestsQuery.eq('organization_id', orgScoped);
         staffActiveQuery = staffActiveQuery.eq('organization_id', orgScoped);
         stockPendingQuery = stockPendingQuery.eq('organization_id', orgScoped);
-        staffPendingQuery = staffPendingQuery.eq('organization_id', orgScoped);
+        // staff_applications işletme kolonu yok — genel başvurular, onay merkezinde filtresiz
         expensesPendingQuery = expensesPendingQuery.eq('organization_id', orgScoped);
         complaintsPendingQuery = complaintsPendingQuery.eq('organization_id', orgScoped);
         acceptancesUnassignedQuery = acceptancesUnassignedQuery.eq('organization_id', orgScoped);
@@ -440,8 +443,7 @@ export default function AdminDashboard() {
     useCallback(() => {
       if (Platform.OS !== 'android') return;
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        signalStaffExitedAdminPanelFromRoot();
-        router.replace('/staff' as Href);
+        exitAdminPanelToStaffTabs(router);
         return true;
       });
       return () => sub.remove();
@@ -469,13 +471,13 @@ export default function AdminDashboard() {
     return null;
   };
 
+  /** Onay merkezi listesiyle aynı kaynaklar (misafir şikayetleri ayrı menüde). */
   const totalApprovals = useMemo(
     () =>
       stats.staffPending +
       stats.stockPending +
       stats.expensesPending +
       stats.reportsPending +
-      stats.complaintsPending +
       stats.acceptancesUnassigned,
     [stats]
   );
@@ -491,7 +493,7 @@ export default function AdminDashboard() {
         `Bekleyen toplam kayıt: ${totalApprovals} (önceki: ${prev}). Birleşik listeden inceleyebilirsiniz.`,
         [
           { text: 'Tamam', style: 'cancel' },
-          { text: 'Onaya sunulan', onPress: () => router.push('/admin/approvals' as never) },
+          { text: 'Onay merkezi', onPress: () => router.push('/admin/approvals' as never) },
         ]
       );
     }
@@ -617,14 +619,17 @@ export default function AdminDashboard() {
           <Ionicons name="shield-checkmark-outline" size={26} color="#0f766e" />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.approvalsHubKicker}>Yonetim</Text>
-          <Text style={styles.approvalsHubTitle}>Onaya sunulan</Text>
+          <Text style={styles.approvalsHubKicker}>Yönetim</Text>
+          <Text style={styles.approvalsHubTitle}>Onay merkezi</Text>
           <Text style={styles.approvalsHubSub} numberOfLines={2}>
-            Personel başvurusu, stok, harcama, paylaşım bildirimi ve sözleşme ataması — tek listede inceleyin ve onaylayın.
+            {totalApprovals > 0
+              ? 'Personel başvurusu, stok, harcama, paylaşım bildirimi ve sözleşme ataması — tek listede inceleyin.'
+              : 'Şu an bekleyen onay yok. Yeni başvuru veya hareket geldiğinde burada listelenir.'}
           </Text>
           <Text style={styles.approvalsHubMeta}>
-            Bekleyen toplam: {totalApprovals}
-            {totalApprovals > 0 ? ' · Detay için dokunun' : ''}
+            {totalApprovals > 0
+              ? `Bekleyen: ${totalApprovals} kayıt · Detay için dokunun`
+              : 'Bekleyen kayıt yok'}
           </Text>
         </View>
         {approvalsHubBadge > 0 ? (

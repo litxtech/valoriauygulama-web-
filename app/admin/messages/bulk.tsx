@@ -14,6 +14,7 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { MESSAGING_COLORS } from '@/lib/messaging';
+import { sendBulkToStaff } from '@/lib/notificationService';
 
 type TargetType = 'all' | 'guests' | 'staff';
 const TARGET_OPTIONS: { value: TargetType; label: string }[] = [
@@ -46,7 +47,20 @@ export default function AdminBulkMessageScreen() {
         created_by_type: staff.role === 'admin' ? 'admin' : 'staff',
       });
       if (error) throw error;
-      Alert.alert('Gönderildi', 'Duyuru kaydedildi. Kullanıcılar mesajlaşma ekranında görebilir.');
+
+      if (target === 'staff' || target === 'all') {
+        await sendBulkToStaff({
+          target: 'all_staff',
+          organizationId: staff.organization_id ?? null,
+          title: title.trim(),
+          body: content.trim(),
+          createdByStaffId: staff.id,
+          notificationType: 'staff_board_announcement',
+          data: { screen: '/staff/board' },
+        }).catch(() => {});
+      }
+
+      Alert.alert('Gönderildi', 'Duyuru panoya eklendi; personel header göz ikonundan görebilir.');
       setTitle('');
       setContent('');
     } catch (e: unknown) {

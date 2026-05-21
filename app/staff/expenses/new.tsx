@@ -208,6 +208,13 @@ export default function NewExpenseScreen() {
         error = direct.error;
       }
       if (error) throw error;
+      const { notifyAdminPanel } = await import('@/lib/notificationService');
+      void notifyAdminPanel({
+        title: '💰 Harcama onayı bekliyor',
+        body: `${staff.full_name ?? 'Personel'} · ${num.toLocaleString('tr-TR')} ₺`,
+        href: '/admin/approvals',
+        notificationType: 'expense_pending_approval',
+      });
       Alert.alert('Kaydedildi', 'Harcamanız admin onayından sonra kesinleşecektir.', [
         { text: 'Tamam', onPress: () => router.replace('/staff/expenses') },
       ]);

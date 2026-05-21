@@ -90,10 +90,14 @@ const APP_PERMISSIONS = [
   { key: 'transfer_tour_requests', label: 'Transfer & Tur: talepleri yönet (onay, red, fiyat)' },
   { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },
   { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesini yönetebilir' },
+  { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi oluşturabilir / düzenleyebilir' },
+  { key: 'yemek_listesi_mutfak_onay', label: 'Günlük yemek listesi mutfak onayı verebilir' },
+  { key: 'otel_mutfak_menu', label: 'Otel mutfağı menüsünü yönetebilir (yemek/içecek, fiyat, fotoğraf)' },
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
   { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri: bina, lokasyon, varlık ve QR yönetimi' },
   { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
+  { key: 'emanet_buluntu', label: 'Emanet / buluntu: kayıt oluşturma ve yönetim' },
 ];
 
 const CONTRACT_TYPES: { value: string; label: string }[] = [
@@ -164,10 +168,14 @@ export default function AddStaffScreen() {
     transfer_tour_requests: false,
     dining_venues: false,
     yarin_oda_temizlik_listesi: false,
+    yemek_listesi_olustur: false,
+    yemek_listesi_mutfak_onay: false,
+    otel_mutfak_menu: false,
     kbs_mrz_scan: false,
     teknik_varlik_yonetimi: false,
     teknik_varliklar: false,
     teknik_varliklar_okuma: false,
+    emanet_buluntu: false,
   });
   const [notes, setNotes] = useState('');
   const [emergency_contact_name, setEmergencyContactName] = useState('');

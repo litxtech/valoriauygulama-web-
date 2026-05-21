@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,11 +13,12 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
+import { publishTaskAssignmentBoardNotice } from '@/lib/staffBoard';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminButton, AdminCard } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
@@ -32,6 +33,8 @@ import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { MAX_ASSIGNMENT_ATTACHMENTS, STAFF_TASK_MEDIA_BUCKET } from '@/lib/staffAssignmentMedia';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
+import { AdminStackBackButton } from '@/lib/adminStackBack';
+import { useTranslation } from 'react-i18next';
 
 type StaffRow = { id: string; full_name: string | null; role: string | null; department: string | null };
 type RoomRow = { id: string; room_number: string; floor: number | null };
@@ -41,7 +44,17 @@ const PRIORITIES = Object.keys(ASSIGNMENT_PRIORITY_LABELS) as (keyof typeof ASSI
 
 export default function AdminAssignTaskScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const { t } = useTranslation();
   const { staff } = useAuthStore();
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <AdminStackBackButton accessibilityLabel={t('back')} fallback="/admin/tasks" />
+      ),
+    });
+  }, [navigation, t]);
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,6 +273,20 @@ export default function AdminAssignTaskScreen() {
       const mediaPart = uploadedUrls.length ? ` ${uploadedUrls.length} ek.` : '';
       const pushBody = `${typeLabel}: ${t}.${roomPart}${mediaPart}`.trim();
 
+      const boardContent = [body.trim(), roomPart.replace(/^\s*/, ''), mediaPart.replace(/^\s*/, '')]
+        .filter(Boolean)
+        .join('\n')
+        .trim() || pushBody;
+
+      const boardRes = await publishTaskAssignmentBoardNotice({
+        assigneeStaffId: assigneeId,
+        createdByStaffId: staff.id,
+        assignmentId,
+        title: t,
+        content: boardContent,
+        priority,
+      });
+
       const notifRes = await sendNotification({
         staffId: assigneeId,
         title: 'Yeni görev atandı',
@@ -270,7 +297,8 @@ export default function AdminAssignTaskScreen() {
         data: { url: '/staff/tasks', assignmentId },
       });
 
-      let notifNote = ' Personel uygulama içi bildirimde görevi görebilir.';
+      let notifNote = ' Personel uygulama içi bildirimde ve duyuru panosunda görevi görebilir.';
+      if (boardRes.error) notifNote += ` Pano kaydı başarısız: ${boardRes.error}`;
       if (notifRes.error) notifNote = ` Bildirim kaydı başarısız: ${notifRes.error}`;
       notifNote += ' Push için cihazda bildirim izni ve kayıtlı token gerekir.';
 

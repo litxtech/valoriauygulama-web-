@@ -39,3 +39,14 @@ export const pds = {
   mediaRadius: 16,
   actionBtnRadius: 999,
 } as const;
+
+/** Feed gönderi medyası: 4:5 (yükseklik = genişlik × oran) */
+export const FEED_POST_MEDIA_HEIGHT_RATIO = 1.25;
+
+export function feedPostCardWidth(screenWidth: number, sideInsetPerEdge = pds.outerPadding) {
+  return screenWidth - sideInsetPerEdge * 2;
+}
+
+export function feedPostMediaHeight(cardWidth: number) {
+  return Math.round(cardWidth * FEED_POST_MEDIA_HEIGHT_RATIO);
+}

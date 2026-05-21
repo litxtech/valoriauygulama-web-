@@ -32,7 +32,9 @@ import {
   STAFF_ROLE_LABELS,
 } from '@/lib/staffAssignments';
 import { isAssignmentMediaVideoUrl } from '@/lib/staffAssignmentMedia';
+import { completeStaffAssignment } from '@/lib/staffAssignmentComplete';
 import { CachedImage } from '@/components/CachedImage';
+import { TaskCompletionSheet } from '@/components/TaskCompletionSheet';
 import {
   parseRoomStayHistoryRpc,
   sortRoomStayHistoryRows,
@@ -46,6 +48,7 @@ import {
   printContractGuest,
   shareContractPdf,
 } from '@/lib/contractPdf';
+import { roomStatusLabel, guestStayStatusLabel, idTypeLabel, genderLabel } from '@/lib/i18nLookup';
 
 type RoomStatus = 'available' | 'occupied' | 'cleaning' | 'maintenance' | 'out_of_order';
 
@@ -70,17 +73,13 @@ type AssignmentRow = {
   completed_at: string | null;
   created_by_staff_id: string | null;
   attachment_urls?: string[] | null;
+  completion_proof_urls?: string[] | null;
+  completion_note?: string | null;
 };
 
 type CreatorMini = { id: string; full_name: string | null; role: string | null };
 
-const STATUS_LABELS: Record<RoomStatus, string> = {
-  available: 'Müsait',
-  occupied: 'Dolu',
-  cleaning: 'Temizlikte',
-  maintenance: 'Bakımda',
-  out_of_order: 'Kullanılmıyor',
-};
+const statusLabel = (s: RoomStatus) => roomStatusLabel(s);
 
 const STATUS_STYLES: Record<RoomStatus, { borderColor: string; backgroundColor: string }> = {
   available: { borderColor: theme.colors.success, backgroundColor: theme.colors.success + '18' },
@@ -94,10 +93,40 @@ const STATUS_OPTIONS: RoomStatus[] = ['available', 'occupied', 'cleaning', 'main
 
 type TabKey = 'assignments' | 'rooms';
 
-function formatDt(iso: string | null | undefined) {
+const GUEST_FIELD_KEYS: (keyof RoomStayHistoryGuest)[] = [
+  'full_name',
+  'phone',
+  'email',
+  'nationality',
+  'id_number',
+  'id_type',
+  'status',
+  'check_in_at',
+  'check_out_at',
+  'nights_count',
+  'room_type',
+  'adults',
+  'children',
+  'date_of_birth',
+  'gender',
+  'address',
+  'photo_url',
+  'created_at',
+  'total_amount_net',
+  'vat_amount',
+  'accommodation_tax_amount',
+];
+
+function dateLocale(lang: string): string {
+  if (lang.startsWith('ar')) return 'ar-SA';
+  if (lang.startsWith('tr')) return 'tr-TR';
+  return 'en-US';
+}
+
+function formatDt(iso: string | null | undefined, locale: string) {
   if (!iso) return '—';
   try {
-    return new Date(iso).toLocaleString('tr-TR', {
+    return new Date(iso).toLocaleString(dateLocale(locale), {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -109,77 +138,62 @@ function formatDt(iso: string | null | undefined) {
   }
 }
 
-function formatMoney(v: number | string | null | undefined) {
+function formatMoney(v: number | string | null | undefined, locale: string) {
   if (v === null || v === undefined || v === '') return '—';
   const n = typeof v === 'string' ? parseFloat(v) : v;
   if (Number.isNaN(n)) return String(v);
-  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(n);
-}
-
-const GUEST_STATUS_TR: Record<string, string> = {
-  pending: 'Beklemede',
-  checked_in: 'Konaklıyor',
-  checked_out: 'Çıkış yaptı',
-  cancelled: 'İptal',
-};
-const ID_TYPE_TR: Record<string, string> = { tc: 'TC kimlik', passport: 'Pasaport', other: 'Diğer' };
-const GENDER_TR: Record<string, string> = { male: 'Erkek', female: 'Kadın', other: 'Diğer' };
-
-const GUEST_FIELD_LIST: { key: keyof RoomStayHistoryGuest; label: string }[] = [
-  { key: 'full_name', label: 'Ad soyad' },
-  { key: 'phone', label: 'Telefon' },
-  { key: 'email', label: 'E-posta' },
-  { key: 'nationality', label: 'Uyruk' },
-  { key: 'id_number', label: 'Kimlik no' },
-  { key: 'id_type', label: 'Kimlik türü' },
-  { key: 'status', label: 'Misafir durumu' },
-  { key: 'check_in_at', label: 'Giriş' },
-  { key: 'check_out_at', label: 'Çıkış' },
-  { key: 'nights_count', label: 'Gece sayısı' },
-  { key: 'room_type', label: 'Oda tipi (kayıt)' },
-  { key: 'adults', label: 'Yetişkin' },
-  { key: 'children', label: 'Çocuk' },
-  { key: 'date_of_birth', label: 'Doğum tarihi' },
-  { key: 'gender', label: 'Cinsiyet' },
-  { key: 'address', label: 'Adres' },
-  { key: 'photo_url', label: 'Fotoğraf URL' },
-  { key: 'created_at', label: 'Misafir kaydı' },
-  { key: 'total_amount_net', label: 'Tutar (KDV hariç)' },
-  { key: 'vat_amount', label: 'KDV' },
-  { key: 'accommodation_tax_amount', label: 'Konaklama vergisi' },
-];
-
-function guestFieldDisplay(key: keyof RoomStayHistoryGuest, raw: unknown): string {
-  if (raw === null || raw === undefined) return '—';
-  if (key === 'status') return GUEST_STATUS_TR[String(raw)] ?? String(raw);
-  if (key === 'id_type') return ID_TYPE_TR[String(raw)] ?? String(raw);
-  if (key === 'gender') return GENDER_TR[String(raw)] ?? String(raw);
-  if (key === 'check_in_at' || key === 'check_out_at' || key === 'created_at')
-    return formatDt(String(raw));
-  if (key === 'date_of_birth') {
-    try {
-      return new Date(String(raw)).toLocaleDateString('tr-TR');
-    } catch {
-      return String(raw);
-    }
-  }
-  if (key === 'total_amount_net' || key === 'vat_amount' || key === 'accommodation_tax_amount')
-    return formatMoney(raw as number | string);
-  return String(raw);
-}
-
-function roomStayListTitle(row: RoomStayHistoryRow): string {
-  return row.guest ? guestDisplayName(row.guest.full_name, 'Misafir') : 'Misafir kaydı yok';
-}
-
-function roomStayListSubtitle(row: RoomStayHistoryRow): string {
-  if (row.guest?.check_out_at) return `Çıkış: ${formatDt(row.guest.check_out_at)}`;
-  if (row.guest?.check_in_at) return `Giriş: ${formatDt(row.guest.check_in_at)}`;
-  return `Sözleşme onayı: ${formatDt(row.accepted_at)}`;
+  return new Intl.NumberFormat(dateLocale(locale), { style: 'currency', currency: 'TRY' }).format(n);
 }
 
 export default function StaffTasksTabScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const loc = (i18n.language || 'tr').split('-')[0];
+
+  const guestFieldList = useMemo(
+    () => GUEST_FIELD_KEYS.map((key) => ({ key, label: t(`guestField_${key}`) })),
+    [t, i18n.language]
+  );
+
+  const guestFieldDisplay = useCallback(
+    (key: keyof RoomStayHistoryGuest, raw: unknown): string => {
+      if (raw === null || raw === undefined) return '—';
+      if (key === 'status') return guestStayStatusLabel(String(raw));
+      if (key === 'id_type') return idTypeLabel(String(raw));
+      if (key === 'gender') return genderLabel(String(raw));
+      if (key === 'check_in_at' || key === 'check_out_at' || key === 'created_at')
+        return formatDt(String(raw), loc);
+      if (key === 'date_of_birth') {
+        try {
+          return new Date(String(raw)).toLocaleDateString(dateLocale(loc));
+        } catch {
+          return String(raw);
+        }
+      }
+      if (key === 'total_amount_net' || key === 'vat_amount' || key === 'accommodation_tax_amount')
+        return formatMoney(raw as number | string, loc);
+      return String(raw);
+    },
+    [loc]
+  );
+
+  const roomStayListTitle = useCallback(
+    (row: RoomStayHistoryRow) =>
+      row.guest
+        ? guestDisplayName(row.guest.full_name, t('staffTasks_guestDefault'))
+        : t('staffTasks_noGuestRecord'),
+    [t]
+  );
+
+  const roomStayListSubtitle = useCallback(
+    (row: RoomStayHistoryRow) => {
+      if (row.guest?.check_out_at)
+        return t('staffTasks_checkOutLine', { date: formatDt(row.guest.check_out_at, loc) });
+      if (row.guest?.check_in_at)
+        return t('staffTasks_checkInLine', { date: formatDt(row.guest.check_in_at, loc) });
+      return t('staffTasks_contractAcceptedLine', { date: formatDt(row.accepted_at, loc) });
+    },
+    [t, loc]
+  );
   const { focusAssignment } = useLocalSearchParams<{ focusAssignment?: string }>();
   const staff = useAuthStore((s) => s.staff);
   const insets = useSafeAreaInsets();
@@ -195,6 +209,8 @@ export default function StaffTasksTabScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewIsVideo, setPreviewIsVideo] = useState(false);
+  const [completeTarget, setCompleteTarget] = useState<AssignmentRow | null>(null);
+  const [completing, setCompleting] = useState(false);
   const [roomSheetRoom, setRoomSheetRoom] = useState<Room | null>(null);
   const [roomSheetMode, setRoomSheetMode] = useState<'menu' | 'history'>('menu');
   const [roomHistorySub, setRoomHistorySub] = useState<'list' | 'detail'>('list');
@@ -308,17 +324,17 @@ export default function StaffTasksTabScreen() {
       let q = supabase
         .from('staff_assignments')
         .select(
-          'id, title, body, task_type, priority, status, room_ids, due_at, created_at, started_at, completed_at, created_by_staff_id, attachment_urls'
+          'id, title, body, task_type, priority, status, room_ids, due_at, created_at, started_at, completed_at, created_by_staff_id, attachment_urls, completion_proof_urls, completion_note'
         )
         .eq('assigned_staff_id', staff.id)
         .order('created_at', { ascending: false })
         .limit(80);
       let { data, error } = await q;
-      if (error && (error.message?.includes('attachment_urls') || error.code === 'PGRST204')) {
+      if (error && (error.message?.includes('attachment_urls') || error.message?.includes('completion_') || error.code === 'PGRST204')) {
         const r2 = await supabase
           .from('staff_assignments')
           .select(
-            'id, title, body, task_type, priority, status, room_ids, due_at, created_at, started_at, completed_at, created_by_staff_id'
+            'id, title, body, task_type, priority, status, room_ids, due_at, created_at, started_at, completed_at, created_by_staff_id, attachment_urls'
           )
           .eq('assigned_staff_id', staff.id)
           .order('created_at', { ascending: false })
@@ -433,24 +449,43 @@ export default function StaffTasksTabScreen() {
 
   const showStatusMenu = (room: Room) => {
     Alert.alert(
-      `Oda ${room.room_number} – Durum`,
-      'Yeni durum seçin:',
+      t('staffTasks_roomStatusAlertTitle', { number: room.room_number }),
+      t('staffTasks_pickNewStatus'),
       STATUS_OPTIONS.map((s) => ({
-        text: STATUS_LABELS[s],
+        text: statusLabel(s),
         onPress: () => updateStatus(room.id, s),
-      })).concat([{ text: 'İptal', style: 'cancel' }])
+      })).concat([{ text: t('cancel'), style: 'cancel' }])
     );
   };
 
-  const setAssignmentStatus = async (row: AssignmentRow, next: 'in_progress' | 'completed') => {
+  const setAssignmentInProgress = async (row: AssignmentRow) => {
     if (!staff?.id) return;
-    const patch: Record<string, string | null> =
-      next === 'in_progress'
-        ? { status: 'in_progress', started_at: new Date().toISOString() }
-        : { status: 'completed', completed_at: new Date().toISOString() };
-    const { error } = await supabase.from('staff_assignments').update(patch).eq('id', row.id).eq('assigned_staff_id', staff.id);
+    const { error } = await supabase
+      .from('staff_assignments')
+      .update({ status: 'in_progress', started_at: new Date().toISOString() })
+      .eq('id', row.id)
+      .eq('assigned_staff_id', staff.id);
     if (error) Alert.alert(t('error'), error.message);
     else loadAssignments();
+  };
+
+  const submitTaskCompletion = async (payload: { note?: string; proofUris: string[] }) => {
+    if (!staff?.id || !completeTarget) return;
+    setCompleting(true);
+    const result = await completeStaffAssignment({
+      assignmentId: completeTarget.id,
+      staffId: staff.id,
+      note: payload.note,
+      proofUris: payload.proofUris,
+    });
+    setCompleting(false);
+    if (result.error) {
+      Alert.alert(t('error'), result.error);
+      return;
+    }
+    setCompleteTarget(null);
+    await loadAssignments();
+    Alert.alert(t('staffTasks_savedTitle'), t('staffTasks_taskCompletedBody'));
   };
 
   const openPreview = (url: string) => {
@@ -517,21 +552,18 @@ export default function StaffTasksTabScreen() {
           {roomSheetRoom && roomSheetMode === 'menu' ? (
             <>
               <View style={styles.roomSheetHeader}>
-                <Text style={styles.roomSheetTitle}>Oda {roomSheetRoom.room_number}</Text>
+                <Text style={styles.roomSheetTitle}>{t('staffTasks_roomTitle', { number: roomSheetRoom.room_number })}</Text>
                 <TouchableOpacity onPress={closeRoomSheet} hitSlop={12} accessibilityLabel={t('close')}>
                   <Ionicons name="close" size={26} color={theme.colors.text} />
                 </TouchableOpacity>
               </View>
               {roomSheetRoom.floor != null ? (
-                <Text style={styles.roomSheetMeta}>Kat {roomSheetRoom.floor}</Text>
+                <Text style={styles.roomSheetMeta}>{t('staffTasks_floor', { floor: roomSheetRoom.floor })}</Text>
               ) : null}
               <Text style={styles.roomSheetStatusLine}>
-                Mevcut durum: <Text style={styles.roomSheetStatusEm}>{STATUS_LABELS[roomSheetRoom.status]}</Text>
+                {t('roomCurrentStatus')}: <Text style={styles.roomSheetStatusEm}>{statusLabel(roomSheetRoom.status)}</Text>
               </Text>
-              <Text style={styles.roomSheetIntro}>
-                Bu odada sözleşmesi atanmış veya onaylanmış kayıtlar ile misafir bilgilerine aşağıdan ulaşabilirsiniz. Oda durumunu
-                değiştirmek için ikinci düğmeyi kullanın.
-              </Text>
+              <Text style={styles.roomSheetIntro}>{t('staffTasks_roomSheetIntro')}</Text>
               <TouchableOpacity
                 style={styles.roomSheetBtnPrimary}
                 activeOpacity={0.88}
@@ -543,7 +575,7 @@ export default function StaffTasksTabScreen() {
                 }}
               >
                 <Ionicons name="people-outline" size={22} color={theme.colors.white} />
-                <Text style={styles.roomSheetBtnPrimaryText}>Konaklama ve sözleşme geçmişi</Text>
+                <Text style={styles.roomSheetBtnPrimaryText}>{t('staffTasks_stayContractHistory')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.roomSheetBtnSecondary}
@@ -555,7 +587,7 @@ export default function StaffTasksTabScreen() {
                 }}
               >
                 <Ionicons name="options-outline" size={22} color={theme.colors.primary} />
-                <Text style={styles.roomSheetBtnSecondaryText}>Oda durumunu değiştir</Text>
+                <Text style={styles.roomSheetBtnSecondaryText}>{t('staffTasks_changeRoomStatus')}</Text>
               </TouchableOpacity>
             </>
           ) : roomSheetRoom && roomSheetMode === 'history' ? (
@@ -579,7 +611,7 @@ export default function StaffTasksTabScreen() {
                 <Text style={[styles.roomSheetTitle, { flex: 1 }]} numberOfLines={1}>
                   {roomHistorySub === 'detail' && roomHistoryDetailRow
                     ? roomStayListTitle(roomHistoryDetailRow)
-                    : `Oda ${roomSheetRoom.room_number} — geçmiş`}
+                    : t('staffTasks_roomHistoryTitle', { number: roomSheetRoom.room_number })}
                 </Text>
                 <TouchableOpacity onPress={closeRoomSheet} hitSlop={12}>
                   <Ionicons name="close" size={26} color={theme.colors.text} />
@@ -588,7 +620,7 @@ export default function StaffTasksTabScreen() {
               {roomHistoryLoading ? (
                 <View style={styles.roomHistoryCenter}>
                   <ActivityIndicator size="large" color={theme.colors.primary} />
-                  <Text style={styles.roomHistoryLoadingText}>Kayıtlar yükleniyor…</Text>
+                  <Text style={styles.roomHistoryLoadingText}>{t('staffTasks_recordsLoading')}</Text>
                 </View>
               ) : roomHistoryError ? (
                 <View style={styles.roomHistoryCenter}>
@@ -597,16 +629,12 @@ export default function StaffTasksTabScreen() {
               ) : sortedRoomHistory.length === 0 ? (
                 <View style={styles.roomHistoryCenter}>
                   <Ionicons name="document-text-outline" size={48} color={theme.colors.textMuted} />
-                  <Text style={styles.roomHistoryEmptyTitle}>Bu oda için kayıt yok</Text>
-                  <Text style={styles.roomHistoryEmptySub}>
-                    Sözleşme bu odaya atanmadıysa veya henüz onaylanmadıysa liste boş görünür.
-                  </Text>
+                  <Text style={styles.roomHistoryEmptyTitle}>{t('staffTasks_noRoomRecordsTitle')}</Text>
+                  <Text style={styles.roomHistoryEmptySub}>{t('staffTasks_noRoomRecordsSub')}</Text>
                 </View>
               ) : roomHistorySub === 'list' ? (
                 <View style={styles.roomHistoryListWrap}>
-                  <Text style={styles.roomHistoryListHint}>
-                    En üstte en son çıkış / giriş veya onay tarihine göre güncel kayıt yer alır. Satıra dokunun.
-                  </Text>
+                  <Text style={styles.roomHistoryListHint}>{t('staffTasks_historyHint')}</Text>
                   <FlatList
                     data={sortedRoomHistory}
                     keyExtractor={(r) => r.acceptance_id}
@@ -654,51 +682,49 @@ export default function StaffTasksTabScreen() {
                       <>
                         <Ionicons name="document-text-outline" size={28} color={theme.colors.primary} />
                         <View style={styles.pdfActionTextCol}>
-                          <Text style={styles.pdfActionTitle}>Onaylanan sözleşme PDF</Text>
-                          <Text style={styles.pdfActionSub}>
-                            Dokunun: önizleme, yazdır veya PDF indir / paylaş
-                          </Text>
+                          <Text style={styles.pdfActionTitle}>{t('staffTasks_contractPdfTitle')}</Text>
+                          <Text style={styles.pdfActionSub}>{t('staffTasks_contractPdfHint')}</Text>
                         </View>
                         <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.textMuted} />
                       </>
                     )}
                   </TouchableOpacity>
                   {!roomHistoryDetailRow.guest?.id ? (
-                    <Text style={styles.historyMuted}>Misafir kaydı olmadan PDF oluşturulamaz.</Text>
+                    <Text style={styles.historyMuted}>{t('staffTasks_noPdfWithoutGuest')}</Text>
                   ) : null}
 
-                  <Text style={[styles.historySectionLabel, { marginTop: 16 }]}>Sözleşme</Text>
+                  <Text style={[styles.historySectionLabel, { marginTop: 16 }]}>{t('staffTasks_contractSection')}</Text>
                   <View style={styles.historyCard}>
                     <View style={styles.kvRow}>
-                      <Text style={styles.kvLabel}>Onay zamanı</Text>
-                      <Text style={styles.kvValue}>{formatDt(roomHistoryDetailRow.accepted_at)}</Text>
+                      <Text style={styles.kvLabel}>{t('staffTasks_acceptedAt')}</Text>
+                      <Text style={styles.kvValue}>{formatDt(roomHistoryDetailRow.accepted_at, loc)}</Text>
                     </View>
                     {roomHistoryDetailRow.contract_title ? (
                       <View style={styles.kvRow}>
-                        <Text style={styles.kvLabel}>Şablon</Text>
+                        <Text style={styles.kvLabel}>{t('staffTasks_template')}</Text>
                         <Text style={styles.kvValue}>{roomHistoryDetailRow.contract_title}</Text>
                       </View>
                     ) : null}
                     <View style={styles.kvRow}>
-                      <Text style={styles.kvLabel}>Dil / sürüm</Text>
+                      <Text style={styles.kvLabel}>{t('staffTasks_langVersion')}</Text>
                       <Text style={styles.kvValue}>
                         {roomHistoryDetailRow.contract_lang?.toUpperCase?.() ?? roomHistoryDetailRow.contract_lang} · v
                         {roomHistoryDetailRow.contract_version}
                       </Text>
                     </View>
                     <View style={styles.kvRow}>
-                      <Text style={styles.kvLabel}>Kaynak</Text>
+                      <Text style={styles.kvLabel}>{t('staffTasks_source')}</Text>
                       <Text style={styles.kvValue}>{roomHistoryDetailRow.source}</Text>
                     </View>
                     {roomHistoryDetailRow.assigned_at ? (
                       <View style={styles.kvRow}>
-                        <Text style={styles.kvLabel}>Atama zamanı</Text>
-                        <Text style={styles.kvValue}>{formatDt(roomHistoryDetailRow.assigned_at)}</Text>
+                        <Text style={styles.kvLabel}>{t('staffTasks_assignedAt')}</Text>
+                        <Text style={styles.kvValue}>{formatDt(roomHistoryDetailRow.assigned_at, loc)}</Text>
                       </View>
                     ) : null}
                     {roomHistoryDetailRow.assigned_staff ? (
                       <View style={styles.kvRow}>
-                        <Text style={styles.kvLabel}>Atanan personel</Text>
+                        <Text style={styles.kvLabel}>{t('staffTasks_assignedStaff')}</Text>
                         <Text style={styles.kvValue}>
                           {roomHistoryDetailRow.assigned_staff.full_name ?? '—'}
                           {roomHistoryDetailRow.assigned_staff.role
@@ -711,19 +737,19 @@ export default function StaffTasksTabScreen() {
                       </View>
                     ) : null}
                     <View style={styles.kvRow}>
-                      <Text style={styles.kvLabel}>Token</Text>
+                      <Text style={styles.kvLabel}>{t('staffTasks_token')}</Text>
                       <Text style={styles.kvValue} selectable>
                         {roomHistoryDetailRow.token}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={[styles.historySectionLabel, { marginTop: 16 }]}>Misafir</Text>
+                  <Text style={[styles.historySectionLabel, { marginTop: 16 }]}>{t('staffTasks_guestSection')}</Text>
                   <View style={styles.historyCard}>
                     {!roomHistoryDetailRow.guest ? (
-                      <Text style={styles.historyMuted}>Misafir kaydı bağlı değil.</Text>
+                      <Text style={styles.historyMuted}>{t('staffTasks_noGuestLinked')}</Text>
                     ) : (
-                      GUEST_FIELD_LIST.map(({ key, label }) => {
+                      guestFieldList.map(({ key, label }) => {
                         const raw = roomHistoryDetailRow.guest![key];
                         if (raw === null || raw === undefined || raw === '') return null;
                         return (
@@ -754,9 +780,9 @@ export default function StaffTasksTabScreen() {
           <View style={styles.contractPreviewBar}>
             <TouchableOpacity onPress={() => setContractPreviewHtml(null)} hitSlop={12} style={styles.contractPreviewCloseBtn}>
               <Ionicons name="close" size={26} color={theme.colors.text} />
-              <Text style={styles.contractPreviewCloseText}>Kapat</Text>
+              <Text style={styles.contractPreviewCloseText}>{t('close')}</Text>
             </TouchableOpacity>
-            <Text style={styles.contractPreviewBarTitle}>Sözleşme önizleme</Text>
+            <Text style={styles.contractPreviewBarTitle}>{t('staffTasks_contractPreview')}</Text>
             <View style={{ width: 72 }} />
           </View>
           {contractPreviewHtml ? (
@@ -794,6 +820,14 @@ export default function StaffTasksTabScreen() {
         </View>
       </Modal>
 
+      <TaskCompletionSheet
+        visible={!!completeTarget}
+        taskTitle={completeTarget?.title ?? ''}
+        saving={completing}
+        onClose={() => setCompleteTarget(null)}
+        onSubmit={submitTaskCompletion}
+      />
+
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={[styles.tab, tab === 'assignments' && styles.tabOn]}
@@ -814,7 +848,7 @@ export default function StaffTasksTabScreen() {
           activeOpacity={0.85}
         >
           <Ionicons name="grid-outline" size={20} color={tab === 'rooms' ? theme.colors.white : theme.colors.textSecondary} />
-          <Text style={[styles.tabText, tab === 'rooms' && styles.tabTextOn]}>Oda durumu</Text>
+          <Text style={[styles.tabText, tab === 'rooms' && styles.tabTextOn]}>{t('staffTasks_roomsTab')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -826,17 +860,15 @@ export default function StaffTasksTabScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
           ListHeaderComponent={
             <View style={styles.hero}>
-              <Text style={styles.heroTitle}>Görevleriniz</Text>
-              <Text style={styles.heroSub}>
-                Atayan kişi, tarih-saat ve ekteki fotoğraf veya videolar burada. Yeni görev geldiğinde bildirim alırsınız.
-              </Text>
+              <Text style={styles.heroTitle}>{t('staffTasks_heroTitle')}</Text>
+              <Text style={styles.heroSub}>{t('staffTasks_heroSub')}</Text>
             </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons name="checkmark-done-outline" size={48} color={theme.colors.textMuted} />
-              <Text style={styles.emptyTitle}>Açık görev yok</Text>
-              <Text style={styles.emptySub}>Yönetim size görev atadığında burada listelenir.</Text>
+              <Text style={styles.emptyTitle}>{t('staffTasks_emptyTitle')}</Text>
+              <Text style={styles.emptySub}>{t('staffTasks_emptySub')}</Text>
             </View>
           }
           renderItem={({ item: r }) => {
@@ -845,6 +877,7 @@ export default function StaffTasksTabScreen() {
             const roomsFor = (r.room_ids ?? []).map((id) => roomMap[id]).filter(Boolean) as Room[];
             const creator = r.created_by_staff_id ? creatorMap[r.created_by_staff_id] : null;
             const urls = (r.attachment_urls ?? []).filter(Boolean);
+            const proofUrls = (r.completion_proof_urls ?? []).filter(Boolean);
             const prioColor =
               r.priority === 'urgent'
                 ? theme.colors.error
@@ -869,8 +902,8 @@ export default function StaffTasksTabScreen() {
                     <View style={styles.assignerRow}>
                       <Ionicons name="person-circle-outline" size={18} color={theme.colors.primary} />
                       <Text style={styles.assignerText}>
-                        <Text style={styles.assignerLabel}>Atayan: </Text>
-                        {creator.full_name ?? 'Yönetici'}
+                        <Text style={styles.assignerLabel}>{t('staffTasks_assigner')} </Text>
+                        {creator.full_name ?? t('staffTasks_managerDefault')}
                         {creator.role ? ` · ${STAFF_ROLE_LABELS[creator.role] ?? creator.role}` : ''}
                       </Text>
                     </View>
@@ -878,24 +911,24 @@ export default function StaffTasksTabScreen() {
                   <View style={styles.timeline}>
                     <View style={styles.tlRow}>
                       <Ionicons name="calendar-outline" size={15} color={theme.colors.textMuted} />
-                      <Text style={styles.tlText}>Oluşturulma: {formatDt(r.created_at)}</Text>
+                      <Text style={styles.tlText}>{t('staffTasks_createdAt', { date: formatDt(r.created_at, loc) })}</Text>
                     </View>
                     {r.due_at ? (
                       <View style={styles.tlRow}>
                         <Ionicons name="alarm-outline" size={15} color={theme.colors.primary} />
-                        <Text style={[styles.tlText, styles.tlDue]}>Son tarih: {formatDt(r.due_at)}</Text>
+                        <Text style={[styles.tlText, styles.tlDue]}>{t('staffTasks_dueAt', { date: formatDt(r.due_at, loc) })}</Text>
                       </View>
                     ) : null}
                     {r.started_at ? (
                       <View style={styles.tlRow}>
                         <Ionicons name="play-outline" size={15} color={theme.colors.textMuted} />
-                        <Text style={styles.tlText}>Başlangıç: {formatDt(r.started_at)}</Text>
+                        <Text style={styles.tlText}>{t('staffTasks_startedAt', { date: formatDt(r.started_at, loc) })}</Text>
                       </View>
                     ) : null}
                     {r.completed_at ? (
                       <View style={styles.tlRow}>
                         <Ionicons name="checkmark-circle-outline" size={15} color={theme.colors.success} />
-                        <Text style={styles.tlText}>Tamamlanma: {formatDt(r.completed_at)}</Text>
+                        <Text style={styles.tlText}>{t('staffTasks_completedAt', { date: formatDt(r.completed_at, loc) })}</Text>
                       </View>
                     ) : null}
                   </View>
@@ -905,14 +938,34 @@ export default function StaffTasksTabScreen() {
                       {roomsFor.map((rm) => (
                         <View key={rm.id} style={styles.roomChip}>
                           <Text style={styles.roomChipText}>{rm.room_number}</Text>
-                          {rm.floor != null && <Text style={styles.roomChipFloor}>K{rm.floor}</Text>}
+                          {rm.floor != null && (
+                            <Text style={styles.roomChipFloor}>{t('staffTasks_roomFloorShort', { floor: rm.floor })}</Text>
+                          )}
                         </View>
                       ))}
                     </View>
                   )}
+                  {proofUrls.length > 0 && (
+                    <View style={styles.mediaRow}>
+                      <Text style={styles.mediaLabel}>{t('staffTasks_completionProof')}</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        {proofUrls.map((url) => (
+                          <TouchableOpacity key={url} style={styles.mediaThumbOuter} onPress={() => openPreview(url)} activeOpacity={0.88}>
+                            <CachedImage uri={url} style={styles.mediaThumb} contentFit="cover" />
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                  {r.completion_note?.trim() ? (
+                    <View style={styles.completionNoteBox}>
+                      <Text style={styles.completionNoteLabel}>{t('staffTasks_staffNote')}</Text>
+                      <Text style={styles.completionNoteText}>{r.completion_note.trim()}</Text>
+                    </View>
+                  ) : null}
                   {urls.length > 0 && (
                     <View style={styles.mediaRow}>
-                      <Text style={styles.mediaLabel}>Ekler</Text>
+                      <Text style={styles.mediaLabel}>{t('staffTasks_taskAttachments')}</Text>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                         {urls.map((url) => {
                           const vid = isAssignmentMediaVideoUrl(url);
@@ -946,19 +999,30 @@ export default function StaffTasksTabScreen() {
                     </Text>
                   ) : null}
                   <View style={styles.cardMetaRow}>
-                    <Text style={styles.cardMeta}>Öncelik: {ASSIGNMENT_PRIORITY_LABELS[r.priority] ?? r.priority}</Text>
+                    <Text style={styles.cardMeta}>
+                      {t('staffTasks_priority', {
+                        priority: ASSIGNMENT_PRIORITY_LABELS[r.priority] ?? r.priority,
+                      })}
+                    </Text>
                   </View>
-                  <Text style={styles.cardHint}>{expanded ? 'Özet açık' : 'Karta dokunun — aç / kapat'}</Text>
+                  <Text style={styles.cardHint}>
+                    {expanded ? t('staffTasks_summaryOpen') : t('staffTasks_summaryClosed')}
+                  </Text>
                 </TouchableOpacity>
                 {isOpen ? (
                   <View style={styles.actions}>
                     {r.status === 'pending' ? (
-                      <TouchableOpacity style={styles.btnPrimary} onPress={() => setAssignmentStatus(r, 'in_progress')} activeOpacity={0.85}>
-                        <Text style={styles.btnPrimaryText}>Başladım</Text>
+                      <TouchableOpacity style={styles.btnPrimary} onPress={() => setAssignmentInProgress(r)} activeOpacity={0.85}>
+                        <Text style={styles.btnPrimaryText}>{t('staffTasks_startedBtn')}</Text>
                       </TouchableOpacity>
                     ) : null}
-                    <TouchableOpacity style={styles.btnSuccess} onPress={() => setAssignmentStatus(r, 'completed')} activeOpacity={0.85}>
-                      <Text style={styles.btnSuccessText}>Tamamlandı</Text>
+                    <TouchableOpacity
+                      style={styles.btnSuccess}
+                      onPress={() => setCompleteTarget(r)}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
+                      <Text style={styles.btnSuccessText}>{t('staffTasks_completeBtn')}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -971,11 +1035,8 @@ export default function StaffTasksTabScreen() {
           contentContainerStyle={styles.listPad}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
         >
-          <Text style={styles.roomsSectionTitle}>Tüm odalar — hızlı durum</Text>
-          <Text style={styles.roomsSectionSub}>
-            Karta dokunun: önce bu odadaki konaklama ve sözleşme geçmişini görebilir, isteğe bağlı oda durumunu değiştirebilirsiniz. Sağ üstteki
-            sayı, bu odaya atanmış sözleşme / konaklama kaydı adedidir.
-          </Text>
+          <Text style={styles.roomsSectionTitle}>{t('staffTasks_allRoomsTitle')}</Text>
+          <Text style={styles.roomsSectionSub}>{t('staffTasks_allRoomsSub')}</Text>
           <View style={styles.filterRow}>
             {(['all', ...STATUS_OPTIONS] as const).map((f) => (
               <TouchableOpacity
@@ -985,7 +1046,7 @@ export default function StaffTasksTabScreen() {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.filterChipText, filter === f && styles.filterChipTextActive]}>
-                  {f === 'all' ? 'Tümü' : STATUS_LABELS[f]}
+                  {f === 'all' ? t('missingItemsFilterAll') : statusLabel(f)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1023,10 +1084,10 @@ export default function StaffTasksTabScreen() {
                       {historyCount > 99 ? '99+' : historyCount}
                     </Text>
                   </View>
-                  <Text style={styles.roomNumber}>Oda {item.room_number}</Text>
-                  {item.floor != null && <Text style={styles.floor}>Kat {item.floor}</Text>}
-                  <Text style={styles.statusLabel}>{STATUS_LABELS[item.status]}</Text>
-                  <Text style={styles.tapHint}>Dokun → geçmiş / durum</Text>
+                  <Text style={styles.roomNumber}>{t('staffTasks_roomTitle', { number: item.room_number })}</Text>
+                  {item.floor != null && <Text style={styles.floor}>{t('staffTasks_floor', { floor: item.floor })}</Text>}
+                  <Text style={styles.statusLabel}>{statusLabel(item.status)}</Text>
+                  <Text style={styles.tapHint}>{t('staffTasks_tapHistory')}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1153,12 +1214,26 @@ const styles = StyleSheet.create({
   btnPrimaryText: { color: theme.colors.white, fontWeight: '800', fontSize: 15 },
   btnSuccess: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     backgroundColor: theme.colors.success,
     paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: theme.radius.md,
-    alignItems: 'center',
   },
-  btnSuccessText: { color: theme.colors.white, fontWeight: '800', fontSize: 15 },
+  btnSuccessText: { color: theme.colors.white, fontWeight: '800', fontSize: 13, flexShrink: 1, textAlign: 'center' },
+  completionNoteBox: {
+    marginBottom: 12,
+    padding: 10,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.success + '12',
+    borderWidth: 1,
+    borderColor: theme.colors.success + '35',
+  },
+  completionNoteLabel: { fontSize: 11, fontWeight: '800', color: theme.colors.success, marginBottom: 4 },
+  completionNoteText: { fontSize: 13, color: theme.colors.text, lineHeight: 19 },
   roomsSectionTitle: { fontSize: 18, fontWeight: '800', color: theme.colors.text, marginBottom: 6 },
   roomsSectionSub: { fontSize: 13, color: theme.colors.textSecondary, marginBottom: theme.spacing.md },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: theme.spacing.md, gap: 8 },

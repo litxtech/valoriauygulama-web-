@@ -19,7 +19,7 @@ Otel konaklama sözleşmesi ve check-in/out yönetim sistemi. Expo 54 + TypeScri
 2. `.env` dosyasını düzenleyin (`.env.example` referans):
    - `EXPO_PUBLIC_SUPABASE_URL`
    - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-   - KBS: Supabase Edge `ops-proxy` + dış KBS API — Hetzner: `deploy/HETZNER.md`
+   - KBS: Supabase Edge + Railway — `deploy/RAILWAY_KURULUM.md`
 
 3. Supabase migration’larını çalıştırın:
    - Yerel Supabase CLI ile: `supabase db reset` (önerilir)
@@ -36,9 +36,8 @@ Otel konaklama sözleşmesi ve check-in/out yönetim sistemi. Expo 54 + TypeScri
 
 ## KBS (Supabase Edge + dış KBS API)
 
-- **Mobil asla KBS’ye doğrudan bağlanmaz.** Akış: Mobil → Supabase (auth/DB/Edge) → Edge `ops-proxy` → **dış Node gateway** (`railway-service/` klasörü — Hetzner VPS) → iç KBS HTTP süreci (`kbs-gateway-service`) → Jandarma KBS.
-- Dış API kodu: `railway-service/` (Fastify). Hetzner’de PM2: `deploy/GATEWAY_PM2.md`.
-- Edge secrets: `KBS_GATEWAY_URL` (dış API’nin `https://` kökü), `KBS_GATEWAY_TOKEN` (sunucudakiyle aynı). Hetzner ayrıntı: `deploy/HETZNER.md`.
+- **Mobil asla KBS’ye doğrudan bağlanmaz.** Akış: Mobil → Supabase (auth/DB/Edge) → Edge `ops-proxy` → **Railway** (`railway-service` + `kbs-gateway-service`) → Jandarma KBS.
+- Kurulum: `deploy/RAILWAY_KURULUM.md`. Edge secrets: `KBS_GATEWAY_URL` (ör. `https://valoriahotel-production.up.railway.app`), `KBS_GATEWAY_TOKEN`.
 - KBS uçtan uca test (mock / gerçek SOAP, admin + personel akışı): `deploy/KBS_E2E_TEST.md` ve `scripts/sql/kbs-ops-test-provision.sql`.
 
 Supabase OPS / KBS migrations (seçme):

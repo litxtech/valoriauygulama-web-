@@ -5,11 +5,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard } from '@/components/admin';
+import { organizationKindLabel } from '@/lib/organizationKinds';
 
 type OrganizationRow = {
   id: string;
   name: string;
   slug: string;
+  kind: string;
   city: string | null;
   is_active: boolean;
   currency_code: string;
@@ -24,7 +26,7 @@ export default function AdminOrganizationsIndexScreen() {
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('organizations')
-      .select('id,name,slug,city,is_active,currency_code')
+      .select('id,name,slug,kind,city,is_active,currency_code')
       .order('name');
     setRows((data ?? []) as OrganizationRow[]);
     setLoading(false);
@@ -48,7 +50,7 @@ export default function AdminOrganizationsIndexScreen() {
     >
       <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/admin/organizations/new')}>
         <Ionicons name="add-circle-outline" size={20} color="#fff" />
-        <Text style={styles.addBtnText}>Yeni Otel Ekle</Text>
+        <Text style={styles.addBtnText}>Yeni işletme ekle</Text>
       </TouchableOpacity>
 
       {loading ? (
@@ -63,8 +65,8 @@ export default function AdminOrganizationsIndexScreen() {
                   {o.is_active ? 'Aktif' : 'Pasif'}
                 </Text>
               </View>
-              <Text style={styles.meta}>Kod: {o.slug}</Text>
-              <Text style={styles.meta}>Sehir: {o.city ?? '—'} • Para birimi: {o.currency_code}</Text>
+              <Text style={styles.meta}>Tür: {organizationKindLabel(o.kind)} · Kod: {o.slug}</Text>
+              <Text style={styles.meta}>Şehir: {o.city ?? '—'} • Para birimi: {o.currency_code}</Text>
               <TouchableOpacity
                 style={styles.editBtn}
                 onPress={() => router.push({ pathname: '/admin/organizations/[id]', params: { id: o.id } })}

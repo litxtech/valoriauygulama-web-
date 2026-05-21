@@ -1,25 +1,20 @@
-import { TouchableOpacity } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { AdminStackBackButton, adminStackGestureForNavigation } from '@/lib/adminStackBack';
 
 export default function ContractsLayout() {
-  const router = useRouter();
   const { t } = useTranslation();
-  const headerLeft = () => (
-    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 8, padding: 8 }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-      <Ionicons name="arrow-back" size={24} color="#1a202c" />
-    </TouchableOpacity>
-  );
   return (
     <Stack
-      screenOptions={{
+      screenOptions={({ navigation }) => ({
+        ...adminStackGestureForNavigation(navigation),
         headerShown: true,
         headerStyle: { backgroundColor: '#fff' },
         headerTintColor: '#1a202c',
         headerTitleStyle: { fontWeight: '600', fontSize: 17 },
-        headerLeft,
-      }}
+        headerBackVisible: false,
+        headerLeft: () => <AdminStackBackButton tintColor="#1a202c" accessibilityLabel={t('back')} />,
+      })}
     >
       <Stack.Screen name="form-fields" options={{ title: t('adminContractFormFieldsTitle') }} />
       <Stack.Screen name="all" options={{ title: t('adminContractsAllMineTitle') }} />

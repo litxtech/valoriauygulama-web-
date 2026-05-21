@@ -27,6 +27,7 @@ import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName, isOpaqueGuestDisplayString } from '@/lib/guestDisplayName';
+import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
 import { useAuthStore } from '@/stores/authStore';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
@@ -179,7 +180,7 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
     setComments(commentList);
     setMyLike(myReactions.length > 0);
     if (guestRow) {
-      supabase.from('feed_post_views').upsert({ post_id: postId, guest_id: guestRow.guest_id }, { onConflict: 'post_id,guest_id', ignoreDuplicates: true }).then(() => {}).catch(() => {});
+      void recordGuestFeedPostViews([postId], guestRow.guest_id);
     }
   }, [postId, onPostUnavailable]);
 

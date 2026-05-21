@@ -15,7 +15,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { setPolicyConsent, getPendingGuest, clearPendingGuest } from '@/lib/policyConsent';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
-import { LANGUAGES } from '@/i18n';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LANGUAGES, LANG_STORAGE_KEY, type LangCode } from '@/i18n';
+import { applyRTLAndReloadIfNeeded } from '@/lib/reloadForRTL';
 
 export default function PoliciesConsentScreen() {
   const insets = useSafeAreaInsets();
@@ -137,7 +139,11 @@ export default function PoliciesConsentScreen() {
             <TouchableOpacity
               key={code}
               style={[styles.langBtn, i18n.language === code && styles.langBtnActive]}
-              onPress={() => i18n.changeLanguage(code)}
+              onPress={async () => {
+                i18n.changeLanguage(code);
+                await AsyncStorage.setItem(LANG_STORAGE_KEY, code as LangCode);
+                await applyRTLAndReloadIfNeeded(code);
+              }}
             >
               <Text style={[styles.langBtnText, i18n.language === code && styles.langBtnTextActive]}>{label}</Text>
             </TouchableOpacity>

@@ -33,6 +33,7 @@ import { isAnonymousAuthUser } from '@/lib/isAnonymousAuthUser';
 import { LinearGradient } from 'expo-linear-gradient';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
+import { ProfileMenuRow } from '@/components/ProfileMenuRow';
 
 const AVATAR_SIZE = P.avatar.size;
 const COVER_BLOCK_HEIGHT = P.hero.height;
@@ -405,152 +406,107 @@ export default function CustomerProfile() {
       {/* 1) Genel — dil, konaklama/çevre, güvenlik */}
       <View style={styles.section}>
         <Text style={styles.sectionTitleLively}>{t('customerProfileSectionGeneral')}</Text>
-        <TouchableOpacity style={styles.menuRow} onPress={() => setLanguageModalVisible(true)} activeOpacity={0.88}>
-          <View style={styles.menuIconLively}>
-            <Ionicons name="language" size={22} color={P.accent.blue} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('language')}</Text>
-            <Text style={styles.menuSublabel}>
-              {LANGUAGES.find((l) => l.code === (i18n.language || '').split('-')[0])?.label ?? t('selectLanguage')}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/carbon')} activeOpacity={0.88}>
-          <View style={[styles.menuIconLively, styles.menuIconLivelyLeaf]}>
-            <Ionicons name="leaf" size={22} color="#0f766e" />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('screenCarbonFootprint')}</Text>
-            <Text style={styles.menuSublabel}>{t('customerProfileCarbonSub')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/emergency')} activeOpacity={0.88}>
-          <View style={[styles.menuIconLively, styles.menuIconLivelyDanger]}>
-            <Ionicons name="medkit" size={22} color={theme.colors.error} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={[styles.menuLabelLively, styles.menuLabelDangerEmph]}>{t('customerProfileMenuEmergencyTitle')}</Text>
-            <Text style={styles.menuSublabel}>{t('customerProfileEmergencySub')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={theme.colors.error} style={styles.menuChevron} />
-        </TouchableOpacity>
+        <ProfileMenuRow
+          icon="language"
+          title={t('language')}
+          subtitle={LANGUAGES.find((l) => l.code === (i18n.language || '').split('-')[0])?.label ?? t('selectLanguage')}
+          onPress={() => setLanguageModalVisible(true)}
+        />
+        <ProfileMenuRow
+          icon="leaf"
+          variant="leaf"
+          title={t('screenCarbonFootprint')}
+          subtitle={t('customerProfileCarbonSub')}
+          onPress={() => router.push('/customer/carbon')}
+        />
+        <ProfileMenuRow
+          icon="medkit"
+          variant="danger"
+          title={t('customerProfileMenuEmergencyTitle')}
+          subtitle={t('customerProfileEmergencySub')}
+          titleDanger
+          chevronColor={P.accent.red}
+          onPress={() => router.push('/customer/emergency')}
+        />
       </View>
 
       {/* 2) Giriş yapmış kullanıcı — bildirim, paylaşımlar, gizlilik */}
       {isLoggedIn && (
         <View style={styles.section}>
           <Text style={styles.sectionTitleLively}>{t('customerProfileSectionMyAccount')}</Text>
-          {showConvertToFullAccount && (
-            <TouchableOpacity
-              style={styles.menuRow}
+          {showConvertToFullAccount ? (
+            <ProfileMenuRow
+              icon="at"
+              title={t('screenConvertToFullAccount')}
+              subtitle={t('convertToFullAccountMenuSub')}
               onPress={() => router.push('/customer/convert-to-full-account')}
-              activeOpacity={0.88}
-            >
-              <View style={[styles.menuIconLively, styles.menuIconLivelyTeal]}>
-                <Ionicons name="at" size={22} color={theme.colors.primaryDark} />
-              </View>
-              <View style={styles.menuTextWrap}>
-                <Text style={styles.menuLabelLively}>{t('screenConvertToFullAccount')}</Text>
-                <Text style={styles.menuSublabel}>{t('convertToFullAccountMenuSub')}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/profile/notification-settings')} activeOpacity={0.88}>
-            <View style={styles.menuIconLively}>
-              <Ionicons name="notifications" size={22} color={P.accent.blue} />
-            </View>
-            <View style={styles.menuTextWrap}>
-              <Text style={styles.menuLabelLively}>{t('guestNotifSettingsScreenTitle')}</Text>
-              <Text style={styles.menuSublabel}>{t('customerProfileNotifSettingsSub')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/profile/blocked-users')} activeOpacity={0.88}>
-            <View style={[styles.menuIconLively, styles.menuIconLivelyDangerSoft]}>
-              <Ionicons name="ban" size={22} color={theme.colors.error} />
-            </View>
-            <View style={styles.menuTextWrap}>
-              <Text style={styles.menuLabelLively}>{t('blockedUsersTitle')}</Text>
-              <Text style={styles.menuSublabel}>{t('customerProfileBlockedMenuSub')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} style={styles.menuChevron} />
-          </TouchableOpacity>
+            />
+          ) : null}
+          <ProfileMenuRow
+            icon="notifications"
+            title={t('guestNotifSettingsScreenTitle')}
+            subtitle={t('customerProfileNotifSettingsSub')}
+            onPress={() => router.push('/customer/profile/notification-settings')}
+          />
+          <ProfileMenuRow
+            icon="ban"
+            variant="dangerSoft"
+            title={t('blockedUsersTitle')}
+            subtitle={t('customerProfileBlockedMenuSub')}
+            onPress={() => router.push('/customer/profile/blocked-users')}
+          />
         </View>
       )}
 
       {isLoggedIn && (
         <View style={styles.section}>
           <Text style={styles.sectionTitleLively}>{t('customerProfileSectionManage')}</Text>
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/profile/delete-account')} activeOpacity={0.88}>
-            <View style={[styles.menuIconLively, styles.menuIconLivelyDanger]}>
-              <Ionicons name="trash" size={22} color={theme.colors.error} />
-            </View>
-            <View style={styles.menuTextWrap}>
-              <Text style={[styles.menuLabelLively, styles.signOutText]}>{t('screenDeleteAccount')}</Text>
-              <Text style={styles.menuSublabel}>{t('customerProfileDeleteAccountSub')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={theme.colors.error} style={styles.menuChevron} />
-          </TouchableOpacity>
+          <ProfileMenuRow
+            icon="trash"
+            variant="danger"
+            title={t('screenDeleteAccount')}
+            subtitle={t('customerProfileDeleteAccountSub')}
+            titleDanger
+            chevronColor={P.accent.red}
+            onPress={() => router.push('/customer/profile/delete-account')}
+          />
         </View>
       )}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitleLively}>{t('localAreaGuideSectionTitle')}</Text>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/customer/local-area-guide')} activeOpacity={0.88}>
-          <View style={[styles.menuIconLively, styles.menuIconLivelyLeaf]}>
-            <Ionicons name="trail-sign-outline" size={22} color="#0f766e" />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('localAreaGuideMenuTitle')}</Text>
-            <Text style={styles.menuSublabel}>{t('localAreaGuideMenuSub')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
+        <ProfileMenuRow
+          icon="trail-sign-outline"
+          variant="leaf"
+          title={t('localAreaGuideMenuTitle')}
+          subtitle={t('localAreaGuideMenuSub')}
+          onPress={() => router.push('/customer/local-area-guide')}
+        />
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitleLively}>{t('legalAndContact')}</Text>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'privacy' } })} activeOpacity={0.88}>
-          <View style={styles.menuIconLively}>
-            <Ionicons name="document-text" size={22} color={P.accent.blue} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('privacyPolicy')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'terms' } })} activeOpacity={0.88}>
-          <View style={styles.menuIconLively}>
-            <Ionicons name="book-outline" size={22} color={P.accent.blue} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('termsOfService')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'cookies' } })} activeOpacity={0.88}>
-          <View style={styles.menuIconLively}>
-            <Ionicons name="nutrition" size={22} color={P.accent.blue} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('cookiePolicy')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/permissions')} activeOpacity={0.88}>
-          <View style={styles.menuIconLively}>
-            <Ionicons name="shield-checkmark" size={22} color={P.accent.blue} />
-          </View>
-          <View style={styles.menuTextWrap}>
-            <Text style={styles.menuLabelLively}>{t('customerProfilePermissionsMenuTitle')}</Text>
-            <Text style={styles.menuSublabel}>{t('customerProfilePermissionsMenuSub')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={P.subtext} style={styles.menuChevron} />
-        </TouchableOpacity>
+        <ProfileMenuRow
+          icon="document-text"
+          title={t('privacyPolicy')}
+          onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'privacy' } })}
+        />
+        <ProfileMenuRow
+          icon="book-outline"
+          title={t('termsOfService')}
+          onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'terms' } })}
+        />
+        <ProfileMenuRow
+          icon="nutrition"
+          title={t('cookiePolicy')}
+          onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'cookies' } })}
+        />
+        <ProfileMenuRow
+          icon="shield-checkmark"
+          title={t('customerProfilePermissionsMenuTitle')}
+          subtitle={t('customerProfilePermissionsMenuSub')}
+          onPress={() => router.push('/permissions')}
+        />
         <Text style={styles.contactLabel}>{t('contact')}: support@litxtech.com</Text>
       </View>
 
@@ -768,7 +724,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 8,
   },
-  heroEditCtaOuter: { marginTop: 16, alignSelf: 'stretch', borderRadius: 12, overflow: 'hidden' },
+  heroEditCtaOuter: { marginTop: 16, alignSelf: 'stretch', borderRadius: 16, overflow: 'hidden' },
   heroActionsRow: {
     marginTop: 16,
     flexDirection: 'row',
@@ -778,7 +734,7 @@ const styles = StyleSheet.create({
   heroActionHalfOuter: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
   },
   heroEditCtaGrad: {
@@ -830,52 +786,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   sectionTitleLively: {
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '600',
     color: P.subtext,
     marginBottom: 10,
     paddingTop: 6,
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
-  menuRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: P.card,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-    borderWidth: 0,
-    ...theme.shadows.sm,
-    shadowOpacity: 0.06,
-  },
-  menuIconLively: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: P.iconBg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  menuIconLivelyLeaf: {
-    backgroundColor: 'rgba(15, 118, 110, 0.16)',
-  },
-  menuIconLivelyTeal: {
-    backgroundColor: theme.colors.primaryLight + '40',
-  },
-  menuIconLivelyDanger: {
-    backgroundColor: theme.colors.error + '20',
-  },
-  menuIconLivelyDangerSoft: {
-    backgroundColor: theme.colors.error + '12',
-  },
-  menuTextWrap: { flex: 1 },
-  menuLabelLively: { fontSize: 16, fontWeight: '700', color: P.text },
-  menuLabelDangerEmph: { color: theme.colors.error, fontWeight: '800' },
-  menuSublabel: { fontSize: 13, color: P.subtext, marginTop: 3 },
-  menuChevron: { marginLeft: 4, opacity: 0.85 },
-  signOutText: { color: theme.colors.error, fontWeight: '600' },
   signOutSection: {
     marginHorizontal: theme.spacing.lg,
     marginTop: 4,
@@ -886,12 +803,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 13,
+    paddingVertical: 14,
     paddingHorizontal: theme.spacing.lg,
-    borderRadius: 12,
-    backgroundColor: theme.colors.backgroundSecondary,
+    borderRadius: 20,
+    backgroundColor: P.cardMuted,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: P.border,
   },
   signOutIcon: { marginTop: 1 },
   signOutButtonText: { fontSize: 15, fontWeight: '600', color: theme.colors.textSecondary },

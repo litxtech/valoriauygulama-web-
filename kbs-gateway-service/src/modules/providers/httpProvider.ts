@@ -4,7 +4,8 @@ import type {
   ProviderResponse,
   ProviderTestResponse,
   SubmitCheckInPayload,
-  SubmitCheckOutPayload
+  SubmitCheckOutPayload,
+  SubmitDeletePayload
 } from './types.js';
 
 export class HttpOfficialProvider implements OfficialSubmissionProvider {
@@ -162,6 +163,49 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const sonuc = this.extractSonuc(xmlText);
     if (!sonuc.basarili) throw new Error(`KBS check-out failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
     return { summary: { kbs: 'jandarma', action: 'MusteriYabanciCikis', sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
+  }
+
+  /**
+   * KBS kayıt silme — yabancı: MusteriYabanciSil; T.C.: MusteriTCSIil (belge no = BELGENO).
+   */
+  async submitDelete(payload: SubmitDeletePayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
+    const userTc = Number(credentials.username);
+    const tssKod = Number(credentials.facilityCode);
+    if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) {
+      throw new Error('KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)');
+    }
+    if (!payload.documentNumber) throw new Error('documentNumber required for delete');
+
+    const isTc = payload.kbsPersonKind === 'tc_citizen';
+    const opName = isTc ? 'MusteriTCSIil' : 'MusteriYabanciSil';
+    const action = `http://tempuri.org/ISrvShsYtkTml/${opName}`;
+
+    const musteriFields: Record<string, string | null | undefined> = {
+      BELGENO: payload.documentNumber
+    };
+    const musteriXml = this.buildWcfDatacontractObjectXml(
+      'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',
+      musteriFields
+    );
+
+    const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <${opName} xmlns="http://tempuri.org/">
+      <KullaniciTC>${userTc}</KullaniciTC>
+      <TssKod>${tssKod}</TssKod>
+      <Sifre>${HttpOfficialProvider.esc(credentials.password)}</Sifre>
+      ${musteriXml}
+    </${opName}>
+  </soap:Body>
+</soap:Envelope>`;
+
+    const xmlText = await this.soapCall({ action, bodyXml });
+    const sonuc = this.extractSonuc(xmlText);
+    if (!sonuc.basarili) {
+      throw new Error(`KBS delete failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
+    }
+    return { summary: { kbs: 'jandarma', action: opName, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
   }
 
   async testConnection(credentials: ProviderCredentials): Promise<ProviderTestResponse> {

@@ -1,5 +1,8 @@
 /**
- * Pasaport/ID MRZ tarama — KBS sekmesi (isKbsUiEnabled) kapalı olsa da erişilebilir.
- * İçerik: app/staff/kbs/scan.tsx
+ * Pasaport/ID MRZ — KBS UI kapalı olsa da erişilir (staff stack, kbs/_layout dışında).
  */
-export { default } from './kbs/scan';
+import { KbsGuestScanScreen } from '@/components/kbs/KbsGuestScanScreen';
+
+export default function StaffMrzScanScreen() {
+  return <KbsGuestScanScreen deniedFallback="/staff" />;
+}

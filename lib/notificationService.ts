@@ -257,6 +257,44 @@ export async function sendBulkToGuests(params: {
   return { count: rows.length };
 }
 
+/** Duyuru panosu — hedef personele push (uygulama açılınca /staff/board) */
+export async function notifyStaffBoardAnnouncementPush(params: {
+  title: string;
+  body: string;
+  targetStaffId?: string | null;
+  organizationId?: string | null;
+}): Promise<void> {
+  const title = params.title.trim() || 'Yeni duyuru';
+  const body = (params.body.trim() || title).slice(0, 200);
+
+  let query = supabase.from('staff').select('id').eq('is_active', true);
+  if (params.targetStaffId) {
+    query = query.eq('id', params.targetStaffId);
+  } else if (params.organizationId) {
+    query = query.eq('organization_id', params.organizationId);
+  }
+
+  const { data: staffList, error } = await query;
+  if (error || !staffList?.length) return;
+
+  const staffIds = await filterStaffRecipientsByPreference(
+    staffList.map((s: { id: string }) => s.id),
+    'staff_board_announcement'
+  );
+  if (staffIds.length === 0) return;
+
+  await sendExpoPushToRecipients({
+    staffIds,
+    title,
+    body,
+    data: {
+      screen: '/staff/board',
+      url: '/staff/board',
+      notificationType: 'staff_board_announcement',
+    },
+  });
+}
+
 /** Personele toplu bildirim (departman/rol filtresi) */
 export async function sendBulkToStaff(params: {
   target: BulkStaffTarget;
@@ -325,11 +363,26 @@ export async function notifyConversationRecipients(params: {
   conversationId: string;
   excludeAppToken?: string | null;
   excludeStaffId?: string | null;
+  excludeStaffIds?: string[];
+  excludeGuestIds?: string[];
+  onlyStaffIds?: string[];
+  onlyGuestIds?: string[];
   title: string;
   body?: string | null;
   data?: Record<string, unknown>;
 }): Promise<{ sent?: number; failed?: number; error?: string }> {
-  const { conversationId, excludeAppToken, excludeStaffId, title, body, data } = params;
+  const {
+    conversationId,
+    excludeAppToken,
+    excludeStaffId,
+    excludeStaffIds,
+    excludeGuestIds,
+    onlyStaffIds,
+    onlyGuestIds,
+    title,
+    body,
+    data,
+  } = params;
   if (!conversationId || !title?.trim()) return { error: 'conversationId ve title gerekli' };
   try {
     const { data: result, error } = await supabase.functions.invoke(EDGE_FN_NOTIFY_CONV_RECIPIENTS, {
@@ -337,6 +390,10 @@ export async function notifyConversationRecipients(params: {
         conversationId,
         excludeAppToken: excludeAppToken ?? undefined,
         excludeStaffId: excludeStaffId ?? undefined,
+        excludeStaffIds: excludeStaffIds?.length ? excludeStaffIds : undefined,
+        excludeGuestIds: excludeGuestIds?.length ? excludeGuestIds : undefined,
+        onlyStaffIds: onlyStaffIds?.length ? onlyStaffIds : undefined,
+        onlyGuestIds: onlyGuestIds?.length ? onlyGuestIds : undefined,
         title: title.trim(),
         body: body ?? null,
         data: data ?? {},
@@ -356,6 +413,31 @@ export async function notifyConversationRecipients(params: {
     log.warn('notificationService', 'notifyConversationRecipients exception', e);
     return { error: (e as Error).message };
   }
+}
+
+/**
+ * Admin panel olayları (onay, stok, harcama vb.) — notify-admins edge + doğru deep link.
+ * sendBulkToStaff(all_staff) yerine bunu kullanın; aksi halde admin cihazına push gitmeyebilir.
+ */
+export async function notifyAdminPanel(params: {
+  title: string;
+  body?: string | null;
+  /** Örn. /admin/approvals, /admin/stock/approvals */
+  href?: string;
+  notificationType?: string;
+  conversationId?: string | null;
+}): Promise<{ sent?: number; failed?: number; error?: string }> {
+  const href = (params.href ?? '/admin/approvals').trim() || '/admin/approvals';
+  return notifyAdmins({
+    title: params.title,
+    body: params.body,
+    conversationId: params.conversationId,
+    data: {
+      url: href,
+      screen: href,
+      notificationType: params.notificationType ?? 'admin_panel_alert',
+    },
+  });
 }
 
 /** Tüm admin hesaplarına (açık olan telefona) push bildirimi gönder. Panel bildirimleri için kullanın. */

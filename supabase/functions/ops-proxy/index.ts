@@ -1,13 +1,14 @@
 /**
- * Mobil → Supabase Edge → Hetzner KBS gateway (tek dış KBS çıkışı).
- * Jandarma/KBS’ye doğrudan bağlanmaz; yalnızca VPS’teki Node gateway’e forward eder.
+ * Mobil → Supabase Edge → Railway KBS ops API (railway-service).
  *
- * Secrets (Dashboard → Edge Functions → Secrets):
- * - KBS_GATEWAY_URL = http://178.104.12.20:4000 (sonunda / yok, boşluk yok)
- * - KBS_GATEWAY_TOKEN = VPS’teki KBS_GATEWAY_TOKEN ile aynı (ops-proxy istek başlığında gider)
+ * Secrets:
+ * - KBS_GATEWAY_URL = https://<kbs-ops>.up.railway.app (sonunda / yok)
+ * - KBS_GATEWAY_TOKEN = Railway kbs-ops ile aynı
  *
- * Geriye dönük: OPS_VPS_URL hâlâ okunur (KBS_GATEWAY_URL yoksa).
+ * Kurulum: deploy/RAILWAY_KURULUM.md
  */
+
+import { normalizeGatewayBase, validateKbsGatewayBase } from "../_shared/kbsGatewayUrl.ts";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -21,9 +22,8 @@ type ProxyBody = {
 };
 
 function gatewayBase(): string {
-  const raw =
-    (Deno.env.get("KBS_GATEWAY_URL") ?? Deno.env.get("OPS_VPS_URL") ?? "").trim();
-  return raw.replace(/\/$/, "");
+  const raw = Deno.env.get("KBS_GATEWAY_URL") ?? Deno.env.get("OPS_VPS_URL") ?? "";
+  return normalizeGatewayBase(raw);
 }
 
 Deno.serve(async (req: Request) => {
@@ -32,14 +32,14 @@ Deno.serve(async (req: Request) => {
   }
 
   const vpsBase = gatewayBase();
-  if (!vpsBase) {
+  const gatewayCheck = validateKbsGatewayBase(vpsBase);
+  if (!gatewayCheck.ok) {
     return new Response(
       JSON.stringify({
         ok: false,
         error: {
           code: "CONFIG",
-          message:
-            "KBS_GATEWAY_URL is not set (Hetzner KBS gateway base URL). Legacy OPS_VPS_URL is also empty.",
+          message: gatewayCheck.message,
         },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "X-Upstream-Status": "0" } }
@@ -88,10 +88,14 @@ Deno.serve(async (req: Request) => {
       },
     });
   } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    const msg = /failed to lookup|name or service not known|ENOTFOUND/i.test(raw)
+      ? `KBS sunucusuna DNS ile ulaşılamadı (${vpsBase}). Supabase secret KBS_GATEWAY_URL gerçek VPS IP olmalı (örnek metin senin_sunucu_ip kullanılamaz). VPS: curl http://127.0.0.1:4000/health — Detay: ${raw}`
+      : raw;
     return new Response(
       JSON.stringify({
         ok: false,
-        error: { code: "PROXY_ERROR", message: e instanceof Error ? e.message : String(e) },
+        error: { code: "PROXY_ERROR", message: msg },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "X-Upstream-Status": "0" } }
     );

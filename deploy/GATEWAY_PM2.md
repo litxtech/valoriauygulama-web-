@@ -1,4 +1,6 @@
-# KBS yığını — PM2 (Hetzner tek VPS)
+# KBS — PM2 (yalnızca yerel / eski VPS)
+
+> **Üretim kurulumu Railway:** [`deploy/RAILWAY_KURULUM.md`](./RAILWAY_KURULUM.md) — Hetzner kullanılmıyor.
 
 İki ayrı Node süreci: **Ops API** (dış :4000) + **iç SOAP gateway** (:4001). Tanım: `railway-service/ecosystem.config.cjs`.
 

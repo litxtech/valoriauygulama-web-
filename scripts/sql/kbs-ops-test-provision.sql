@@ -1,7 +1,11 @@
 -- KBS test / demo: OPS oteli + odalar + gateway için ops.app_users (admin).
--- 1) Supabase Dashboard → Authentication → Users: test admin hesabının UUID'sini kopyalayın.
--- 2) Aşağıdaki YOUR_AUTH_USER_UUID değerini o UUID ile değiştirin.
--- 3) SQL Editor'de tek seferde çalıştırın (postgres / service_role ortamı RLS'yi aşar).
+-- Kolay yol: scripts/sql/kbs-link-admin-app-user.sql (e-posta ile)
+-- veya Edge deploy sonrası ilk KBS Kaydet otomatik oluşturur (migration 282 + staff admin).
+--
+-- Manuel UUID:
+-- 1) Supabase Dashboard → Authentication → Users: admin UUID kopyala
+-- 2) YOUR_AUTH_USER_UUID değiştir
+-- 3) SQL Editor'de çalıştır
 
 BEGIN;
 

@@ -150,7 +150,8 @@ export default function HomeScreen() {
   const params = useLocalSearchParams<{ t?: string; l?: string }>();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { user, staff, loading } = useAuthStore();
+  const { user, staff, loading, staffCheckComplete, staffCheckUnavailable, retryStaffCheck, signOut } =
+    useAuthStore();
   const [isOffline, setIsOffline] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -292,7 +293,9 @@ export default function HomeScreen() {
   // QR ile sözleşme sayfası açıldıysa yönlendirme yapma – misafir sözleşme ekranında kalsın.
   useEffect(() => {
     if (loading) return;
-    if (!user && !staff) return;
+    if (!user) return;
+    if (!staffCheckComplete) return;
+    if (staffCheckUnavailable && !staff) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
       if (pathname.includes('/guest/sign-one')) return;
@@ -300,7 +303,6 @@ export default function HomeScreen() {
     const path = staff ? '/staff' : '/customer';
     const nextParam = staff ? 'staff' : 'customer';
     let cancelled = false;
-    // loadSession bitti; user.id vererek getUser ağ turu yok, yalnızca privacy_consent sorgusu
     hasPolicyConsent(user?.id ?? null).then((accepted) => {
       if (cancelled) return;
       if (accepted) {
@@ -308,9 +310,14 @@ export default function HomeScreen() {
       } else {
         router.replace({ pathname: '/policies', params: { next: nextParam } });
       }
+    }).catch(() => {
+      if (cancelled) return;
+      router.replace(path);
     });
-    return () => { cancelled = true; };
-  }, [loading, user, staff]);
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, user, staff, staffCheckComplete, staffCheckUnavailable]);
 
   const signInWithPassword = async () => {
     const e = email.trim().toLowerCase();
@@ -328,6 +335,7 @@ export default function HomeScreen() {
       if (error) throw error;
       if (data.user) {
         await useAuthStore.getState().loadSession();
+        await useAuthStore.getState().waitForStaffCheck();
         const { user, staff } = useAuthStore.getState();
         const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
         if (pendingRoom && user?.email) {
@@ -524,27 +532,40 @@ export default function HomeScreen() {
   const cardWidth = width - 24;
   const paddingH = 12;
 
-  /** Oturum okunurken: dönen yükleme simgesi yok (_layout nokta animasyonu yeterli); aynı lobi arka planı */
   if (loading) {
-    return (
-      <View style={[styles.bootLoaderRoot, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <AnimatedLobbyBackground />
-      </View>
-    );
+    return null;
   }
 
   if (isOffline) {
     return <OfflineWelcome onRetry={() => NetInfo.fetch().then((s) => setIsOffline(!s.isConnected))} />;
   }
 
-  // Giriş yapmış kullanıcı: hasPolicyConsent() ağ çağrısı bitene kadar boş View yerine boot ekranı
-  // (aksi halde _layout nokta animasyonundan sonra uzun süre boş / donmuş hissi oluşuyordu).
-  if (user || staff) {
+  if (user && staffCheckUnavailable && !staffCheckComplete) {
     return (
-      <View style={[styles.bootLoaderRoot, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.wrapper}>
         <AnimatedLobbyBackground />
+        <View style={[styles.bootLoaderRoot, { paddingTop: insets.top + 48 }]}>
+          <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
+          <Text style={[styles.lobbyTaglineWhite, { marginTop: 16, textAlign: 'center', paddingHorizontal: 24 }]}>
+            Sunucuya şu an ulaşılamıyor. Birkaç dakika sonra tekrar deneyin.
+          </Text>
+          <TouchableOpacity
+            style={[styles.retryButton, { marginTop: 28 }]}
+            onPress={() => void retryStaffCheck()}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.retryButtonText}>{t('retry')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={{ marginTop: 16 }} onPress={() => void signOut()} activeOpacity={0.85}>
+            <Text style={styles.lobbyTaglineWhite}>{t('signOut') ?? 'Çıkış yap'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
+  }
+
+  if (user || staff) {
+    return null;
   }
 
   return (

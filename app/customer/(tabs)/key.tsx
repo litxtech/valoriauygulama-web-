@@ -303,7 +303,7 @@ export default function DigitalKeyScreen() {
               </>
             ) : urls.contractUrl ? (
               <>
-                <Text style={styles.qrTitle}>Otel kuralları / sözleşme onayı</Text>
+                <Text style={styles.qrTitle}>{t('guestKeyQrTitle')}</Text>
                 <FramedQR value={urls.contractUrl} size={190} design={contractDesign} frame={selectedFrame} getRef={setContractQrRef} />
                 <Text style={styles.qrSub}>{t('digitalKeyQrContractWebNote')}</Text>
               </>
@@ -313,7 +313,7 @@ export default function DigitalKeyScreen() {
               onPress={() => startDownloadQr(selectedQrType)}
               disabled={qrDownloading !== null}
             >
-              <Text style={styles.qrDownloadBtnText}>QR İndir</Text>
+              <Text style={styles.qrDownloadBtnText}>{t('guestKeyQrDownload')}</Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity style={styles.scanBtn} onPress={() => setShowScan(true)} activeOpacity={0.85}>

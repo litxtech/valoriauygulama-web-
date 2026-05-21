@@ -57,10 +57,33 @@ verify_jwt = false
 [functions.print-incident-report]
 verify_jwt = false
 
-# KBS gateway köprüsü (Hetzner): KBS_GATEWAY_URL + KBS_GATEWAY_TOKEN; JWT RN'de sorun çıkarırsa false
+# KBS köprüsü (Railway): KBS_GATEWAY_URL + KBS_GATEWAY_TOKEN; JWT RN'de sorun çıkarırsa false
 [functions.ops-proxy]
+verify_jwt = false
+
+# KBS otel şifresi: JWT fonksiyon içinde getUser ile doğrulanır (RN invoke + gateway 401 önlenir)
+[functions.kbs-admin-credentials]
+verify_jwt = false
+
+[functions.kbs-staff-ops]
 verify_jwt = false
 
 # Hesap silme: JWT gateway'de RN'de 401 verebiliyor; fonksiyon Bearer + getUser ile doğrular
 [functions.delete-user-account]
+verify_jwt = false
+
+# DeepSeek çeviri: Bearer ile fonksiyon içinde getUser doğrulaması
+[functions.translate-text]
+verify_jwt = false
+
+[functions.mux-create-upload]
+verify_jwt = false
+
+[functions.mux-webhook]
+verify_jwt = false
+
+[functions.mux-sync-upload]
+verify_jwt = false
+
+[functions.mux-create-story-upload]
 verify_jwt = false

@@ -1,15 +1,16 @@
 # KBS (kimlik bildirimi) — uçtan uca test ve canlı öncesi kontrol
 
-Mobil **KBS’ye doğrudan gitmez**; sıra: **Uygulama → Supabase Edge `ops-proxy` → Hetzner `:4000` (ops) → `:4001` (iç gateway) → Jandarma SOAP** (veya mock).
+Mobil **KBS’ye doğrudan gitmez**; sıra: **Uygulama → Supabase Edge → Railway (kbs-ops → kbs-core) → Jandarma SOAP** (veya mock).
+
+**Kurulum:** `deploy/RAILWAY_KURULUM.md` (Hetzner kullanılmıyor).
 
 ## 0) Önkoşul kontrol listesi
 
 | Adım | Kontrol |
 |------|--------|
-| VPS | `curl http://SUNUCU_IP:4000/health` ve `curl http://127.0.0.1:4001/gateway/health` (SSH içinden) |
-| PM2 | `pm2 status` → `valoria-kbs-ops` + `valoria-kbs-core` online |
-| Supabase Edge | Secret `KBS_GATEWAY_URL=http://SUNUCU_IP:4000`, `KBS_GATEWAY_TOKEN` = VPS `railway-service/.env` ile aynı; `supabase functions deploy ops-proxy` |
-| Sırlar | `GATEWAY_SHARED_SECRET` ve `KBS_CREDENTIAL_SECRET` **her iki** `.env`’de (ops + core) aynı; core’da `OFFICIAL_PROVIDER_MODE` aşağıya göre |
+| Railway | `https://<kbs-ops>/health` JSON; `https://<kbs-core>/gateway/health` JSON |
+| Supabase Edge | `KBS_GATEWAY_URL=https://<kbs-ops>.up.railway.app`, `KBS_GATEWAY_TOKEN` = Railway kbs-ops ile aynı; `deploy ops-proxy`, `kbs-admin-credentials`, `kbs-staff-ops` |
+| Sırlar | `GATEWAY_SHARED_SECRET` ve `KBS_CREDENTIAL_SECRET` **her iki** Railway serviste aynı; core’da `OFFICIAL_PROVIDER_MODE` aşağıya göre |
 
 ## 1) Uygulama: personel KBS sekmesi (isteğe bağlı bayrak)
 
@@ -65,11 +66,17 @@ Jandarma’nın verdiği **tesis kodu (TssKod)** ve **şifre** + kullanıcı **K
 
 **Admin panel** → **KBS Ayarları** (`/admin/kbs-settings`):
 
-- **Tesis kodu** (`facilityCode`): Jandarma’daki kod (HTTP modunda **sayı** olmalı).
-- **Kullanıcı adı** (`username`): KBS’deki **KullaniciTC** (sayısal TC).
-- **Şifre**: KBS sisteminin verdiği şifre (ilk kayıtta zorunlu).
+- **Tesis kodu (TssKod)** (`facilityCode`): Jandarma’nın otele özel verdiği sayısal kod (ör. `255579`).
+- **Otel KBS şifresi** (`password`, write-only): Web servis şifresi (ör. KBS’nin ürettiği otel şifresi). Kayıttan sonra ekranda gösterilmez.
+- **KBS kullanıcı TC** (`kullaniciTc` / DB `username`): SOAP’taki **KullaniciTC** — 11 haneli sayısal TC (KBS’ye giriş yapan yetkili).
 
-**Kaydet**, ardından **Bağlantı testi**. Hata mesajında Edge token, VPS veya SOAP yanıtı ipuçları `i18n` / ekranda birleşir.
+İlk kurulum CLI (VPS’te `KBS_CREDENTIAL_SECRET` ile aynı secret):
+
+```bash
+KBS_SEED_FACILITY_CODE=255579 KBS_SEED_PASSWORD='...' KBS_SEED_KULLANICI_TC=12345678901 node scripts/seed-kbs-credentials.js
+```
+
+**Kaydet** (Supabase Edge `kbs-admin-credentials` — VPS :4000 gerekmez), ardından **Bağlantı testi** (VPS ayakta olmalı). Kayıt hatası `Connection timed out` → VPS firewall / pm2; şifre kaydı için `KBS_CREDENTIAL_SECRET` Edge secret + `deploy kbs-admin-credentials` yeterli.
 
 ## 5) Admin: KBS odaları (`ops.rooms`)
 

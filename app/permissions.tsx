@@ -68,6 +68,7 @@ async function getStatus(key: string): Promise<PermStatus> {
         }
       }
       case 'photo_library': {
+        if (Platform.OS === 'android') return 'granted';
         const ImagePicker = await import('expo-image-picker');
         const { status } = await ImagePicker.getMediaLibraryPermissionsAsync();
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
@@ -127,6 +128,7 @@ async function requestPermission(key: string): Promise<PermStatus> {
         }
       }
       case 'photo_library': {
+        if (Platform.OS === 'android') return 'granted';
         const ImagePicker = await import('expo-image-picker');
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         emitPermissionLiveChange();

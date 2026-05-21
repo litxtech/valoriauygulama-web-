@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.*.local
+scripts/.kbs-credential-secret.new.txt
+scripts/.kbs-secrets-rotate.*
 
 # Dependencies
 node_modules/

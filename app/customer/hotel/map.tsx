@@ -1,46 +1,45 @@
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 
-const FACILITIES = [
-  { name: 'Resepsiyon', floor: 'Giriş', direction: 'Lobi, ana girişin karşısı', icon: '🛎️' },
-  { name: 'Restoran', floor: '1. Kat', direction: 'Asansörle 1. kata, sağa', icon: '🍽️' },
-  { name: 'Havuz', floor: 'Zemin', direction: 'Lobiden bahçe yönüne, 50 m', icon: '🏊' },
-  { name: 'Spor salonu', floor: '-1. Kat', direction: 'Asansörle -1. kata', icon: '💪' },
-  { name: 'Spa & Wellness', floor: '1. Kat', direction: 'Restoranın yanı', icon: '💆' },
-  { name: 'Bar', floor: '1. Kat', direction: 'Restoran bitişiği', icon: '🍷' },
-  { name: 'Otopark', floor: '-2. Kat', direction: 'Asansör veya rampa', icon: '🅿️' },
-];
+const FACILITY_IDS = ['reception', 'restaurant', 'pool', 'gym', 'spa', 'bar', 'parking'] as const;
+const FACILITY_ICONS: Record<(typeof FACILITY_IDS)[number], string> = {
+  reception: '🛎️',
+  restaurant: '🍽️',
+  pool: '🏊',
+  gym: '💪',
+  spa: '💆',
+  bar: '🍷',
+  parking: '🅿️',
+};
 
-const EMERGENCY = [
-  { label: 'Acil çıkış merdivenleri', desc: 'Her katta koridor sonlarında, işaretli kapılar.' },
-  { label: 'Toplanma alanı', desc: 'Otelin ön bahçesi (lobi çıkışından sola).' },
-  { label: 'Yangın söndürücü', desc: 'Koridorlarda ve lobide kırmızı dolaplar.' },
-  { label: 'İlk yardım', desc: 'Resepsiyonda ilk yardım kiti ve eğitimli personel.' },
-];
+const EMERGENCY_IDS = ['stairs', 'assembly', 'extinguisher', 'firstaid'] as const;
 
 export default function HotelMapScreen() {
+  const { t } = useTranslation();
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>🗺️ Otel içi harita</Text>
-      <Text style={styles.subtitle}>Nerede ne var? Oda numaranıza göre yön tarifi için resepsiyonla iletişime geçin.</Text>
+      <Text style={styles.title}>{t('hotelMap_title')}</Text>
+      <Text style={styles.subtitle}>{t('hotelMap_subtitle')}</Text>
 
-      <Text style={styles.sectionTitle}>Tesisler</Text>
-      {FACILITIES.map((f) => (
-        <View key={f.name} style={styles.card}>
-          <Text style={styles.cardIcon}>{f.icon}</Text>
+      <Text style={styles.sectionTitle}>{t('hotelMap_facilitiesSection')}</Text>
+      {FACILITY_IDS.map((id) => (
+        <View key={id} style={styles.card}>
+          <Text style={styles.cardIcon}>{FACILITY_ICONS[id]}</Text>
           <View style={styles.cardBody}>
-            <Text style={styles.cardName}>{f.name}</Text>
-            <Text style={styles.cardFloor}>{f.floor}</Text>
-            <Text style={styles.cardDir}>{f.direction}</Text>
+            <Text style={styles.cardName}>{t(`hotelMap_fac_${id}_name`)}</Text>
+            <Text style={styles.cardFloor}>{t(`hotelMap_fac_${id}_floor`)}</Text>
+            <Text style={styles.cardDir}>{t(`hotelMap_fac_${id}_dir`)}</Text>
           </View>
         </View>
       ))}
 
-      <Text style={[styles.sectionTitle, styles.emergencySection]}>🚨 Acil çıkış yolları</Text>
-      {EMERGENCY.map((e) => (
-        <View key={e.label} style={styles.emergencyCard}>
-          <Text style={styles.emergencyLabel}>{e.label}</Text>
-          <Text style={styles.emergencyDesc}>{e.desc}</Text>
+      <Text style={[styles.sectionTitle, styles.emergencySection]}>{t('hotelMap_emergencySection')}</Text>
+      {EMERGENCY_IDS.map((id) => (
+        <View key={id} style={styles.emergencyCard}>
+          <Text style={styles.emergencyLabel}>{t(`hotelMap_em_${id}_label`)}</Text>
+          <Text style={styles.emergencyDesc}>{t(`hotelMap_em_${id}_desc`)}</Text>
         </View>
       ))}
     </ScrollView>

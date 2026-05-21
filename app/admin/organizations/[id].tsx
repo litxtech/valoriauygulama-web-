@@ -3,11 +3,13 @@ import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Alert,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { adminTheme } from '@/constants/adminTheme';
 import { supabase } from '@/lib/supabase';
+import { ORGANIZATION_KINDS, ORGANIZATION_KIND_LABELS, type OrganizationKind } from '@/lib/organizationKinds';
 
 type OrgRow = {
   id: string;
   name: string;
   slug: string;
+  kind: string;
   city: string | null;
   address: string | null;
   phone: string | null;
@@ -29,22 +31,24 @@ export default function AdminOrganizationEditScreen() {
   const [email, setEmail] = useState('');
   const [currencyCode, setCurrencyCode] = useState('TRY');
   const [isActive, setIsActive] = useState(true);
+  const [kind, setKind] = useState<OrganizationKind>('hotel');
 
   const load = useCallback(async () => {
     if (!id) return;
     const { data, error } = await supabase
       .from('organizations')
-      .select('id,name,slug,city,address,phone,email,currency_code,is_active')
+      .select('id,name,slug,kind,city,address,phone,email,currency_code,is_active')
       .eq('id', id)
       .maybeSingle();
     if (error || !data) {
-      Alert.alert('Hata', error?.message ?? 'Otel kaydi bulunamadi.');
+      Alert.alert('Hata', error?.message ?? 'İşletme kaydı bulunamadı.');
       router.back();
       return;
     }
     const row = data as OrgRow;
     setName(row.name);
     setSlug(row.slug);
+    setKind((ORGANIZATION_KINDS.includes(row.kind as OrganizationKind) ? row.kind : 'hotel') as OrganizationKind);
     setCity(row.city ?? '');
     setAddress(row.address ?? '');
     setPhone(row.phone ?? '');
@@ -60,7 +64,7 @@ export default function AdminOrganizationEditScreen() {
 
   const save = async () => {
     if (!id || !name.trim() || !slug.trim()) {
-      Alert.alert('Eksik bilgi', 'Otel adi ve kodu zorunludur.');
+      Alert.alert('Eksik bilgi', 'İşletme adı ve kodu zorunludur.');
       return;
     }
     setSaving(true);
@@ -74,13 +78,14 @@ export default function AdminOrganizationEditScreen() {
       p_email: email.trim() || null,
       p_currency_code: currencyCode.trim() || 'TRY',
       p_is_active: isActive,
+      p_kind: kind,
     });
     setSaving(false);
     if (error) {
       Alert.alert('Hata', error.message);
       return;
     }
-    Alert.alert('Kaydedildi', 'Otel bilgileri guncellendi.');
+    Alert.alert('Kaydedildi', 'İşletme bilgileri güncellendi.');
   };
 
   if (loading) {
@@ -93,9 +98,17 @@ export default function AdminOrganizationEditScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={styles.label}>Otel Adi</Text>
+      <Text style={styles.label}>İşletme türü</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+        {ORGANIZATION_KINDS.map((k) => (
+          <TouchableOpacity key={k} style={[styles.kindChip, kind === k && styles.kindChipOn]} onPress={() => setKind(k)}>
+            <Text style={[styles.kindChipText, kind === k && styles.kindChipTextOn]}>{ORGANIZATION_KIND_LABELS[k]}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <Text style={styles.label}>İşletme adı</Text>
       <TextInput style={styles.input} value={name} onChangeText={setName} />
-      <Text style={styles.label}>Otel Kodu (slug)</Text>
+      <Text style={styles.label}>Kod (slug)</Text>
       <TextInput style={styles.input} value={slug} onChangeText={setSlug} autoCapitalize="none" />
       <Text style={styles.label}>Sehir</Text>
       <TextInput style={styles.input} value={city} onChangeText={setCity} />
@@ -139,5 +152,17 @@ const styles = StyleSheet.create({
   toggleText: { fontWeight: '700', color: '#111827' },
   saveBtn: { marginTop: 12, backgroundColor: adminTheme.colors.accent, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
   saveBtnText: { color: '#fff', fontWeight: '700' },
+  kindChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surface,
+  },
+  kindChipOn: { backgroundColor: adminTheme.colors.accent, borderColor: adminTheme.colors.accent },
+  kindChipText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
+  kindChipTextOn: { color: '#fff' },
 });
 

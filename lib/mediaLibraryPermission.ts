@@ -45,6 +45,11 @@ function askOpenSettings(message: string): Promise<boolean> {
 export async function ensureMediaLibraryPermission(
   options?: EnsureMediaLibraryPermissionOptions
 ): Promise<boolean> {
+  // Android 13+: sistem Photo Picker; READ_MEDIA_IMAGES gerekmez (Play politikası).
+  if (Platform.OS === 'android') {
+    return true;
+  }
+
   const title = options?.title ?? 'Galeri izni';
   const message =
     options?.message ??

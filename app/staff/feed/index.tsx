@@ -21,13 +21,14 @@ import {
   PanResponder,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { pds } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth, feedPostMediaHeight } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDistanceToNow } from 'date-fns';
@@ -40,7 +41,17 @@ import { formatDateTime } from '@/lib/date';
 import { log } from '@/lib/logger';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
+import { StoryMuxVideo } from '@/components/StoryMuxVideo';
+import {
+  buildStaffAvatarLookup,
+  parseFeedGuestEmbed,
+  parseFeedStaffEmbed,
+  resolveFeedAuthorAvatarUrl,
+  unwrapFeedRelation,
+} from '@/lib/feedAuthorJoin';
+import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { guestDisplayName } from '@/lib/guestDisplayName';
+import { loadFeedPostViewers, recordStaffFeedPostViews, type FeedPostViewerRow } from '@/lib/feedPostViewers';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
@@ -65,6 +76,8 @@ import {
   type StaffStoryGroup,
   type StaffStoryRow,
 } from '@/lib/staffStories';
+import { getMuxHlsPlaybackUrl, isMuxPendingMediaUrl } from '@/lib/muxChat';
+import { pollStoryPlaybackReady } from '@/lib/muxStoryUpload';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
@@ -73,6 +86,8 @@ import { MentionableText } from '@/components/MentionableText';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const STAFF_FEED_CACHE_KEY = 'staff_feed_cache_v1';
+const FEED_PAGE_SIZE = Platform.OS === 'android' ? 15 : 30;
+const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 900 : 350;
 
 function firstName(fullName: string | null | undefined): string {
   const s = (fullName ?? '').trim();
@@ -100,15 +115,6 @@ type FeedPostRow = {
   guest_id?: string | null;
   guest?: { full_name: string | null; photo_url?: string | null } | null;
   media_items?: { id: string; media_type: 'image' | 'video'; media_url: string; thumbnail_url: string | null; sort_order: number }[];
-};
-
-type ViewerRow = {
-  id: string;
-  staff_id: string | null;
-  guest_id: string | null;
-  viewed_at: string;
-  staff: { full_name: string | null; profile_image: string | null; verification_badge?: 'blue' | 'yellow' | null } | null;
-  guest: { full_name: string | null; photo_url?: string | null } | null;
 };
 
 type CommentRow = {
@@ -159,8 +165,10 @@ export default function StaffHomeScreen() {
     [dateLocale]
   );
   const { staff } = useAuthStore();
+  const insets = useSafeAreaInsets();
   const [posts, setPosts] = useState<FeedPostRow[]>([]);
   const [staffList, setStaffList] = useState<StaffAvatarRow[]>([]);
+  const staffAvatarById = useMemo(() => buildStaffAvatarLookup(staffList), [staffList]);
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [myLikes, setMyLikes] = useState<Set<string>>(new Set());
@@ -173,7 +181,7 @@ export default function StaffHomeScreen() {
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [notificationPrefs, setNotificationPrefs] = useState<Set<string>>(new Set());
   const [viewersModalPostId, setViewersModalPostId] = useState<string | null>(null);
-  const [viewersList, setViewersList] = useState<ViewerRow[]>([]);
+  const [viewersList, setViewersList] = useState<FeedPostViewerRow[]>([]);
   const [loadingViewers, setLoadingViewers] = useState(false);
   const [togglingNotif, setTogglingNotif] = useState<string | null>(null);
   const [fullscreenPostMedia, setFullscreenPostMedia] = useState<{
@@ -223,7 +231,7 @@ export default function StaffHomeScreen() {
   const [storyReportDetails, setStoryReportDetails] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyKeyboardOpen, setStoryKeyboardOpen] = useState(false);
-  const [visibleFeedCount, setVisibleFeedCount] = useState(30);
+  const [visibleFeedCount, setVisibleFeedCount] = useState(FEED_PAGE_SIZE);
   const storyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const storyProgressAnim = useRef(new Animated.Value(0)).current;
 
@@ -451,8 +459,8 @@ export default function StaffHomeScreen() {
       (p) =>
         !(p.staff_id && hidden.hiddenStaffIds.has(p.staff_id)) &&
         !(p.guest_id && hidden.hiddenGuestIds.has(p.guest_id)) &&
-        !(p.staff_id && (p.staff as { deleted_at?: string | null } | null)?.deleted_at) &&
-        !(p.guest_id && (p.guest as { deleted_at?: string | null } | null)?.deleted_at)
+        !(p.staff_id && unwrapFeedRelation(p.staff as { deleted_at?: string | null } | null)?.deleted_at) &&
+        !(p.guest_id && unwrapFeedRelation(p.guest as { deleted_at?: string | null } | null)?.deleted_at)
     );
     if (!mountedRef.current) return;
     const ids = list.map((p) => p.id);
@@ -570,20 +578,26 @@ export default function StaffHomeScreen() {
       })
     ).catch(() => {});
     setLoading(false);
+    const avatarLookup = buildStaffAvatarLookup(staffListRows);
     prefetchImageUrls(
       [
-        ...list.flatMap((p) => [
-          p.staff?.profile_image,
-          p.guest?.photo_url,
-          p.thumbnail_url,
-          p.media_type && p.media_type !== 'video' ? p.media_url : null,
-        ]),
+        ...list.flatMap((p) => {
+          return [
+            resolveFeedAuthorAvatarUrl({
+              staff: p.staff,
+              guest: p.guest,
+              staffId: p.staff_id,
+              staffAvatarById: avatarLookup,
+            }),
+            p.thumbnail_url,
+            p.media_type && p.media_type !== 'video' ? p.media_url : null,
+          ];
+        }),
         ...staffListRows.map((s) => s.profile_image),
       ],
-      56
+      Platform.OS === 'android' ? 28 : 56
     );
-    const viewRows = ids.map((post_id) => ({ post_id, staff_id: staff.id }));
-    supabase.from('feed_post_views').upsert(viewRows, { onConflict: 'post_id,staff_id', ignoreDuplicates: true }).then(() => {});
+    void recordStaffFeedPostViews(ids, staff.id);
   }, [staff?.id, loadStaffList]);
 
   const refreshCommentsSheet = useCallback(async () => {
@@ -661,24 +675,43 @@ export default function StaffHomeScreen() {
     return () => clearTimeout(t);
   }, [fullscreenPostMedia?.uri, fullscreenPostMedia?.mediaType]);
 
+  const loadFeedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoadFeedFromRealtime = useCallback(() => {
+    if (loadFeedDebounceRef.current) clearTimeout(loadFeedDebounceRef.current);
+    loadFeedDebounceRef.current = setTimeout(() => {
+      loadFeedDebounceRef.current = null;
+      void loadFeed();
+    }, FEED_REALTIME_DEBOUNCE_MS);
+  }, [loadFeed]);
+
+  useEffect(() => {
+    return () => {
+      if (loadFeedDebounceRef.current) clearTimeout(loadFeedDebounceRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     const channel = supabase
       .channel('feed_posts_changes')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'feed_posts' },
-        () => { loadFeed(); }
+        () => {
+          scheduleLoadFeedFromRealtime();
+        }
       )
       .on(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'feed_posts' },
-        () => { loadFeed(); }
+        () => {
+          scheduleLoadFeedFromRealtime();
+        }
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadFeed]);
+  }, [scheduleLoadFeedFromRealtime]);
 
   useEffect(() => {
     const channel = supabase
@@ -709,10 +742,16 @@ export default function StaffHomeScreen() {
     orderedStoryGroups.forEach((g) => map.set(g.staff_id, g));
     return map;
   }, [orderedStoryGroups]);
+  const orderedStaffList = useMemo(() => {
+    if (!staff?.id) return staffList;
+    const me = staffList.find((s) => s.id === staff.id);
+    const others = staffList.filter((s) => s.id !== staff.id);
+    return me ? [me, ...others] : staffList;
+  }, [staffList, staff?.id]);
   const visiblePosts = useMemo(() => posts.slice(0, visibleFeedCount), [posts, visibleFeedCount]);
 
   useEffect(() => {
-    setVisibleFeedCount(30);
+    setVisibleFeedCount(FEED_PAGE_SIZE);
   }, [posts]);
 
   const closeStoryPlayer = useCallback((force = false) => {
@@ -768,6 +807,7 @@ export default function StaffHomeScreen() {
   const activeStoryGroup = storyPlayer ? orderedStoryGroups[storyPlayer.groupIndex] : null;
   const activeStory = storyPlayer && activeStoryGroup ? activeStoryGroup.stories[storyPlayer.storyIndex] : null;
   const canDeleteActiveStory = !!(staff?.id && activeStory && (activeStory.staff_id === staff.id || staff?.role === 'admin'));
+  const canViewActiveStoryViewers = !!(staff?.id && activeStory && activeStory.staff_id === staff.id);
   const storyOverlayOpen = storyMenuOpen || storyViewersModal || storyReportOpen;
 
   useEffect(() => {
@@ -837,10 +877,41 @@ export default function StaffHomeScreen() {
       closeStoryPlayer();
       return;
     }
-    if (storyPlayer.storyIndex > activeStoryGroup.stories.length - 1) {
-      setStoryPlayer({ groupIndex: storyPlayer.groupIndex, storyIndex: 0 });
+    if (storyPlayer.storyIndex >= activeStoryGroup.stories.length) {
+      setStoryPlayer({
+        groupIndex: storyPlayer.groupIndex,
+        storyIndex: Math.max(0, activeStoryGroup.stories.length - 1),
+      });
     }
   }, [storyGroups, storyPlayer, activeStoryGroup, closeStoryPlayer]);
+
+  useEffect(() => {
+    if (!activeStory?.id || activeStory.media_type !== 'video') return;
+    if (getMuxHlsPlaybackUrl(activeStory.media_url)) return;
+    if (!isMuxPendingMediaUrl(activeStory.media_url)) return;
+    let cancelled = false;
+    void (async () => {
+      const result = await pollStoryPlaybackReady(activeStory.id, { maxAttempts: 60, intervalMs: 500 });
+      if (cancelled || !result.ready || !result.media_url) return;
+      setStoryGroups((prev) =>
+        prev.map((g) => ({
+          ...g,
+          stories: g.stories.map((s) =>
+            s.id === activeStory.id
+              ? {
+                  ...s,
+                  media_url: result.media_url!,
+                  thumbnail_url: result.thumbnail_url ?? s.thumbnail_url,
+                }
+              : s
+          ),
+        }))
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStory?.id, activeStory?.media_url, activeStory?.media_type]);
 
   useEffect(() => {
     if (!storyPlayer) {
@@ -932,11 +1003,16 @@ export default function StaffHomeScreen() {
     setStoryBusy(false);
   }, [activeStory?.id, activeStoryGroup?.staff_id, staff?.id, staff?.full_name, storyReplyText, storyBusy]);
 
+  useEffect(() => {
+    if (!canViewActiveStoryViewers && storyViewersModal) {
+      setStoryViewersModal(false);
+    }
+  }, [canViewActiveStoryViewers, storyViewersModal]);
+
   const openStoryViewers = useCallback(async () => {
-    if (!activeStory?.id) return;
+    if (!activeStory?.id || !canViewActiveStoryViewers) return;
     log.info('staff/feed/story', 'openStoryViewers pressed', {
       storyId: activeStory.id,
-      canDeleteActiveStory,
       currentUserStaffId: staff?.id,
       storyOwnerStaffId: activeStory?.staff_id,
     });
@@ -959,7 +1035,7 @@ export default function StaffHomeScreen() {
       });
       Alert.alert('Goruntuleyenler acilamadi', err?.message ?? 'Yetki veya baglanti hatasi olabilir.');
     }
-  }, [activeStory?.id, activeStory?.staff_id, canDeleteActiveStory, staff?.id]);
+  }, [activeStory?.id, activeStory?.staff_id, canViewActiveStoryViewers, staff?.id]);
 
   const openStoryPersonProfile = useCallback(
     (viewerStaffId: string | null | undefined, guestId: string | null | undefined) => {
@@ -999,7 +1075,7 @@ export default function StaffHomeScreen() {
   }, [activeStory?.id, staff?.id, staff?.full_name, storyReportReason, storyReportDetails, storyBusy]);
 
   const deleteActiveStory = useCallback(async () => {
-    if (!activeStory?.id || !canDeleteActiveStory || storyBusy) {
+    if (!activeStory?.id || !canDeleteActiveStory || storyBusy || !storyPlayer || !activeStoryGroup) {
       log.warn('staff/feed/story', 'deleteActiveStory blocked', {
         hasStoryId: !!activeStory?.id,
         canDeleteActiveStory,
@@ -1013,27 +1089,55 @@ export default function StaffHomeScreen() {
         text: 'Sil',
         style: 'destructive',
         onPress: async () => {
+          const deletedStoryId = activeStory.id;
+          const groupIndex = storyPlayer.groupIndex;
+          const storyIndex = storyPlayer.storyIndex;
+          const ownerStaffId = activeStoryGroup.staff_id;
+          const storiesRemaining = activeStoryGroup.stories.length - 1;
           setStoryBusy(true);
           try {
-            log.info('staff/feed/story', 'deleteActiveStory started', { storyId: activeStory.id });
-            const { error } = await softDeleteStory(activeStory.id);
+            log.info('staff/feed/story', 'deleteActiveStory started', { storyId: deletedStoryId });
+            const { error } = await softDeleteStory(deletedStoryId);
             if (error) {
               log.error('staff/feed/story', 'deleteActiveStory failed', error);
               Alert.alert('Silinemedi', error.message || 'Hikaye silinirken hata olustu.');
               return;
             }
-            log.info('staff/feed/story', 'deleteActiveStory success', { storyId: activeStory.id });
+            log.info('staff/feed/story', 'deleteActiveStory success', { storyId: deletedStoryId });
             setStoryMenuOpen(false);
-            closeStoryPlayer(true);
+            setStoryViewersModal(false);
+            setStoryRepliesModal(false);
+            setStoryGroups((prev) =>
+              prev
+                .map((g) =>
+                  g.staff_id === ownerStaffId
+                    ? { ...g, stories: g.stories.filter((s) => s.id !== deletedStoryId) }
+                    : g
+                )
+                .filter((g) => g.stories.length > 0)
+            );
+            if (storiesRemaining > 0) {
+              const nextIndex = Math.min(storyIndex, storiesRemaining - 1);
+              setStoryPlayer({ groupIndex, storyIndex: nextIndex });
+            } else {
+              closeStoryPlayer(true);
+            }
             await loadStories();
-            Alert.alert('Tamam', 'Hikaye silindi.');
           } finally {
             setStoryBusy(false);
           }
         },
       },
     ]);
-  }, [activeStory?.id, canDeleteActiveStory, storyBusy, closeStoryPlayer, loadStories]);
+  }, [
+    activeStory?.id,
+    activeStoryGroup,
+    canDeleteActiveStory,
+    storyBusy,
+    storyPlayer,
+    closeStoryPlayer,
+    loadStories,
+  ]);
 
   const toggleLike = async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
     if (!staff) return;
@@ -1191,18 +1295,11 @@ export default function StaffHomeScreen() {
     setViewersModalPostId(postId);
     setLoadingViewers(true);
     setViewersList([]);
-    const { data } = await supabase
-      .from('feed_post_views')
-      .select('id, staff_id, guest_id, viewed_at, staff:staff_id(full_name, profile_image, verification_badge, deleted_at), guest:guest_id(full_name, photo_url, deleted_at)')
-      .eq('post_id', postId)
-      .order('viewed_at', { ascending: false });
-    const rows = (data ?? []) as ViewerRow[];
-    const filtered = rows.filter(
-      (v) =>
-        !(v.staff_id && (v.staff as { deleted_at?: string | null } | null)?.deleted_at) &&
-        !(v.guest_id && (v.guest as { deleted_at?: string | null } | null)?.deleted_at)
-    );
-    setViewersList(filtered);
+    const { rows, error } = await loadFeedPostViewers(postId);
+    if (error) {
+      log.warn('staff/feed openViewersModal', error.message);
+    }
+    setViewersList(rows);
     setLoadingViewers(false);
   };
 
@@ -1343,14 +1440,18 @@ export default function StaffHomeScreen() {
       Alert.alert(t('warning'), t('cannotBlockSelf'));
       return;
     }
+    const postStaff = unwrapFeedRelation(
+      post.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null
+    );
+    const postGuest = unwrapFeedRelation(post.guest as { full_name?: string | null } | null);
     const targetName = post.staff_id
       ? displayStaffNameForViewer(
-          (post.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
-          (post.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
+          postStaff?.full_name ?? null,
+          postStaff?.profile_hidden_by_admin ?? null,
           staff?.role === 'admin',
           t('thisUser')
         )
-      : guestDisplayName((post.guest as { full_name?: string | null } | null)?.full_name, t('thisUser'));
+      : guestDisplayName(postGuest?.full_name, t('thisUser'));
     Alert.alert(t('blockUserTitle'), t('blockUserMessage', { name: targetName }), [
       { text: t('cancel'), style: 'cancel' },
       {
@@ -1457,6 +1558,89 @@ export default function StaffHomeScreen() {
     [mentionDirectory]
   );
 
+  const renderStaffAvatarCard = useCallback(
+    (s: StaffAvatarRow) => {
+      const name = displayStaffNameForViewer(
+        s.full_name,
+        s.profile_hidden_by_admin ?? null,
+        staff?.role === 'admin',
+        '—'
+      );
+      const staffStory = storyGroupByStaffId.get(s.id);
+      const hasStory = !!staffStory;
+      const isMe = s.id === staff?.id;
+      const ringColors = hasStory
+        ? staffStory?.has_unseen
+          ? [pds.gradientStoryRing[0], '#FF5AD0', pds.gradientStoryRing[1]]
+          : ['#FEC8A8', '#FD9BC2', '#F9A8D4']
+        : ['#e5e7eb', '#d1d5db'];
+      return (
+        <TouchableOpacity
+          key={s.id}
+          style={styles.staffAvatarCard}
+          onPress={() => {
+            if (hasStory) {
+              openStoryByStaffId(s.id);
+              return;
+            }
+            if (isMe) {
+              router.push('/staff/feed/story-new');
+              return;
+            }
+            router.push(`/staff/profile/${s.id}`);
+          }}
+          activeOpacity={0.85}
+        >
+          <View style={styles.staffAvatarCardInner}>
+            <LinearGradient
+              colors={ringColors as [string, string, ...string[]]}
+              start={{ x: 0.1, y: 0.2 }}
+              end={{ x: 0.9, y: 0.8 }}
+              style={styles.staffAvatarRing}
+            >
+              <AvatarWithBadge badge={s.verification_badge ?? null} avatarSize={64} badgeSize={14} showBadge={false}>
+                {s.profile_image ? (
+                  <CachedImage uri={s.profile_image} style={styles.staffAvatarImg} contentFit="cover" />
+                ) : (
+                  <View style={styles.staffAvatarPlaceholder}>
+                    <Text style={styles.staffAvatarLetter}>{name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                )}
+              </AvatarWithBadge>
+              {isMe ? (
+                <View style={styles.storyAddBadge}>
+                  <Ionicons name="add" size={13} color="#fff" />
+                </View>
+              ) : null}
+              {isMe || hasStory ? (
+                <View
+                  style={[styles.storyOnlineDot, isMe ? styles.storyOnlineDotLeft : styles.storyOnlineDotRight]}
+                />
+              ) : null}
+            </LinearGradient>
+            <StaffNameWithBadge name={name} badge={s.verification_badge ?? null} textStyle={styles.staffAvatarName} />
+            {!s.profile_hidden_by_admin && (s.department || s.position) ? (
+              <Text style={styles.staffAvatarRole} numberOfLines={1}>
+                {s.department || s.position || ''}
+              </Text>
+            ) : s.profile_hidden_by_admin && staff?.role !== 'admin' ? (
+              <Text style={styles.staffAvatarRole} numberOfLines={1}>
+                —
+              </Text>
+            ) : null}
+            {!s.profile_hidden_by_admin && s.organization?.name ? (
+              <Text style={styles.staffAvatarOrg} numberOfLines={2}>
+                {s.organization.name}
+                {s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}
+              </Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      );
+    },
+    [staff?.id, staff?.role, storyGroupByStaffId, openStoryByStaffId, router]
+  );
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -1469,6 +1653,7 @@ export default function StaffHomeScreen() {
         contentContainerStyle={styles.content}
         contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={Platform.OS === 'android'}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.white} />
         }
@@ -1482,84 +1667,10 @@ export default function StaffHomeScreen() {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.staffAvatarsContent}
+            style={styles.staffAvatarsScroll}
+            contentContainerStyle={styles.staffAvatarsScrollContent}
           >
-            {staffList.map((s) => {
-              const name = displayStaffNameForViewer(
-                s.full_name,
-                s.profile_hidden_by_admin ?? null,
-                staff?.role === 'admin',
-                '—'
-              );
-              const staffStory = storyGroupByStaffId.get(s.id);
-              const hasStory = !!staffStory;
-              const isMe = s.id === staff?.id;
-              const ringColors = hasStory
-                ? (staffStory?.has_unseen ? [pds.gradientStoryRing[0], '#FF5AD0', pds.gradientStoryRing[1]] : ['#FEC8A8', '#FD9BC2', '#F9A8D4'])
-                : ['#e5e7eb', '#d1d5db'];
-              return (
-                <TouchableOpacity
-                  key={s.id}
-                  style={styles.staffAvatarCard}
-                  onPress={() => {
-                    if (hasStory) {
-                      openStoryByStaffId(s.id);
-                      return;
-                    }
-                    if (isMe) {
-                      router.push('/staff/feed/story-new');
-                      return;
-                    }
-                    router.push(`/staff/profile/${s.id}`);
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <View style={styles.staffAvatarCardInner}>
-                    <LinearGradient
-                      colors={ringColors as [string, string, ...string[]]}
-                      start={{ x: 0.1, y: 0.2 }}
-                      end={{ x: 0.9, y: 0.8 }}
-                      style={styles.staffAvatarRing}
-                    >
-                      <AvatarWithBadge badge={s.verification_badge ?? null} avatarSize={64} badgeSize={14} showBadge={false}>
-                        {s.profile_image ? (
-                          <CachedImage uri={s.profile_image} style={styles.staffAvatarImg} contentFit="cover" />
-                        ) : (
-                          <View style={styles.staffAvatarPlaceholder}>
-                            <Text style={styles.staffAvatarLetter}>{name.charAt(0).toUpperCase()}</Text>
-                          </View>
-                        )}
-                      </AvatarWithBadge>
-                      {isMe ? (
-                        <View style={styles.storyAddBadge}>
-                          <Ionicons name="add" size={13} color="#fff" />
-                        </View>
-                      ) : null}
-                      {isMe || hasStory ? (
-                        <View
-                          style={[
-                            styles.storyOnlineDot,
-                            isMe ? styles.storyOnlineDotLeft : styles.storyOnlineDotRight,
-                          ]}
-                        />
-                      ) : null}
-                    </LinearGradient>
-                    <StaffNameWithBadge name={name} badge={s.verification_badge ?? null} textStyle={styles.staffAvatarName} />
-                    {!s.profile_hidden_by_admin && (s.department || s.position) ? (
-                      <Text style={styles.staffAvatarRole} numberOfLines={1}>{s.department || s.position || ''}</Text>
-                    ) : s.profile_hidden_by_admin && staff?.role !== 'admin' ? (
-                      <Text style={styles.staffAvatarRole} numberOfLines={1}>—</Text>
-                    ) : null}
-                    {!s.profile_hidden_by_admin && s.organization?.name ? (
-                      <Text style={styles.staffAvatarOrg} numberOfLines={2}>
-                        {s.organization.name}
-                        {s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}
-                      </Text>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+            {orderedStaffList.map((s) => renderStaffAvatarCard(s))}
           </ScrollView>
         </View>
 
@@ -1584,6 +1695,8 @@ export default function StaffHomeScreen() {
               </View>
             );
           }
+          const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
+          const feedMediaHeight = feedPostMediaHeight(feedCardWidth);
           return visiblePosts.map((p) => {
             const maySeeHiddenFull = staff?.role === 'admin';
             const likeCount = likeCounts[p.id] ?? 0;
@@ -1606,17 +1719,8 @@ export default function StaffHomeScreen() {
                 text: (c.content ?? '').trim(),
               }))
               .filter((x) => x.text);
-            const staffInfo = p.staff as {
-              full_name?: string;
-              profile_image?: string;
-              department?: string | null;
-              position?: string | null;
-              verification_badge?: 'blue' | 'yellow' | null;
-              organization?: { name?: string | null; kind?: string | null } | null;
-              profile_hidden_by_admin?: boolean | null;
-            } | null;
-            const rawGuest = p.guest;
-            const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
+            const staffInfo = parseFeedStaffEmbed(p.staff);
+            const guestInfo = parseFeedGuestEmbed(p.guest);
             const isGuestPost = !p.staff_id;
             const authorName = isGuestPost
               ? guestDisplayName(guestInfo?.full_name, 'Misafir')
@@ -1626,14 +1730,19 @@ export default function StaffHomeScreen() {
                   maySeeHiddenFull,
                   '—'
                 );
-            const authorAvatar = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
+            const authorAvatar = resolveFeedAuthorAvatarUrl({
+              staff: p.staff,
+              guest: p.guest,
+              staffId: p.staff_id,
+              staffAvatarById,
+            });
             const authorBadge = staffInfo?.verification_badge ?? null;
             const orgName = staffInfo?.organization?.name?.trim() || null;
             const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
             const roleBase = staffInfo?.department || staffInfo?.position || null;
             const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
             const roleLabel = isGuestPost
-              ? 'Misafir'
+              ? null
               : staffInfo?.profile_hidden_by_admin && !maySeeHiddenFull
                 ? '—'
                 : [roleBase, orgLabel].filter(Boolean).join(' • ') || null;
@@ -1648,8 +1757,9 @@ export default function StaffHomeScreen() {
                 <View style={styles.postImageWrap}>
                   <FeedMediaCarousel
                     items={mediaItems.map((m, i) => ({ id: `${p.id}-${i}`, media_type: m.media_type, media_url: m.media_url, thumbnail_url: m.thumbnail_url }))}
-                    width={SCREEN_WIDTH - 32}
-                    height={Math.round((SCREEN_WIDTH - 32) * 1.25)}
+                    width={feedCardWidth}
+                    height={feedMediaHeight}
+                    videoPosterOnly={Platform.OS === 'android'}
                     onPressItem={(item) => {
                       if (item.media_type === 'video') {
                         setFullscreenPostMedia({
@@ -1671,13 +1781,18 @@ export default function StaffHomeScreen() {
               ) : null;
 
             const isOwnStaffPost = !!(staff?.id && p.staff_id === staff.id);
+            const canOpenViewersList = !!(staff?.id && (isOwnStaffPost || isGuestPost));
             return (
               <View
                 key={p.id}
                 collapsable={false}
-                onLayout={(e) => {
-                  postYRef.current[p.id] = e.nativeEvent.layout.y;
-                }}
+                onLayout={
+                  Platform.OS === 'android' && pendingScrollPostId !== p.id
+                    ? undefined
+                    : (e) => {
+                        postYRef.current[p.id] = e.nativeEvent.layout.y;
+                      }
+                }
               >
                 <StaffFeedPostCard
                   postTag={p.post_tag}
@@ -1696,16 +1811,20 @@ export default function StaffHomeScreen() {
                   commentCount={commentCount}
                   viewCount={viewCount}
                   showViewStats
-                  viewersListEnabled={isOwnStaffPost}
+                  viewersListEnabled={canOpenViewersList}
                   commentPreview={commentPreview}
                   togglingLike={togglingLike === p.id}
                   deletingPost={deletingPostId === p.id}
-                  onAuthorPress={p.staff_id ? () => router.push(`/staff/profile/${p.staff_id}`) : undefined}
+                  onAuthorPress={
+                    p.staff_id
+                      ? () => openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id)
+                      : undefined
+                  }
                   onLike={() => toggleLike(p.id, p.staff_id, p.guest_id ?? null)}
                   onComment={() => setCommentsSheetPostId(commentsSheetPostId === p.id ? null : p.id)}
                   onDetailsPress={() => setCommentsSheetPostId(commentsSheetPostId === p.id ? null : p.id)}
                   onViewers={() => {
-                    if (isOwnStaffPost) void openViewersModal(p.id);
+                    if (canOpenViewersList) void openViewersModal(p.id);
                   }}
                   onMenu={() => setMenuPostId(menuPostId === p.id ? null : p.id)}
                 />
@@ -1791,7 +1910,7 @@ export default function StaffHomeScreen() {
           }).concat(
             posts.length > visibleFeedCount
               ? (
-                <TouchableOpacity key="staff-feed-more" style={styles.showMoreBtn} onPress={() => setVisibleFeedCount((c) => c + 30)} activeOpacity={0.85}>
+                <TouchableOpacity key="staff-feed-more" style={styles.showMoreBtn} onPress={() => setVisibleFeedCount((c) => c + FEED_PAGE_SIZE)} activeOpacity={0.85}>
                   <Text style={styles.showMoreBtnText}>Daha fazla göster</Text>
                 </TouchableOpacity>
               )
@@ -1888,15 +2007,13 @@ export default function StaffHomeScreen() {
                   keyExtractor={(item) => item.id}
                   ListEmptyComponent={<Text style={styles.viewersEmpty}>Henüz görüntüleyen yok</Text>}
                   renderItem={({ item }) => {
-                    const v = item as ViewerRow;
-                    const staffData = v.staff as { full_name?: string; profile_image?: string; verification_badge?: 'blue' | 'yellow' | null } | null;
-                    const guestData = v.guest as { full_name?: string | null; photo_url?: string | null } | null;
-                    const name = v.guest_id
-                      ? guestDisplayName(guestData?.full_name, '—')
-                      : (staffData?.full_name?.trim() || '—');
-                    const img = staffData?.profile_image ?? guestData?.photo_url ?? null;
-                    const badge = staffData?.verification_badge ?? null;
-                    const isGuest = !!v.guest_id;
+                    const v = item as FeedPostViewerRow;
+                    const isGuest = v.is_guest;
+                    const name = isGuest
+                      ? guestDisplayName(v.viewer_name, '—')
+                      : (v.viewer_name?.trim() || '—');
+                    const img = v.viewer_avatar?.trim() || null;
+                    const badge = v.verification_badge;
                     return (
                       <View style={styles.viewerRow}>
                         <AvatarWithBadge badge={badge} avatarSize={44} badgeSize={12} showBadge={false}>
@@ -2242,19 +2359,48 @@ export default function StaffHomeScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={!!storyPlayer && !!activeStory} transparent animationType="fade" onRequestClose={closeStoryPlayer}>
+      <Modal
+        visible={!!storyPlayer && !!activeStory}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={closeStoryPlayer}
+      >
         <KeyboardAvoidingView
-          style={styles.storyModalOverlay}
+          style={styles.storyFullscreenRoot}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+          keyboardVerticalOffset={0}
         >
-          <Pressable style={styles.storyModalBackdrop} onPress={closeStoryPlayer}>
-            {activeStory && activeStoryGroup ? (
-              <Pressable
-                style={[styles.storyModalBody, storyKeyboardOpen && styles.storyModalBodyKeyboard]}
-                onPress={(e) => e.stopPropagation()}
+          {activeStory && activeStoryGroup ? (
+            <View style={styles.storyFullscreenRoot}>
+              <View style={styles.storyMediaFullscreen} pointerEvents="box-none">
+                {activeStory.media_type === 'video' ? (
+                  <StoryMuxVideo
+                    key={activeStory.id}
+                    mediaUrl={activeStory.media_url}
+                    thumbnailUrl={activeStory.thumbnail_url}
+                    style={styles.storyMedia}
+                    shouldPlay
+                    resizeMode="cover"
+                    isMuted={false}
+                    useNativeControls={false}
+                  />
+                ) : (
+                  <CachedImage uri={activeStory.media_url} style={styles.storyMedia} contentFit="contain" />
+                )}
+                <View style={styles.storyTapZones} pointerEvents={storyOverlayOpen ? 'none' : 'box-none'}>
+                  <Pressable style={styles.storyTapZoneLeft} onPress={goToPrevStory} />
+                  <Pressable style={styles.storyTapZoneRight} onPress={goToNextStory} />
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.storyChromeTop,
+                  { paddingTop: insets.top + 8, zIndex: storyMenuOpen ? 36 : 4 },
+                ]}
+                pointerEvents="box-none"
               >
-                <View style={[styles.storyModalCard, storyKeyboardOpen && styles.storyModalCardKeyboard]}>
                 <View style={styles.storyProgressRow}>
                   {activeStoryGroup.stories.map((s, idx) => {
                     const isCurrent = idx === (storyPlayer?.storyIndex ?? 0);
@@ -2301,42 +2447,42 @@ export default function StaffHomeScreen() {
                         });
                         setStoryMenuOpen(true);
                       }}
-                      hitSlop={14}
+                      hitSlop={{ top: 16, bottom: 16, left: 16, right: 8 }}
                       style={styles.storyHeaderIconBtn}
+                      accessibilityLabel="Hikaye menüsü"
                     >
                       <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={closeStoryPlayer} hitSlop={12} style={styles.storyHeaderIconBtn}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setStoryMenuOpen(false);
+                        closeStoryPlayer();
+                      }}
+                      hitSlop={{ top: 16, bottom: 16, left: 12, right: 16 }}
+                      style={styles.storyHeaderIconBtn}
+                      accessibilityLabel="Hikayeyi kapat"
+                    >
                       <Ionicons name="close" size={22} color="#fff" />
                     </TouchableOpacity>
                   </View>
                 </View>
+              </View>
 
-                <View style={styles.storyMediaWrap}>
-                  {activeStory.media_type === 'video' ? (
-                    <Video
-                      key={activeStory.id}
-                      source={{ uri: activeStory.media_url }}
-                      style={styles.storyMedia}
-                      shouldPlay
-                      resizeMode="cover"
-                      isMuted={false}
-                      useNativeControls={false}
-                    />
-                  ) : (
-                    <CachedImage uri={activeStory.media_url} style={styles.storyMedia} contentFit="cover" />
-                  )}
-                  <View style={styles.storyTapZones} pointerEvents={storyOverlayOpen ? 'none' : 'box-none'}>
-                    <Pressable style={styles.storyTapZoneLeft} onPress={goToPrevStory} />
-                    <Pressable style={styles.storyTapZoneRight} onPress={goToNextStory} />
-                  </View>
-                </View>
+              <View
+                style={[
+                  styles.storyChromeBottom,
+                  { paddingBottom: Math.max(insets.bottom, 12) + (storyKeyboardOpen ? 4 : 0) },
+                ]}
+                pointerEvents="box-none"
+              >
                 {activeStory.caption ? <Text style={styles.storyCaption}>{activeStory.caption}</Text> : null}
                 <View style={styles.storyActionRow}>
-                  <TouchableOpacity style={styles.storyActionBtn} onPress={openStoryViewers} activeOpacity={0.8}>
-                    <Ionicons name="eye-outline" size={18} color="#fff" />
-                    <Text style={styles.storyActionText}>Gorenler</Text>
-                  </TouchableOpacity>
+                  {canViewActiveStoryViewers ? (
+                    <TouchableOpacity style={styles.storyActionBtn} onPress={openStoryViewers} activeOpacity={0.8}>
+                      <Ionicons name="eye-outline" size={18} color="#fff" />
+                      <Text style={styles.storyActionText}>Gorenler</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity style={styles.storyActionBtn} onPress={() => setStoryRepliesModal(true)} activeOpacity={0.8}>
                     <Ionicons name="chatbubble-ellipses-outline" size={18} color="#fff" />
                     <Text style={styles.storyActionText}>Yanitlar</Text>
@@ -2368,29 +2514,40 @@ export default function StaffHomeScreen() {
                     <Ionicons name="send" size={16} color="#fff" />
                   </TouchableOpacity>
                 </View>
-                {storyMenuOpen ? (
-                  <Pressable style={styles.storyMenuInlineOverlay} onPress={() => setStoryMenuOpen(false)}>
-                    <Pressable style={styles.storyMenuInlineCard} onPress={(e) => e.stopPropagation()}>
-                      {canDeleteActiveStory ? (
-                        <TouchableOpacity style={styles.storyMenuItem} onPress={deleteActiveStory} disabled={storyBusy}>
-                          <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
-                          <Text style={[styles.storyMenuText, { color: theme.colors.error }]}>Hikayeyi sil</Text>
-                        </TouchableOpacity>
-                      ) : null}
+              </View>
+              {storyMenuOpen ? (
+                <Pressable style={styles.storyMenuBackdrop} onPress={() => setStoryMenuOpen(false)}>
+                  <Pressable
+                    style={[styles.storyMenuDropdown, { top: insets.top + 96, right: 12 }]}
+                    onPress={(e) => e.stopPropagation()}
+                  >
+                    {canDeleteActiveStory ? (
                       <TouchableOpacity
                         style={styles.storyMenuItem}
-                        onPress={() => {
-                          setStoryMenuOpen(false);
-                          setStoryReportOpen(true);
-                        }}
+                        onPress={deleteActiveStory}
+                        disabled={storyBusy}
+                        activeOpacity={0.7}
                       >
-                        <Ionicons name="flag-outline" size={18} color={theme.colors.text} />
-                        <Text style={styles.storyMenuText}>Bildir</Text>
+                        <Ionicons name="trash-outline" size={20} color={theme.colors.error} />
+                        <Text style={[styles.storyMenuText, { color: theme.colors.error }]}>Hikayeyi sil</Text>
                       </TouchableOpacity>
-                    </Pressable>
+                    ) : null}
+                    {canDeleteActiveStory ? <View style={styles.storyMenuDivider} /> : null}
+                    <TouchableOpacity
+                      style={styles.storyMenuItem}
+                      onPress={() => {
+                        setStoryMenuOpen(false);
+                        setStoryReportOpen(true);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="flag-outline" size={20} color={theme.colors.text} />
+                      <Text style={styles.storyMenuText}>Bildir</Text>
+                    </TouchableOpacity>
                   </Pressable>
-                ) : null}
-                {storyViewersModal ? (
+                </Pressable>
+              ) : null}
+                {storyViewersModal && canViewActiveStoryViewers ? (
                   <View style={styles.storyViewersInlineOverlay}>
                     <View style={styles.storyViewersInlineCard}>
                       <View style={styles.storyViewersHead}>
@@ -2481,10 +2638,8 @@ export default function StaffHomeScreen() {
                     </View>
                   </View>
                 ) : null}
-                </View>
-              </Pressable>
-            ) : null}
-          </Pressable>
+            </View>
+          ) : null}
         </KeyboardAvoidingView>
       </Modal>
 
@@ -2578,7 +2733,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   staffSectionSub: { fontSize: 12, fontWeight: '700', color: theme.colors.textMuted },
-  staffAvatarsContent: { paddingHorizontal: 16, alignItems: 'center', paddingRight: 24 },
+  staffAvatarsScroll: {},
+  staffAvatarsScrollContent: { paddingLeft: 16, paddingRight: 24, alignItems: 'center' },
   staffAvatarCard: { width: 72, marginRight: 24, alignItems: 'center' },
   staffAvatarCardInner: { alignItems: 'center' },
   staffAvatarRing: {
@@ -3073,39 +3229,44 @@ const styles = StyleSheet.create({
   fullscreenSeekZoneLeft: { flex: 1 },
   fullscreenSeekZoneCenter: { flex: 1 },
   fullscreenSeekZoneRight: { flex: 1 },
-  storyModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 16 },
-  storyModalBackdrop: { flex: 1, justifyContent: 'center' },
-  storyModalBody: { width: '100%', alignItems: 'center', justifyContent: 'center', zIndex: 2, elevation: 2 },
-  storyModalBodyKeyboard: { justifyContent: 'flex-start', paddingTop: Platform.OS === 'ios' ? 24 : 12 },
-  storyModalCard: {
-    width: '100%',
-    maxWidth: 460,
-    height: SCREEN_HEIGHT * 0.74,
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    backgroundColor: 'rgba(17,24,39,0.96)',
-    paddingHorizontal: 10,
-    paddingTop: 10,
-    paddingBottom: 12,
+  storyFullscreenRoot: { flex: 1, backgroundColor: '#000' },
+  storyMediaFullscreen: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  storyChromeTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 4,
+    paddingHorizontal: 12,
   },
-  storyModalCardKeyboard: {
-    height: SCREEN_HEIGHT * 0.54,
+  storyChromeBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 4,
+    paddingHorizontal: 12,
   },
   storyProgressRow: { flexDirection: 'row', gap: 4, marginBottom: 10 },
   storyProgressTrack: { flex: 1, height: 3, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
   storyProgressFill: { height: 3, backgroundColor: '#fff' },
-  storyModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  storyModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48 },
+  storyHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 },
+  storyHeaderIconBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+  },
   storyModalAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   storyModalAvatar: { width: 36, height: 36, borderRadius: 18 },
   storyModalAvatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
   storyModalAvatarText: { color: '#fff', fontWeight: '700' },
   storyModalAuthor: { color: '#fff', fontWeight: '700', fontSize: 14 },
   storyModalTime: { color: 'rgba(255,255,255,0.72)', fontSize: 12, marginTop: 1 },
-  storyMediaWrap: { flex: 1, borderRadius: 16, overflow: 'hidden', backgroundColor: '#111827', position: 'relative' },
   storyMedia: { width: '100%', height: '100%' },
-  storyCaption: { color: '#fff', fontSize: 14, marginTop: 10, marginHorizontal: 6, fontWeight: '500' },
+  storyCaption: { color: '#fff', fontSize: 14, marginBottom: 8, marginHorizontal: 6, fontWeight: '500' },
   storyActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, zIndex: 5 },
   storyActionBtn: {
     flexDirection: 'row',
@@ -3140,31 +3301,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  storyMenuInlineOverlay: {
+  storyMenuBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(3,7,18,0.52)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-    borderRadius: 16,
+    backgroundColor: 'rgba(3,7,18,0.4)',
     zIndex: 28,
   },
-  storyMenuInlineCard: {
+  storyMenuDropdown: {
+    position: 'absolute',
     backgroundColor: theme.colors.surface,
     borderRadius: 14,
     minWidth: 220,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
-    ...Platform.select({ ios: theme.shadows.md, android: { elevation: 6 } }),
+    ...Platform.select({ ios: theme.shadows.md, android: { elevation: 8 } }),
   },
-  storyMenuItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 16 },
+  storyMenuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.borderLight,
+    marginHorizontal: 12,
+  },
+  storyMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    minHeight: 52,
+  },
   storyMenuText: { fontSize: 15, fontWeight: '600', color: theme.colors.text },
   storyViewersInlineOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(3,7,18,0.62)',
     justifyContent: 'flex-end',
-    borderRadius: 16,
     zIndex: 30,
   },
   storyViewersInlineCard: {

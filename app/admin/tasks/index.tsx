@@ -38,6 +38,8 @@ type AssignmentRow = {
   due_at: string | null;
   created_at: string;
   attachment_urls?: string[] | null;
+  completion_proof_urls?: string[] | null;
+  completion_note?: string | null;
 };
 
 type StaffMini = { id: string; full_name: string | null; role: string | null; department: string | null };
@@ -63,7 +65,7 @@ export default function AdminTasksIndexScreen() {
     let baseQuery = supabase
       .from('staff_assignments')
       .select(
-        'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls'
+        'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls, completion_proof_urls, completion_note'
       )
       .order('created_at', { ascending: false })
       .limit(120);
@@ -296,6 +298,7 @@ export default function AdminTasksIndexScreen() {
           const creator = r.created_by_staff_id ? staffMap[r.created_by_staff_id] : null;
           const rooms = (r.room_ids ?? []).map((id) => roomMap[id]).filter(Boolean);
           const attachCount = (r.attachment_urls ?? []).filter(Boolean).length;
+          const proofCount = (r.completion_proof_urls ?? []).filter(Boolean).length;
           const statusColor =
             r.status === 'completed'
               ? adminTheme.colors.success
@@ -318,6 +321,12 @@ export default function AdminTasksIndexScreen() {
                   <View style={styles.attachBadge}>
                     <Ionicons name="attach-outline" size={14} color={adminTheme.colors.primary} />
                     <Text style={styles.attachBadgeText}>{attachCount}</Text>
+                  </View>
+                ) : null}
+                {proofCount > 0 ? (
+                  <View style={[styles.attachBadge, { borderColor: adminTheme.colors.success }]}>
+                    <Ionicons name="camera-outline" size={14} color={adminTheme.colors.success} />
+                    <Text style={[styles.attachBadgeText, { color: adminTheme.colors.success }]}>{proofCount}</Text>
                   </View>
                 ) : null}
               </View>

@@ -141,7 +141,7 @@ export default function CustomerDeleteAccountScreen() {
           activeOpacity={0.85}
         >
           <Ionicons name="arrow-back-outline" size={20} color={theme.colors.text} style={{ marginRight: 8 }} />
-          <Text style={styles.cancelBtnText}>Geri dön</Text>
+          <Text style={styles.cancelBtnText}>{t('back')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

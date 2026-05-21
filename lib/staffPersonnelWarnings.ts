@@ -1,3 +1,5 @@
+import i18n from '@/i18n';
+
 export type StaffPersonnelWarningSeverity = 'reminder' | 'verbal' | 'written' | 'severe' | 'final';
 
 export const STAFF_WARNING_GATE_SEVERITIES: StaffPersonnelWarningSeverity[] = [
@@ -46,18 +48,8 @@ export function sortWarningsByUrgency<T extends { severity: StaffPersonnelWarnin
 }
 
 export function notificationTitleForSeverity(severity: StaffPersonnelWarningSeverity): string {
-  switch (severity) {
-    case 'reminder':
-      return 'Hatırlatma (yönetim)';
-    case 'verbal':
-      return 'SÖZLÜ UYARI — yönetim kaydı';
-    case 'written':
-      return 'YAZILI UYARI — resmi kayıt';
-    case 'severe':
-      return 'CİDDİ UYARI — disiplin';
-    case 'final':
-      return 'SON UYARI — iş ilişiği riski';
-    default:
-      return 'Yönetim uyarısı';
-  }
+  const k = `personnelWarnNotify_${severity}`;
+  const v = i18n.t(k);
+  if (v !== k) return v;
+  return i18n.t('personnelWarnNotify_default');
 }

@@ -4,9 +4,22 @@ import { clearGuestMessagingLocalState } from '@/stores/guestMessagingStore';
 import type { User } from '@supabase/supabase-js';
 import { log } from '@/lib/logger';
 import { savePushTokenForStaff } from '@/lib/notificationsPush';
-import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
+import { isPostgrestSchemaCacheError, isSupabaseUnavailableError, sleepMs, withTimeout } from '@/lib/supabaseTransientErrors';
+import {
+  readStaffSessionCache,
+  writeStaffSessionCache,
+  clearStaffSessionCache,
+  type CachedStaffProfile,
+} from '@/lib/staffSessionCache';
 
-interface StaffProfile {
+const STAFF_FETCH_TIMEOUT_MS = 8_000;
+const STAFF_RETRY_FAST_MAX = 3;
+const STAFF_RETRY_SLOW_MS = 45_000;
+
+const STAFF_SELECT_LEAN =
+  'id, auth_id, email, full_name, role, department, profile_image, work_status, is_active, banned_until, deleted_at, app_permissions, organization_id';
+
+type StaffRow = {
   id: string;
   auth_id: string;
   email: string;
@@ -15,170 +28,372 @@ interface StaffProfile {
   department: string | null;
   profile_image?: string | null;
   work_status?: string | null;
+  is_active?: boolean;
   banned_until?: string | null;
   deleted_at?: string | null;
-  /** Admin panelinde checkbox ile verilen yetkiler (gorev_ata vb.) */
-  app_permissions?: Record<string, boolean> | null;
-  /** OPS KBS sekmesi; ops.app_users yoksa veya kolon yoksa true kabul edilir */
-  kbs_access_enabled?: boolean;
-  /** Valoria / Bavul Suite / Bavultur vb. */
-  organization_id: string;
-  organization?: { name: string; slug?: string | null; kind?: string | null } | null;
-}
+  app_permissions?: Record<string, boolean> | unknown;
+  organization_id: string | null;
+};
+
+export type StaffProfile = CachedStaffProfile;
+
+type StaffResolveResult =
+  | { status: 'staff'; staff: StaffProfile }
+  | { status: 'guest' }
+  | { status: 'unknown'; reason: string };
 
 interface AuthState {
   user: User | null;
   staff: StaffProfile | null;
   loading: boolean;
+  staffCheckComplete: boolean;
+  staffCheckUnavailable: boolean;
   setUser: (u: User | null) => void;
   setStaff: (s: StaffProfile | null) => void;
   loadSession: () => Promise<void>;
+  waitForStaffCheck: () => Promise<void>;
+  retryStaffCheck: () => Promise<void>;
   signOut: () => Promise<void>;
+}
+
+let loadSessionPromise: Promise<void> | null = null;
+let staffCheckPromise: Promise<void> | null = null;
+let staffRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let staffFastRetryCount = 0;
+let staffRetryUserId: string | null = null;
+let lastStaffCheckUserId: string | null = null;
+
+function clearStaffRetryTimer() {
+  if (staffRetryTimer) {
+    clearTimeout(staffRetryTimer);
+    staffRetryTimer = null;
+  }
+}
+
+function staffFromRow(row: StaffRow, org?: StaffProfile['organization']): StaffProfile | null {
+  if (row.deleted_at) return null;
+  if (row.banned_until && new Date(row.banned_until) > new Date()) return null;
+  if (row.is_active === false) return null;
+
+  const perms =
+    typeof row.app_permissions === 'object' && row.app_permissions !== null && !Array.isArray(row.app_permissions)
+      ? (row.app_permissions as Record<string, boolean>)
+      : null;
+
+  return {
+    id: row.id,
+    auth_id: row.auth_id,
+    email: row.email,
+    full_name: row.full_name,
+    role: row.role,
+    department: row.department,
+    profile_image: row.profile_image,
+    work_status: row.work_status,
+    banned_until: row.banned_until,
+    deleted_at: row.deleted_at,
+    app_permissions: perms,
+    kbs_access_enabled: true,
+    organization_id: row.organization_id ?? '',
+    organization: org ?? null,
+  };
+}
+
+function isStaffRpcMissing(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  if (err.code === 'PGRST202') return true;
+  const m = (err.message ?? '').toLowerCase();
+  return m.includes('get_my_staff_session') || m.includes('could not find the function');
+}
+
+async function fetchStaffRowViaTable(authId: string): Promise<{ row: StaffRow | null; error: string | null }> {
+  const res = await withTimeout(
+    supabase.from('staff').select(STAFF_SELECT_LEAN).eq('auth_id', authId).maybeSingle(),
+    STAFF_FETCH_TIMEOUT_MS,
+    'staff'
+  );
+  if (!res.error) return { row: res.data as StaffRow | null, error: null };
+  return { row: null, error: res.error.message };
+}
+
+async function fetchStaffRow(authId: string): Promise<{ row: StaffRow | null; error: string | null }> {
+  try {
+    const rpc = await withTimeout(supabase.rpc('get_my_staff_session'), STAFF_FETCH_TIMEOUT_MS, 'staff_rpc');
+    if (!rpc.error) {
+      const raw = rpc.data;
+      const row = (Array.isArray(raw) ? raw[0] : raw) as StaffRow | null | undefined;
+      return { row: row ?? null, error: null };
+    }
+    if (!isStaffRpcMissing(rpc.error)) {
+      if (isPostgrestSchemaCacheError(rpc.error)) {
+        await sleepMs(500);
+        const rpc2 = await withTimeout(supabase.rpc('get_my_staff_session'), STAFF_FETCH_TIMEOUT_MS, 'staff_rpc');
+        if (!rpc2.error) {
+          const raw2 = rpc2.data;
+          const row2 = (Array.isArray(raw2) ? raw2[0] : raw2) as StaffRow | null | undefined;
+          return { row: row2 ?? null, error: null };
+        }
+      } else {
+        log.warn('authStore', 'get_my_staff_session', rpc.error.message);
+      }
+    }
+    return await fetchStaffRowViaTable(authId);
+  } catch (e) {
+    const msg = (e as Error)?.message ?? 'staff timeout';
+    if (msg.includes('staff_rpc')) {
+      try {
+        return await fetchStaffRowViaTable(authId);
+      } catch (e2) {
+        return { row: null, error: (e2 as Error)?.message ?? msg };
+      }
+    }
+    return { row: null, error: msg };
+  }
+}
+
+function hydrateOrg(staff: StaffProfile): void {
+  if (!staff.organization_id) return;
+  void supabase
+    .from('organizations')
+    .select('name, slug, kind')
+    .eq('id', staff.organization_id)
+    .maybeSingle()
+    .then(({ data }) => {
+      if (!data?.name) return;
+      const s = useAuthStore.getState().staff;
+      if (!s || s.id !== staff.id) return;
+      useAuthStore.setState({
+        staff: {
+          ...s,
+          organization: {
+            name: data.name,
+            slug: (data as { slug?: string | null }).slug ?? undefined,
+            kind: (data as { kind?: string | null }).kind ?? undefined,
+          },
+        },
+      });
+    })
+    .catch(() => {});
+}
+
+async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
+  const { row, error } = await fetchStaffRow(user.id);
+
+  if (!error && row) {
+    const staff = staffFromRow(row);
+    if (staff) {
+      await writeStaffSessionCache(user.id, staff);
+      savePushTokenForStaff(row.id).catch(() => {});
+      hydrateOrg(staff);
+      return { status: 'staff', staff };
+    }
+  }
+
+  if (!error && !row) {
+    await clearStaffSessionCache();
+    return { status: 'guest' };
+  }
+
+  if (error) log.warn('authStore', 'staff fetch', error);
+
+  const cached = await readStaffSessionCache(user.id);
+  if (cached && !cached.deleted_at) {
+    log.info('authStore', 'staff önbellek kullanılıyor');
+    hydrateOrg(cached);
+    return { status: 'staff', staff: cached };
+  }
+
+  if (error) return { status: 'unknown', reason: error };
+  return { status: 'guest' };
+}
+
+function scheduleStaffRetry(user: User, slow = false) {
+  if (staffRetryUserId !== user.id) {
+    staffFastRetryCount = 0;
+    staffRetryUserId = user.id;
+  }
+
+  clearStaffRetryTimer();
+
+  if (!slow && staffFastRetryCount >= STAFF_RETRY_FAST_MAX) {
+    log.warn('authStore', 'staff hızlı retry bitti, yavaş mod', { attempts: staffFastRetryCount });
+    scheduleStaffRetry(user, true);
+    return;
+  }
+
+  const delay = slow ? STAFF_RETRY_SLOW_MS : [0, 4_000, 10_000][staffFastRetryCount] ?? 10_000;
+  if (!slow) staffFastRetryCount += 1;
+
+  staffRetryTimer = setTimeout(() => {
+    staffRetryTimer = null;
+    void runStaffCheck(user);
+  }, delay);
+}
+
+function applyStaffResolve(user: User, result: StaffResolveResult): void {
+  const cur = useAuthStore.getState();
+  if (cur.user?.id !== user.id) return;
+
+  if (result.status === 'unknown') {
+    useAuthStore.setState({
+      user,
+      staffCheckComplete: false,
+      staffCheckUnavailable: true,
+      loading: false,
+    });
+    scheduleStaffRetry(user);
+    return;
+  }
+
+  clearStaffRetryTimer();
+  staffFastRetryCount = 0;
+  staffRetryUserId = null;
+  lastStaffCheckUserId = user.id;
+
+  const staff = result.status === 'staff' ? result.staff : null;
+  useAuthStore.setState({
+    user,
+    staff,
+    staffCheckComplete: true,
+    staffCheckUnavailable: false,
+    loading: false,
+  });
+  log.info('authStore', 'staffCheckComplete', { hasStaff: !!staff });
+}
+
+function runStaffCheck(user: User): Promise<void> {
+  if (staffCheckPromise) return staffCheckPromise;
+
+  staffCheckPromise = (async () => {
+    const result = await resolveStaffForUser(user);
+    applyStaffResolve(user, result);
+  })().finally(() => {
+    staffCheckPromise = null;
+  });
+
+  return staffCheckPromise;
+}
+
+async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => AuthState): Promise<void> {
+  log.info('authStore', 'loadSession başladı');
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      log.error('authStore', 'getSession hatası', sessionError);
+      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+      return;
+    }
+
+    const user = session?.user ?? null;
+    if (!user) {
+      clearStaffRetryTimer();
+      staffFastRetryCount = 0;
+      lastStaffCheckUserId = null;
+      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+      return;
+    }
+
+    const cached = await readStaffSessionCache(user.id);
+    const memory = get().staff?.auth_id === user.id ? get().staff : null;
+    const staff = (cached && !cached.deleted_at ? cached : null) ?? memory ?? null;
+    const alreadyKnown = get().staffCheckComplete && get().user?.id === user.id;
+
+    set({
+      user,
+      staff: staff ?? (alreadyKnown ? get().staff : null),
+      loading: false,
+      staffCheckComplete: !!staff || alreadyKnown,
+      staffCheckUnavailable: false,
+    });
+    log.info('authStore', 'loadSession bitti', { hasStaff: !!staff, staffCheckComplete: !!staff || alreadyKnown });
+
+    if (!staff && !alreadyKnown) {
+      void runStaffCheck(user);
+    } else if (staff && lastStaffCheckUserId !== user.id) {
+      void runStaffCheck(user);
+    }
+  } catch (e) {
+    log.warn('authStore', 'loadSession', (e as Error)?.message);
+    const user = get().user;
+    if (user && !get().staffCheckComplete) {
+      set({ loading: false, staffCheckUnavailable: true });
+      void runStaffCheck(user);
+    } else {
+      set({ loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+    }
+  }
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   staff: null,
   loading: true,
+  staffCheckComplete: false,
+  staffCheckUnavailable: false,
 
   setUser: (user) => set({ user }),
   setStaff: (staff) => set({ staff }),
 
+  retryStaffCheck: async () => {
+    const { user } = get();
+    if (!user) return;
+    clearStaffRetryTimer();
+    staffFastRetryCount = 0;
+    set({ staffCheckUnavailable: false, staffCheckComplete: false, loading: true });
+    await runStaffCheck(user);
+  },
+
+  waitForStaffCheck: async () => {
+    const { user, staffCheckComplete } = get();
+    if (staffCheckComplete || !user) return;
+    await runStaffCheck(user);
+  },
+
   loadSession: async () => {
-    // Zaten oturum varsa loading true yapma; sayfa geçişlerinde lobi flash'ını önler
-    const hadSession = !!get().user || !!get().staff;
-    if (!hadSession) set({ loading: true });
-    log.info('authStore', 'loadSession başladı');
-    try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) {
-        log.error('authStore', 'getSession hatası', sessionError);
-        set({ user: null, staff: null, loading: false });
-        return;
-      }
-      const user = session?.user ?? null;
-      log.info('authStore', 'session', { hasUser: !!user, userId: user?.id?.slice(0, 8) });
-
-      if (!user) {
-        set({ user: null, staff: null, loading: false });
-        return;
-      }
-
-      let staff: StaffProfile | null = null;
-      // Personel sorgusu ile paralel: açılışta KBS erişim RPC bekleme süresini kısaltır
-      const kbsRpcCall = supabase.rpc('get_my_kbs_access_enabled');
-      const staffSelect =
-        'id, auth_id, email, full_name, role, department, profile_image, work_status, is_active, banned_until, deleted_at, app_permissions, organization_id, organization:organization_id(name, slug, kind)';
-      let data: unknown = null;
-      let staffError: { message: string; code?: string } | null = null;
-      const maxStaffAttempts = 4;
-      for (let a = 1; a <= maxStaffAttempts; a++) {
-        const res = await supabase.from('staff').select(staffSelect).eq('auth_id', user.id).maybeSingle();
-        if (!res.error) {
-          data = res.data;
-          staffError = null;
-          break;
-        }
-        staffError = res.error;
-        if (isPostgrestSchemaCacheError(res.error) && a < maxStaffAttempts) {
-          await sleepMs(400 * a);
-          continue;
-        }
-        break;
-      }
-      if (staffError) {
-        void kbsRpcCall.then(() => {}).catch(() => {});
-        log.warn('authStore', 'staff fetch hatası (oturum korunur)', staffError.message, staffError.code);
-        // Geçici PostgREST / ağ hatasında staff=null yapma: staff layout lobiye atıyor.
-        const prev = get().staff;
-        if (prev?.auth_id === user.id) staff = prev;
-      } else {
-        const row = data as (StaffProfile & { is_active?: boolean }) | null;
-        if (!row) {
-          // Misafir: KBS sonucu UI için gerekmez; loadSession'ı bloklama
-          void kbsRpcCall.then(() => {}).catch(() => {});
-          staff = null;
-          log.info('authStore', 'staff yok, müşteri oturumu korunuyor');
-        } else {
-          const perms =
-            typeof row.app_permissions === 'object' && row.app_permissions !== null && !Array.isArray(row.app_permissions)
-              ? (row.app_permissions as Record<string, boolean>)
-              : null;
-          const org = (row as { organization?: { name?: string; slug?: string | null; kind?: string | null } | null }).organization;
-          // KBS RPC'yi açılışta beklememek: loading=false daha erken; gerçek değer gelince (seyrek) store güncellenir.
-          const staffIdForKbs = row.id;
-          staff = {
-            id: row.id,
-            auth_id: row.auth_id,
-            email: row.email,
-            full_name: row.full_name,
-            role: row.role,
-            department: row.department,
-            profile_image: row.profile_image,
-            work_status: row.work_status,
-            banned_until: row.banned_until,
-            deleted_at: row.deleted_at,
-            app_permissions: perms,
-            kbs_access_enabled: true,
-            organization_id: (row as { organization_id: string }).organization_id,
-            organization: org?.name
-              ? { name: org.name, slug: org.slug ?? undefined, kind: org.kind ?? undefined }
-              : null,
-          };
-          void (async () => {
-            try {
-              const { data: kbsRpc, error: kbsRpcErr } = await kbsRpcCall;
-              if (kbsRpcErr || typeof kbsRpc !== 'boolean') return;
-              const s = get().staff;
-              if (!s || s.id !== staffIdForKbs) return;
-              set({ staff: { ...s, kbs_access_enabled: kbsRpc } });
-            } catch {
-              // sessiz: açılış yolu
-            }
-          })();
-          if (row.deleted_at) log.info('authStore', 'staff silinmiş, lobiye yönlendirilecek');
-          else if (row.banned_until && new Date(row.banned_until) > new Date()) log.info('authStore', 'staff banlı, lobiye yönlendirilecek');
-          else if (row.is_active === false) staff = null;
-          else if (!row.deleted_at && (!row.banned_until || new Date(row.banned_until) <= new Date()))
-            savePushTokenForStaff(row.id).catch((e) => log.warn('authStore', 'push token kaydı', e));
-        }
-      }
-      if (staff) {
-        log.info('authStore', 'staff', { hasStaff: true });
-      }
-
-      set({ user, staff, loading: false });
-      log.info('authStore', 'loadSession bitti', { loading: false });
-    } catch (e) {
-      log.error('authStore', 'loadSession exception', e);
-      set({ loading: false });
-    }
+    if (loadSessionPromise) return loadSessionPromise;
+    loadSessionPromise = doLoadSession(set, get).finally(() => {
+      loadSessionPromise = null;
+    });
+    return loadSessionPromise;
   },
 
   signOut: async () => {
     log.info('authStore', 'signOut');
+    clearStaffRetryTimer();
+    staffFastRetryCount = 0;
+    staffRetryUserId = null;
+    lastStaffCheckUserId = null;
     try {
       await supabase.auth.signOut();
       await clearGuestMessagingLocalState();
-      set({ user: null, staff: null });
+      await clearStaffSessionCache();
+      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
     } catch (e) {
       log.error('authStore', 'signOut hatası', e);
     }
   },
 }));
 
-/** Uygulama açılışında bir kez çağır: auth state dinleyicisi + ilk oturum yüklemesi. Kalıcı oturum için. */
 export function initAuthListener() {
-  const { loadSession } = useAuthStore.getState();
-  loadSession();
+  void useAuthStore.getState().loadSession();
   return supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') {
+      clearStaffRetryTimer();
+      staffFastRetryCount = 0;
+      staffRetryUserId = null;
+      lastStaffCheckUserId = null;
       void clearGuestMessagingLocalState();
-      useAuthStore.setState({ user: null, staff: null });
+      void clearStaffSessionCache();
+      useAuthStore.setState({
+        user: null,
+        staff: null,
+        loading: false,
+        staffCheckComplete: true,
+        staffCheckUnavailable: false,
+      });
       return;
     }
-    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-      loadSession();
+    if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+      void useAuthStore.getState().loadSession();
     }
   });
 }

@@ -11,6 +11,7 @@ import {
   type HubReview,
 } from '@/components/StaffEvaluationHub';
 import { StaffManagementEvaluationCards } from '@/components/StaffManagementEvaluationCards';
+import { StaffAuditSection } from '@/components/StaffAuditSection';
 import { resolveStaffEvaluation } from '@/lib/staffEvaluation';
 import type { StaffManagementEvaluationRow } from '@/lib/managementEvaluation';
 import { formatDateShort } from '@/lib/date';
@@ -155,6 +156,7 @@ export default function StaffEvaluationScreen() {
           onOpenAllReviews={() => setReviewsModalVisible(true)}
           formatReviewDate={(iso) => formatDateShort(iso)}
         />
+        <StaffAuditSection staffId={staffId} />
         <View style={styles.mgmtBlock}>
           <StaffManagementEvaluationCards
             rows={mgmtRows}

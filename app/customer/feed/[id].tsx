@@ -34,6 +34,7 @@ import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { MentionableText } from '@/components/MentionableText';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
+import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
 
 type PostRow = {
   id: string;
@@ -192,8 +193,8 @@ export default function CustomerFeedPostDetail() {
     setCommentCount(commentList.length);
     setComments(commentList);
     setMyLike(myReactions.length > 0);
-    if (guestRow) {
-      supabase.from('feed_post_views').insert({ post_id: idNorm, guest_id: guestRow.guest_id }).then(() => {}).catch(() => {});
+    if (guestRow?.guest_id) {
+      void recordGuestFeedPostViews([idNorm], guestRow.guest_id);
     }
   }, [idNorm, t]);
 

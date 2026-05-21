@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import HotelMap from '@/components/HotelMap';
 import { theme } from '@/constants/theme';
@@ -17,6 +18,7 @@ type GalleryItem = { id: string; url: string; sort_order: number };
 type Facility = { id: string; name: string; icon: string | null };
 
 export default function HotelInfoScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [hotel, setHotel] = useState<HotelInfo | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
@@ -42,7 +44,7 @@ export default function HotelInfoScreen() {
         <View style={styles.coverPlaceholder} />
       )}
       <View style={styles.body}>
-        <Text style={styles.name}>{hotel?.name || 'Valoria Hotel'}</Text>
+        <Text style={styles.name}>{hotel?.name || t('valoriaHotel')}</Text>
         {hotel?.address && <Text style={styles.address}>{hotel.address}</Text>}
         {hotel?.stars != null && (
           <View style={styles.stars}>
@@ -54,27 +56,27 @@ export default function HotelInfoScreen() {
       </View>
       <View style={styles.section}>
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>Konum</Text>
+          <Text style={styles.sectionTitle}>{t('guestHotelLocation')}</Text>
           <TouchableOpacity onPress={() => router.push('/customer/surroundings')}>
-            <Text style={styles.linkText}>📍 Çevre rehberi</Text>
+            <Text style={styles.linkText}>{t('guestHotelSurroundingsLink')}</Text>
           </TouchableOpacity>
         </View>
         <HotelMap
           latitude={typeof process.env.EXPO_PUBLIC_HOTEL_LAT !== 'undefined' ? Number(process.env.EXPO_PUBLIC_HOTEL_LAT) : undefined}
           longitude={typeof process.env.EXPO_PUBLIC_HOTEL_LON !== 'undefined' ? Number(process.env.EXPO_PUBLIC_HOTEL_LON) : undefined}
-          title={hotel?.name || 'Valoria Hotel'}
+          title={hotel?.name || t('valoriaHotel')}
         />
       </View>
       <TouchableOpacity style={styles.mapLinkCard} onPress={() => router.push('/customer/hotel/map')}>
-        <Text style={styles.mapLinkText}>🗺️ Otel içi harita – Tesisler ve acil çıkış yolları</Text>
+        <Text style={styles.mapLinkText}>{t('guestHotelIndoorMap')}</Text>
       </TouchableOpacity>
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Hakkımızda</Text>
-        <Text style={styles.desc}>{hotel?.description || 'Lüks konaklama deneyimi.'}</Text>
+        <Text style={styles.sectionTitle}>{t('guestHotelAbout')}</Text>
+        <Text style={styles.desc}>{hotel?.description || t('guestHotelDefaultDesc')}</Text>
       </View>
       {facilities.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Tesisler</Text>
+          <Text style={styles.sectionTitle}>{t('guestHotelFacilities')}</Text>
           <View style={styles.facilityGrid}>
             {facilities.map((f) => (
               <View key={f.id} style={styles.facilityItem}>
@@ -87,7 +89,7 @@ export default function HotelInfoScreen() {
       )}
       {gallery.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Galeri</Text>
+          <Text style={styles.sectionTitle}>{t('guestHotelGallery')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {gallery.map((img) => (
               <CachedImage key={img.id} uri={img.url} style={styles.galleryImg} contentFit="cover" />

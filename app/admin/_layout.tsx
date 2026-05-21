@@ -1,5 +1,5 @@
-import { useEffect, useCallback } from 'react';
-import { View, TouchableOpacity, Platform, StyleSheet, Text } from 'react-native';
+import { useEffect, useCallback, useRef } from 'react';
+import { View, TouchableOpacity, Platform, StyleSheet, Text, BackHandler } from 'react-native';
 import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -10,7 +10,13 @@ import { adminTheme } from '@/constants/adminTheme';
 import { Ionicons } from '@expo/vector-icons';
 import { complaintsText } from '@/lib/complaintsI18n';
 import { log } from '@/lib/logger';
-import { signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import { savePushTokenForStaff } from '@/lib/notificationsPush';
+import { exitAdminPanelToStaffTabs, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import {
+  AdminStackBackButton,
+  adminStackGestureForNavigation,
+  resolveAdminBackFallback,
+} from '@/lib/adminStackBack';
 
 export default function AdminLayout() {
   const { t } = useTranslation();
@@ -18,16 +24,89 @@ export default function AdminLayout() {
   const navigation = useNavigation();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const adminRootExitInFlightRef = useRef(false);
 
   /**
    * Android: router.back() çoğu zaman personel sekmesindeki /staff/admin placeholder'a düşer;
    * sekme tekrar odaklanınca /admin yeniden push edilir (geri "tutmuyor" hissi).
    * Doğrudan personel köküne replace ile çıkış tek adımda ve tutarlı olur.
    */
-  const handleAdminBack = () => {
-    signalStaffExitedAdminPanelFromRoot();
-    router.replace('/staff' as Href);
-  };
+  const handleAdminBack = useCallback(() => {
+    if (adminRootExitInFlightRef.current) return;
+    adminRootExitInFlightRef.current = true;
+    exitAdminPanelToStaffTabs(router);
+  }, [router]);
+
+  const isAdminRootPath =
+    pathname === '/admin' || pathname === '/admin/' || pathname === '/admin/index';
+
+  /** Android donanım geri: kök panelde personel sekmesine çık (beforeRemove kullanma — native/JS desync). */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !isAdminRootPath) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleAdminBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [isAdminRootPath, handleAdminBack]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      adminRootExitInFlightRef.current = false;
+    });
+    return unsub;
+  }, [navigation]);
+
+  /** Native pop ile /admin kapanırsa otomatik yeniden açılmasın (geri butonu zaten suppress set eder). */
+  useEffect(() => {
+    return () => {
+      signalStaffExitedAdminPanelFromRoot();
+    };
+  }, []);
+
+  /** iOS: kök yığından kaydırarak çıkışı geri butonuyla aynı yola yönlendir. */
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !isAdminRootPath) return;
+    const parent = navigation.getParent();
+    if (!parent) return;
+    const unsub = parent.addListener('beforeRemove', (e) => {
+      const stackState = navigation.getState();
+      if ((stackState?.routes?.length ?? 0) > 1) return;
+      e.preventDefault();
+      handleAdminBack();
+    });
+    return unsub;
+  }, [navigation, isAdminRootPath, handleAdminBack]);
+
+  const handleSubScreenBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      router.back();
+      return;
+    }
+    const fallback = resolveAdminBackFallback(pathname);
+    const current = (pathname ?? '').replace(/\/+$/, '') || '/admin';
+    const target = String(fallback).replace(/\/+$/, '');
+    if (current !== target) {
+      router.replace(fallback as never);
+    } else {
+      handleAdminBack();
+    }
+  }, [navigation, router, pathname, handleAdminBack]);
+
+  const renderSubScreenBack = useCallback(
+    () => <AdminStackBackButton accessibilityLabel={t('back')} />,
+    [t]
+  );
+
+  /** Android donanım geri: alt sayfada stack yoksa modül köküne / panele dön. */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || isAdminRootPath) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleSubScreenBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [isAdminRootPath, handleSubScreenBack]);
 
   /** Belge detayı: replace ile açıldığında stack boş kalmasın; yoksa tüm belgelere dön. */
   const renderDocumentDetailBack = () => (
@@ -41,7 +120,7 @@ export default function AdminLayout() {
       }}
       style={{ marginLeft: 8, padding: 8 }}
       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      accessibilityLabel="Geri"
+      accessibilityLabel={t('back')}
     >
       <Ionicons name="arrow-back" size={24} color={adminTheme.colors.text} />
     </TouchableOpacity>
@@ -80,6 +159,12 @@ export default function AdminLayout() {
       return () => {};
     }, [refreshNotifications])
   );
+
+  /** Admin panelde push token kaydı (köke sadece personel sekmesinde girilmediyse). */
+  useEffect(() => {
+    if (!staff?.id || !canAccessAdminShell(staff)) return;
+    savePushTokenForStaff(staff.id).catch((e) => log.warn('AdminLayout', 'push token', e));
+  }, [staff?.id]);
 
   const renderHeaderRight = () => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -137,16 +222,28 @@ export default function AdminLayout() {
 
   return (
     <View style={styles.wrapper}>
-      <Stack screenOptions={{ headerShown: true, ...headerOpts }}>
+      <Stack
+        screenOptions={({ navigation: nav }) => ({
+          headerShown: true,
+          ...headerOpts,
+          ...adminStackGestureForNavigation(nav),
+          headerBackVisible: false,
+          headerLeft: renderSubScreenBack,
+        })}
+      >
         <Stack.Screen
           name="index"
           options={{
             title: t('managementPanel'),
+            /** Kaydırarak geri native pop + replace ile çakışıp "admin removed natively" uyarısı vermesin */
+            gestureEnabled: false,
+            headerBackButtonMenuEnabled: false,
             headerLeft: () => (
               <TouchableOpacity
                 onPress={handleAdminBack}
                 style={{ marginLeft: 8, padding: 8 }}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityLabel={t('back')}
               >
                 <Ionicons name="arrow-back" size={24} color={adminTheme.colors.text} />
               </TouchableOpacity>
@@ -178,6 +275,28 @@ export default function AdminLayout() {
       <Stack.Screen name="incident-reports/new" options={{ title: 'Yeni Tutanak Oluştur', headerRight: renderHeaderRight }} />
       <Stack.Screen name="incident-reports/[id]" options={{ title: 'Tutanak Detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="missing-items/index" options={{ title: 'Eksik Var', headerRight: renderHeaderRight }} />
+      <Stack.Screen
+        name="missing-items/[area]"
+        options={({ route }) => {
+          const area = (route.params as { area?: string })?.area;
+          const title =
+            area === 'kitchen' ? 'Mutfak — Eksik Var' : area === 'hotel' ? 'Otel — Eksik Var' : 'Eksik Var';
+          return { title, headerRight: renderHeaderRight };
+        }}
+      />
+      <Stack.Screen name="missing-items/report/[id]" options={{ title: 'Eksik detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="missing-items/legacy/[id]" options={{ title: 'Eksik detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="missing-items/history" options={{ title: 'Geçmiş eksik listesi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="lost-found/index" options={{ title: 'Emanet / Buluntu', headerRight: renderHeaderRight }} />
+      <Stack.Screen
+        name="lost-found/new"
+        options={{
+          title: 'Yeni emanet kaydı',
+          headerBackTitle: t('back'),
+          headerRight: renderHeaderRight,
+        }}
+      />
+      <Stack.Screen name="lost-found/[id]" options={{ title: 'Emanet detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/all" options={{ title: t('adminDocumentsAll'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/new" options={{ title: t('adminDocumentsUpload'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerRight: renderHeaderRight }} />
@@ -224,6 +343,7 @@ export default function AdminLayout() {
       <Stack.Screen name="access/logs" options={{ title: t('adminAccessLogs'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="permissions" options={{ title: t('adminPermissions'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/index" options={{ title: t('adminNotifications'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/bulk" options={{ title: t('adminBulkNotification'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="reports/index" options={{ title: t('adminReports'), headerRight: renderHeaderRight }} />
@@ -258,6 +378,8 @@ export default function AdminLayout() {
       <Stack.Screen name="app-links" options={{ title: t('adminAppsAndWebsites'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="settings/printer" options={{ title: t('adminPrinterSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="map" options={{ headerShown: false }} />
+      <Stack.Screen name="accounting" options={{ headerShown: false }} />
+      <Stack.Screen name="audits" options={{ headerShown: false }} />
       <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/[id]" options={{ title: 'Çek detayı', headerRight: renderHeaderRight }} />

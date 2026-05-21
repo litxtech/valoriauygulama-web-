@@ -11,11 +11,11 @@ import {
   StyleSheet,
   Linking,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
-import { getPoiIcon, getPoiTypeLabel, getPoiCache, type Poi } from '@/lib/map/pois';
+import { getPoiIcon, getPoiCache, type Poi } from '@/lib/map/pois';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 
@@ -28,6 +28,8 @@ type PoiReview = {
 };
 
 export default function PoiDetailScreen() {
+  const { t, i18n } = useTranslation();
+  const dateLoc = i18n.language?.startsWith('ar') ? 'ar-SA' : i18n.language?.startsWith('tr') ? 'tr-TR' : 'en-US';
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [poi, setPoi] = useState<Poi | null>(null);
@@ -118,36 +120,37 @@ export default function PoiDetailScreen() {
         <Text style={styles.name}>{poi.name}</Text>
         {(starDisplay || reviewsCount > 0) && (
           <Text style={styles.rating}>
-            {'⭐'.repeat(Math.round(Number(poi.rating) || 0))} {starDisplay ?? '—'} ({reviewsCount} yorum)
+            {'⭐'.repeat(Math.round(Number(poi.rating) || 0))} {starDisplay ?? '—'}{' '}
+            {t('guestPoiReviewCount', { count: reviewsCount })}
           </Text>
         )}
       </View>
 
       <View style={styles.actions}>
         <TouchableOpacity style={styles.actionBtn} onPress={openDirections}>
-          <Text style={styles.actionBtnText}>📍 Yol tarifi</Text>
+          <Text style={styles.actionBtnText}>{t('guestPoiDirections')}</Text>
         </TouchableOpacity>
         {poi.phone && (
           <TouchableOpacity style={styles.actionBtn} onPress={openPhone}>
-            <Text style={styles.actionBtnText}>📞 Ara</Text>
+            <Text style={styles.actionBtnText}>{t('guestPoiCall')}</Text>
           </TouchableOpacity>
         )}
         {poi.website && (
           <TouchableOpacity style={styles.actionBtn} onPress={openWebsite}>
-            <Text style={styles.actionBtnText}>🌐 Web</Text>
+            <Text style={styles.actionBtnText}>{t('guestPoiWeb')}</Text>
           </TouchableOpacity>
         )}
       </View>
 
       {poi.address && (
         <View style={styles.row}>
-          <Text style={styles.label}>📍 Adres</Text>
+          <Text style={styles.label}>{t('guestPoiAddress')}</Text>
           <Text style={styles.value}>{poi.address}</Text>
         </View>
       )}
       {poi.phone && (
         <View style={styles.row}>
-          <Text style={styles.label}>📞 Telefon</Text>
+          <Text style={styles.label}>{t('guestPoiPhone')}</Text>
           <TouchableOpacity onPress={openPhone}>
             <Text style={[styles.value, styles.link]}>{poi.phone}</Text>
           </TouchableOpacity>
@@ -155,36 +158,40 @@ export default function PoiDetailScreen() {
       )}
       {poi.website && (
         <View style={styles.row}>
-          <Text style={styles.label}>🌐 Web</Text>
+          <Text style={styles.label}>{t('guestPoiWeb')}</Text>
           <TouchableOpacity onPress={openWebsite}>
-            <Text style={[styles.value, styles.link]} numberOfLines={1}>{poi.website}</Text>
+            <Text style={[styles.value, styles.link]} numberOfLines={1}>
+              {poi.website}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
       {poi.hours && (
         <View style={styles.row}>
-          <Text style={styles.label}>⏰ Çalışma saatleri</Text>
+          <Text style={styles.label}>{t('guestPoiHours')}</Text>
           <Text style={styles.value}>{poi.hours}</Text>
         </View>
       )}
 
       {poi.image_url && (
         <View style={styles.photoSection}>
-          <Text style={styles.sectionTitle}>📸 Fotoğraf</Text>
+          <Text style={styles.sectionTitle}>{t('guestPoiPhoto')}</Text>
           <CachedImage uri={poi.image_url} style={styles.photo} contentFit="cover" />
         </View>
       )}
 
       <View style={styles.reviewsSection}>
-        <Text style={styles.sectionTitle}>⭐ Yorumlar</Text>
+        <Text style={styles.sectionTitle}>{t('guestPoiReviews')}</Text>
         {reviews.length === 0 ? (
-          <Text style={styles.emptyReviews}>Henüz uygulama içi yorum yok.</Text>
+          <Text style={styles.emptyReviews}>{t('guestPoiEmptyReviews')}</Text>
         ) : (
           reviews.map((r) => (
             <View key={r.id} style={styles.reviewCard}>
-              <Text style={styles.reviewAuthor}>{r.author_name ?? 'Anonim'} · {'⭐'.repeat(r.rating)}</Text>
+              <Text style={styles.reviewAuthor}>
+                {r.author_name ?? t('guestAnonymous')} · {'⭐'.repeat(r.rating)}
+              </Text>
               {r.comment && <Text style={styles.reviewComment}>{r.comment}</Text>}
-              <Text style={styles.reviewDate}>{new Date(r.created_at).toLocaleDateString('tr-TR')}</Text>
+              <Text style={styles.reviewDate}>{new Date(r.created_at).toLocaleDateString(dateLoc)}</Text>
             </View>
           ))
         )}
@@ -198,31 +205,26 @@ const styles = StyleSheet.create({
   content: { padding: theme.spacing.lg, paddingBottom: theme.spacing.xxl + 24 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { marginBottom: theme.spacing.xl },
-  icon: { fontSize: 48, marginBottom: 8 },
-  name: { ...theme.typography.title, color: theme.colors.text, marginBottom: 4 },
-  rating: { fontSize: 14, color: theme.colors.textSecondary },
-  actions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.xl,
-  },
+  icon: { fontSize: 40, marginBottom: 8 },
+  name: { fontSize: 22, fontWeight: '700', color: theme.colors.text },
+  rating: { fontSize: 14, color: theme.colors.textSecondary, marginTop: 6 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: theme.spacing.lg },
   actionBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.primaryLight,
   },
-  actionBtnText: { fontSize: 14, fontWeight: '600', color: theme.colors.text },
+  actionBtnText: { color: theme.colors.white, fontWeight: '600', fontSize: 14 },
   row: { marginBottom: theme.spacing.md },
-  label: { fontSize: 12, color: theme.colors.textMuted, marginBottom: 2 },
-  value: { fontSize: 15, color: theme.colors.text },
-  link: { color: theme.colors.primary, textDecorationLine: 'underline' },
-  photoSection: { marginTop: theme.spacing.lg, marginBottom: theme.spacing.xl },
-  sectionTitle: { ...theme.typography.titleSmall, color: theme.colors.text, marginBottom: theme.spacing.md },
-  photo: { width: '100%', height: 200, borderRadius: theme.radius.md, backgroundColor: theme.colors.borderLight },
-  reviewsSection: { marginTop: theme.spacing.lg },
-  emptyReviews: { fontSize: 14, color: theme.colors.textMuted },
+  label: { fontSize: 13, fontWeight: '600', color: theme.colors.textMuted, marginBottom: 4 },
+  value: { fontSize: 15, color: theme.colors.text, lineHeight: 22 },
+  link: { color: theme.colors.primary },
+  photoSection: { marginTop: theme.spacing.md, marginBottom: theme.spacing.lg },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 8 },
+  photo: { width: '100%', height: 200, borderRadius: theme.radius.md },
+  reviewsSection: { marginTop: theme.spacing.md },
+  emptyReviews: { fontSize: 14, color: theme.colors.textMuted, fontStyle: 'italic' },
   reviewCard: {
     backgroundColor: theme.colors.surface,
     padding: theme.spacing.md,
@@ -230,7 +232,7 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
     ...theme.shadows.sm,
   },
-  reviewAuthor: { fontWeight: '600', fontSize: 14, color: theme.colors.text },
-  reviewComment: { fontSize: 14, color: theme.colors.textSecondary, marginTop: 4 },
-  reviewDate: { fontSize: 12, color: theme.colors.textMuted, marginTop: 4 },
+  reviewAuthor: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
+  reviewComment: { fontSize: 14, color: theme.colors.textSecondary, marginTop: 6, lineHeight: 20 },
+  reviewDate: { fontSize: 12, color: theme.colors.textMuted, marginTop: 6 },
 });

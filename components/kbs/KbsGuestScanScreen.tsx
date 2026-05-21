@@ -1,0 +1,116 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, View, StyleSheet } from 'react-native';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useTranslation } from 'react-i18next';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GuestIdentityScanner } from '@/components/kbs/GuestIdentityScanner';
+import { useAuthStore } from '@/stores/authStore';
+import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { useGuestScanSessionStore } from '@/stores/guestScanSessionStore';
+import { mapLockPayloadToGuestItem } from '@/lib/guestScan/mapParsedToItem';
+import { fingerprintFromMrzQueued } from '@/stores/kbsMrzBatchStore';
+import type { GuestScanLockPayload } from '@/lib/guestScan/types';
+
+const SOUND_KEY = 'kbs_mrz_scan_sound_enabled';
+
+type Props = {
+  /** Yetkisiz kullanıcıda geri dönülecek rota (KBS layout kapalıyken /staff/mrz-scan için /staff). */
+  deniedFallback?: string;
+};
+
+/**
+ * Tam ekran MRZ tarayıcı — KBS stack’inden bağımsız `/staff/mrz-scan` veya hub üzerinden kullanılır.
+ */
+export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
+  const router = useRouter();
+  const { t } = useTranslation();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const staff = useAuthStore((s) => s.staff);
+  const session = useGuestScanSessionStore((s) => s.session);
+  const sessionLoading = useGuestScanSessionStore((s) => s.loading);
+  const startSession = useGuestScanSessionStore((s) => s.startSession);
+  const hasDuplicate = useGuestScanSessionStore((s) => s.hasDuplicate);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [scanEnabled, setScanEnabled] = useState(true);
+  const sessionBootstrapped = useRef(false);
+
+  const isGroup = mode === 'group' || mode === 'family' || (session?.sessionType !== 'single');
+
+  useEffect(() => {
+    if (staff == null) return;
+    if (!canStaffUseMrzScan(staff)) {
+      Alert.alert(t('kbsNavScanSerial'), t('staffPassportsNoAccess'));
+      router.replace(deniedFallback as never);
+    }
+  }, [staff, router, t, deniedFallback]);
+
+  useEffect(() => {
+    if (sessionBootstrapped.current || session || sessionLoading) return;
+    sessionBootstrapped.current = true;
+    const type = mode === 'group' || mode === 'family' ? 'group' : 'single';
+    void startSession(type);
+  }, [session, sessionLoading, mode, startSession]);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(SOUND_KEY).then((v) => {
+      if (v === '0') setSoundEnabled(false);
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setScanEnabled(true);
+    }, [])
+  );
+
+  const onLocked = useCallback(
+    (payload: GuestScanLockPayload) => {
+      if (!session) return;
+      const fp = fingerprintFromMrzQueued({
+        mrzLine: payload.mrz ?? `${payload.parsed.documentNumber ?? ''}`,
+        documentNumber: payload.parsed.documentNumber,
+        birthDate: payload.parsed.birthDate,
+        nationalityCode: payload.parsed.nationalityCode,
+        firstName: payload.parsed.firstName,
+        lastName: payload.parsed.lastName,
+      });
+      if (hasDuplicate(fp)) {
+        Alert.alert(t('kbsGuestDuplicateTitle'), t('kbsGuestDuplicateBody'));
+        return;
+      }
+      setScanEnabled(false);
+      const item = mapLockPayloadToGuestItem({
+        sessionId: session.id,
+        payload,
+        documentSerialNo: (payload.parsed as { documentSeries?: string }).documentSeries ?? null,
+        fatherName: (payload.parsed as { fatherName?: string }).fatherName ?? null,
+        motherName: (payload.parsed as { motherName?: string }).motherName ?? null,
+      });
+      useGuestScanSessionStore.getState().setPendingConfirmItem(item);
+      router.push({
+        pathname: '/staff/kbs/guests/confirm',
+        params: { itemId: item.id, mode: isGroup ? 'group' : 'single' },
+      } as never);
+    },
+    [session, hasDuplicate, router, t, isGroup]
+  );
+
+  if (!staff || !canStaffUseMrzScan(staff)) {
+    return <View style={styles.blocked} />;
+  }
+
+  return (
+    <GuestIdentityScanner
+      enabled={scanEnabled}
+      soundEnabled={soundEnabled}
+      groupCount={session?.items.length ?? 0}
+      onLocked={onLocked}
+      onBack={() => router.back()}
+      onGalleryError={(msg) => Alert.alert(t('kbsGuestGalleryTitle'), msg)}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  blocked: { flex: 1, backgroundColor: '#000' },
+});

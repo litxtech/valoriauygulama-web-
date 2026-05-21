@@ -1,0 +1,100 @@
+import { supabase } from '@/lib/supabase';
+
+export type MrzRecentDocRow = {
+  id: string;
+  created_at: string;
+  document_type: string;
+  document_number: string | null;
+  nationality_code: string | null;
+  expiry_date: string | null;
+  raw_mrz: string | null;
+  scan_status: string;
+  guest_id: string;
+  guest?: {
+    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+  } | null;
+};
+
+/**
+ * Pasaportlar (MRZ) listesi — doğrudan ops.guest_documents (RLS).
+ * VPS köprüsü (KBS_GATEWAY_URL) gerekmez; yanlış placeholder URL hatası oluşmaz.
+ */
+export async function loadMrzRecentDocuments(): Promise<
+  { ok: true; data: MrzRecentDocRow[] } | { ok: false; message: string; code: string }
+> {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return { ok: false, message: 'Oturum yok', code: 'AUTH' };
+
+  const { data: au, error: auErr } = await supabase
+    .schema('ops')
+    .from('app_users')
+    .select('hotel_id')
+    .eq('id', uid)
+    .maybeSingle();
+  if (auErr || !au?.hotel_id) {
+    return { ok: false, message: 'Bu kullanıcı için ops.app_users kaydı yok.', code: 'NO_APP_USER' };
+  }
+  const hotelId = au.hotel_id;
+
+  const { data: docs, error: e0 } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select(
+      'id, created_at, document_type, document_number, nationality_code, expiry_date, raw_mrz, scan_status, guest_id'
+    )
+    .eq('hotel_id', hotelId)
+    .not('raw_mrz', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (e0) return { ok: false, message: e0.message, code: 'DB' };
+
+  const list = (docs ?? []) as Array<{
+    id: string;
+    guest_id: string | null;
+    created_at: string;
+    document_type: string;
+    document_number: string | null;
+    nationality_code: string | null;
+    expiry_date: string | null;
+    raw_mrz: string | null;
+    scan_status: string;
+  }>;
+  const gids = [...new Set(list.map((d) => d.guest_id).filter(Boolean))] as string[];
+
+  const guestMap: Record<
+    string,
+    { full_name: string | null; first_name: string | null; last_name: string | null }
+  > = {};
+  if (gids.length) {
+    const { data: guests, error: e1 } = await supabase
+      .schema('ops')
+      .from('guests')
+      .select('id, full_name, first_name, last_name')
+      .in('id', gids);
+    if (e1) return { ok: false, message: e1.message, code: 'DB' };
+    for (const g of guests ?? []) {
+      const row = g as {
+        id: string;
+        full_name: string | null;
+        first_name: string | null;
+        last_name: string | null;
+      };
+      guestMap[row.id] = {
+        full_name: row.full_name,
+        first_name: row.first_name,
+        last_name: row.last_name,
+      };
+    }
+  }
+
+  const items: MrzRecentDocRow[] = list.map((d) => ({
+    ...d,
+    guest_id: d.guest_id ?? '',
+    guest: d.guest_id ? guestMap[d.guest_id] ?? null : null,
+  }));
+
+  return { ok: true, data: items };
+}

@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, Ale
 import { theme } from '@/constants/theme';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost } from '@/lib/kbsApi';
+import { kbsQueryOptions } from '@/lib/kbsReactQuery';
 import { useTranslation } from 'react-i18next';
 
 export default function SubmittedPassportsScreen() {
@@ -13,6 +14,7 @@ export default function SubmittedPassportsScreen() {
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
     },
+    ...kbsQueryOptions,
   });
 
   const checkout = async (guestDocumentId: string) => {
@@ -46,7 +48,9 @@ export default function SubmittedPassportsScreen() {
             ) : null}
           </View>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>{q.isLoading ? t('loading') : t('emptyNoRecords')}</Text>}
+        ListEmptyComponent={
+          <Text style={styles.empty}>{q.isPending ? t('loading') : q.isError ? '' : t('emptyNoRecords')}</Text>
+        }
       />
     </View>
   );

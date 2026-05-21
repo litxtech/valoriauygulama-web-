@@ -49,12 +49,29 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { data: adminRows } = await supabase
+    const { data: staffRows } = await supabase
       .from("staff")
-      .select("id")
-      .eq("role", "admin")
+      .select("id, role, app_permissions")
       .eq("is_active", true);
-    let adminIds = (adminRows ?? []).map((r: { id: string }) => r.id);
+
+    function isAdminPanelRecipient(row: {
+      id: string;
+      role: string | null;
+      app_permissions: Record<string, unknown> | null;
+    }): boolean {
+      if (row.role === "admin") return true;
+      const perms = row.app_permissions;
+      if (perms && typeof perms === "object" && perms.super_admin === true) return true;
+      return false;
+    }
+
+    let adminIds = (staffRows ?? [])
+      .filter((r) =>
+        isAdminPanelRecipient(
+          r as { id: string; role: string | null; app_permissions: Record<string, unknown> | null }
+        )
+      )
+      .map((r) => (r as { id: string }).id);
     if (bodyConversationId && String(bodyConversationId).trim().length > 0) {
       const { data: parts } = await supabase
         .from("conversation_participants")

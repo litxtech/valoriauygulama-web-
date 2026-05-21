@@ -43,6 +43,32 @@ export function canSaveMrzDocument(args: {
   return { allowed: true };
 }
 
+/**
+ * Canlı kamera kilidi: checksum doğrulanamasa bile yüksek charset + temel alanlar doluysa
+ * kullanıcı onay ekranına geçilir (KBS kaydı yine `canSaveMrzDocument` ile sıkı kontrol edilir).
+ */
+export function canLockMrzLiveScan(args: {
+  rawMrz: string | null;
+  parsed: ParsedDocument;
+}): boolean {
+  const strict = canSaveMrzDocument(args);
+  if (strict.allowed) return true;
+
+  const { rawMrz, parsed } = args;
+  const raw = rawMrz?.trim() ?? '';
+  if (!raw) return false;
+  if (parsed.warnings?.some((w) => w === 'MRZ parse failed' || w.includes('parse failed'))) {
+    return false;
+  }
+  if (parsed.checksumsValid === false) return false;
+
+  const ratio = mrzCharsetRatio(raw);
+  if (ratio < 0.88) return false;
+  if (!parsed.documentNumber?.trim()) return false;
+  if (!parsed.firstName?.trim() && !parsed.lastName?.trim()) return false;
+  return true;
+}
+
 export function isMrzPayload(rawMrz: string | null | undefined): boolean {
   return Boolean(rawMrz && String(rawMrz).trim().length > 0);
 }

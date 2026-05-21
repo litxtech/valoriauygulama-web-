@@ -183,14 +183,13 @@ export default function StaffStockManualEntryScreen() {
       });
       if (error) throw error;
 
-      const { sendBulkToStaff } = await import('@/lib/notificationService');
-      sendBulkToStaff({
-        target: 'all_staff',
+      const { notifyAdminPanel } = await import('@/lib/notificationService');
+      void notifyAdminPanel({
         title: `📦 ${t('pendingApproval')}`,
-        body: 'Yeni stok girişi (manuel) kaydedildi; onay bekleniyor.',
-        createdByStaffId: staff.id,
+        body: `${productName.trim()} · manuel stok girişi onay bekliyor.`,
+        href: '/admin/stock/approvals',
         notificationType: 'stock_pending_approval',
-      }).catch(() => {});
+      });
 
       Alert.alert(t('saved'), t('pendingApproval'), () => router.replace('/staff/stock'));
     } catch (e) {

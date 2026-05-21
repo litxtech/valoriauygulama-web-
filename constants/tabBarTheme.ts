@@ -10,11 +10,12 @@ export const appTabBar = {
   inactive: '#6B7280',
   /** Bir sekme rengi bulunamazsa (fallback) */
   fallbackActive: '#6366F1',
-  /** Misafir orta mesaj: tab satırına sığacak; Android’de kırpma/boş kutu riskini azaltır. */
+  /** Orta mesaj: diğer sekmelerle hizalı, belirgin ama taşmayan daire. */
   centerMessage: {
-    size: 48,
+    size: 40,
     icon: 22,
-    lift: -4,
+    /** Etiketsiz orta sekme: ikon satırını yan sekmelerle hizalamak için yukarı kaydır */
+    lift: 18,
   },
 } as const;
 

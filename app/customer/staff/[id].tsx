@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -33,7 +33,9 @@ import { blockUserForGuest, getHiddenUsersForGuest } from '@/lib/userBlocks';
 import type { HubReview } from '@/components/StaffEvaluationHub';
 import { StaffReviewsFullModal } from '@/components/StaffEvaluationHub';
 import { STAFF_SOCIAL_KEYS, staffSocialOpenUrl, type StaffSocialKey } from '@/lib/staffSocialLinks';
+import { loadGuestMyReviewForStaff, loadStaffProfileReviews } from '@/lib/loadStaffProfileReviews';
 import { recordStaffProfileVisit } from '@/lib/staffProfileVisits';
+import { readStaffProfileViewCache, writeStaffProfileViewCache } from '@/lib/staffProfileViewCache';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { StaffProfileFeedGrid } from '@/components/StaffProfileFeedGrid';
@@ -126,9 +128,20 @@ export default function StaffProfileScreen() {
   const [todayAnchor, setTodayAnchor] = useState(() => Date.now());
   const loadStaff = useCallback(async () => {
     if (!id) return;
-    setLoading(true);
+
+    const cached = await readStaffProfileViewCache<StaffDetail>('guest', id);
+    const hadCache = !!cached?.profile;
+    if (hadCache) {
+      setStaff(cached.profile);
+      if (cached.reviews) setReviews(cached.reviews as Review[]);
+      if (cached.myReview !== undefined) setMyReview(cached.myReview as Review | null);
+      if (cached.engagement) setEngagement(cached.engagement);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      // Misafir satırı + personel profili aynı anda: ardışık beklemek sayfayı yavaşlatıyordu
       const [guestRow, profRes] = await Promise.all([
         getOrCreateGuestForCurrentSession(),
         supabase.rpc('get_staff_public_profile', { p_staff_id: id }),
@@ -155,6 +168,7 @@ export default function StaffProfileScreen() {
           show_email_to_guest?: boolean | null;
           show_whatsapp_to_guest?: boolean | null;
         };
+        shift_id?: string | null;
       };
       const c = raw.profile_contact;
       const rawSocial = (raw as { social_links?: Record<string, string> | null }).social_links;
@@ -171,7 +185,7 @@ export default function StaffProfileScreen() {
       }
       const staffData: StaffDetail = {
         ...raw,
-        shift: undefined,
+        shift: cached?.profile?.shift,
         created_at: raw.created_at ?? joinFallback?.created_at ?? null,
         hire_date: raw.hire_date ?? joinFallback?.hire_date ?? null,
         phone: c?.phone ?? raw.phone,
@@ -183,121 +197,79 @@ export default function StaffProfileScreen() {
         social_links: rawSocial && typeof rawSocial === 'object' ? rawSocial : null,
         profile_visit_restricted: visitRestricted,
         profile_hidden_by_admin: profileHiddenByAdmin,
+        organization: cached?.profile?.organization ?? null,
       };
-      if (!visitRestricted) {
+      if (!visitRestricted && !staffData.organization) {
         const { data: orgRow } = await supabase
           .from('staff')
           .select('organization:organization_id(name,kind)')
           .eq('id', id)
           .maybeSingle();
-        staffData.organization = (orgRow as { organization?: { name: string | null; kind: string | null } | null } | null)?.organization ?? null;
-      } else {
+        staffData.organization =
+          (orgRow as { organization?: { name: string | null; kind: string | null } | null } | null)?.organization ?? null;
+      } else if (visitRestricted) {
         staffData.organization = null;
       }
       setStaff(staffData);
-      if (!visitRestricted) {
-        recordStaffProfileVisit(id).catch(() => {});
-      }
-      if (!visitRestricted && s.shift_id) {
-        const { data: shift } = await supabase
+      setLoading(false);
+      recordStaffProfileVisit(id).catch(() => {});
+
+      const loadSecondary = async () => {
+        if (visitRestricted) {
+          setReviews([]);
+          setMyReview(null);
+          setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
+          void writeStaffProfileViewCache('guest', id, {
+            profile: staffData,
+            reviews: [],
+            myReview: null,
+            engagement: { posts: 0, likes: 0, comments: 0, visits: 0 },
+          });
+          return;
+        }
+
+        let viewerGuestId: string | null = guestRow?.guest_id ?? null;
+        if (!viewerGuestId) {
+          const email = (user?.email ?? user?.user_metadata?.email ?? '').toString().trim();
+          if (email) {
+            const { data: guest } = await supabase.from('guests').select('id').eq('email', email).limit(1).maybeSingle();
+            viewerGuestId = guest?.id ?? null;
+          }
+        }
+
+        const [nextReviews, nextMyReview, nextEngagement] = await Promise.all([
+          loadStaffProfileReviews(id, CUSTOMER_REVIEW_LIMIT),
+          loadGuestMyReviewForStaff(id, viewerGuestId),
+          loadStaffEngagementStats(id).catch(() => ({ posts: 0, likes: 0, comments: 0, visits: 0 })),
+        ]);
+
+        setReviews(nextReviews as Review[]);
+        setMyReview(nextMyReview as Review | null);
+        setEngagement(nextEngagement);
+
+        void writeStaffProfileViewCache('guest', id, {
+          profile: staffData,
+          reviews: nextReviews,
+          myReview: nextMyReview,
+          engagement: nextEngagement,
+        });
+      };
+
+      if (!visitRestricted && raw.shift_id) {
+        void supabase
           .from('shifts')
           .select('start_time, end_time')
-          .eq('id', s.shift_id)
-          .single();
-        setStaff((prev) => (prev ? { ...prev, shift: shift ?? null } : null));
-      }
-      if (visitRestricted) {
-        setReviews([]);
-        setMyReview(null);
-        setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
-      } else {
-      const { data: r } = await supabase
-        .from('staff_reviews')
-        .select('id, rating, comment, created_at, guest_id, stay_room_label, stay_nights_label')
-        .eq('staff_id', id)
-        .order('created_at', { ascending: false })
-        .limit(CUSTOMER_REVIEW_LIMIT);
-      const reviewRows = (r ?? []) as (Review & { guest_id?: string })[];
-      if (reviewRows.some((x) => x.guest_id)) {
-        const guestIds = [...new Set(reviewRows.map((x) => x.guest_id).filter(Boolean))] as string[];
-        const { data: guests } = await supabase
-          .from('guests')
-          .select('id, full_name, room_id, photo_url')
-          .in('id', guestIds);
-        const guestList = (guests ?? []) as { id: string; full_name: string | null; room_id: string | null; photo_url: string | null }[];
-        const roomIds = [...new Set(guestList.map((g) => g.room_id).filter(Boolean))] as string[];
-        let roomMap = new Map<string, string>();
-        if (roomIds.length > 0) {
-          const { data: rooms } = await supabase
-            .from('rooms')
-            .select('id, room_number')
-            .in('id', roomIds);
-          roomMap = new Map((rooms ?? []).map((ro: { id: string; room_number: string }) => [ro.id, ro.room_number]));
-        }
-        const guestMap = new Map(
-          guestList.map((g) => [
-            g.id,
-            {
-              full_name: g.full_name,
-              room_number: g.room_id ? roomMap.get(g.room_id) ?? null : null,
-              photo_url: g.photo_url,
-            },
-          ])
-        );
-        setReviews(
-          reviewRows.map((x) => ({
-            id: x.id,
-            rating: x.rating,
-            comment: x.comment,
-            created_at: x.created_at,
-            stay_room_label: x.stay_room_label,
-            stay_nights_label: x.stay_nights_label,
-            guest: x.guest_id ? guestMap.get(x.guest_id) ?? null : null,
-          }))
-        );
-      } else {
-        setReviews(
-          reviewRows.map(({ guest_id: _, ...rest }) => ({
-            ...rest,
-            stay_room_label: rest.stay_room_label,
-            stay_nights_label: rest.stay_nights_label,
-          }))
-        );
-      }
-      let viewerGuestId: string | null = guestRow?.guest_id ?? null;
-      if (!viewerGuestId) {
-        const email = (user?.email ?? user?.user_metadata?.email ?? '').toString().trim();
-        if (email) {
-          const { data: guest } = await supabase.from('guests').select('id').eq('email', email).limit(1).maybeSingle();
-          viewerGuestId = guest?.id ?? null;
-        }
-      }
-      if (viewerGuestId) {
-        const { data: existing } = await supabase
-          .from('staff_reviews')
-          .select('id, rating, comment, created_at, stay_room_label, stay_nights_label')
-          .eq('staff_id', id)
-          .eq('guest_id', viewerGuestId)
-          .limit(1)
-          .maybeSingle();
-        if (existing) {
-          setMyReview({
-            id: existing.id,
-            rating: existing.rating,
-            comment: existing.comment,
-            created_at: existing.created_at,
-            stay_room_label: existing.stay_room_label,
-            stay_nights_label: existing.stay_nights_label,
-            guest: null,
+          .eq('id', raw.shift_id)
+          .single()
+          .then(({ data: shift }) => {
+            setStaff((prev) => {
+              if (!prev || prev.id !== id) return prev;
+              return { ...prev, shift: shift ?? null };
+            });
           });
-        } else {
-          setMyReview(null);
-        }
-      } else {
-        setMyReview(null);
       }
-      loadStaffEngagementStats(id).then(setEngagement).catch(() => {});
-    }
+
+      void loadSecondary();
     } finally {
       setLoading(false);
     }
@@ -471,7 +443,20 @@ export default function StaffProfileScreen() {
     : null;
   const joinDateIso = staff.hire_date ?? staff.created_at;
   const daysWithUs = joinDateIso ? calculateDaysWithUs(joinDateIso, todayAnchor) : null;
-  const tenureCopy = getTenureCopy(i18n.language, daysWithUs ?? 0);
+  const tenureCopy = useMemo(
+    () => ({
+      title: t('tenureTitle'),
+      badge: t('tenureBadge'),
+      headline: t('tenureHeadline', { days: daysWithUs ?? 0 }),
+      subtitle: t('tenureSubtitle'),
+      timelineTitle: t('tenureTimelineTitle'),
+      startLabel: t('tenureStartLabel'),
+      todayLabel: t('tenureTodayLabel'),
+      monthLabel: t('tenureMonthLabel'),
+      close: t('tenureClose'),
+    }),
+    [t, i18n.language, daysWithUs]
+  );
   const tenureSubtitle = staff.tenure_note?.trim() || tenureCopy.subtitle;
   const tenureTimeline = joinDateIso ? buildTenureTimeline(joinDateIso, todayAnchor) : [];
   const statItems = [
@@ -572,7 +557,7 @@ export default function StaffProfileScreen() {
               <TouchableOpacity style={styles.langBadgeTop} onPress={() => setLanguagesModalVisible(true)} activeOpacity={0.85}>
                 <Ionicons name="language-outline" size={14} color="#fff" />
                 <Text style={styles.langBadgeTopText}>
-                  Diller ({staff.languages.length})
+                  {t('guestStaffLanguages', { count: staff.languages.length })}
                 </Text>
               </TouchableOpacity>
             )}
@@ -833,7 +818,7 @@ export default function StaffProfileScreen() {
       >
         <Pressable style={styles.languagesOverlay} onPress={() => setLanguagesModalVisible(false)}>
           <Pressable style={styles.languagesModalBox} onPress={() => {}}>
-            <Text style={styles.languagesModalTitle}>Konusulan Diller</Text>
+            <Text style={styles.languagesModalTitle}>{t('guestStaffLanguagesTitle')}</Text>
             {(staff.languages ?? []).map((lang, idx) => (
               <Text key={`${lang}-${idx}`} style={styles.languagesModalLine}>• {lang}</Text>
             ))}
@@ -954,14 +939,16 @@ function StatPill({ label, value }: { label: string; value: string }) {
 }
 
 function formatReviewDate(iso: string) {
+  const i18n = require('@/i18n').default;
   const d = new Date(iso);
   const now = new Date();
   const diff = Math.floor((now.getTime() - d.getTime()) / (24 * 60 * 60 * 1000));
-  if (diff === 0) return 'Bugün';
-  if (diff === 1) return 'Dün';
-  if (diff < 7) return `${diff} gün önce`;
-  if (diff < 30) return `${Math.floor(diff / 7)} hafta önce`;
-  return d.toLocaleDateString('tr-TR');
+  const lang = (i18n.language || 'tr').split('-')[0];
+  if (diff === 0) return i18n.t('relativeToday');
+  if (diff === 1) return i18n.t('relativeYesterday');
+  if (diff < 7) return i18n.t('relativeDaysAgo', { count: diff });
+  if (diff < 30) return i18n.t('relativeWeeksAgo', { count: Math.floor(diff / 7) });
+  return d.toLocaleDateString(lang === 'tr' ? 'tr-TR' : lang === 'ar' ? 'ar-SA' : 'en-US');
 }
 
 function calculateDaysWithUs(isoDate: string, anchorMs: number) {
@@ -1002,39 +989,6 @@ function buildTenureTimeline(isoDate: string, anchorMs: number) {
   }
   if (rows[rows.length - 1]?.toDateString() !== anchor.toDateString()) rows.push(anchor);
   return rows;
-}
-
-function getTenureCopy(lang: string, days: number) {
-  const code = (lang || 'en').toLowerCase();
-  if (code.startsWith('tr')) {
-    return {
-      title: 'Çalışma Kıdem Bilgisi',
-      badge: 'Kıdem',
-      headline: `${days}. gündeyiz`,
-      subtitle: 'Valoria ailesindeki aktif çalışma süresi',
-      timelineTitle: 'Başlangıç tarihinden bugüne aylık zaman çizelgesi',
-      startLabel: 'Başlangıç',
-      todayLabel: 'Bugün',
-      monthLabel: 'ay',
-      close: 'Kapat',
-    };
-  }
-  if (code.startsWith('de')) return { title: 'Betriebszugehörigkeit', badge: 'Dauer', headline: `Tag ${days}`, subtitle: 'Aktive Betriebszugehörigkeit bei Valoria', timelineTitle: 'Monatliche Zeitleiste seit dem Startdatum', startLabel: 'Start', todayLabel: 'Heute', monthLabel: 'Monat', close: 'Schließen' };
-  if (code.startsWith('fr')) return { title: "Ancienneté de l'équipe", badge: 'Ancienneté', headline: `Jour ${days}`, subtitle: "Durée active au sein de Valoria", timelineTitle: 'Chronologie mensuelle depuis la date de début', startLabel: 'Début', todayLabel: "Aujourd'hui", monthLabel: 'mois', close: 'Fermer' };
-  if (code.startsWith('es')) return { title: 'Antigüedad laboral', badge: 'Antigüedad', headline: `Día ${days}`, subtitle: 'Tiempo activo en Valoria', timelineTitle: 'Cronología mensual desde la fecha de inicio', startLabel: 'Inicio', todayLabel: 'Hoy', monthLabel: 'mes', close: 'Cerrar' };
-  if (code.startsWith('ru')) return { title: 'Стаж работы', badge: 'Стаж', headline: `${days}-й день`, subtitle: 'Активный срок работы в Valoria', timelineTitle: 'Помесячная шкала с даты начала', startLabel: 'Начало', todayLabel: 'Сегодня', monthLabel: 'месяц', close: 'Закрыть' };
-  if (code.startsWith('ar')) return { title: 'مدة الخدمة', badge: 'الخبرة', headline: `اليوم ${days}`, subtitle: 'مدة العمل الفعلي ضمن Valoria', timelineTitle: 'جدول زمني شهري منذ تاريخ البداية', startLabel: 'البداية', todayLabel: 'اليوم', monthLabel: 'شهر', close: 'إغلاق' };
-  return {
-    title: 'Employment Tenure',
-    badge: 'Tenure',
-    headline: `Day ${days}`,
-    subtitle: 'Active employment period in Valoria',
-    timelineTitle: 'Monthly timeline since start date',
-    startLabel: 'Start',
-    todayLabel: 'Today',
-    monthLabel: 'month',
-    close: 'Close',
-  };
 }
 
 const styles = StyleSheet.create({

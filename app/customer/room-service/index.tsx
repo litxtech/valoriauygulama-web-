@@ -240,13 +240,15 @@ export default function RoomServiceScreen() {
             ))}
           </ScrollView>
           <View style={styles.cartFooter}>
-            <Text style={styles.cartTotal}>Toplam: {total.toFixed(2)} ₺</Text>
+            <Text style={styles.cartTotal}>{t('guestRoomServiceTotal', { total: total.toFixed(2) })}</Text>
             <TouchableOpacity
               style={[styles.orderBtn, submitting && styles.orderBtnDisabled]}
               onPress={placeOrder}
               disabled={submitting}
             >
-              <Text style={styles.orderBtnText}>{submitting ? 'Gönderiliyor...' : 'Sipariş ver'}</Text>
+              <Text style={styles.orderBtnText}>
+                {submitting ? t('guestRoomServiceSubmitting') : t('guestRoomServiceOrder')}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

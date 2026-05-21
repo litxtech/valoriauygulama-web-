@@ -147,6 +147,14 @@ export default function StaffStockExitScreen() {
         .order('created_at', { ascending: false })
         .limit(15);
       setRecentExits((data ?? []) as RecentExit[]);
+      const { notifyAdminPanel } = await import('@/lib/notificationService');
+      const names = valid.map((i) => i.name).slice(0, 3).join(', ');
+      void notifyAdminPanel({
+        title: `📤 ${t('pendingApproval')}`,
+        body: valid.length === 1 ? `${names} · stok çıkışı onay bekliyor.` : `${valid.length} kalem çıkış onay bekliyor.`,
+        href: '/admin/stock/approvals',
+        notificationType: 'stock_pending_approval',
+      });
       Alert.alert(t('saved'), t('pendingApproval'), () => router.back());
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('recordError'));

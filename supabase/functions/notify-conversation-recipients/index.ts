@@ -16,6 +16,10 @@ type Body = {
   conversationId: string;
   excludeAppToken?: string | null;
   excludeStaffId?: string | null;
+  excludeStaffIds?: string[];
+  excludeGuestIds?: string[];
+  onlyStaffIds?: string[];
+  onlyGuestIds?: string[];
   title: string;
   body?: string | null;
   data?: Record<string, unknown>;
@@ -43,7 +47,18 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = (await req.json()) as Body;
-    const { conversationId, excludeAppToken, excludeStaffId, title, body: messageBody, data = {} } = body;
+    const {
+      conversationId,
+      excludeAppToken,
+      excludeStaffId,
+      excludeStaffIds = [],
+      excludeGuestIds = [],
+      onlyStaffIds = [],
+      onlyGuestIds = [],
+      title,
+      body: messageBody,
+      data = {},
+    } = body;
     if (!conversationId || !title?.trim()) {
       return new Response(
         JSON.stringify({ error: "conversationId ve title gerekli" }),
@@ -67,15 +82,27 @@ Deno.serve(async (req: Request) => {
       .eq("conversation_id", conversationId)
       .is("left_at", null);
 
+    const excludeStaffSet = new Set(
+      [excludeStaffId, ...excludeStaffIds].filter((id): id is string => Boolean(id))
+    );
+    const excludeGuestSet = new Set(
+      [excludeGuestId, ...excludeGuestIds].filter((id): id is string => Boolean(id))
+    );
+    const onlyStaffSet = new Set(onlyStaffIds.filter(Boolean));
+    const onlyGuestSet = new Set(onlyGuestIds.filter(Boolean));
+    const filterOnly = onlyStaffSet.size > 0 || onlyGuestSet.size > 0;
+
     const guestIds: string[] = [];
     const staffIds: string[] = [];
     for (const p of participants ?? []) {
       const row = p as { participant_id: string; participant_type: string };
       if (row.participant_type === "guest") {
-        if (excludeGuestId && row.participant_id === excludeGuestId) continue;
+        if (excludeGuestSet.has(row.participant_id)) continue;
+        if (filterOnly && !onlyGuestSet.has(row.participant_id)) continue;
         guestIds.push(row.participant_id);
       } else if (row.participant_type === "staff" || row.participant_type === "admin") {
-        if (excludeStaffId && row.participant_id === excludeStaffId) continue;
+        if (excludeStaffSet.has(row.participant_id)) continue;
+        if (filterOnly && !onlyStaffSet.has(row.participant_id)) continue;
         staffIds.push(row.participant_id);
       }
     }

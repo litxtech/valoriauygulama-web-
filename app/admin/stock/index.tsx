@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   StyleSheet,
@@ -12,26 +12,26 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
+import { navigateAdminBack, ADMIN_TABS_FALLBACK } from '@/lib/adminStackBack';
+import { usePathname } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
-import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { useAuthStore } from '@/stores/authStore';
+import { StockProductCard, type StockProductCardData } from '@/components/admin/stock/StockProductCard';
+import { getStockLevel, stockTheme, type StockLevel } from '@/components/admin/stock/stockUi';
 
 function formatShortDateTime(iso: string): string {
   const d = new Date(iso);
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  const year = d.getFullYear();
-  const h = d.getHours().toString().padStart(2, '0');
-  const min = d.getMinutes().toString().padStart(2, '0');
-  return `${day}.${month}.${year} ${h}:${min}`;
+  return `${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')}.${d.getFullYear()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
 type Category = { id: string; name: string };
@@ -46,7 +46,6 @@ type Product = {
   max_stock: number | null;
   image_url: string | null;
   created_at: string;
-  created_by: string | null;
   organization_id: string;
   category: Category | null;
   creator: { full_name: string | null } | null;
@@ -65,15 +64,28 @@ type RecentMovement = {
   photo_proof: string | null;
 };
 
+type StatusFilter = 'all' | StockLevel;
+
+const QUICK_ACTIONS = [
+  { key: 'new', label: 'Yeni ürün', sub: 'Barkod tara', icon: 'scan-outline' as const, colors: ['#2563eb', '#3b82f6'] as [string, string], route: '/admin/stock/scan' },
+  { key: 'in', label: 'Stok girişi', sub: 'Depoya ekle', icon: 'arrow-down-circle' as const, colors: ['#059669', '#10b981'] as [string, string], route: '/admin/stock/movement', params: { type: 'in' } },
+  { key: 'out', label: 'Stok çıkışı', sub: 'Kullanım / satış', icon: 'arrow-up-circle' as const, colors: ['#d97706', '#f59e0b'] as [string, string], route: '/admin/stock/movement', params: { type: 'out' } },
+  { key: 'approvals', label: 'Onaylar', sub: 'Bekleyenler', icon: 'checkmark-done' as const, colors: ['#7c3aed', '#8b5cf6'] as [string, string], route: '/admin/stock/approvals' },
+] as const;
+
 export default function StockManagement() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { staff: me } = useAuthStore();
   const { selectedOrganizationId } = useAdminOrgStore();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [alerts, setAlerts] = useState<StockAlertRow[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [lastMovementByProduct, setLastMovementByProduct] = useState<Record<string, LastMovement>>({});
@@ -82,11 +94,10 @@ export default function StockManagement() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [recentDrawerOpen, setRecentDrawerOpen] = useState(false);
-  /** Ürün resmi yoksa son hareketin photo_proof ile göster (admin panelde resim görünsün) */
   const [lastPhotoByProductId, setLastPhotoByProductId] = useState<Record<string, string>>({});
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoadError(null);
     const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
     const orgScoped = orgId && orgId !== 'all' ? orgId : null;
@@ -94,7 +105,7 @@ export default function StockManagement() {
       let productsQuery = supabase
         .from('stock_products')
         .select(
-          'id, name, barcode, unit, current_stock, min_stock, max_stock, image_url, category_id, created_at, created_by, organization_id, category:stock_categories(id, name), creator:created_by(full_name), organization:organization_id(name)'
+          'id, name, barcode, unit, current_stock, min_stock, max_stock, image_url, category_id, created_at, organization_id, category:stock_categories(id, name), organization:organization_id(name)'
         )
         .order('name');
       if (orgScoped) productsQuery = productsQuery.eq('organization_id', orgScoped);
@@ -122,6 +133,15 @@ export default function StockManagement() {
       }
 
       try {
+        let pendingQ = supabase.from('stock_movements').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+        if (orgScoped) pendingQ = pendingQ.eq('organization_id', orgScoped);
+        const { count } = await pendingQ;
+        setPendingApprovals(count ?? 0);
+      } catch {
+        setPendingApprovals(0);
+      }
+
+      try {
         let movementsQuery = supabase
           .from('stock_movements')
           .select('product_id, created_at, staff:staff_id(full_name)')
@@ -135,7 +155,7 @@ export default function StockManagement() {
             const staff = (m as unknown as { staff?: { full_name: string | null } }).staff;
             byProduct[pid] = {
               staffName: staff?.full_name ?? '—',
-              createdAt: (m as { created_at: string }).created_at,
+              createdAt: formatShortDateTime((m as { created_at: string }).created_at),
             };
           }
         }
@@ -149,7 +169,7 @@ export default function StockManagement() {
           .from('stock_movements')
           .select('id, product_id, movement_type, quantity, created_at, photo_proof, product:stock_products(name), staff:staff_id(full_name)')
           .order('created_at', { ascending: false })
-          .limit(12);
+          .limit(15);
         if (orgScoped) recentQuery = recentQuery.eq('organization_id', orgScoped);
         const { data: recentData } = await recentQuery;
         setRecentMovements((recentData ?? []) as unknown as RecentMovement[]);
@@ -181,12 +201,12 @@ export default function StockManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [canUseAllOrganizations, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
     setLoading(true);
     loadData();
-  }, [selectedOrganizationId, canUseAllOrganizations, me?.organization_id]);
+  }, [loadData]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -195,409 +215,347 @@ export default function StockManagement() {
   };
 
   const handleDeleteProduct = (p: Product) => {
-    Alert.alert(
-      'Ürünü sil',
-      `"${p.name}" ürününü silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Sil',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase.from('barcode_scan_history').delete().eq('product_id', p.id);
-              await supabase.from('stock_alerts').delete().eq('product_id', p.id);
-              await supabase.from('stock_counts').delete().eq('product_id', p.id);
-              await supabase.from('stock_movements').delete().eq('product_id', p.id);
-              const { error } = await supabase.from('stock_products').delete().eq('id', p.id);
-              if (error) throw error;
-              await loadData();
-            } catch (e) {
-              Alert.alert('Hata', (e as Error)?.message ?? 'Ürün silinemedi.');
-            }
-          },
+    Alert.alert('Ürünü sil', `"${p.name}" kalıcı olarak silinsin mi?`, [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await supabase.from('barcode_scan_history').delete().eq('product_id', p.id);
+            await supabase.from('stock_alerts').delete().eq('product_id', p.id);
+            await supabase.from('stock_counts').delete().eq('product_id', p.id);
+            await supabase.from('stock_movements').delete().eq('product_id', p.id);
+            const { error } = await supabase.from('stock_products').delete().eq('id', p.id);
+            if (error) throw error;
+            await loadData();
+          } catch (e) {
+            Alert.alert('Hata', (e as Error)?.message ?? 'Ürün silinemedi.');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  const handleDeleteEntireStock = () => {
-    Alert.alert(
-      'Stoğu komple sil',
-      'Tüm stok verileri (ürünler, hareketler, uyarılar) kalıcı olarak silinecek. Bu işlem geri alınamaz. Emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Evet, hepsini sil',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase.from('barcode_scan_history').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-              await supabase.from('stock_movements').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-              await supabase.from('stock_alerts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-              await supabase.from('stock_counts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-              const { error } = await supabase.from('stock_products').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-              if (error) throw error;
-              await loadData();
-              Alert.alert('Tamam', 'Tüm stok verileri silindi.');
-            } catch (e) {
-              Alert.alert('Hata', (e as Error)?.message ?? 'Stok silinemedi.');
-            }
-          },
-        },
-      ]
-    );
-  };
+  const categoryCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const p of products) {
+      const key = p.category_id ?? '_none';
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    return map;
+  }, [products]);
 
-  const filtered = products.filter((p) => {
-    const matchCat = selectedCategory === 'all' || p.category_id === selectedCategory;
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matchSearch = !q || p.name.toLowerCase().includes(q) || (p.barcode != null && p.barcode.toLowerCase().includes(q));
-    return matchCat && matchSearch;
-  });
-  const criticalCount = products.filter((p) => (p.min_stock ?? 0) > 0 && (p.current_stock ?? 0) <= (p.min_stock ?? 0)).length;
-  const emptyCount = products.filter((p) => (p.current_stock ?? 0) <= 0).length;
-  const totalStockUnits = products.reduce((sum, p) => sum + (p.current_stock ?? 0), 0);
+    return products.filter((p) => {
+      const matchCat = selectedCategory === 'all' || p.category_id === selectedCategory;
+      const matchSearch = !q || p.name.toLowerCase().includes(q) || (p.barcode?.toLowerCase().includes(q) ?? false);
+      if (!matchCat || !matchSearch) return false;
+      if (statusFilter === 'all') return true;
+      const cur = p.current_stock ?? 0;
+      const min = p.min_stock ?? 0;
+      const max = p.max_stock ?? Math.max(cur, min, 1);
+      return getStockLevel(cur, min, max) === statusFilter;
+    });
+  }, [products, search, selectedCategory, statusFilter]);
+
+  const stats = useMemo(() => {
+    let critical = 0;
+    let empty = 0;
+    let ok = 0;
+    let totalUnits = 0;
+    for (const p of products) {
+      const cur = p.current_stock ?? 0;
+      totalUnits += cur;
+      const level = getStockLevel(cur, p.min_stock ?? 0, p.max_stock ?? Math.max(cur, 1));
+      if (level === 'empty') empty++;
+      else if (level === 'critical' || level === 'low') critical++;
+      else ok++;
+    }
+    return { total: products.length, critical, empty, ok, totalUnits, alerts: alerts.length, pending: pendingApprovals };
+  }, [products, alerts.length, pendingApprovals]);
+
+  const cardData = useCallback(
+    (p: Product): StockProductCardData => {
+      const last = lastMovementByProduct[p.id];
+      return {
+        id: p.id,
+        name: p.name,
+        barcode: p.barcode,
+        unit: p.unit,
+        current_stock: p.current_stock,
+        min_stock: p.min_stock,
+        max_stock: p.max_stock,
+        image_url: p.image_url,
+        categoryName: p.category?.name ?? null,
+        organizationName: p.organization?.name ?? null,
+        fallbackImageUrl: lastPhotoByProductId[p.id] ?? null,
+        lastStaffName: last?.staffName ?? null,
+        lastMovementAt: last?.createdAt ?? null,
+      };
+    },
+    [lastMovementByProduct, lastPhotoByProductId]
+  );
 
   const headerPaddingTop = Platform.OS === 'ios' ? insets.top : insets.top + 8;
-  const footerPaddingBottom = insets.bottom + 20;
 
-  return (
-    <View style={styles.container}>
-      {/* Özel header: Stok Yönetimi + arama */}
-      <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity
-            style={styles.headerBack}
-            onPress={() => router.back()}
-            activeOpacity={0.8}
-            accessibilityLabel="Geri"
-          >
-            <Ionicons name="arrow-back" size={24} color={adminTheme.colors.surface} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>Stok Yönetimi</Text>
-            <Text style={styles.headerSub}>
-              {products.length} ürün · {alerts.length > 0 ? `${alerts.length} uyarı` : 'Uyarı yok'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.headerAction}
-            onPress={() => router.push('/admin')}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="home-outline" size={22} color={adminTheme.colors.surface} />
-          </TouchableOpacity>
+  const renderListHeader = () => (
+    <View style={styles.listHeader}>
+      {canUseAllOrganizations ? (
+        <View style={styles.orgWrap}>
+          <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={me?.organization_id} />
         </View>
+      ) : null}
 
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={20} color={adminTheme.colors.textMuted} style={styles.searchIcon} />
-          <TextInput
-            style={styles.search}
-            placeholder="Ürün adı veya barkod ara..."
-            placeholderTextColor={adminTheme.colors.textMuted}
-            value={search}
-            onChangeText={setSearch}
-          />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch('')} hitSlop={12} style={styles.searchClear}>
-              <Ionicons name="close-circle" size={20} color={adminTheme.colors.textMuted} />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-      <View style={styles.orgPickerWrap}>
-        <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={me?.organization_id} />
-      </View>
-
-      {/* Kritik uyarılar */}
-      {alerts.length > 0 && (
-        <View style={styles.alertBanner}>
-          <View style={styles.alertBannerLeft}>
-            <Ionicons name="warning" size={22} color="#fff" />
-            <Text style={styles.alertBannerTitle}>Kritik stok ({alerts.length})</Text>
+      {alerts.length > 0 ? (
+        <View style={styles.alertBox}>
+          <View style={styles.alertHead}>
+            <Ionicons name="warning" size={20} color="#fff" />
+            <Text style={styles.alertTitle}>{alerts.length} kritik uyarı</Text>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.alertScroll}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.alertScroll}>
             {alerts.map((a) => (
               <TouchableOpacity
                 key={a.id}
                 style={styles.alertChip}
                 onPress={() => router.push({ pathname: '/admin/stock/movement', params: { productId: a.product_id } })}
-                activeOpacity={0.8}
               >
                 <Text style={styles.alertChipText} numberOfLines={1}>
-                  {(a.product as { name?: string })?.name ?? a.product_id}
+                  {(a.product as { name?: string })?.name ?? 'Ürün'}
                 </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
-      )}
+      ) : null}
 
-      <View style={styles.metricsWrap}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{products.length}</Text>
-          <Text style={styles.metricLabel}>Toplam Ürün</Text>
-        </View>
-        <View style={[styles.metricCard, styles.metricCardWarn]}>
-          <Text style={styles.metricValue}>{criticalCount}</Text>
-          <Text style={styles.metricLabel}>Kritik Ürün</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{emptyCount}</Text>
-          <Text style={styles.metricLabel}>Stok Yok</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{totalStockUnits}</Text>
-          <Text style={styles.metricLabel}>Toplam Adet</Text>
-        </View>
+      <View style={styles.quickGrid}>
+        {QUICK_ACTIONS.map((a) => (
+          <TouchableOpacity
+            key={a.key}
+            style={styles.quickTile}
+            activeOpacity={0.88}
+            onPress={() => {
+              if ('params' in a && a.params) router.push({ pathname: a.route as never, params: a.params as never });
+              else router.push(a.route as never);
+            }}
+          >
+            <LinearGradient colors={a.colors} style={styles.quickGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+              <Ionicons name={a.icon} size={24} color="#fff" />
+              {a.key === 'approvals' && pendingApprovals > 0 ? (
+                <View style={styles.quickBadge}>
+                  <Text style={styles.quickBadgeText}>{pendingApprovals > 99 ? '99+' : pendingApprovals}</Text>
+                </View>
+              ) : null}
+            </LinearGradient>
+            <Text style={styles.quickLabel}>{a.label}</Text>
+            <Text style={styles.quickSub}>{a.sub}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {/* Kategori filtreleri + üst aksiyon butonları */}
-      <View style={styles.controlsCard}>
-        <Text style={styles.controlsTitle}>Filtreler</Text>
-        <ScrollView
-          horizontal
-          style={styles.categoriesWrap}
-          contentContainerStyle={styles.categoriesContent}
-          showsHorizontalScrollIndicator={false}
-        >
-          <TouchableOpacity
-            style={[styles.chip, selectedCategory === 'all' && styles.chipActive]}
-            onPress={() => setSelectedCategory('all')}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.chipText, selectedCategory === 'all' && styles.chipTextActive]}>Tümü</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Text style={styles.statVal}>{stats.total}</Text>
+          <Text style={styles.statLbl}>Ürün çeşidi</Text>
+        </View>
+        <View style={[styles.statCard, styles.statOk]}>
+          <Text style={[styles.statVal, { color: '#047857' }]}>{stats.ok}</Text>
+          <Text style={styles.statLbl}>Yeterli stok</Text>
+        </View>
+        <View style={[styles.statCard, styles.statWarn]}>
+          <Text style={[styles.statVal, { color: '#b45309' }]}>{stats.critical}</Text>
+          <Text style={styles.statLbl}>Dikkat</Text>
+        </View>
+        <View style={[styles.statCard, styles.statDanger]}>
+          <Text style={[styles.statVal, { color: '#b91c1c' }]}>{stats.empty}</Text>
+          <Text style={styles.statLbl}>Tükendi</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statVal}>{stats.totalUnits}</Text>
+          <Text style={styles.statLbl}>Toplam adet</Text>
+        </View>
+      </ScrollView>
+
+      <View style={styles.filterSection}>
+        <Text style={styles.filterTitle}>Durum</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {(
+            [
+              { id: 'all', label: 'Tümü' },
+              { id: 'ok', label: 'Yeterli' },
+              { id: 'low', label: 'Azalıyor' },
+              { id: 'critical', label: 'Kritik' },
+              { id: 'empty', label: 'Tükendi' },
+            ] as { id: StatusFilter; label: string }[]
+          ).map((f) => (
+            <TouchableOpacity
+              key={f.id}
+              style={[styles.chip, statusFilter === f.id && styles.chipOn]}
+              onPress={() => setStatusFilter(f.id)}
+            >
+              <Text style={[styles.chipTxt, statusFilter === f.id && styles.chipTxtOn]}>{f.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <Text style={[styles.filterTitle, { marginTop: 12 }]}>Kategori</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          <TouchableOpacity style={[styles.chip, selectedCategory === 'all' && styles.chipOn]} onPress={() => setSelectedCategory('all')}>
+            <Text style={[styles.chipTxt, selectedCategory === 'all' && styles.chipTxtOn]}>Tümü ({products.length})</Text>
           </TouchableOpacity>
           {categories.map((c) => (
             <TouchableOpacity
               key={c.id}
-              style={[styles.chip, selectedCategory === c.id && styles.chipActive]}
+              style={[styles.chip, selectedCategory === c.id && styles.chipOn]}
               onPress={() => setSelectedCategory(c.id)}
-              activeOpacity={0.8}
             >
-              <Text style={[styles.chipText, selectedCategory === c.id && styles.chipTextActive]}>{c.name}</Text>
+              <Text style={[styles.chipTxt, selectedCategory === c.id && styles.chipTxtOn]}>
+                {c.name} ({categoryCounts[c.id] ?? 0})
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
-        <View style={styles.topActionsWrap}>
-          <TouchableOpacity style={[styles.topActionBtn, styles.topActionBtnDanger]} onPress={handleDeleteEntireStock} activeOpacity={0.86}>
-            <Ionicons name="trash-outline" size={16} color="#fff" />
-            <Text style={styles.topActionBtnText}>Stoğu sil</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.topActionBtn, styles.topActionBtnPrimary]} onPress={() => router.push('/admin/stock/scan')} activeOpacity={0.86}>
-            <Ionicons name="add-circle-outline" size={16} color="#fff" />
-            <Text style={styles.topActionBtnText}>Yeni Ürün</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.topActionBtn, styles.topActionBtnMint]} onPress={() => router.push({ pathname: '/admin/stock/movement', params: { type: 'in' } })} activeOpacity={0.86}>
-            <Ionicons name="arrow-down-circle-outline" size={16} color="#fff" />
-            <Text style={styles.topActionBtnText}>Stok Girişi</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.topActionBtn, styles.topActionBtnWarn]} onPress={() => router.push({ pathname: '/admin/stock/movement', params: { type: 'out' } })} activeOpacity={0.86}>
-            <Ionicons name="arrow-up-circle-outline" size={16} color="#fff" />
-            <Text style={styles.topActionBtnText}>Stok Çıkışı</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.topActionBtn, styles.topActionBtnPrimarySoft]} onPress={() => router.push('/admin/stock/approvals')} activeOpacity={0.86}>
-            <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
-            <Text style={styles.topActionBtnText}>Onaylar</Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
-      {/* Son İşlemler – çekmece butonu (tıklanınca açılır) */}
-      <View style={styles.recentButtonWrap}>
-        <TouchableOpacity
-          style={styles.recentDrawerButton}
-          onPress={() => setRecentDrawerOpen(true)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="time-outline" size={20} color={adminTheme.colors.primary} />
-          <Text style={styles.recentDrawerButtonText}>Son İşlemler</Text>
-          {recentMovements.length > 0 && (
-            <View style={styles.recentDrawerBadge}>
-              <Text style={styles.recentDrawerBadgeText}>{Math.min(recentMovements.length, 99)}</Text>
-            </View>
-          )}
-          <Ionicons name="chevron-up" size={18} color={adminTheme.colors.textMuted} />
+      <View style={styles.listTitleRow}>
+        <Text style={styles.listTitle}>Ürünler</Text>
+        <Text style={styles.listCount}>{filtered.length} kayıt</Text>
+        <TouchableOpacity style={styles.recentBtn} onPress={() => setRecentDrawerOpen(true)}>
+          <Ionicons name="time-outline" size={16} color={adminTheme.colors.accent} />
+          <Text style={styles.recentBtnText}>Son işlemler</Text>
         </TouchableOpacity>
       </View>
+    </View>
+  );
 
-      {/* Liste alanı: bölüm başlığı + liste (aşağı kaydırın, alt butonlar en altta sabit) */}
-        <View style={styles.listWrapper}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📋 TÜM ÜRÜNLER ({filtered.length})</Text>
-          </View>
-
-          {loading ? (
-            <View style={styles.loadingBox}>
-              <ActivityIndicator size="large" color={adminTheme.colors.primary} />
-              <Text style={styles.loadingText}>Yükleniyor...</Text>
-            </View>
-          ) : loadError ? (
-            <View style={styles.empty}>
-              <Ionicons name="alert-circle-outline" size={56} color={adminTheme.colors.error} />
-              <Text style={styles.emptyTitle}>Yükleme hatası</Text>
-              <Text style={styles.emptySub}>{loadError}</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); loadData(); }} activeOpacity={0.8}>
-                <Text style={styles.retryBtnText}>Tekrar dene</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-          <ScrollView
-            style={styles.list}
-            contentContainerStyle={[styles.listContent, { paddingBottom: 24 + footerPaddingBottom }]}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[adminTheme.colors.accent]} />}
+  return (
+    <View style={styles.container}>
+      <LinearGradient colors={stockTheme.headerGrad} style={[styles.hero, { paddingTop: headerPaddingTop }]}>
+        <View style={styles.heroRow}>
+          <TouchableOpacity
+            style={styles.heroBtn}
+            onPress={() => navigateAdminBack(router, navigation, pathname, ADMIN_TABS_FALLBACK)}
+            accessibilityLabel="Geri"
           >
-            {filtered.length === 0 ? (
-              <View style={styles.empty}>
-                <Ionicons name="cube-outline" size={56} color={adminTheme.colors.textMuted} />
-                <Text style={styles.emptyTitle}>
-                  {products.length === 0 ? 'Henüz ürün yok' : 'Bu arama/kategoriye uygun ürün yok'}
-                </Text>
-                <Text style={styles.emptySub}>
-                  {products.length === 0
-                    ? 'Yeni Ürün veya Stok Girişi ile ürün ekleyebilirsiniz.'
-                    : 'Arama kutusunu temizleyin veya "Tümü" kategorisini seçin.'}
-                </Text>
-                {search.length > 0 && (
-                  <TouchableOpacity style={styles.retryBtn} onPress={() => setSearch('')} activeOpacity={0.8}>
-                    <Text style={styles.retryBtnText}>Aramayı temizle</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-            filtered.map((p) => {
-              const cur = p.current_stock ?? 0;
-              const min = p.min_stock ?? 0;
-              const max = p.max_stock ?? 1;
-              const pct = max > 0 ? Math.min((cur / max) * 100, 100) : 0;
-              const isLow = min > 0 && cur <= min;
-              const addedBy = p.creator?.full_name ?? '—';
-              const addedAt = p.created_at ? formatShortDateTime(p.created_at) : '—';
-              return (
-                <View key={p.id} style={[styles.card, isLow && styles.cardLow]}>
-                  <TouchableOpacity
-                    onPress={() => router.push(`/admin/stock/product/${p.id}`)}
-                    activeOpacity={0.7}
-                    accessibilityLabel={`${p.name} detayı`}
-                  >
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardTitle} numberOfLines={1}>{p.name}</Text>
-                      <Text style={styles.cardMetaLine}>
-                        Stok: <Text style={[styles.stockHighlight, isLow && styles.stockLabelLow]}>{cur} {p.unit ?? 'adet'}</Text>
-                        {isLow && <Text style={styles.kritikBadge}> · Kritik</Text>}
-                      </Text>
-                      {p.organization?.name ? (
-                        <Text style={styles.cardOrgTag} numberOfLines={1}>
-                          {p.organization.name}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View style={styles.cardImageWrap}>
-                      {(p.image_url ?? lastPhotoByProductId[p.id]) ? (
-                        <TouchableOpacity
-                          activeOpacity={0.9}
-                          onPress={() => setPreviewUri(p.image_url ?? lastPhotoByProductId[p.id] ?? null)}
-                          style={styles.cardImageTouch}
-                        >
-                          <CachedImage
-                            uri={p.image_url ?? lastPhotoByProductId[p.id] ?? ''}
-                            style={styles.cardImage}
-                            contentFit="cover"
-                          />
-                        </TouchableOpacity>
-                      ) : (
-                        <View style={styles.cardImagePlaceholder}>
-                          <Ionicons name="image-outline" size={40} color={adminTheme.colors.textMuted} />
-                          <Text style={styles.cardImagePlaceholderText}>Ürün resmi yok</Text>
-                        </View>
-                      )}
-                    </View>
-                    <View style={styles.cardFooter}>
-                      <Text style={styles.cardAddedBy}>📦 Ekleyen: {addedBy}</Text>
-                      <Text style={styles.cardAddedAt}>📅 {addedAt}</Text>
-                    </View>
-                    <View style={styles.barBg}>
-                      <View
-                        style={[
-                          styles.barFill,
-                          isLow ? styles.barLow : styles.barOk,
-                          { width: `${Math.max(pct, 2)}%` },
-                        ]}
-                      />
-                    </View>
-                  </TouchableOpacity>
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-                      onPress={() => router.push(`/admin/stock/product/${p.id}`)}
-                      activeOpacity={0.86}
-                    >
-                      <Text style={styles.cardActionBtnText}>🔍 Detay</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.cardActionBtn, styles.cardActionBtnSoft]}
-                      onPress={() => router.push(`/admin/stock/product/${p.id}`)}
-                      activeOpacity={0.86}
-                    >
-                      <Text style={styles.cardActionBtnText}>✏️ Düzenle</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.cardActionBtn, styles.cardActionBtnDanger]}
-                      onPress={() => handleDeleteProduct(p)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.cardActionBtnDangerText}>🗑️ Sil</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })
-            )}
-          </ScrollView>
-          )}
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.heroCenter}>
+            <Text style={styles.heroTitle}>Stok yönetimi</Text>
+            <Text style={styles.heroSub}>Hangi üründen ne kadar kaldığını tek bakışta görün</Text>
+          </View>
+          <TouchableOpacity style={styles.heroBtn} onPress={() => router.push('/admin/stock/all')}>
+            <Ionicons name="grid-outline" size={20} color="#fff" />
+          </TouchableOpacity>
         </View>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={20} color="rgba(255,255,255,0.65)" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Ürün adı veya barkod..."
+            placeholderTextColor="rgba(255,255,255,0.5)"
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 ? (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={10}>
+              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </LinearGradient>
 
-      {/* Son İşlemler çekmecesi – tıklanınca açılır */}
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={adminTheme.colors.accent} />
+          <Text style={styles.centerTxt}>Stoklar yükleniyor…</Text>
+        </View>
+      ) : loadError ? (
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline-outline" size={48} color={adminTheme.colors.error} />
+          <Text style={styles.centerTitle}>Yüklenemedi</Text>
+          <Text style={styles.centerSub}>{loadError}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); loadData(); }}>
+            <Text style={styles.retryTxt}>Tekrar dene</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <StockProductCard
+              product={cardData(item)}
+              onPress={() => router.push(`/admin/stock/product/${item.id}`)}
+              onImagePress={setPreviewUri}
+              onEntry={() => router.push({ pathname: '/admin/stock/movement', params: { type: 'in', productId: item.id } })}
+              onExit={() => router.push({ pathname: '/admin/stock/movement', params: { type: 'out', productId: item.id } })}
+              onDelete={() => handleDeleteProduct(item)}
+            />
+          )}
+          ListHeaderComponent={renderListHeader}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="cube-outline" size={52} color={adminTheme.colors.textMuted} />
+              <Text style={styles.emptyTitle}>{products.length === 0 ? 'Henüz ürün yok' : 'Eşleşen ürün yok'}</Text>
+              <Text style={styles.emptySub}>
+                {products.length === 0 ? 'Yeni ürün ekleyerek başlayın.' : 'Filtreleri veya aramayı değiştirin.'}
+              </Text>
+              {products.length === 0 ? (
+                <TouchableOpacity style={styles.retryBtn} onPress={() => router.push('/admin/stock/scan')}>
+                  <Text style={styles.retryTxt}>Ürün ekle</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          }
+          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 24 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
+
       <Modal visible={recentDrawerOpen} transparent animationType="slide">
         <Pressable style={styles.drawerOverlay} onPress={() => setRecentDrawerOpen(false)}>
-          <Pressable style={styles.drawerPanel} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={styles.drawer} onPress={(e) => e.stopPropagation()}>
             <View style={styles.drawerHandle} />
-            <View style={styles.drawerHeader}>
-              <Text style={styles.drawerTitle}>Son İşlemler</Text>
-              <TouchableOpacity onPress={() => setRecentDrawerOpen(false)} hitSlop={12} style={styles.drawerCloseBtn}>
-                <Ionicons name="close" size={24} color={adminTheme.colors.textSecondary} />
+            <View style={styles.drawerHead}>
+              <Text style={styles.drawerTitle}>Son stok hareketleri</Text>
+              <TouchableOpacity onPress={() => setRecentDrawerOpen(false)}>
+                <Ionicons name="close" size={24} color={adminTheme.colors.textMuted} />
               </TouchableOpacity>
             </View>
             {recentMovements.length === 0 ? (
-              <View style={styles.drawerEmpty}>
-                <Ionicons name="document-text-outline" size={48} color={adminTheme.colors.textMuted} />
-                <Text style={styles.drawerEmptyText}>Henüz işlem yok</Text>
-              </View>
+              <Text style={styles.drawerEmpty}>Henüz hareket kaydı yok</Text>
             ) : (
-              <ScrollView style={styles.drawerScroll} contentContainerStyle={styles.drawerScrollContent} showsVerticalScrollIndicator={true}>
+              <ScrollView style={styles.drawerScroll}>
                 {recentMovements.map((m) => {
-                  const name = (m.product as { name?: string })?.name ?? '—';
-                  const staffName = (m.staff as { full_name?: string })?.full_name ?? '—';
-                  const shortName = staffName.split(' ')[0] + (staffName.includes(' ') ? ' ' + staffName.split(' ')[1]?.charAt(0) + '.' : '');
-                  const icon = m.movement_type === 'in' ? '📥' : '📤';
-                  const sign = m.movement_type === 'in' ? '+' : '-';
+                  const isIn = m.movement_type === 'in';
+                  const name = (m.product as { name?: string })?.name ?? 'Ürün';
+                  const staff = (m.staff as { full_name?: string })?.full_name ?? '—';
                   return (
                     <TouchableOpacity
                       key={m.id}
-                      style={styles.recentRow}
+                      style={styles.moveRow}
                       onPress={() => {
                         setRecentDrawerOpen(false);
                         router.push(`/admin/stock/product/${m.product_id}`);
                       }}
-                      activeOpacity={0.7}
                     >
-                      <Text style={styles.recentRowText} numberOfLines={2}>
-                        {icon} {m.movement_type === 'in' ? 'Giriş' : 'Çıkış'} — {shortName} · {name} {sign}{m.quantity}
-                      </Text>
-                      <Text style={styles.recentRowDate}>{formatShortDateTime(m.created_at)}{m.photo_proof ? ' · 📷' : ''}</Text>
+                      <View style={[styles.moveIcon, { backgroundColor: isIn ? '#d1fae5' : '#ffedd5' }]}>
+                        <Ionicons name={isIn ? 'arrow-down' : 'arrow-up'} size={18} color={isIn ? '#059669' : '#d97706'} />
+                      </View>
+                      <View style={styles.moveBody}>
+                        <Text style={styles.moveName} numberOfLines={1}>
+                          {name}
+                        </Text>
+                        <Text style={styles.moveMeta}>
+                          {isIn ? 'Giriş' : 'Çıkış'} · {staff} · {isIn ? '+' : '-'}
+                          {m.quantity}
+                        </Text>
+                        <Text style={styles.moveDate}>{formatShortDateTime(m.created_at)}</Text>
+                      </View>
+                      {m.photo_proof ? <Ionicons name="camera" size={16} color={adminTheme.colors.textMuted} /> : null}
                     </TouchableOpacity>
                   );
                 })}
@@ -606,558 +564,132 @@ export default function StockManagement() {
           </Pressable>
         </Pressable>
       </Modal>
+
       <ImagePreviewModal visible={!!previewUri} uri={previewUri} onClose={() => setPreviewUri(null)} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: adminTheme.colors.surfaceSecondary,
-  },
-  header: {
-    backgroundColor: adminTheme.colors.primary,
-    paddingHorizontal: adminTheme.spacing.lg,
-    paddingBottom: adminTheme.spacing.lg,
-    borderBottomLeftRadius: adminTheme.radius.lg,
-    borderBottomRightRadius: adminTheme.radius.lg,
-    ...adminTheme.shadow.md,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: adminTheme.spacing.md,
-  },
-  headerBack: {
+  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  hero: { paddingHorizontal: 16, paddingBottom: 18, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
+  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
+  heroBtn: {
     width: 40,
     height: 40,
-    borderRadius: adminTheme.radius.sm,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: adminTheme.colors.surface,
-  },
-  headerSub: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
-  },
-  headerAction: {
-    width: 40,
-    height: 40,
-    borderRadius: adminTheme.radius.sm,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: adminTheme.radius.md,
-    paddingHorizontal: adminTheme.spacing.md,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  search: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: adminTheme.colors.surface,
-  },
-  searchClear: {
-    padding: 4,
-  },
-  alertBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: adminTheme.colors.error,
-    paddingVertical: 10,
-    paddingHorizontal: adminTheme.spacing.lg,
-    marginHorizontal: adminTheme.spacing.lg,
-    marginTop: adminTheme.spacing.lg,
-    borderRadius: adminTheme.radius.md,
-    ...adminTheme.shadow.sm,
-  },
-  alertBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  alertBannerTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
-    marginLeft: 6,
-  },
-  alertScroll: {
-    flex: 1,
-    maxHeight: 36,
-  },
-  alertChip: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: adminTheme.radius.full,
-    marginRight: 8,
-    justifyContent: 'center',
-  },
-  alertChipText: {
-    fontSize: 12,
-    color: '#fff',
-    maxWidth: 120,
-  },
-  categoriesWrap: {
-    maxHeight: 52,
-    flexShrink: 0,
-  },
-  orgPickerWrap: {
-    paddingHorizontal: adminTheme.spacing.lg,
-    paddingTop: 10,
-  },
-  metricsWrap: {
-    marginTop: adminTheme.spacing.md,
-    marginHorizontal: adminTheme.spacing.lg,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  metricCard: {
-    flexBasis: '48%',
-    backgroundColor: '#fff',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-  },
-  metricCardWarn: {
-    backgroundColor: '#fffbeb',
-    borderColor: '#f59e0b',
-  },
-  metricValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: adminTheme.colors.text,
-  },
-  metricLabel: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: '600',
-    color: adminTheme.colors.textSecondary,
-  },
-  controlsCard: {
-    marginTop: adminTheme.spacing.md,
-    marginHorizontal: adminTheme.spacing.lg,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    backgroundColor: '#fff',
-    paddingVertical: 10,
-  },
-  controlsTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: adminTheme.colors.textSecondary,
-    marginBottom: 6,
-    paddingHorizontal: adminTheme.spacing.md,
-  },
-  categoriesContent: {
-    paddingHorizontal: adminTheme.spacing.md,
-    paddingVertical: 4,
-    gap: 8,
-  },
-  listWrapper: {
-    flex: 1,
-    minHeight: 200,
-    overflow: 'hidden',
-  },
-  sectionHint: {
-    fontSize: 11,
-    color: adminTheme.colors.textMuted,
-    paddingHorizontal: adminTheme.spacing.lg,
-    marginBottom: 4,
-    flexShrink: 0,
-  },
-  sectionHeader: {
-    paddingHorizontal: adminTheme.spacing.lg,
-    paddingTop: adminTheme.spacing.md,
-    paddingBottom: adminTheme.spacing.sm,
-    flexShrink: 0,
-  },
-  loadingBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 48,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: adminTheme.colors.textSecondary,
-  },
-  retryBtn: {
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: adminTheme.colors.primary,
-    borderRadius: adminTheme.radius.md,
-  },
-  retryBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: adminTheme.colors.surface,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: adminTheme.colors.textSecondary,
-  },
-  chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: adminTheme.radius.full,
-    marginRight: 8,
-    backgroundColor: adminTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  chipActive: {
-    backgroundColor: adminTheme.colors.primary,
-    borderColor: adminTheme.colors.primary,
-  },
-  chipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: adminTheme.colors.textSecondary,
-  },
-  chipTextActive: {
-    color: adminTheme.colors.surface,
-  },
-  topActionsWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
-    paddingHorizontal: adminTheme.spacing.md,
-  },
-  topActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderRadius: 999,
-    backgroundColor: '#0f172a',
-    borderWidth: 0,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  topActionBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  topActionBtnPrimary: { backgroundColor: '#2563eb' },
-  topActionBtnPrimarySoft: { backgroundColor: '#1d4ed8' },
-  topActionBtnMint: { backgroundColor: '#059669' },
-  topActionBtnWarn: { backgroundColor: '#d97706' },
-  topActionBtnDanger: { backgroundColor: '#b91c1c' },
-  list: {
-    flex: 1,
-    minHeight: 180,
-  },
-  listContent: {
-    padding: adminTheme.spacing.lg,
-  },
-  empty: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 48,
   },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: adminTheme.colors.textSecondary,
-    marginTop: 12,
-  },
-  emptySub: {
-    fontSize: 14,
-    color: adminTheme.colors.textMuted,
-    marginTop: 4,
-  },
-  card: {
-    backgroundColor: adminTheme.colors.surface,
-    padding: adminTheme.spacing.md,
-    borderRadius: adminTheme.radius.md,
-    marginBottom: adminTheme.spacing.md,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    overflow: 'hidden',
-    ...adminTheme.shadow.sm,
-  },
-  cardLow: {
-    borderLeftWidth: 4,
-    borderLeftColor: adminTheme.colors.error,
-  },
-  cardTop: {
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: adminTheme.colors.text,
-  },
-  cardMetaLine: {
-    fontSize: 13,
-    color: adminTheme.colors.textSecondary,
-    marginTop: 4,
-  },
-  cardOrgTag: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: adminTheme.colors.accent,
-    marginTop: 4,
-  },
-  stockHighlight: {
-    fontWeight: '600',
-    color: adminTheme.colors.text,
-  },
-  stockLabelLow: {
-    color: adminTheme.colors.error,
-    fontWeight: '600',
-  },
-  kritikBadge: {
-    color: adminTheme.colors.error,
-    fontWeight: '600',
-  },
-  cardImageWrap: {
-    width: '100%',
-    height: 220,
-    borderRadius: adminTheme.radius.sm,
-    overflow: 'hidden',
-    backgroundColor: adminTheme.colors.surfaceTertiary,
-    marginBottom: 10,
-  },
-  cardImageTouch: {
-    width: '100%',
-    height: '100%',
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-  },
-  cardImagePlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: adminTheme.colors.surfaceTertiary,
-    minHeight: 220,
-  },
-  cardImagePlaceholderText: {
-    fontSize: 13,
-    color: adminTheme.colors.textMuted,
-    marginTop: 8,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  cardAddedBy: {
-    fontSize: 12,
-    color: adminTheme.colors.textMuted,
-  },
-  cardAddedAt: {
-    fontSize: 12,
-    color: adminTheme.colors.textMuted,
-  },
-  cardActions: {
+  heroCenter: { flex: 1 },
+  heroTitle: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: -0.3 },
+  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.75)', marginTop: 2, lineHeight: 16 },
+  searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: adminTheme.colors.border,
-  },
-  cardActionBtn: {
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderRadius: 999,
-    backgroundColor: '#e2e8f0',
-    borderWidth: 0,
-  },
-  cardActionBtnPrimary: { backgroundColor: '#2563eb' },
-  cardActionBtnSoft: { backgroundColor: '#334155' },
-  cardActionBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
-  cardActionBtnDanger: { backgroundColor: '#b91c1c' },
-  cardActionBtnDangerText: { fontSize: 12, fontWeight: '700', color: '#fff' },
-  recentButtonWrap: {
-    paddingHorizontal: adminTheme.spacing.lg,
-    marginTop: adminTheme.spacing.md,
-    marginBottom: adminTheme.spacing.sm,
-    flexShrink: 0,
-  },
-  recentDrawerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: adminTheme.colors.surface,
-    paddingVertical: 12,
-    paddingHorizontal: adminTheme.spacing.lg,
-    borderRadius: adminTheme.radius.md,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    gap: 8,
-    ...adminTheme.shadow.sm,
-  },
-  recentDrawerButtonText: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
-  recentDrawerBadge: {
-    backgroundColor: adminTheme.colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: adminTheme.radius.full,
-  },
-  recentDrawerBadgeText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.surface },
-  drawerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  drawerPanel: {
-    backgroundColor: adminTheme.colors.surface,
-    borderTopLeftRadius: adminTheme.radius.lg,
-    borderTopRightRadius: adminTheme.radius.lg,
-    maxHeight: '70%',
-    minHeight: 200,
-  },
-  drawerHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: adminTheme.colors.border,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  drawerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: adminTheme.spacing.lg,
-    paddingVertical: adminTheme.spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: adminTheme.colors.border,
-  },
-  drawerTitle: { fontSize: 18, fontWeight: '700', color: adminTheme.colors.text },
-  drawerCloseBtn: { padding: 4 },
-  drawerEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
-  },
-  drawerEmptyText: { fontSize: 15, color: adminTheme.colors.textMuted, marginTop: 12 },
-  drawerScroll: { maxHeight: 400 },
-  drawerScrollContent: { paddingBottom: adminTheme.spacing.xl },
-  recentRow: {
-    paddingVertical: 12,
-    paddingHorizontal: adminTheme.spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: adminTheme.colors.border,
-  },
-  recentRowText: { fontSize: 14, color: adminTheme.colors.text, fontWeight: '500' },
-  recentRowDate: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 4 },
-  barBg: {
-    height: 5,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
-    borderRadius: 3,
-    marginTop: 8,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  barOk: {
-    backgroundColor: adminTheme.colors.success,
-  },
-  barLow: {
-    backgroundColor: adminTheme.colors.error,
-  },
-  footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 10,
-    flexDirection: 'column',
-    paddingHorizontal: adminTheme.spacing.lg,
-    paddingTop: 10,
-    paddingBottom: 12,
-    backgroundColor: adminTheme.colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: adminTheme.colors.border,
     gap: 10,
-    ...adminTheme.shadow.lg,
-    ...(Platform.OS === 'android' && { elevation: 8 }),
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
-  footerRow: { width: '100%', alignItems: 'center' },
-  footerActions: { flexDirection: 'row', gap: 10 },
-  deleteEntireBtn: {
-    flexDirection: 'row',
+  searchInput: { flex: 1, paddingVertical: 12, fontSize: 15, color: '#fff', fontWeight: '500' },
+  listHeader: { paddingTop: 16 },
+  orgWrap: { marginBottom: 4 },
+  alertBox: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: '#b91c1c',
+    borderRadius: 14,
+    padding: 12,
+  },
+  alertHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  alertTitle: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  alertScroll: { gap: 8 },
+  alertChip: { backgroundColor: 'rgba(255,255,255,0.22)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
+  alertChipText: { color: '#fff', fontSize: 12, fontWeight: '600', maxWidth: 140 },
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, gap: 10, marginBottom: 14 },
+  quickTile: { width: '47%', backgroundColor: '#fff', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: adminTheme.colors.border },
+  quickGrad: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  quickBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: adminTheme.radius.md,
-    backgroundColor: adminTheme.colors.error || '#dc2626',
+    paddingHorizontal: 4,
   },
-  deleteEntireBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  footerBtn: {
-    flex: 1,
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 12,
-    borderRadius: adminTheme.radius.md,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
+  quickBadgeText: { fontSize: 10, fontWeight: '800', color: '#7c3aed' },
+  quickLabel: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
+  quickSub: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
+  statsRow: { paddingHorizontal: 16, gap: 8, paddingBottom: 4 },
+  statCard: {
+    minWidth: 100,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  footerBtnPrimary: {
-    backgroundColor: adminTheme.colors.primary,
-    borderColor: adminTheme.colors.primary,
+  statOk: { borderColor: '#a7f3d0', backgroundColor: '#f0fdf4' },
+  statWarn: { borderColor: '#fde68a', backgroundColor: '#fffbeb' },
+  statDanger: { borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  statVal: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text },
+  statLbl: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted, marginTop: 2 },
+  filterSection: { paddingHorizontal: 16, marginTop: 12, marginBottom: 4 },
+  filterTitle: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  chipRow: { gap: 8, paddingRight: 16 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
   },
-  footerBtnOut: {
-    backgroundColor: adminTheme.colors.error,
-    borderColor: adminTheme.colors.error,
+  chipOn: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  chipTxt: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textSecondary },
+  chipTxtOn: { color: '#fff' },
+  listTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 8,
   },
-  footerBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: adminTheme.colors.text,
-  },
-  footerBtnTextWhite: {
-    color: '#fff',
-  },
+  listTitle: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text, flex: 1 },
+  listCount: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  recentBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  recentBtnText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.accent },
+  listContent: { paddingHorizontal: 16 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  centerTxt: { marginTop: 12, color: adminTheme.colors.textMuted },
+  centerTitle: { fontSize: 17, fontWeight: '700', marginTop: 12 },
+  centerSub: { fontSize: 14, color: adminTheme.colors.textMuted, textAlign: 'center', marginTop: 6 },
+  retryBtn: { marginTop: 16, backgroundColor: adminTheme.colors.primary, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
+  retryTxt: { color: '#fff', fontWeight: '700' },
+  empty: { alignItems: 'center', paddingVertical: 40 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', marginTop: 12, color: adminTheme.colors.text },
+  emptySub: { fontSize: 14, color: adminTheme.colors.textMuted, marginTop: 4, textAlign: 'center' },
+  drawerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  drawer: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '72%', minHeight: 200 },
+  drawerHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: adminTheme.colors.border, alignSelf: 'center', marginTop: 10 },
+  drawerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: adminTheme.colors.border },
+  drawerTitle: { fontSize: 17, fontWeight: '800' },
+  drawerEmpty: { textAlign: 'center', padding: 32, color: adminTheme.colors.textMuted },
+  drawerScroll: { maxHeight: 400 },
+  moveRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: adminTheme.colors.border },
+  moveIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  moveBody: { flex: 1, minWidth: 0 },
+  moveName: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
+  moveMeta: { fontSize: 13, color: adminTheme.colors.textSecondary, marginTop: 2 },
+  moveDate: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
 });

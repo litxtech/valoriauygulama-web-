@@ -11,17 +11,18 @@ import {
   Linking,
   Modal,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { getExpoPushTokenAsync, savePushTokenForStaff, isExpoGo } from '@/lib/notificationsPush';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
+import type { StaffPersonnelWarningSeverity } from '@/lib/staffPersonnelWarnings';
 import {
-  type StaffPersonnelWarningSeverity,
-  SEVERITY_LABEL_TR,
-} from '@/lib/staffPersonnelWarnings';
+  isStaffMealMenuDailyNotification,
+  staffMealMenuNotificationHref,
+} from '@/lib/staffMealMenuNotification';
 
 type NotifRow = {
   id: string;
@@ -35,11 +36,14 @@ type NotifRow = {
     postId?: string;
     url?: string;
     missingItemId?: string;
+    missingItemReportId?: string;
+    area?: string;
     kind?: string;
     note?: string;
     conversationId?: string;
     warningId?: string;
     screen?: string;
+    mealDate?: string;
   } | null;
 };
 
@@ -54,6 +58,20 @@ type MissingItemDetail = {
   reminder_count: number;
   creator?: { full_name: string | null } | null;
   resolver?: { full_name: string | null } | null;
+};
+
+type MissingItemReportDetail = {
+  id: string;
+  area: 'kitchen' | 'hotel';
+  note: string | null;
+  priority: 'low' | 'medium' | 'high';
+  status: 'open' | 'resolved';
+  item_count: number;
+  created_at: string;
+  resolved_at: string | null;
+  creator?: { full_name: string | null } | null;
+  resolver?: { full_name: string | null } | null;
+  items?: { title: string }[];
 };
 
 type PersonnelWarningDetail = {
@@ -75,8 +93,12 @@ function warningIdFromNotifData(data: Record<string, unknown> | NotifRow['data']
 }
 
 export default function StaffNotificationsScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dateLoc = i18n.language?.startsWith('ar') ? 'ar-SA' : i18n.language?.startsWith('tr') ? 'tr-TR' : 'en-US';
+  const fmtDate = (iso: string) => new Date(iso).toLocaleString(dateLoc);
   const router = useRouter();
+  const pathname = usePathname();
+  const missingItemsBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { staff } = useAuthStore();
   const scrollRef = useRef<ScrollView>(null);
   const [list, setList] = useState<NotifRow[]>([]);
@@ -86,6 +108,7 @@ export default function StaffNotificationsScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<NotifRow | null>(null);
   const [missingItemDetail, setMissingItemDetail] = useState<MissingItemDetail | null>(null);
+  const [missingReportDetail, setMissingReportDetail] = useState<MissingItemReportDetail | null>(null);
   const [personnelWarningDetail, setPersonnelWarningDetail] = useState<PersonnelWarningDetail | null>(null);
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
@@ -171,11 +194,7 @@ export default function StaffNotificationsScreen() {
   const enablePush = useCallback(async () => {
     if (enablingPush) return;
     if (isExpoGo) {
-      Alert.alert(
-        'Push bildirimleri desteklenmiyor',
-        'Push bildirimleri Expo Go içinde çalışmaz. Lütfen development build veya yüklenmiş uygulama (App Store / Play Store) ile deneyin.',
-        [{ text: 'Tamam' }]
-      );
+      Alert.alert(t('staffNotifPushUnsupportedTitle'), t('staffNotifPushUnsupportedBody'), [{ text: t('ok') }]);
       return;
     }
     if (!staff?.id) return;
@@ -191,14 +210,10 @@ export default function StaffNotificationsScreen() {
           const { status } = await Notifications.getPermissionsAsync();
           setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
           if (status === 'denied') {
-            Alert.alert(
-              'Bildirim izni reddedildi',
-              'Bildirim almak için lütfen ayarlardan izin verin.',
-              [
-                { text: 'İptal', style: 'cancel' },
-                { text: 'Ayarları aç', onPress: () => Linking.openSettings() },
-              ]
-            );
+            Alert.alert(t('staffNotifPermDeniedTitle'), t('staffNotifPermDeniedBody'), [
+              { text: t('cancel'), style: 'cancel' },
+              { text: t('staffNotifOpenSettings'), onPress: () => Linking.openSettings() },
+            ]);
           }
         } catch {
           /* ignore */
@@ -209,7 +224,7 @@ export default function StaffNotificationsScreen() {
     } finally {
       setEnablingPush(false);
     }
-  }, [staff?.id, enablingPush]);
+  }, [staff?.id, enablingPush, t]);
 
   const markRead = async (id: string) => {
     if (!staff?.id) return;
@@ -223,14 +238,14 @@ export default function StaffNotificationsScreen() {
 
   const formatMissingPriority = (priority?: MissingItemDetail['priority']) => {
     if (!priority) return '-';
-    if (priority === 'high') return 'Yuksek';
-    if (priority === 'medium') return 'Orta';
-    return 'Dusuk';
+    if (priority === 'high') return t('missingItemsPriorityHigh');
+    if (priority === 'medium') return t('missingItemsPriorityMedium');
+    return t('missingItemsPriorityLow');
   };
 
   const formatMissingStatus = (status?: MissingItemDetail['status']) => {
     if (!status) return '-';
-    return status === 'resolved' ? 'Giderildi' : 'Acik';
+    return status === 'resolved' ? t('staffNotifMissingStatusResolved') : t('staffNotifMissingStatusOpen');
   };
 
   const fetchMissingItemDetail = async (missingItemId: string) => {
@@ -261,12 +276,46 @@ export default function StaffNotificationsScreen() {
     setMissingItemDetail((data as MissingItemDetail | null) ?? null);
   };
 
+  const fetchMissingReportDetail = async (reportId: string) => {
+    setDetailLoading(true);
+    const { data, error } = await supabase
+      .from('missing_item_reports')
+      .select(
+        `
+        id,
+        area,
+        note,
+        priority,
+        status,
+        item_count,
+        created_at,
+        resolved_at,
+        creator:staff!missing_item_reports_created_by_staff_id_fkey(full_name),
+        resolver:staff!missing_item_reports_resolved_by_staff_id_fkey(full_name),
+        items:missing_items(title)
+      `
+      )
+      .eq('id', reportId)
+      .maybeSingle();
+    setDetailLoading(false);
+    if (error) {
+      setMissingReportDetail(null);
+      return;
+    }
+    setMissingReportDetail((data as MissingItemReportDetail | null) ?? null);
+  };
+
   const openNotificationDetail = async (n: NotifRow) => {
     setSelectedNotification(n);
     setMissingItemDetail(null);
+    setMissingReportDetail(null);
     setPersonnelWarningDetail(null);
     setDetailVisible(true);
-    if (n.data?.missingItemId) {
+    const reportId =
+      typeof n.data?.missingItemReportId === 'string' ? n.data.missingItemReportId.trim() : '';
+    if (reportId) {
+      await fetchMissingReportDetail(reportId);
+    } else if (n.data?.missingItemId) {
       await fetchMissingItemDetail(n.data.missingItemId);
     } else {
       setDetailLoading(false);
@@ -343,6 +392,10 @@ export default function StaffNotificationsScreen() {
       }
       return;
     }
+    if (isStaffMealMenuDailyNotification((n.data ?? {}) as Record<string, unknown>)) {
+      router.push(staffMealMenuNotificationHref((n.data ?? {}) as Record<string, unknown>));
+      return;
+    }
     if (n.data?.postId) {
       router.push({ pathname: '/staff/feed', params: { openPostId: n.data.postId } });
       return;
@@ -360,18 +413,43 @@ export default function StaffNotificationsScreen() {
       router.push({ pathname: '/staff/chat/[id]', params: { id: cid } });
       return;
     }
+    const lostFoundId =
+      typeof n.data?.lostFoundItemId === 'string' ? n.data.lostFoundItemId.trim() : '';
+    const lostFoundBase = pathname?.startsWith('/admin') ? '/admin/lost-found' : '/staff/lost-found';
+    if (lostFoundId) {
+      router.push(`${lostFoundBase}/${lostFoundId}` as never);
+      return;
+    }
+    const missingUrl = typeof n.data?.url === 'string' ? n.data.url : '';
+    const lostFoundUrlMatch = missingUrl.match(/\/lost-found\/([0-9a-f-]{36})/i);
+    if (lostFoundUrlMatch?.[1]) {
+      router.push(`${lostFoundBase}/${lostFoundUrlMatch[1]}` as never);
+      return;
+    }
+    const reportIdFromData =
+      typeof n.data?.missingItemReportId === 'string' ? n.data.missingItemReportId.trim() : '';
+    if (reportIdFromData) {
+      router.push(`${missingItemsBase}/report/${reportIdFromData}` as never);
+      return;
+    }
+    const missingAreaMatch = missingUrl.match(/\/missing-items\/(kitchen|hotel)/);
+    if (missingAreaMatch?.[1]) {
+      router.push(`${missingItemsBase}/${missingAreaMatch[1]}` as never);
+      return;
+    }
+    if (typeof n.data?.area === 'string' && (n.data.area === 'kitchen' || n.data.area === 'hotel')) {
+      router.push(`${missingItemsBase}/${n.data.area}` as never);
+      return;
+    }
     openNotificationDetail(n);
   };
 
   const deleteAllNotifications = () => {
     if (!staff?.id || list.length === 0) return;
-    Alert.alert(
-      'Tüm bildirimleri sil',
-      'Tüm bildirimleriniz kalıcı olarak silinecek. Emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Sil',
+    Alert.alert(t('staffNotifDeleteAllTitle'), t('staffNotifDeleteAllBody'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('staffNotifDeleteBtn'),
           style: 'destructive',
           onPress: async () => {
             setDeletingAll(true);
@@ -388,11 +466,11 @@ export default function StaffNotificationsScreen() {
 
   const categoryLabel = (c: string | null) => {
     const m: Record<string, string> = {
-      emergency: 'Acil',
-      guest: 'Misafir',
-      staff: 'Görev',
-      admin: 'Admin',
-      bulk: 'Duyuru',
+      emergency: t('staffNotifCatEmergency'),
+      guest: t('staffNotifCatGuest'),
+      staff: t('staffNotifCatStaff'),
+      admin: t('staffNotifCatAdmin'),
+      bulk: t('staffNotifCatBulk'),
     };
     return c ? m[c] ?? c : '';
   };
@@ -400,7 +478,7 @@ export default function StaffNotificationsScreen() {
   if (!staff) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.message}>Oturum gerekli.</Text>
+        <Text style={styles.message}>{t('staffNotifSessionRequired')}</Text>
       </View>
     );
   }
@@ -413,18 +491,16 @@ export default function StaffNotificationsScreen() {
       refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
       contentInsetAdjustmentBehavior="automatic"
     >
-      <Text style={styles.title}>Bildirimlerim</Text>
-      <Text style={styles.subtitle}>Yeni görevler, acil durumlar ve duyurular burada.</Text>
+      <Text style={styles.title}>{t('staffNotifTitle')}</Text>
+      <Text style={styles.subtitle}>{t('staffNotifSubtitle')}</Text>
       {!isExpoGo && (pushPerm === 'denied' || pushPerm === 'undetermined') && (
         <View style={styles.pushCard}>
           <View style={styles.pushCardRow}>
             <Ionicons name="notifications-outline" size={20} color="#2b6cb0" />
-            <Text style={styles.pushCardTitle}>Bildirim izni gerekli</Text>
+            <Text style={styles.pushCardTitle}>{t('staffNotifPermCardTitle')}</Text>
           </View>
           <Text style={styles.pushCardDesc}>
-            {pushPerm === 'denied'
-              ? 'Bildirim izni daha önce reddedildi. Ayarlardan izin verebilirsiniz.'
-              : 'Görevler ve duyurular için bildirim izni verin. İzni istemek için butona dokunun.'}
+            {pushPerm === 'denied' ? t('staffNotifPermDeniedHint') : t('staffNotifPermUndeterminedHint')}
           </Text>
           <View style={styles.pushCardBtnRow}>
             <TouchableOpacity
@@ -437,7 +513,7 @@ export default function StaffNotificationsScreen() {
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <Text style={styles.pushCardBtnText}>
-                  {pushPerm === 'denied' ? 'Tekrar iste' : 'Bildirim izni ver'}
+                  {pushPerm === 'denied' ? t('staffNotifPermRetry') : t('staffNotifPermGrant')}
                 </Text>
               )}
             </TouchableOpacity>
@@ -447,7 +523,7 @@ export default function StaffNotificationsScreen() {
                 onPress={() => Linking.openSettings()}
                 activeOpacity={0.8}
               >
-                <Text style={styles.pushCardBtnSecondaryText}>Ayarları aç</Text>
+                <Text style={styles.pushCardBtnSecondaryText}>{t('staffNotifOpenSettings')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -465,13 +541,13 @@ export default function StaffNotificationsScreen() {
           ) : (
             <>
               <Ionicons name="trash-outline" size={14} color="#e53e3e" />
-              <Text style={styles.deleteAllBtnText}>Tümünü sil</Text>
+              <Text style={styles.deleteAllBtnText}>{t('staffNotifDeleteAllBtn')}</Text>
             </>
           )}
         </TouchableOpacity>
       )}
       {list.length === 0 && !loading ? (
-        <Text style={styles.empty}>Henüz bildirim yok.</Text>
+        <Text style={styles.empty}>{t('staffNotifEmpty')}</Text>
       ) : (
         list.map((n) => (
           <TouchableOpacity
@@ -485,7 +561,7 @@ export default function StaffNotificationsScreen() {
             ) : null}
             <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
             {n.body ? <Text style={styles.rowBody}>{n.body}</Text> : null}
-            <Text style={styles.rowTime}>{new Date(n.created_at).toLocaleString('tr-TR')}</Text>
+            <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
           </TouchableOpacity>
         ))
       )}
@@ -501,7 +577,9 @@ export default function StaffNotificationsScreen() {
         <View style={styles.detailBackdrop}>
           <View style={styles.detailCard}>
             <View style={styles.detailHeader}>
-              <Text style={styles.detailTitle}>{selectedNotification ? displayTitle(selectedNotification) : 'Bildirim'}</Text>
+              <Text style={styles.detailTitle}>
+                {selectedNotification ? displayTitle(selectedNotification) : t('staffNotifDetailDefault')}
+              </Text>
               <TouchableOpacity
                 onPress={() => {
                   setDetailVisible(false);
@@ -518,67 +596,137 @@ export default function StaffNotificationsScreen() {
                 personnelWarningDetail
               ) && <Text style={styles.detailBody}>{selectedNotification.body}</Text>}
             {!!selectedNotification && (
-              <Text style={styles.detailMeta}>Tarih: {new Date(selectedNotification.created_at).toLocaleString('tr-TR')}</Text>
+              <Text style={styles.detailMeta}>
+                {t('staffNotifDate', { date: fmtDate(selectedNotification.created_at) })}
+              </Text>
             )}
             {!!selectedNotification && categoryLabel(selectedNotification.category) ? (
-              <Text style={styles.detailMeta}>Kategori: {categoryLabel(selectedNotification.category)}</Text>
+              <Text style={styles.detailMeta}>
+                {t('staffNotifCategory', { category: categoryLabel(selectedNotification.category) })}
+              </Text>
             ) : null}
 
             {detailLoading ? (
               <ActivityIndicator size="small" color="#2b6cb0" style={{ marginTop: 10 }} />
+            ) : missingReportDetail ? (
+              <View style={styles.detailBox}>
+                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingReport')}</Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifArea', {
+                    area:
+                      missingReportDetail.area === 'kitchen'
+                        ? t('missArea_kitchen_title')
+                        : t('missArea_hotel_title'),
+                  })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifItemCount', { count: missingReportDetail.item_count })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifStatus', { status: formatMissingStatus(missingReportDetail.status) })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifPriority', { priority: formatMissingPriority(missingReportDetail.priority) })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifAddedBy', { name: missingReportDetail.creator?.full_name || '—' })}
+                </Text>
+                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingItems')}</Text>
+                {(missingReportDetail.items ?? []).map((it, idx) => (
+                  <Text key={idx} style={styles.detailLine}>
+                    • {it.title}
+                  </Text>
+                ))}
+                {missingReportDetail.note?.trim() ? (
+                  <>
+                    <Text style={styles.detailSectionTitle}>{t('missingItemsSectionNote')}</Text>
+                    <Text style={styles.detailNote}>{missingReportDetail.note}</Text>
+                  </>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.detailLinkBtn}
+                  onPress={() => {
+                    setDetailVisible(false);
+                    router.push(`${missingItemsBase}/report/${missingReportDetail.id}` as never);
+                  }}
+                >
+                  <Text style={styles.detailLinkBtnText}>{t('staffNotifOpenFullDetail')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.detailLinkBtnSecondary}
+                  onPress={() => {
+                    setDetailVisible(false);
+                    router.push(`${missingItemsBase}/${missingReportDetail.area}` as never);
+                  }}
+                >
+                  <Text style={styles.detailLinkBtnSecondaryText}>{t('staffNotifGoToList')}</Text>
+                </TouchableOpacity>
+              </View>
             ) : missingItemDetail ? (
               <View style={styles.detailBox}>
-                <Text style={styles.detailSectionTitle}>Eksik Detayi</Text>
-                <Text style={styles.detailLine}>Baslik: {missingItemDetail.title}</Text>
-                <Text style={styles.detailLine}>Durum: {formatMissingStatus(missingItemDetail.status)}</Text>
-                <Text style={styles.detailLine}>Oncelik: {formatMissingPriority(missingItemDetail.priority)}</Text>
-                <Text style={styles.detailLine}>Hatirlatma sayisi: {missingItemDetail.reminder_count}</Text>
-                <Text style={styles.detailLine}>Ekleyen: {missingItemDetail.creator?.full_name || '-'}</Text>
-                <Text style={styles.detailLine}>Eklenme: {new Date(missingItemDetail.created_at).toLocaleString('tr-TR')}</Text>
+                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingDetail')}</Text>
+                <Text style={styles.detailLine}>{t('staffNotifTitleLine', { title: missingItemDetail.title })}</Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifStatus', { status: formatMissingStatus(missingItemDetail.status) })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifPriority', { priority: formatMissingPriority(missingItemDetail.priority) })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifReminderCount', { count: missingItemDetail.reminder_count })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifAddedBy', { name: missingItemDetail.creator?.full_name || '—' })}
+                </Text>
+                <Text style={styles.detailLine}>
+                  {t('staffNotifAddedAt', { date: fmtDate(missingItemDetail.created_at) })}
+                </Text>
                 {missingItemDetail.status === 'resolved' ? (
                   <Text style={styles.detailLine}>
-                    Gideren: {missingItemDetail.resolver?.full_name || '-'} / {missingItemDetail.resolved_at ? new Date(missingItemDetail.resolved_at).toLocaleString('tr-TR') : '-'}
+                    {t('staffNotifResolvedBy', {
+                      name: missingItemDetail.resolver?.full_name || '—',
+                      date: missingItemDetail.resolved_at ? fmtDate(missingItemDetail.resolved_at) : '—',
+                    })}
                   </Text>
                 ) : null}
-                <Text style={styles.detailSectionTitle}>Not</Text>
-                <Text style={styles.detailNote}>{missingItemDetail.description?.trim() || 'Not girilmemis.'}</Text>
+                <Text style={styles.detailSectionTitle}>{t('missingItemsSectionNote')}</Text>
+                <Text style={styles.detailNote}>{missingItemDetail.description?.trim() || t('staffNotifNoNote')}</Text>
               </View>
             ) : selectedNotification?.notification_type === 'staff_personnel_warning' ? (
               <View style={{ marginTop: 8 }}>
                 {personnelWarningDetail ? (
                   <View style={styles.detailBox}>
-                    <Text style={styles.detailSectionTitle}>Uyarı kaydı</Text>
+                    <Text style={styles.detailSectionTitle}>{t('staffNotifWarningRecord')}</Text>
                     <Text style={styles.detailLine}>
-                      Seviye:{' '}
-                      {SEVERITY_LABEL_TR[personnelWarningDetail.severity] ?? personnelWarningDetail.severity}
+                      {t('staffNotifSeverity', {
+                        level:
+                          t(`warningSeverity_${personnelWarningDetail.severity}` as 'warningSeverity_severe') ||
+                          personnelWarningDetail.severity,
+                      })}
                     </Text>
                     {personnelWarningDetail.subject_line?.trim() ? (
-                      <Text style={styles.detailLine}>Konu: {personnelWarningDetail.subject_line.trim()}</Text>
+                      <Text style={styles.detailLine}>
+                        {t('staffNotifSubject', { subject: personnelWarningDetail.subject_line.trim() })}
+                      </Text>
                     ) : null}
-                    <Text style={styles.detailSectionTitle}>Metin</Text>
+                    <Text style={styles.detailSectionTitle}>{t('staffNotifBodySection')}</Text>
                     <Text style={styles.detailNote}>{personnelWarningDetail.body.trim()}</Text>
                     <Text style={styles.detailMeta}>
-                      {new Date(personnelWarningDetail.created_at).toLocaleString('tr-TR')}
+                      {fmtDate(personnelWarningDetail.created_at)}
                       {personnelWarningDetail.acknowledged_at
-                        ? ` · Okundu: ${new Date(personnelWarningDetail.acknowledged_at).toLocaleString('tr-TR')}`
-                        : ' · Okuma bekliyor'}
+                        ? t('staffNotifReadAt', { date: fmtDate(personnelWarningDetail.acknowledged_at) })
+                        : t('staffNotifAwaitingRead')}
                     </Text>
                     {personnelWarningDetail.acknowledgement_note?.trim() ? (
                       <Text style={[styles.detailLine, { marginTop: 8 }]}>
-                        Sizin notunuz: {personnelWarningDetail.acknowledgement_note.trim()}
+                        {t('staffNotifYourNote', { note: personnelWarningDetail.acknowledgement_note.trim() })}
                       </Text>
                     ) : null}
                   </View>
                 ) : selectedNotification.body?.trim() ? (
-                  <Text style={styles.detailMeta}>
-                    Tam kayıt yüklenemedi veya kimlik eksik; yukarıdaki özet geçerlidir. Görseller ve tam kayıt için
-                    uyarılar sayfasını açın.
-                  </Text>
+                  <Text style={styles.detailMeta}>{t('staffNotifWarningPartialSummary')}</Text>
                 ) : (
-                  <Text style={styles.detailWarn}>
-                    Tam kayıt yüklenemedi veya kimlik eksik; tam metin ve görseller için aşağıdan uyarılar sayfasını
-                    açın.
-                  </Text>
+                  <Text style={styles.detailWarn}>{t('staffNotifWarningPartialBody')}</Text>
                 )}
                 <TouchableOpacity
                   style={styles.warningDetailBtn}
@@ -586,11 +734,11 @@ export default function StaffNotificationsScreen() {
                   activeOpacity={0.85}
                 >
                   <Ionicons name="document-text-outline" size={18} color="#fff" />
-                  <Text style={styles.warningDetailBtnText}>Resmi uyarılar sayfasında aç</Text>
+                  <Text style={styles.warningDetailBtnText}>{t('staffNotifOpenWarningsPage')}</Text>
                 </TouchableOpacity>
               </View>
             ) : selectedNotification && isMissingNotification(selectedNotification) ? (
-              <Text style={styles.detailWarn}>Eksik kaydinin detaylari su an alinamadi.</Text>
+              <Text style={styles.detailWarn}>{t('staffNotifMissingLoadFailed')}</Text>
             ) : null}
           </View>
         </View>
@@ -696,4 +844,21 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   warningDetailBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  detailLinkBtn: {
+    marginTop: 12,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2b6cb0',
+  },
+  detailLinkBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  detailLinkBtnSecondary: {
+    marginTop: 8,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2b6cb0',
+  },
+  detailLinkBtnSecondaryText: { color: '#2b6cb0', fontWeight: '700', fontSize: 14 },
 });

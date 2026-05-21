@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Ale
 import { theme } from '@/constants/theme';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet, apiPost } from '@/lib/kbsApi';
+import { kbsQueryOptions } from '@/lib/kbsReactQuery';
 import { useTranslation } from 'react-i18next';
 
 export default function FailedTransactionsScreen() {
@@ -13,6 +14,7 @@ export default function FailedTransactionsScreen() {
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
     },
+    ...kbsQueryOptions,
   });
 
   const onRetry = async (transactionId: string) => {
@@ -45,7 +47,9 @@ export default function FailedTransactionsScreen() {
             </TouchableOpacity>
           </View>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>{q.isLoading ? t('loading') : t('kbsNoErrors')}</Text>}
+        ListEmptyComponent={
+          <Text style={styles.empty}>{q.isPending ? t('loading') : q.isError ? '' : t('kbsNoErrors')}</Text>
+        }
       />
     </View>
   );

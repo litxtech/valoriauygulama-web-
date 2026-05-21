@@ -38,7 +38,7 @@ export default function StaffKbsTab() {
         {showMrz ? (
           <TouchableOpacity
             style={styles.passportAddBtn}
-            onPress={() => router.push('/staff/mrz-scan')}
+            onPress={() => router.push('/staff/kbs/guests' as never)}
             activeOpacity={0.88}
             accessibilityLabel={t('kbsNavScanSerial')}
           >
@@ -48,7 +48,15 @@ export default function StaffKbsTab() {
       </View>
 
       {showMrz ? (
-        <Tile title={t('kbsNavScanSerial')} subtitle={t('kbsTabScanSub')} icon="scan-outline" onPress={() => router.push('/staff/mrz-scan')} />
+        <Tile
+          title={t('kbsGuestHubTitle')}
+          subtitle={t('kbsGuestHubTileSub')}
+          icon="scan-outline"
+          onPress={() => router.push('/staff/kbs/guests' as never)}
+        />
+      ) : null}
+      {showMrz ? (
+        <Tile title={t('kbsNavScanSerial')} subtitle={t('kbsTabScanSub')} icon="document-text-outline" onPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)} />
       ) : null}
       {showMrz ? (
         <Tile
@@ -62,6 +70,12 @@ export default function StaffKbsTab() {
           }
         />
       ) : null}
+      <Tile
+        title={t('kbsLodgersTitle')}
+        subtitle={t('kbsLodgersTileSub')}
+        icon="bed-outline"
+        onPress={() => router.push('/staff/kbs/lodgers' as never)}
+      />
       <Tile title={t('kbsNavReady')} subtitle={t('kbsTabReadySub')} icon="paper-plane-outline" onPress={() => router.push('/staff/kbs/ready')} />
       <Tile title={t('kbsNavSubmitted')} subtitle={t('kbsTabSubmittedSub')} icon="list-outline" onPress={() => router.push('/staff/kbs/submitted')} />
       <Tile title={t('kbsNavRooms')} subtitle={t('kbsTabRoomsSub')} icon="bed-outline" onPress={() => router.push('/staff/kbs/rooms')} />

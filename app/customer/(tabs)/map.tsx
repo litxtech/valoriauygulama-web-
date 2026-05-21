@@ -755,10 +755,8 @@ export default function CustomerMapScreen() {
                 <Ionicons name="location-outline" size={24} color={theme.colors.primary} />
               </View>
               <View style={styles.permCardTitleWrap}>
-                <Text style={styles.permCardTitle}>Konum izni</Text>
-                <Text style={styles.permCardSubtitle}>
-                  Haritada bulunduğunuz yeri göstermek ve yol tarifi için başlangıç noktası kullanmak üzere konum erişimi gerekir.
-                </Text>
+                <Text style={styles.permCardTitle}>{t('guestMapLocationTitle')}</Text>
+                <Text style={styles.permCardSubtitle}>{t('guestMapLocationHint')}</Text>
               </View>
               <View
                 style={[
@@ -915,7 +913,7 @@ export default function CustomerMapScreen() {
           {showSuggestions && (
             <ScrollView style={styles.suggestionsList} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
               {loading && filteredPois.length === 0 ? (
-                <Text style={styles.suggestionPlaceholder}>Aranıyor...</Text>
+                <Text style={styles.suggestionPlaceholder}>{t('guestMapSearching')}</Text>
               ) : filteredPois.length === 0 ? (
                 <View style={styles.emptySuggestions}>
                   <Text style={styles.suggestionPlaceholder}>{t('mapNoVenuesInArea')}</Text>

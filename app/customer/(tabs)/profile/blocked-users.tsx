@@ -68,7 +68,7 @@ export default function CustomerBlockedUsersScreen() {
             </View>
             <View style={styles.menuTextWrap}>
               <Text style={styles.menuLabel}>{item.name}</Text>
-              <Text style={styles.menuSublabel}>{item.subtitle ?? 'Kullanıcı'}</Text>
+              <Text style={styles.menuSublabel}>{item.subtitle ?? t('blockedUserDefault')}</Text>
             </View>
             <TouchableOpacity
               onPress={() => handleUnblock(item)}

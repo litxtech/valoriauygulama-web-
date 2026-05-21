@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { useRouter, Stack, useNavigation } from 'expo-router';
+import { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, BackHandler } from 'react-native';
+import { useRouter, Stack, useNavigation, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -10,6 +10,11 @@ import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
 import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
 import { PersonnelWarningGate } from '@/components/staff/PersonnelWarningGate';
+import {
+  StaffStackBackButton,
+  resolveStaffBackFallback,
+  staffStackGestureForNavigation,
+} from '@/lib/staffStackBack';
 
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
@@ -64,8 +69,9 @@ function useStaffPresence(staffId: string | undefined) {
 export default function StaffLayout() {
   const router = useRouter();
   const navigation = useNavigation();
+  const pathname = usePathname();
   const { t } = useTranslation();
-  const { staff, loading, signOut } = useAuthStore();
+  const { staff, loading, staffCheckComplete, signOut } = useAuthStore();
   const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   const isBanned = staff?.banned_until && new Date(staff.banned_until) > new Date();
@@ -77,11 +83,11 @@ export default function StaffLayout() {
   // loading: true yapıp layout'u null döndürüyor ve arkadaki lobi görünüyordu.
   useEffect(() => {
     if (loading) return;
+    if (!staffCheckComplete) return;
     if (!staff) {
       router.replace('/');
-      return;
     }
-  }, [loading, staff]);
+  }, [loading, staff, staffCheckComplete, router]);
 
   useEffect(() => {
     if (!staff?.id || !isDeleted) return;
@@ -122,8 +128,8 @@ export default function StaffLayout() {
   }, [staff?.id]);
 
   // null döndürmek Stack'te arkadaki lobiyi gösteriyordu; aynı arka planla dolu ekran göster
-  if (loading || !staff) {
-    return <View style={[styles.blockScreen, { backgroundColor: theme.colors.backgroundSecondary }]} />;
+  if (loading || !staffCheckComplete || !staff) {
+    return null;
   }
 
   if (isDeleted) {
@@ -143,22 +149,33 @@ export default function StaffLayout() {
     );
   }
 
-  const renderStaffDocumentDetailBack = () => (
-    <TouchableOpacity
-      onPress={() => {
-        if (navigation.canGoBack()) {
-          router.back();
-        } else {
-          router.replace('/staff/documents/all' as never);
-        }
-      }}
-      style={{ marginLeft: 8, padding: 8 }}
-      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      accessibilityLabel={t('back')}
-    >
-      <Ionicons name="arrow-back" size={24} color="#1a1d21" />
-    </TouchableOpacity>
+  const handleStaffSubScreenBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(resolveStaffBackFallback(pathname) as never);
+  }, [navigation, router, pathname]);
+
+  const renderStaffSubScreenBack = useCallback(
+    () => <StaffStackBackButton accessibilityLabel={t('back')} />,
+    [t]
   );
+
+  const renderStaffDocumentDetailBack = () => (
+    <StaffStackBackButton accessibilityLabel={t('back')} fallback="/staff/documents/all" />
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const p = pathname ?? '';
+    if (p.startsWith('/staff/(tabs)') || p === '/staff') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleStaffSubScreenBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [pathname, handleStaffSubScreenBack]);
 
   if (isBanned) {
     const until = staff.banned_until ? new Date(staff.banned_until).toLocaleString() : '';
@@ -179,7 +196,18 @@ export default function StaffLayout() {
   return (
     <>
       <PersonnelWarningGate staffId={staff.id} subjectDisplayName={staff.full_name} />
-      <Stack screenOptions={{ headerShown: true, headerStyle: { backgroundColor: '#fff' }, headerTintColor: '#1a1d21' }}>
+      <Stack
+        screenOptions={({ navigation: nav }) => ({
+          headerShown: true,
+          headerStyle: { backgroundColor: '#fff' },
+          headerTintColor: '#1a1d21',
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontWeight: '700', fontSize: 17 },
+          ...staffStackGestureForNavigation(nav),
+          headerBackVisible: false,
+          headerLeft: renderStaffSubScreenBack,
+        })}
+      >
       {/* iOS: grup adı "(tabs)" bazen üstte/geri başlığında kod gibi görünüyor — tüm başlık alanlarını temizle */}
       <Stack.Screen
         name="(tabs)"
@@ -215,6 +243,7 @@ export default function StaffLayout() {
         options={{ title: t('staffPassportsTitle'), headerBackTitle: t('back') }}
       />
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
+      <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/index" options={{ title: t('screenDocumentManagement'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/all" options={{ title: feedSharedText('staffStackDocAll'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerBackTitle: t('back') }} />
@@ -229,7 +258,29 @@ export default function StaffLayout() {
       <Stack.Screen name="incident-reports/new" options={{ title: t('screenIncidentReportNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="incident-reports/[id]" options={{ title: t('screenIncidentReportDetail'), headerBackTitle: t('back') }} />
       <Stack.Screen name="missing-items/index" options={{ title: t('screenMissingItems'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="internal-complaints/new" options={{ title: 'Yönetime Not/Öneri', headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="missing-items/[area]"
+        options={({ route }) => {
+          const area = (route.params as { area?: string })?.area;
+          const areaTitle =
+            area === 'kitchen'
+              ? t('missArea_kitchen_title')
+              : area === 'hotel'
+                ? t('missArea_hotel_title')
+                : '';
+          const title = areaTitle
+            ? t('staffMissingAreaTitle', { area: areaTitle })
+            : t('screenMissingItems');
+          return { title, headerBackTitle: t('back') };
+        }}
+      />
+      <Stack.Screen name="missing-items/report/[id]" options={{ title: t('staffMissingDetailTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="missing-items/legacy/[id]" options={{ title: t('staffMissingDetailTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="missing-items/history" options={{ title: t('missingItemsHistoryTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="lost-found/index" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="lost-found/new" options={{ title: t('lfNewRecord'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="lost-found/[id]" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="internal-complaints/new" options={{ title: t('profileUiStaffComplaint'), headerBackTitle: t('back') }} />
       <Stack.Screen
         name="documents/[id]"
         options={{ title: t('adminDocumentsDetail'), headerBackTitle: t('back'), headerLeft: renderStaffDocumentDetailBack }}
@@ -242,21 +293,29 @@ export default function StaffLayout() {
       <Stack.Screen name="kbs" options={{ headerShown: false }} />
       <Stack.Screen
         name="mrz-scan"
-        options={{ title: t('kbsNavScanSerial'), headerBackTitle: t('back') }}
+        options={{ headerShown: false, contentStyle: { backgroundColor: '#000' } }}
       />
-      <Stack.Screen name="meal-menu" options={{ title: 'Yemek listesi', headerBackTitle: t('back') }} />
+      <Stack.Screen name="meal-menu" options={{ title: t('staffMealMenuTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-menu/index" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-menu/[id]" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-menu/manage" options={{ title: t('hotelKitchenMenuManageTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-menu/edit" options={{ headerBackTitle: t('back') }} />
+      <Stack.Screen name="meal-menu-edit" options={{ title: t('staffMealMenuEditTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="meal-menu-history" options={{ title: t('staffMealHistoryTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="salary-history" options={{ title: t('salaryHistory'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="attendance/index" options={{ title: 'Mesai Takibi', headerBackTitle: t('back') }} />
-      <Stack.Screen name="cleaning-plan" options={{ title: 'Temizlik', headerBackTitle: t('back') }} />
-      <Stack.Screen name="cleaning-history" options={{ title: 'Geçmiş Temizlikler', headerBackTitle: t('back') }} />
+      <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="transfer-tour" options={{ headerShown: false }} />
       <Stack.Screen name="dining-venues" options={{ headerShown: false }} />
       <Stack.Screen name="local-area-guide/index" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="local-area-guide/[id]" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="emergency" options={{ title: t('screenEmergencyButton'), headerBackTitle: t('back') }} />
       <Stack.Screen name="technical-assets" options={{ headerShown: false }} />
-      <Stack.Screen name="warnings" options={{ title: 'Resmi uyarılar', headerBackTitle: t('back') }} />
+      <Stack.Screen name="warnings" options={{ title: t('staffOfficialWarningsNavTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="board" options={{ title: t('staffBoardTitle'), headerBackTitle: t('back') }} />
     </Stack>
     </>
   );

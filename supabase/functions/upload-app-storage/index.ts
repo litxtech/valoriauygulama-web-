@@ -24,6 +24,8 @@ const ALLOWED_BUCKETS = new Set([
   "tech-assets",
   "finance-checks",
   "staff-personnel-warnings",
+  "lost-found-media",
+  "hotel-kitchen-menu",
 ]);
 
 function json(obj: Record<string, unknown>, status: number) {

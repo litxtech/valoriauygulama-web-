@@ -14,9 +14,23 @@ const googleSigninModulePath = path.join(
   'lib/module/signIn/GoogleSignin.js'
 );
 
+/** worklets-core "react-native" alanı src/index (.ts) gösterir; Metro bazen çözemez → derlenmiş JS. */
+const workletsCoreEntry = path.join(
+  __dirname,
+  'node_modules/react-native-worklets-core/lib/module/index.js'
+);
+
+const defaultResolveRequest = config.resolver.resolveRequest;
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === '@react-native-google-signin/google-signin') {
     return { filePath: googleSigninModulePath, type: 'sourceFile' };
+  }
+  if (moduleName === 'react-native-worklets-core') {
+    return { filePath: workletsCoreEntry, type: 'sourceFile' };
+  }
+  if (defaultResolveRequest) {
+    return defaultResolveRequest(context, moduleName, platform);
   }
   return context.resolveRequest(context, moduleName, platform);
 };

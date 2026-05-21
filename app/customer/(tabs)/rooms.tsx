@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
+import { roomStatusLabel } from '@/lib/i18nLookup';
 
 type Room = {
   id: string;
@@ -13,6 +15,7 @@ type Room = {
 };
 
 export default function CustomerRooms() {
+  const { t } = useTranslation();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -40,17 +43,19 @@ export default function CustomerRooms() {
       {rooms.map((r) => (
         <View key={r.id} style={styles.card}>
           <View style={styles.cardRow}>
-            <Text style={styles.roomNumber}>Oda {r.room_number}</Text>
+            <Text style={styles.roomNumber}>{t('roomNumberLabel', { num: r.room_number })}</Text>
             <View style={[styles.badge, r.status === 'available' ? styles.badgeOk : styles.badgeBusy]}>
-              <Text style={styles.badgeText}>{r.status === 'available' ? 'Müsait' : r.status}</Text>
+              <Text style={styles.badgeText}>{roomStatusLabel(r.status)}</Text>
             </View>
           </View>
-          {r.floor != null && <Text style={styles.meta}>{r.floor}. kat</Text>}
-          {r.view_type && <Text style={styles.meta}>Manzara: {r.view_type}</Text>}
-          {r.price_per_night != null && <Text style={styles.price}>{r.price_per_night} ₺/gece</Text>}
+          {r.floor != null && <Text style={styles.meta}>{t('guestRoomFloor', { floor: r.floor })}</Text>}
+          {r.view_type && <Text style={styles.meta}>{t('guestRoomView', { view: r.view_type })}</Text>}
+          {r.price_per_night != null && (
+            <Text style={styles.price}>{t('guestRoomPricePerNight', { price: r.price_per_night })}</Text>
+          )}
         </View>
       ))}
-      {rooms.length === 0 && <Text style={styles.empty}>Henüz oda bilgisi yok.</Text>}
+      {rooms.length === 0 && <Text style={styles.empty}>{t('guestRoomsEmpty')}</Text>}
     </ScrollView>
   );
 }

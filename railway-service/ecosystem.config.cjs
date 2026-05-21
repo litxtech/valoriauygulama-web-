@@ -1,5 +1,5 @@
 /**
- * Tek VPS (Hetzner) — iki Node süreci:
+ * Yerel / eski VPS — iki Node süreci (üretim: Railway, deploy/RAILWAY_KURULUM.md):
  * 1) valoria-kbs-ops    → dış kapı :4000 (Edge / mobil köprü)
  * 2) valoria-kbs-core   → iç SOAP :4001 (yalnız localhost; firewall ile dışarı kapatın)
  *

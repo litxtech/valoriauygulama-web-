@@ -36,8 +36,8 @@ export default function TechnicalAssetsHubScreen() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.lead}>
-        Fiziksel parçalar (sigorta, vana, kamera beslemesi…) QR ile tanımlanır. Okutunca ne işe yaradığı, kapatılırsa ne
-        olacağı ve acil talimatlar burada görünür.
+        Fiziksel parçalar (sigorta, vana, kazan, kamera…) QR ile tanımlanır. Okutunca talimatlar, «nasıl kullanılır»
+        metni ve eğitim videosu (varsa) burada görünür.
       </Text>
 
       <TouchableOpacity style={styles.card} onPress={() => router.push('/staff/technical-assets/scan')} activeOpacity={0.85}>

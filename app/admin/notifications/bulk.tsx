@@ -20,6 +20,7 @@ import {
   sendBulkToGuests,
   sendBulkToStaff,
 } from '@/lib/notificationService';
+import { publishStaffBoardAnnouncement } from '@/lib/staffBoard';
 import type { BulkGuestTarget, BulkStaffTarget, BulkCategory } from '@/lib/notifications';
 
 const GUEST_TARGETS: { value: BulkGuestTarget; label: string }[] = [
@@ -110,12 +111,25 @@ export default function BulkNotifyScreen() {
           title: trimmedTitle || 'Toplu Duyuru',
           body: trimmedBody,
           createdByStaffId: staff.id,
-          notificationType: 'admin_announcement',
+          notificationType: 'staff_board_announcement',
+          data: { screen: '/staff/board' },
         });
         if (result.error) {
           Alert.alert('Hata', result.error);
         } else {
-          Alert.alert('Gönderildi', `${result.count} personele bildirim gönderildi.`, () =>
+          const boardPriority =
+            category === 'warning' ? 'high' : category === 'campaign' ? 'normal' : 'normal';
+          await publishStaffBoardAnnouncement({
+            title: trimmedTitle || 'Toplu Duyuru',
+            content: trimmedBody,
+            priority: boardPriority,
+            createdByStaffId: staff.id,
+            createdByType: staff.role === 'admin' ? 'admin' : 'staff',
+            targetType: 'staff',
+            organizationId: organizationId === 'all' ? null : organizationId ?? null,
+            skipPush: true,
+          });
+          Alert.alert('Gönderildi', `${result.count} personele bildirim ve pano duyurusu gönderildi.`, () =>
             router.back()
           );
         }

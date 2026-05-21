@@ -26,25 +26,69 @@ import {
   guestListConversations,
   guestGetConversationHeader,
   guestDeleteMessage,
+  guestListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
-  uploadImageMessageForGuest,
 } from '@/lib/messagingApi';
-import type { Message } from '@/lib/messaging';
+import {
+  replaceChatMessage,
+  upsertIncomingChatMessage,
+  mergeChatMessagesCapped,
+  latestMessageCreatedAtIso,
+  capChatMessageList,
+  MESSAGING_COLORS,
+  type Message,
+} from '@/lib/messaging';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
-import { uriToArrayBuffer, getMimeAndExt } from '@/lib/uploadMedia';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
-import { MESSAGING_COLORS } from '@/lib/messaging';
 import { supabase } from '@/lib/supabase';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getChatInputBottomPadding, getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 import { useMessagingBubbleStore, getContrastTextColor, BUBBLE_OTHER_DIRECT, BUBBLE_COLOR_OPTIONS } from '@/stores/messagingBubbleStore';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
+import { MessageTranslation } from '@/components/MessageTranslation';
+import { prefetchTranslations } from '@/lib/translateText';
+import { ChatVideoMessage } from '@/components/ChatVideoMessage';
+import { ChatImageMessage } from '@/components/ChatImageMessage';
+import { ChatImageAlbum } from '@/components/ChatImageAlbum';
+import { ChatFullscreenImageModal } from '@/components/ChatFullscreenImageModal';
+import { ChatVideoAlbum } from '@/components/ChatVideoAlbum';
+import { buildChatListDisplayItems } from '@/lib/chatImageAlbum';
+import { ChatVideoBatchBar } from '@/components/ChatVideoBatchBar';
+import {
+  createSessionChatVideoHandlers,
+  expireStaleChatVideoUploadsForConversation,
+  getChatVideoBatchSummary,
+  pruneDoneChatVideoUploads,
+  registerChatVideoScreen,
+  retryChatVideoUploadWithSession,
+  sendChatVideoFromPickerWithSession,
+  useChatVideoUploadStates,
+  type ChatVideoUploadState,
+} from '@/lib/chatVideoUploadSession';
+import {
+  pickChatImageFromCamera,
+  pickChatImagesFromLibrary,
+  sendChatImageUris,
+} from '@/lib/chatMediaSend';
+import { formatChatMessageTime } from '@/lib/formatChatTime';
+import { useChatScreenshotListener } from '@/lib/chatScreenshot';
+import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
+import { ChatMentionComposer } from '@/components/ChatMentionComposer';
+import { ChatMentionText } from '@/components/ChatMentionText';
+import {
+  notifyChatMessageWithMentions,
+  syncMentionsWithText,
+  parseMessageMentions,
+  type ChatMention,
+  type ChatMentionParticipant,
+} from '@/lib/chatMentions';
+import { usePendingMuxVideoPoll } from '@/lib/usePendingMuxVideoPoll';
 
 const CUSTOMER_CHAT_CACHE_PREFIX = 'customer_chat_cache_v1:';
 type CustomerChatCacheEntry = {
@@ -55,38 +99,37 @@ type CustomerChatCacheEntry = {
 };
 const customerChatMemoryCache: Record<string, CustomerChatCacheEntry> = {};
 
-function formatMessageTime(iso: string): string {
-  const raw = (i18n.language || 'tr').split('-')[0];
-  const localeMap: Record<string, string> = {
-    tr: 'tr-TR',
-    en: 'en-GB',
-    ar: 'ar-SA',
-    de: 'de-DE',
-    fr: 'fr-FR',
-    ru: 'ru-RU',
-    es: 'es-ES',
-  };
-  const loc = localeMap[raw] ?? 'tr-TR';
-  return new Date(iso).toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
-}
-
 function MessageBubble({
   msg,
   isOwn,
   onImagePress,
   onDelete,
   bubbleColor,
+  videoUpload,
+  videoUploads,
+  onVideoRetry,
+  onVideoRetryForMessage,
+  imageAlbum,
+  videoAlbum,
 }: {
   msg: Message;
   isOwn: boolean;
   onImagePress?: (uri: string) => void;
   onDelete?: (msg: Message) => void;
   bubbleColor: string;
+  videoUpload?: ChatVideoUploadState;
+  videoUploads?: Record<string, ChatVideoUploadState>;
+  onVideoRetry?: () => void;
+  onVideoRetryForMessage?: (msg: Message) => void;
+  imageAlbum?: Message[];
+  videoAlbum?: Message[];
 }) {
   const { t } = useTranslation();
   const guestLabel = t('chatMessageSenderGuest');
   const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
+  const isVideo = msg.message_type === 'video';
   const isImage = msg.message_type === 'image' && (msg.media_url || msg.media_thumbnail);
+  const isMediaCard = isVideo || !!imageAlbum?.length || !!videoAlbum?.length || isImage;
   const imageUri = msg.media_url || msg.media_thumbnail || '';
   const textColor = getContrastTextColor(bubbleColor);
   return (
@@ -98,24 +141,73 @@ function MessageBubble({
       {!isOwn && (msg.sender_name?.trim() || guestLabel) ? (
         <Text style={styles.senderName}>{msg.sender_name?.trim() || guestLabel}</Text>
       ) : null}
-      <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther, { backgroundColor: bubbleColor }]}>
+      <View
+        style={[
+          styles.bubble,
+          isOwn ? styles.bubbleOwn : styles.bubbleOther,
+          isMediaCard && styles.bubbleVideo,
+          !isMediaCard && { backgroundColor: bubbleColor },
+        ]}
+      >
         {msg.message_type === 'text' ? (
-          <Text style={[styles.bubbleText, { color: textColor }]}>
-            {msg.content || ''}
-          </Text>
+          <>
+            <ChatMentionText
+              content={msg.content || ''}
+              mentions={parseMessageMentions(msg.mentions)}
+              style={[styles.bubbleText, { color: textColor }]}
+              mentionStyle={{ color: isOwn ? '#fff' : MESSAGING_COLORS.primary, fontWeight: '700' }}
+            />
+            <MessageTranslation content={msg.content || ''} enabled={!isOwn} textColor={textColor} />
+          </>
         ) : msg.message_type === 'voice' && voiceUri ? (
           <VoiceMessagePlayer uri={voiceUri} isOwn={isOwn} />
+        ) : videoAlbum && videoAlbum.length > 1 ? (
+          <ChatVideoAlbum
+            messages={videoAlbum}
+            isOwn={isOwn}
+            videoUploads={videoUploads}
+            onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+          />
+        ) : isVideo ? (
+          <View style={styles.chatVideoWrap}>
+            <ChatVideoMessage
+              mediaUrl={msg.media_url}
+              mediaThumbnail={msg.media_thumbnail}
+              isOwn={isOwn}
+              uploadProgress={
+                videoUpload?.progress ??
+                videoUploads?.[msg.id]?.progress ??
+                Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id)?.progress
+              }
+              uploadPhase={
+                videoUpload?.phase ??
+                videoUploads?.[msg.id]?.phase ??
+                Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id)?.phase
+              }
+              uploadFailed={
+                (videoUpload?.phase ?? videoUploads?.[msg.id]?.phase) === 'failed' ||
+                Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id)?.phase === 'failed'
+              }
+              onRetry={onVideoRetry}
+            />
+          </View>
+        ) : imageAlbum && imageAlbum.length > 1 ? (
+          <ChatImageAlbum messages={imageAlbum} onPressImage={(uri) => onImagePress?.(uri)} />
         ) : isImage && imageUri ? (
-          <TouchableOpacity style={[styles.imageWrap, styles.imageWrapPlaceholder]} onPress={() => onImagePress?.(imageUri)} activeOpacity={1}>
-            <CachedImage key={imageUri} uri={imageUri} style={styles.bubbleImage} contentFit="cover" transition={0} />
-          </TouchableOpacity>
+          <ChatImageMessage uri={imageUri} onPress={onImagePress} />
         ) : (
           <Text style={[styles.bubbleText, { color: textColor }]}>
             [{msg.message_type}] {msg.content || msg.media_url || '—'}
           </Text>
         )}
-        <Text style={[styles.bubbleTime, { color: textColor, opacity: 0.9 }]}>
-          {formatMessageTime(msg.created_at)}
+        <Text
+          style={[
+            styles.bubbleTime,
+            isMediaCard && styles.bubbleTimeVideo,
+            !isMediaCard && { color: textColor, opacity: 0.9 },
+          ]}
+        >
+          {formatChatMessageTime(msg.created_at)}
           {isOwn && (msg.is_read ? ' ✓✓' : ' ✓')}
         </Text>
       </View>
@@ -138,8 +230,11 @@ export default function CustomerChatScreen() {
   const { appToken, setUnreadCount } = useGuestMessagingStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [pendingMentions, setPendingMentions] = useState<ChatMention[]>([]);
+  const [mentionParticipants, setMentionParticipants] = useState<ChatMentionParticipant[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const videoUploads = useChatVideoUploadStates(conversationId);
   const [tokenTried, setTokenTried] = useState(false);
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
@@ -147,15 +242,26 @@ export default function CustomerChatScreen() {
   const insets = useSafeAreaInsets();
   const [headerName, setHeaderName] = useState<string>(conversationName || t('chatConversationFallback'));
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
+  const [conversationType, setConversationType] = useState<string>('direct');
+  const [guestDisplayName, setGuestDisplayName] = useState(() => t('guestDefaultName'));
   const listRef = useRef<FlatList>(null);
+  const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRealtimeAtRef = useRef<number>(0);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const initialScrollDoneRef = useRef(false);
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
+
+  useEffect(() => {
+    setMessages([]);
+    initialScrollDoneRef.current = false;
+    setLoading(true);
+  }, [conversationId]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -191,7 +297,7 @@ export default function CustomerChatScreen() {
     if (!conversationId) return;
     if (messages.length === 0 && !headerAvatar && !headerName) return;
     const entry: CustomerChatCacheEntry = {
-      messages,
+      messages: capChatMessageList(messages),
       headerName,
       headerAvatar: headerAvatar ?? null,
       updatedAt: Date.now(),
@@ -208,6 +314,16 @@ export default function CustomerChatScreen() {
     setHeaderName(conversationName || t('chatConversationFallback'));
     setHeaderAvatar(null);
   }, [conversationId, conversationName, t]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    return registerChatVideoScreen(conversationId, { patchMessages: setMessages });
+  }, [conversationId]);
+
+  usePendingMuxVideoPoll(messages, setMessages, {
+    enabled: Boolean(conversationId && appToken && !loading),
+    guestAppToken: appToken,
+  });
 
   useEffect(() => {
     const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
@@ -256,24 +372,53 @@ export default function CustomerChatScreen() {
         return;
       }
       await guestMarkConversationRead(token, conversationId);
-      const [list, header] = await Promise.all([
-        guestGetMessages(token, conversationId),
+      const seedFromMemory = customerChatMemoryCache[conversationId]?.messages ?? [];
+      const afterIso = latestMessageCreatedAtIso(seedFromMemory);
+      const useIncremental = Boolean(afterIso && seedFromMemory.length > 0);
+
+      const listPromise =
+        useIncremental && afterIso
+          ? guestGetMessages(token, conversationId, 120, undefined, afterIso)
+          : guestGetMessages(token, conversationId, 50);
+
+      const [list, header, convos, identityRes] = await Promise.all([
+        listPromise,
         guestGetConversationHeader(token, conversationId),
+        guestListConversations(token),
+        supabase.rpc('get_guest_messaging_identity', { p_app_token: token }),
       ]);
-      setMessages(list);
+      setMessages((prev) => {
+        const base = prev.length > 0 ? prev : customerChatMemoryCache[conversationId]?.messages ?? [];
+        return mergeChatMessagesCapped(list, base);
+      });
       setHeaderName(header.name);
       setHeaderAvatar(header.avatar);
+      const convMeta = convos.find((c) => c.id === conversationId);
+      setConversationType(convMeta?.type ?? 'direct');
+      const identityRow = Array.isArray(identityRes.data) ? identityRes.data[0] : identityRes.data;
+      const identityName = (identityRow as { full_name?: string | null } | null)?.full_name?.trim();
+      if (identityName) setGuestDisplayName(identityName);
       setLoading(false);
-      void (async () => {
-        const convos = await guestListConversations(token);
-        const total = convos.reduce((s, c) => s + (c.unread_count ?? 0), 0);
-        setUnreadCount(total);
-      })();
+      const total = convos.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+      setUnreadCount(total);
     })();
     return () => {
       cancelled = true;
     };
   }, [conversationId, setUnreadCount]);
+
+  const prefetchKeyRef = useRef('');
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const incoming = messages
+      .filter((m) => m.message_type === 'text' && m.sender_type !== 'guest' && (m.content ?? '').trim())
+      .map((m) => (m.content ?? '').trim())
+      .slice(-8);
+    const key = incoming.join('\u0001');
+    if (key === prefetchKeyRef.current) return;
+    prefetchKeyRef.current = key;
+    prefetchTranslations(incoming);
+  }, [messages]);
 
   // Realtime: yeni mesaj geldiğinde anında listeyi güncelle; optimistik temp mesajları gerçekle değiştir
   useEffect(() => {
@@ -282,16 +427,18 @@ export default function CustomerChatScreen() {
       conversationId,
       (newMsg) => {
         lastRealtimeAtRef.current = Date.now();
-        setMessages((prev) => {
-          const withoutTemp = prev.filter((m) => !String(m.id).startsWith('temp-'));
-          if (withoutTemp.some((m) => m.id === newMsg.id)) return prev;
-          return [...withoutTemp, newMsg];
-        });
+        setMessages((prev) => upsertIncomingChatMessage(prev, newMsg, { ownSenderType: 'guest' }));
+        if (newMsg.message_type === 'text' && newMsg.sender_type !== 'guest' && (newMsg.content ?? '').trim()) {
+          prefetchTranslations([(newMsg.content ?? '').trim()]);
+        }
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 150);
       },
       {
         onMessageDeleted: (messageId) => {
           setMessages((prev) => prev.filter((m) => m.id !== messageId));
+        },
+        onMessageUpdated: (updated) => {
+          setMessages((prev) => replaceChatMessage(prev, updated));
         },
       }
     );
@@ -324,19 +471,17 @@ export default function CustomerChatScreen() {
     };
   }, [appToken, conversationId, t]);
 
-  // Sohbet odasındayken gelen mesajlar: kısa aralıklı polling (realtime bazen misafir tarafında atlayabiliyor)
+  // Realtime kaçırsa diye seyrek, hafif artımlı yedek (tüm listeyi çekmez)
   useEffect(() => {
     if (!appToken || !conversationId || loading) return;
-    const poll = async () => {
-      const list = await guestGetMessages(appToken, conversationId, 50);
-      setMessages((prev) => {
-        const withoutTemp = prev.filter((m) => !String(m.id).startsWith('temp-'));
-        if (withoutTemp.length === list.length && withoutTemp[withoutTemp.length - 1]?.id === list[list.length - 1]?.id) return prev;
-        return list;
-      });
-    };
-    const interval = setInterval(poll, 3_000);
-    return () => clearInterval(interval);
+    const id = setInterval(async () => {
+      const after = latestMessageCreatedAtIso(messagesRef.current);
+      if (!after) return;
+      const list = await guestGetMessages(appToken, conversationId, 80, undefined, after);
+      if (list.length === 0) return;
+      setMessages((prev) => mergeChatMessagesCapped(list, prev));
+    }, 45_000);
+    return () => clearInterval(id);
   }, [appToken, conversationId, loading]);
 
   // Tüm hook'lar erken return'lerden önce çağrılmalı (Rules of Hooks)
@@ -344,6 +489,55 @@ export default function CustomerChatScreen() {
     () => [...messages].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
     [messages]
   );
+  const chatListItems = useMemo(() => buildChatListDisplayItems(sortedMessages), [sortedMessages]);
+  const isGroup = conversationType === 'group';
+  const screenshotPushBody = useMemo(
+    () => t('chatScreenshotNotice', { name: guestDisplayName }),
+    [t, guestDisplayName]
+  );
+
+  useEffect(() => {
+    if (!conversationId || !appToken) {
+      setMentionParticipants([]);
+      return;
+    }
+    let cancelled = false;
+    void guestListMentionParticipants(appToken, conversationId).then((list) => {
+      if (!cancelled) setMentionParticipants(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, appToken]);
+
+  const mentionEnabled = mentionParticipants.length > 0;
+
+  useChatScreenshotListener(
+    Boolean(appToken && conversationId && !loading),
+    appToken && conversationId
+      ? {
+          kind: 'guest',
+          appToken,
+          senderName: guestDisplayName,
+          conversationId,
+          chatUrl: `/customer/chat/${conversationId}`,
+        }
+      : null,
+    appToken && conversationId
+      ? {
+          conversationName: headerName,
+          isGroup,
+          pushBody: screenshotPushBody,
+          ownSenderId: undefined,
+          onLocalMessage: (msg) => {
+            setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderType: 'guest' }));
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+          },
+          reloadStaffMessages: () => guestGetMessages(appToken, conversationId, 50),
+        }
+      : null
+  );
+
   // Sohbet odasına girildiğinde en son mesaja otomatik kaydır (Android'de layout ve resim yüklemesi geciktiği için birkaç deneme)
   useEffect(() => {
     if (!loading && sortedMessages.length > 0 && !initialScrollDoneRef.current) {
@@ -371,11 +565,13 @@ export default function CustomerChatScreen() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || !conversationId || sending) return;
+    if (!text || !conversationId || sendInFlightRef.current) return;
     const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
     if (!token) return;
-    setSending(true);
+    const mentions = syncMentionsWithText(text, pendingMentions);
+    sendInFlightRef.current = true;
     setInput('');
+    setPendingMentions([]);
     typingPresenceRef.current?.updateTyping(false);
     const tempId = `temp-${Date.now()}`;
     const optimistic: Message = {
@@ -403,156 +599,201 @@ export default function CustomerChatScreen() {
       reply_to_id: null,
       scheduled_at: null,
       created_at: new Date().toISOString(),
+      mentions: mentions.length ? mentions : [],
     };
     setMessages((prev) => [...prev, optimistic]);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-    const { messageId, conversationId: nextConversationId } = await guestSendMessage(token, conversationId, text);
-    setSending(false);
+    try {
+    const { messageId, conversationId: nextConversationId } = await guestSendMessage(
+      token,
+      conversationId,
+      text,
+      'text',
+      null,
+      null,
+      undefined,
+      mentions.length ? mentions : undefined
+    );
     if (messageId) {
       const convId = nextConversationId ?? conversationId;
-      const { notifyAdmins, notifyConversationRecipients } = await import('@/lib/notificationService');
+      const confirmed: Message = {
+        ...optimistic,
+        id: messageId,
+        conversation_id: convId,
+        is_delivered: true,
+        mentions: mentions.length ? mentions : [],
+      };
+      setMessages((prev) => upsertIncomingChatMessage(prev, confirmed, { ownSenderType: 'guest' }));
+      const { notifyAdmins } = await import('@/lib/notificationService');
+      const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
       notifyAdmins({
         title: t('chatNotifyAdminNewGuest'),
         body: text.slice(0, 60) + (text.length > 60 ? '…' : ''),
         data: { url: '/admin/messages' },
         conversationId: convId,
       }).catch(() => {});
-      notifyConversationRecipients({
+      void notifyChatMessageWithMentions({
         conversationId: convId,
+        conversationTitle: headerName || t('notifNewMessage'),
+        messageText: text,
+        mentions,
+        senderDisplayName: guestDisplayName,
         excludeAppToken: token,
-        title: `💬 ${t('notifNewMessage')}`,
-        body: text.slice(0, 80) + (text.length > 80 ? '…' : ''),
-        data: { conversationId: convId, url: `/customer/chat/${convId}` },
-      }).catch(() => {});
+        chatUrl: `/customer/chat/${convId}`,
+        mentionPushBody: t('chatMentionPushBody', { name: guestDisplayName, preview }),
+        defaultPushBody: preview,
+      });
       if (nextConversationId && nextConversationId !== conversationId) {
         router.replace({ pathname: '/customer/chat/[id]', params: { id: nextConversationId, name: headerName } });
         return;
       }
-      const list = await guestGetMessages(token, nextConversationId ?? conversationId, 50);
-      setMessages(list);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     } else {
+      setInput(text);
+      setPendingMentions(mentions);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       Alert.alert(t('chatMessageBlockedTitle'), t('chatMessageBlockedBody'));
     }
+    } finally {
+      sendInFlightRef.current = false;
+    }
   };
 
-  const sendImageFromSource = async (source: 'camera' | 'library') => {
+  const notifyGuestPhotos = async (token: string, convId: string) => {
+    const { notifyAdmins, notifyConversationRecipients } = await import('@/lib/notificationService');
+    notifyAdmins({
+      title: t('chatNotifyAdminNewGuest'),
+      body: t('staffChatPhotoSentBody'),
+      data: { url: '/admin/messages' },
+      conversationId: convId,
+    }).catch(() => {});
+    notifyConversationRecipients({
+      conversationId: convId,
+      excludeAppToken: token,
+      title: `💬 ${t('notifNewMessage')}`,
+      body: t('staffChatPhotoSentBody'),
+      data: { conversationId: convId, url: `/customer/chat/${convId}` },
+    }).catch(() => {});
+  };
+
+  const sendImagesFromLibrary = async () => {
     if (!conversationId || sending) return;
     const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
     if (!token) return;
-    if (source === 'camera') {
-      const granted = await ensureCameraPermission({
-        title: t('chatCameraPermissionTitle'),
-        message: t('chatCameraPermissionMessage'),
-        settingsMessage: t('chatCameraPermissionSettings'),
-      });
-      if (!granted) return;
-    } else {
-      const granted = await ensureMediaLibraryPermission({
-        title: t('chatGalleryPermissionTitle'),
-        message: t('chatGalleryPermissionMessage'),
-        settingsMessage: t('chatGalleryPermissionSettings'),
-      });
-      if (!granted) {
-        return;
-      }
-    }
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-          allowsEditing: false,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-          allowsEditing: false,
-        });
-    if (result.canceled || !result.assets[0]?.uri) return;
-    let uri = result.assets[0].uri;
+    const uris = await pickChatImagesFromLibrary();
+    if (!uris.length) return;
     setSending(true);
     try {
-      // Edge Function body limit (~1MB) için resmi küçültüp sıkıştırıyoruz. Android’de daha agresif (002 hatası önlemi).
-      const maxWidth = 1200;
-      const compress = 0.65;
-      try {
-        const manipulated = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: maxWidth } }], {
-          compress,
-          format: ImageManipulator.SaveFormat.JPEG,
-        });
-        if (manipulated?.uri) uri = manipulated.uri;
-      } catch (_) {
-        // Manipülasyon başarısız olursa orijinal uri ile devam et
-      }
-      console.log('[Chat] Resim seçildi, uri:', uri?.slice?.(0, 80));
-      let arrayBuffer = await uriToArrayBuffer(uri);
-      // Edge Function MAX_DECODED_BYTES aşılırsa tekrar küçült
-      const MAX_BYTES = 1_000_000;
-      if (arrayBuffer.byteLength > MAX_BYTES) {
-        try {
-          const w = arrayBuffer.byteLength > 800_000 ? 600 : 800;
-          const again = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: w } }], {
-            compress: 0.5,
-            format: ImageManipulator.SaveFormat.JPEG,
-          });
-          if (again?.uri) {
-            arrayBuffer = await uriToArrayBuffer(again.uri);
-          }
-        } catch (_) {}
-      }
-      console.log('[Chat] uriToArrayBuffer OK, byteLength:', arrayBuffer?.byteLength);
-      const { mime } = getMimeAndExt(uri, 'image');
-      console.log('[Chat] mime:', mime);
-      const mediaUrl = await uploadImageMessageForGuest(token, conversationId, arrayBuffer, mime);
-      console.log('[Chat] mediaUrl alındı:', mediaUrl?.slice?.(0, 60));
-      const { messageId, conversationId: nextConversationId } = await guestSendMessage(
-        token,
-        conversationId,
-        t('photo'),
-        'image',
-        mediaUrl
+      const { conversationId: convId, failed } = await sendChatImageUris(
+        { kind: 'guest', appToken: token, conversationId },
+        uris,
+        t('photo')
       );
-      if (messageId) {
-        const convId = nextConversationId ?? conversationId;
-        const { notifyAdmins, notifyConversationRecipients } = await import('@/lib/notificationService');
-        notifyAdmins({
-          title: t('chatNotifyAdminNewGuest'),
-          body: t('staffChatPhotoSentBody'),
-          data: { url: '/admin/messages' },
-          conversationId: convId,
-        }).catch(() => {});
-        notifyConversationRecipients({
-          conversationId: convId,
-          excludeAppToken: token,
-          title: `💬 ${t('notifNewMessage')}`,
-          body: t('staffChatPhotoSentBody'),
-          data: { conversationId: convId, url: `/customer/chat/${convId}` },
-        }).catch(() => {});
-        if (nextConversationId && nextConversationId !== conversationId) {
-          router.replace({ pathname: '/customer/chat/[id]', params: { id: nextConversationId, name: headerName } });
-          return;
-        }
-        const list = await guestGetMessages(token, nextConversationId ?? conversationId, 50);
-        setMessages(list);
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
-      }
+      await notifyGuestPhotos(token, convId);
+      const list = await guestGetMessages(token, convId, 50);
+      setMessages(list);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+      if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
-      const err = e as Error;
-      console.error('[Chat] Resim yükleme hatası:', err?.message, err?.stack);
-      Alert.alert(t('error'), err?.message ?? t('imageSendFailed'));
+      Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
     } finally {
       setSending(false);
     }
   };
 
-  const showImageOptions = () => {
+  const sendImageFromCamera = async () => {
+    if (!conversationId || sending) return;
+    const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+    if (!token) return;
+    const granted = await ensureCameraPermission({
+      title: t('chatCameraPermissionTitle'),
+      message: t('chatCameraPermissionMessage'),
+      settingsMessage: t('chatCameraPermissionSettings'),
+    });
+    if (!granted) return;
+    const uri = await pickChatImageFromCamera();
+    if (!uri) return;
+    setSending(true);
+    try {
+      const { conversationId: convId, failed } = await sendChatImageUris(
+        { kind: 'guest', appToken: token, conversationId },
+        [uri],
+        t('photo')
+      );
+      if (!failed) await notifyGuestPhotos(token, convId);
+      const list = await guestGetMessages(token, convId, 50);
+      setMessages(list);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+      if (failed) Alert.alert(t('error'), t('imageSendFailed'));
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const videoBatchActive = getChatVideoBatchSummary(videoUploads).active;
+
+  useEffect(() => {
+    if (!conversationId) return;
+    const id = setInterval(() => {
+      expireStaleChatVideoUploadsForConversation(conversationId);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [conversationId]);
+
+  useEffect(() => {
+    const summary = getChatVideoBatchSummary(videoUploads);
+    if (!summary.active && summary.total > 0 && summary.failed === 0) {
+      const timer = setTimeout(() => {
+        if (conversationId) pruneDoneChatVideoUploads(conversationId);
+      }, 2800);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [videoUploads, conversationId]);
+
+  const sendVideoFromSource = async (source: 'camera' | 'library') => {
+    if (!conversationId || videoBatchActive) return;
+    const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+    if (!token) return;
+    const actor = { kind: 'guest' as const, appToken: token, conversationId };
+    const handlers = createSessionChatVideoHandlers(conversationId, actor, {
+      setMessages,
+      onBatchComplete: ({ failed, lastError }) => {
+        if (failed > 0) {
+          Alert.alert(t('error'), lastError?.trim() || t('chatMediaPartialFail', { count: failed }));
+        }
+      },
+    });
+    try {
+      await sendChatVideoFromPickerWithSession(actor, source, handlers);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('chatVideoSendFailed'));
+    }
+  };
+
+  const retryVideoUpload = (upload: ChatVideoUploadState) => {
+    if (!conversationId) return;
+    void (async () => {
+      const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+      if (!token) return;
+      void retryChatVideoUploadWithSession({ kind: 'guest', appToken: token, conversationId }, upload, {
+        setMessages,
+      });
+    })();
+  };
+
+  const showAttachOptions = () => {
     Alert.alert(
-      t('sendPhotoTitle'),
+      t('chatAttachTitle'),
       undefined,
       [
-        { text: t('takePhoto'), onPress: () => sendImageFromSource('camera') },
-        { text: t('chooseFromGallery'), onPress: () => sendImageFromSource('library') },
+        { text: t('takePhoto'), onPress: () => void sendImageFromCamera() },
+        { text: t('chatPickMultiplePhotos'), onPress: () => void sendImagesFromLibrary() },
+        { text: t('chatPickMultipleVideos'), onPress: () => void sendVideoFromSource('library') },
+        { text: t('chatRecordVideo'), onPress: () => sendVideoFromSource('camera') },
         { text: t('cancel'), style: 'cancel' },
       ]
     );
@@ -598,7 +839,10 @@ export default function CustomerChatScreen() {
 
   const kbHeight = typeof keyboardHeight === 'number' ? keyboardHeight : 0;
   const inputRowExtra = Platform.OS === 'android' ? -20 : 56;
-  const androidKbPadding = Platform.OS === 'android' && kbHeight > 0 ? kbHeight + inputRowExtra + insets.bottom : 0;
+  const bottomInset = getEffectiveBottomInset(insets);
+  const chatInputBottomPad = getChatInputBottomPadding(insets);
+  const androidKbPadding =
+    Platform.OS === 'android' && kbHeight > 0 ? kbHeight + inputRowExtra + bottomInset : 0;
   return (
     <KeyboardAvoidingView
       style={[styles.container, androidKbPadding > 0 && { paddingBottom: androidKbPadding }]}
@@ -608,19 +852,41 @@ export default function CustomerChatScreen() {
       <FlatList
         keyboardShouldPersistTaps="handled"
         ref={listRef}
-        data={sortedMessages}
-        keyExtractor={(item) => item.id}
+        data={chatListItems}
+        keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
         contentContainerStyle={[styles.listContent, sortedMessages.length > 0 && styles.listContentGrow]}
         renderItem={({ item }) => {
-          const isOwn = item.sender_type === 'guest';
+          const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
+          if (msg.message_type === 'screenshot_notice') {
+            return <ChatScreenshotNotice message={msg} />;
+          }
+          const isOwn = msg.sender_type === 'guest';
           const bubbleColor = isOwn ? myBubbleColor : BUBBLE_OTHER_DIRECT;
+          const resolveVideoUpload = (m: Message) =>
+            videoUploads[m.id] ?? Object.values(videoUploads).find((s) => s.messageId === m.id);
           return (
             <MessageBubble
-              msg={item}
+              msg={msg}
               isOwn={isOwn}
+              imageAlbum={item.kind === 'image_album' ? item.messages : undefined}
+              videoAlbum={item.kind === 'video_album' ? item.messages : undefined}
+              videoUploads={videoUploads}
               onImagePress={setFullscreenImageUri}
               onDelete={handleDeleteMessage}
               bubbleColor={bubbleColor}
+              videoUpload={resolveVideoUpload(msg)}
+              onVideoRetry={
+                resolveVideoUpload(msg)?.phase === 'failed'
+                  ? () => {
+                      const st = resolveVideoUpload(msg);
+                      if (st) void retryVideoUpload(st);
+                    }
+                  : undefined
+              }
+              onVideoRetryForMessage={(m) => {
+                const st = resolveVideoUpload(m);
+                if (st?.phase === 'failed') void retryVideoUpload(st);
+              }}
             />
           );
         }}
@@ -653,14 +919,15 @@ export default function CustomerChatScreen() {
           )}
         </View>
       ) : null}
-      <View style={styles.inputRow}>
-        <TextInput
+      <ChatVideoBatchBar states={videoUploads} />
+      <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
+        <ChatMentionComposer
           style={styles.input}
-          placeholder={t('chatInputPlaceholder')}
+          placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('chatInputPlaceholder')}
           placeholderTextColor={MESSAGING_COLORS.textSecondary}
           value={input}
-          onChangeText={(t) => {
-            setInput(t);
+          onChangeText={(next) => {
+            setInput(next);
             typingPresenceRef.current?.updateTyping(true);
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
             typingTimeoutRef.current = setTimeout(() => {
@@ -668,54 +935,43 @@ export default function CustomerChatScreen() {
               typingTimeoutRef.current = null;
             }, 3000);
           }}
+          participants={mentionParticipants}
+          mentions={pendingMentions}
+          onMentionsChange={setPendingMentions}
+          enabled={mentionEnabled}
           multiline
           maxLength={2000}
           onSubmitEditing={send}
         />
         <TouchableOpacity
           style={styles.mediaBtn}
-          onPress={showImageOptions}
+          onPress={showAttachOptions}
           disabled={sending}
           accessibilityLabel={t('a11yChatAttachPhoto')}
           activeOpacity={0.7}
         >
-          <Ionicons name="camera-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
+          <Ionicons name="add-circle-outline" size={22} color={MESSAGING_COLORS.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.mediaBtn}
-          onPress={() => sendImageFromSource('library')}
-          disabled={sending}
-          accessibilityLabel={t('a11yChatPickFromGallery')}
+          onPress={() => sendVideoFromSource('library')}
+          disabled={videoBatchActive}
+          accessibilityLabel={t('chatSendVideo')}
           activeOpacity={0.7}
         >
-          <Ionicons name="images-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
+          <Ionicons name="videocam-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
           onPress={send}
-          disabled={!input.trim() || sending}
+          disabled={!input.trim()}
           activeOpacity={0.85}
         >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="send" size={22} color="#fff" />
-          )}
+          <Ionicons name="send" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      <Modal visible={!!fullscreenImageUri} transparent animationType="fade">
-        <TouchableOpacity activeOpacity={1} style={styles.imageModalOverlay} onPress={() => setFullscreenImageUri(null)}>
-          <TouchableOpacity activeOpacity={1} style={[styles.imageModalContent, { maxWidth: winWidth, maxHeight: winHeight }]} onPress={() => {}}>
-            {fullscreenImageUri ? (
-              <CachedImage key={fullscreenImageUri} uri={fullscreenImageUri} style={[styles.imageModalImage, { width: winWidth, height: winHeight }]} contentFit="contain" />
-            ) : null}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.imageModalCloseBtn} onPress={() => setFullscreenImageUri(null)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Ionicons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      <ChatFullscreenImageModal uri={fullscreenImageUri} onClose={() => setFullscreenImageUri(null)} />
 
       <Modal visible={showBubbleColorModal} transparent animationType="fade">
         <TouchableOpacity activeOpacity={1} style={styles.bubbleColorModalOverlay} onPress={() => setShowBubbleColorModal(false)}>
@@ -788,28 +1044,22 @@ const styles = StyleSheet.create({
   bubbleTime: { fontSize: 11, marginTop: 4 },
   bubbleTimeOwn: { color: 'rgba(255,255,255,0.85)' },
   bubbleTimeOther: { color: MESSAGING_COLORS.textSecondary },
+  bubbleVideo: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+    maxWidth: '92%',
+  },
+  bubbleTimeVideo: {
+    color: MESSAGING_COLORS.textSecondary,
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  chatVideoWrap: { marginBottom: 0 },
   imageWrap: { marginTop: 2, width: 200, height: 200, borderRadius: 12, overflow: 'hidden' },
   imageWrapPlaceholder: { backgroundColor: '#e5e7eb' },
   bubbleImage: { width: 200, height: 200, borderRadius: 12 },
-  imageModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageModalContent: { justifyContent: 'center', alignItems: 'center' },
-  imageModalImage: { maxWidth: '100%', maxHeight: '100%' },
-  imageModalCloseBtn: {
-    position: 'absolute',
-    top: 48,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   bubbleColorModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   bubbleColorModalBox: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 320 },
   bubbleColorModalTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 20 },
@@ -824,7 +1074,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 48,
+    paddingBottom: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',

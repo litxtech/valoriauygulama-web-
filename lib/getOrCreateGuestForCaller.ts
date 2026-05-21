@@ -5,6 +5,7 @@ import { isOpaqueGuestDisplayString } from '@/lib/guestDisplayName';
 import type { Session, User } from '@supabase/supabase-js';
 import { getOrCreateGuestDeviceInstallId } from '@/lib/guestDeviceInstallId';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
+import { useAuthStore } from '@/stores/authStore';
 
 /**
  * Apple/Google dahil tüm giriş türlerinde kullanılacak full_name.
@@ -34,6 +35,9 @@ export function getGuestFullNameFromUser(user: User | null | undefined): string 
  */
 export async function getOrCreateGuestForCaller(user: User | null | undefined): Promise<{ guest_id: string; app_token: string; is_new?: boolean } | null> {
   if (!user) return null;
+  const { staff, staffCheckComplete } = useAuthStore.getState();
+  if (staff) return null;
+  if (!staffCheckComplete) return null;
   const fullName = getGuestFullNameFromUser(user);
   /** Cihaz kimliği sunucuda yalnızca anonim JWT + cihaz eşlemesinde kullanılır; her zaman gönderilir (parametre kaybı olmasın). */
   const deviceInstallId = await getOrCreateGuestDeviceInstallId();

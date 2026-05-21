@@ -12,7 +12,8 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -43,6 +44,9 @@ type FeedPostRow = {
 export default function StaffGuestProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
+  const leaveGuest = () => navigateStaffBack(router, navigation, pathname, STAFF_TABS_FALLBACK);
   const insets = useSafeAreaInsets();
   const { staff } = useAuthStore();
   const [guest, setGuest] = useState<GuestDetail | null>(null);
@@ -104,7 +108,7 @@ export default function StaffGuestProfileScreen() {
     return (
       <View style={[styles.centered, { paddingTop: insets.top + 60 }]}>
         <Text style={styles.errorText}>Misafir bulunamadı</Text>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.backBtn} onPress={leaveGuest} activeOpacity={0.8}>
           <Text style={styles.backBtnText}>Geri dön</Text>
         </TouchableOpacity>
       </View>
@@ -118,7 +122,7 @@ export default function StaffGuestProfileScreen() {
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]}
     >
-      <TouchableOpacity style={styles.header} onPress={() => router.back()} activeOpacity={0.8}>
+      <TouchableOpacity style={styles.header} onPress={leaveGuest} activeOpacity={0.8}>
         <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
       </TouchableOpacity>
 

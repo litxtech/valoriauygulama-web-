@@ -15,7 +15,8 @@ import {
   TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import type { HubReview } from '@/components/StaffEvaluationHub';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,11 +30,13 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffReviewsFullModal } from '@/components/StaffEvaluationHub';
 import { loadStaffProfileForViewer } from '@/lib/loadStaffProfileForViewer';
+import { loadStaffProfileReviews } from '@/lib/loadStaffProfileReviews';
 import {
   buildRestrictedStaffProfileView,
   shouldRestrictStaffProfileView,
 } from '@/lib/staffProfilePrivacy';
 import { recordStaffProfileVisit } from '@/lib/staffProfileVisits';
+import { readStaffProfileViewCache, writeStaffProfileViewCache } from '@/lib/staffProfileViewCache';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTranslation } from 'react-i18next';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
@@ -41,6 +44,7 @@ import { StaffProfileFeedGrid } from '@/components/StaffProfileFeedGrid';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
 import { ProfileCover } from '@/components/ProfileCover';
+import { formatLocaleDateShort } from '@/lib/date';
 
 const COVER_HEIGHT = 260;
 const AVATAR_SIZE = 116;
@@ -84,13 +88,16 @@ type StaffProfile = {
 };
 
 function formatReviewDateShort(iso: string) {
-  return new Date(iso).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatLocaleDateShort(iso);
 }
 
 export default function StaffProfileViewScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const id = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? params.id[0] : undefined;
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
+  const leaveProfile = () => navigateStaffBack(router, navigation, pathname, STAFF_TABS_FALLBACK);
   const insets = useSafeAreaInsets();
   const { t, i18n } = useTranslation();
   const { width: windowWidth } = useWindowDimensions();
@@ -116,21 +123,68 @@ export default function StaffProfileViewScreen() {
       setLoading(false);
       return;
     }
-    const load = async () => {
+    let cancelled = false;
+
+    const loadSecondary = async (staffId: string, restricted: boolean, baseProfile: StaffProfile) => {
+      if (restricted) {
+        if (!cancelled) {
+          setReviews([]);
+          setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
+        }
+        void writeStaffProfileViewCache('staff', staffId, {
+          profile: baseProfile,
+          reviews: [],
+          engagement: { posts: 0, likes: 0, comments: 0, visits: 0 },
+        });
+        return;
+      }
+      const [nextReviews, nextEngagement] = await Promise.all([
+        loadStaffProfileReviews(staffId, 80),
+        loadStaffEngagementStats(staffId).catch(() => ({
+          posts: 0,
+          likes: 0,
+          comments: 0,
+          visits: 0,
+        })),
+      ]);
+      if (cancelled) return;
+      setReviews(nextReviews);
+      setEngagement(nextEngagement);
+      void writeStaffProfileViewCache('staff', staffId, {
+        profile: baseProfile,
+        reviews: nextReviews,
+        engagement: nextEngagement,
+      });
+    };
+
+    (async () => {
+      const cached = await readStaffProfileViewCache<StaffProfile>('staff', id);
+      if (cancelled) return;
+      if (cached?.profile) {
+        setProfile(cached.profile);
+        if (cached.reviews) setReviews(cached.reviews);
+        if (cached.engagement) setEngagement(cached.engagement);
+        setLoading(false);
+      }
+
       if (me?.id && me.id !== id) {
         const hidden = await getHiddenUsersForStaff(me.id);
+        if (cancelled) return;
         if (hidden.hiddenStaffIds.has(id)) {
           setProfile(null);
           setLoading(false);
           return;
         }
       }
+
       const { data, error } = await loadStaffProfileForViewer(id);
+      if (cancelled) return;
       if (error || !data) {
         setProfile(null);
         setLoading(false);
         return;
       }
+
       const rawHidden = !!(data as { profile_hidden_by_admin?: boolean }).profile_hidden_by_admin;
       const restricted = shouldRestrictStaffProfileView({
         profileHiddenByAdmin: rawHidden,
@@ -138,100 +192,45 @@ export default function StaffProfileViewScreen() {
         viewerRole: me?.role,
         targetStaffId: id,
       });
-      let s = { ...data, shift: null } as StaffProfile;
-      if (data.shift_id && !restricted) {
-        const { data: shift } = await supabase
-          .from('shifts')
-          .select('start_time, end_time')
-          .eq('id', data.shift_id)
-          .single();
-        s.shift = shift ?? null;
-      }
+      let s = { ...data, shift: (cached?.profile as StaffProfile | undefined)?.shift ?? null } as StaffProfile;
       if (restricted) {
         s = buildRestrictedStaffProfileView(s);
       }
       setProfile(s);
-      if (me?.id && me.id !== id && !restricted) {
+      setLoading(false);
+
+      if (me?.id && me.id !== id) {
         recordStaffProfileVisit(id).catch(() => {});
       }
-      if (restricted) {
-        setReviews([]);
-        setLoading(false);
-        return;
-      }
-      const { data: r } = await supabase
-        .from('staff_reviews')
-        .select('id, rating, comment, created_at, guest_id, stay_room_label, stay_nights_label')
-        .eq('staff_id', id)
-        .order('created_at', { ascending: false })
-        .limit(80);
-      const reviewRows = (r ?? []) as (HubReview & { guest_id?: string })[];
-      if (reviewRows.some((x) => x.guest_id)) {
-        const guestIds = [...new Set(reviewRows.map((x) => x.guest_id).filter(Boolean))] as string[];
-        const { data: guests } = await supabase
-          .from('guests')
-          .select('id, full_name, room_id, photo_url')
-          .in('id', guestIds);
-        const guestList = (guests ?? []) as { id: string; full_name: string | null; room_id: string | null; photo_url: string | null }[];
-        const roomIds = [...new Set(guestList.map((g) => g.room_id).filter(Boolean))] as string[];
-        let roomMap = new Map<string, string>();
-        if (roomIds.length > 0) {
-          const { data: rooms } = await supabase.from('rooms').select('id, room_number').in('id', roomIds);
-          roomMap = new Map((rooms ?? []).map((ro: { id: string; room_number: string }) => [ro.id, ro.room_number]));
-        }
-        const guestMap = new Map(
-          guestList.map((g) => [
-            g.id,
-            {
-              full_name: g.full_name,
-              room_number: g.room_id ? roomMap.get(g.room_id) ?? null : null,
-              photo_url: g.photo_url,
-            },
-          ])
-        );
-        setReviews(
-          reviewRows.map((x) => ({
-            id: x.id,
-            rating: x.rating,
-            comment: x.comment,
-            created_at: x.created_at,
-            stay_room_label: x.stay_room_label,
-            stay_nights_label: x.stay_nights_label,
-            guest: x.guest_id ? guestMap.get(x.guest_id) ?? null : null,
-          }))
-        );
-      } else {
-        setReviews(
-          reviewRows.map((x) => ({
-            id: x.id,
-            rating: x.rating,
-            comment: x.comment,
-            created_at: x.created_at,
-            stay_room_label: x.stay_room_label,
-            stay_nights_label: x.stay_nights_label,
-            guest: null,
-          }))
-        );
-      }
-      setLoading(false);
-    };
-    load();
-  }, [id, me?.id, me?.role]);
 
-  useEffect(() => {
-    if (!id || !profile) return;
-    const r = shouldRestrictStaffProfileView({
-      profileHiddenByAdmin: !!profile.profile_hidden_by_admin,
-      viewerStaffId: me?.id,
-      viewerRole: me?.role,
-      targetStaffId: id,
-    });
-    if (r) {
-      setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
-      return;
-    }
-    loadStaffEngagementStats(id).then(setEngagement).catch(() => {});
-  }, [id, profile?.id, profile?.profile_hidden_by_admin, me?.id, me?.role]);
+      if (!restricted && data.shift_id) {
+        void supabase
+          .from('shifts')
+          .select('start_time, end_time')
+          .eq('id', data.shift_id)
+          .single()
+          .then(({ data: shift }) => {
+            if (cancelled) return;
+            setProfile((prev) => {
+              if (!prev || prev.id !== id) return prev;
+              const next = { ...prev, shift: shift ?? null };
+              void writeStaffProfileViewCache('staff', id, {
+                profile: next,
+                reviews: cached?.reviews,
+                engagement: cached?.engagement,
+              });
+              return next;
+            });
+          });
+      }
+
+      void loadSecondary(id, restricted, s);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, me?.id, me?.role]);
 
   useEffect(() => {
     const now = new Date();
@@ -329,7 +328,7 @@ export default function StaffProfileViewScreen() {
       <View style={styles.centered}>
         <Ionicons name="person-outline" size={64} color={theme.colors.textMuted} />
         <Text style={styles.errorText}>Profil bulunamadı</Text>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.backBtn} onPress={leaveProfile} activeOpacity={0.8}>
           <Text style={styles.backBtnText}>Geri</Text>
         </TouchableOpacity>
       </View>
@@ -375,7 +374,7 @@ export default function StaffProfileViewScreen() {
         <View style={[styles.profileTopBar, { paddingTop: safeTop - 6 }]}>
           <TouchableOpacity
             style={styles.coverActionBtn}
-            onPress={() => router.back()}
+            onPress={leaveProfile}
             activeOpacity={0.7}
             accessibilityLabel="Geri"
           >
@@ -516,7 +515,10 @@ export default function StaffProfileViewScreen() {
           {profile.position ? <StatPill label="Pozisyon" value={profile.position} /> : null}
           {yearsExperience != null ? <StatPill label="Deneyim" value={`${yearsExperience}+ yil`} /> : null}
           {profile.hire_date ? (
-            <StatPill label="Baslangic" value={new Date(profile.hire_date).toLocaleDateString('tr-TR')} />
+            <StatPill
+              label={t('staffProfileHireDate')}
+              value={formatLocaleDateShort(profile.hire_date)}
+            />
           ) : null}
           {profile.office_location ? <StatPill label="Lokasyon" value={profile.office_location} /> : null}
           {profile.shift ? (
@@ -594,7 +596,7 @@ export default function StaffProfileViewScreen() {
           <View style={styles.onlineRow}>
             <View style={[styles.onlineDot, profile.is_online && styles.onlineDotOn]} />
             <Text style={styles.onlineText}>
-              {profile.is_online ? 'Çevrimiçi' : 'Çevrimdışı'}
+              {profile.is_online ? t('staffProfileOnlineChip') : t('staffProfileOfflineChip')}
             </Text>
           </View>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, Stack, useNavigation, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getChatInputBottomPadding, getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
@@ -28,16 +29,15 @@ import {
   staffGetConversationHeader,
   staffSetConversationMuted,
   staffDeleteMessage,
+  staffListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
-  uploadImageMessageForStaff,
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
-import type { Message } from '@/lib/messaging';
+import { mergeChatMessagesCapped, replaceChatMessage, upsertIncomingChatMessage, latestMessageCreatedAtIso, capChatMessageList, type Message } from '@/lib/messaging';
 import { theme } from '@/constants/theme';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
 import * as ImagePicker from 'expo-image-picker';
-import { uriToArrayBuffer, getMimeAndExt } from '@/lib/uploadMedia';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -50,6 +50,44 @@ import {
   BUBBLE_COLOR_OPTIONS,
 } from '@/stores/messagingBubbleStore';
 import { useTranslation } from 'react-i18next';
+import { MessageTranslation } from '@/components/MessageTranslation';
+import { prefetchTranslations } from '@/lib/translateText';
+import { ChatVideoMessage } from '@/components/ChatVideoMessage';
+import { ChatImageMessage } from '@/components/ChatImageMessage';
+import { ChatImageAlbum } from '@/components/ChatImageAlbum';
+import { ChatFullscreenImageModal } from '@/components/ChatFullscreenImageModal';
+import { ChatVideoAlbum } from '@/components/ChatVideoAlbum';
+import { buildChatListDisplayItems } from '@/lib/chatImageAlbum';
+import { ChatVideoBatchBar } from '@/components/ChatVideoBatchBar';
+import {
+  createSessionChatVideoHandlers,
+  expireStaleChatVideoUploadsForConversation,
+  getChatVideoBatchSummary,
+  pruneDoneChatVideoUploads,
+  registerChatVideoScreen,
+  retryChatVideoUploadWithSession,
+  sendChatVideoFromPickerWithSession,
+  useChatVideoUploadStates,
+  type ChatVideoUploadState,
+} from '@/lib/chatVideoUploadSession';
+import {
+  pickChatImageFromCamera,
+  pickChatImagesFromLibrary,
+  sendChatImageUris,
+} from '@/lib/chatMediaSend';
+import { formatChatMessageDateTime, formatChatMessageTime } from '@/lib/formatChatTime';
+import { useChatScreenshotListener } from '@/lib/chatScreenshot';
+import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
+import { ChatMentionComposer } from '@/components/ChatMentionComposer';
+import { ChatMentionText } from '@/components/ChatMentionText';
+import {
+  notifyChatMessageWithMentions,
+  syncMentionsWithText,
+  parseMessageMentions,
+  type ChatMention,
+  type ChatMentionParticipant,
+} from '@/lib/chatMentions';
+import { usePendingMuxVideoPoll } from '@/lib/usePendingMuxVideoPoll';
 
 const ALL_STAFF_GROUP_NAME = 'Tüm Çalışanlar';
 const STAFF_CHAT_CACHE_PREFIX = 'staff_chat_cache_v1:';
@@ -61,15 +99,6 @@ type StaffChatCacheEntry = {
 };
 const staffChatMemoryCache: Record<string, StaffChatCacheEntry> = {};
 
-function formatMessageTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatMessageDateAndTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
 function MessageBubble({
   msg,
   isOwn,
@@ -77,6 +106,12 @@ function MessageBubble({
   onImagePress,
   onDelete,
   bubbleColor,
+  videoUpload,
+  videoUploads,
+  onVideoRetry,
+  onVideoRetryForMessage,
+  imageAlbum,
+  videoAlbum,
 }: {
   msg: Message;
   isOwn: boolean;
@@ -84,35 +119,80 @@ function MessageBubble({
   onImagePress?: (uri: string) => void;
   onDelete?: (msg: Message) => void;
   bubbleColor?: string;
+  videoUpload?: ChatVideoUploadState;
+  videoUploads?: Record<string, ChatVideoUploadState>;
+  onVideoRetry?: () => void;
+  onVideoRetryForMessage?: (msg: Message) => void;
+  imageAlbum?: Message[];
+  videoAlbum?: Message[];
 }) {
   const { t } = useTranslation();
   const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
+  const isVideo = msg.message_type === 'video';
   const isImage = msg.message_type === 'image' && (msg.media_url || msg.media_thumbnail);
+  const isMediaCard = isVideo || !!imageAlbum?.length || !!videoAlbum?.length || isImage;
   const imageUri = msg.media_url || msg.media_thumbnail || '';
   const displayName = msg.sender_name?.trim() || (msg.sender_type === 'guest' ? t('guestDefaultName') : null) || '?';
   const initial = displayName.charAt(0).toUpperCase();
-  const timeStr = isGroup ? formatMessageDateAndTime(msg.created_at) : formatMessageTime(msg.created_at);
+  const timeStr = isGroup ? formatChatMessageDateTime(msg.created_at) : formatChatMessageTime(msg.created_at);
   const color = bubbleColor ?? BUBBLE_OTHER_DIRECT;
   const textColor = getContrastTextColor(color);
 
   const renderContent = (own: boolean) => {
     if (msg.message_type === 'text') {
-      return <Text style={[own ? styles.bubbleTextOwn : styles.bubbleTextOther, { color: textColor }]}>{msg.content || ''}</Text>;
+      const mentionList = parseMessageMentions(msg.mentions);
+      return (
+        <>
+          <ChatMentionText
+            content={msg.content || ''}
+            mentions={mentionList}
+            style={[own ? styles.bubbleTextOwn : styles.bubbleTextOther, { color: textColor }]}
+            mentionStyle={{ color: own ? '#fff' : theme.colors.accent, fontWeight: '700' }}
+          />
+          <MessageTranslation content={msg.content || ''} enabled={!own} textColor={textColor} />
+        </>
+      );
     }
     if (msg.message_type === 'voice' && voiceUri) {
       return <VoiceMessagePlayer uri={voiceUri} isOwn={own} />;
     }
-    if (isImage) {
+    if (videoAlbum && videoAlbum.length > 1) {
       return (
-        <TouchableOpacity style={[styles.imageWrap, styles.imageWrapPlaceholder]} onPress={() => onImagePress?.(imageUri)} activeOpacity={1}>
-          <CachedImage
-            uri={msg.media_thumbnail || msg.media_url || ''}
-            style={styles.bubbleImage}
-            contentFit="cover"
-            transition={0}
-          />
-        </TouchableOpacity>
+        <ChatVideoAlbum
+          messages={videoAlbum}
+          isOwn={own}
+          videoUploads={videoUploads}
+          onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+        />
       );
+    }
+    if (isVideo) {
+      const upload =
+        videoUpload ?? videoUploads?.[msg.id] ?? Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id);
+      return (
+        <View style={styles.chatVideoWrap}>
+          <ChatVideoMessage
+            mediaUrl={msg.media_url}
+            mediaThumbnail={msg.media_thumbnail}
+            isOwn={own}
+            uploadProgress={upload?.progress}
+            uploadPhase={upload?.phase}
+            uploadFailed={upload?.phase === 'failed'}
+            onRetry={onVideoRetry}
+          />
+        </View>
+      );
+    }
+    if (imageAlbum && imageAlbum.length > 1) {
+      return (
+        <ChatImageAlbum
+          messages={imageAlbum}
+          onPressImage={(uri) => onImagePress?.(uri)}
+        />
+      );
+    }
+    if (isImage && imageUri) {
+      return <ChatImageMessage uri={imageUri} onPress={onImagePress} />;
     }
     return (
       <Text style={[own ? styles.bubbleTextOwn : styles.bubbleTextOther, { color: textColor }]}>
@@ -142,24 +222,64 @@ function MessageBubble({
             {displayName ? (
               <Text style={styles.senderName}>{displayName}</Text>
             ) : null}
-            <View style={[styles.bubble, styles.bubbleOther, { backgroundColor: color }]}>
+            <View
+              style={[
+                styles.bubble,
+                styles.bubbleOther,
+                isMediaCard && styles.bubbleVideo,
+                !isMediaCard && { backgroundColor: color },
+              ]}
+            >
               {renderContent(false)}
               <View style={styles.bubbleFooter}>
-                <Text style={[styles.bubbleTimeOther, { color: textColor, opacity: 0.9 }]}>{timeStr}</Text>
+                <Text
+                  style={[
+                    styles.bubbleTimeOther,
+                    isMediaCard ? styles.bubbleTimeVideo : null,
+                    !isMediaCard && { color: textColor, opacity: 0.9 },
+                  ]}
+                >
+                  {timeStr}
+                </Text>
               </View>
             </View>
           </View>
         </View>
       )}
       {isOwn && (
-        <View style={[styles.bubble, styles.bubbleOwn, { backgroundColor: color }]}>
+        <View
+          style={[
+            styles.bubble,
+            styles.bubbleOwn,
+            isMediaCard && styles.bubbleVideo,
+            !isMediaCard && { backgroundColor: color },
+          ]}
+        >
           {renderContent(true)}
           <View style={styles.bubbleFooter}>
-            <Text style={[styles.bubbleTimeOwn, { color: textColor, opacity: 0.9 }]}>{timeStr}</Text>
+            <Text
+              style={[
+                styles.bubbleTimeOwn,
+                isMediaCard ? styles.bubbleTimeVideo : null,
+                !isMediaCard && { color: textColor, opacity: 0.9 },
+              ]}
+            >
+              {timeStr}
+            </Text>
             {msg.is_read ? (
-              <Ionicons name="checkmark-done" size={14} color={textColor} style={styles.readIcon} />
+              <Ionicons
+                name="checkmark-done"
+                size={14}
+                color={isMediaCard ? theme.colors.primary : textColor}
+                style={styles.readIcon}
+              />
             ) : (
-              <Ionicons name="checkmark" size={14} color={textColor} style={styles.readIcon} />
+              <Ionicons
+                name="checkmark"
+                size={14}
+                color={isMediaCard ? theme.colors.textMuted : textColor}
+                style={styles.readIcon}
+              />
             )}
           </View>
         </View>
@@ -188,22 +308,44 @@ export default function StaffChatScreen() {
   const [savingGroup, setSavingGroup] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [input, setInput] = useState('');
+  const [pendingMentions, setPendingMentions] = useState<ChatMention[]>([]);
+  const [mentionParticipants, setMentionParticipants] = useState<ChatMentionParticipant[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const videoUploads = useChatVideoUploadStates(conversationId);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const insets = useSafeAreaInsets();
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const [allStaffMuted, setAllStaffMuted] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
+
+  useEffect(() => {
+    setMessages([]);
+    setLoading(true);
+  }, [conversationId]);
+
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
   const inputRowExtra = Platform.OS === 'android' ? -20 : 56;
-  const androidKbPadding = Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + inputRowExtra + insets.bottom : 0;
+  const bottomInset = getEffectiveBottomInset(insets);
+  const chatInputBottomPad = getChatInputBottomPadding(insets);
+  const androidKbPadding =
+    Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + inputRowExtra + bottomInset : 0;
+
+  useEffect(() => {
+    if (!conversationId) return;
+    return registerChatVideoScreen(conversationId, { patchMessages: setMessages });
+  }, [conversationId]);
+
+  usePendingMuxVideoPoll(messages, setMessages, {
+    enabled: Boolean(conversationId && staff?.id && !loading),
+  });
 
   useEffect(() => {
     if (!conversationId) return;
@@ -239,7 +381,7 @@ export default function StaffChatScreen() {
     if (!conversationId) return;
     if (messages.length === 0 && !headerAvatar && !conversationName) return;
     const entry: StaffChatCacheEntry = {
-      messages,
+      messages: capChatMessageList(messages),
       headerName: conversationName,
       headerAvatar: headerAvatar ?? null,
       updatedAt: Date.now(),
@@ -292,7 +434,56 @@ export default function StaffChatScreen() {
 
   const isAdmin = staff?.role === 'admin';
   const isGroup = conversationType === 'group';
+  const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
   const canEditGroup = isAdmin && isGroup;
+  const screenshotSenderName =
+    staff?.full_name?.trim() || staff?.email?.trim() || t('chatMessageSenderStaff');
+  const screenshotPushBody = useMemo(
+    () => t('chatScreenshotNotice', { name: screenshotSenderName }),
+    [t, screenshotSenderName]
+  );
+
+  useEffect(() => {
+    if (!conversationId || !staff?.id) {
+      setMentionParticipants([]);
+      return;
+    }
+    let cancelled = false;
+    void staffListMentionParticipants(conversationId).then((list) => {
+      if (!cancelled) setMentionParticipants(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, staff?.id]);
+
+  const mentionEnabled = mentionParticipants.length > 0;
+
+  useChatScreenshotListener(
+    Boolean(staff?.id && conversationId && !loading),
+    staff?.id && conversationId
+      ? {
+          kind: 'staff',
+          staffId: staff.id,
+          senderName: screenshotSenderName,
+          conversationId,
+          chatUrl: `/staff/chat/${conversationId}`,
+        }
+      : null,
+    staff?.id && conversationId
+      ? {
+          conversationName,
+          isGroup,
+          pushBody: screenshotPushBody,
+          ownSenderId: staff.id,
+          onLocalMessage: (msg) => {
+            setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff!.id }));
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+          },
+          reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff!.id),
+        }
+      : null
+  );
 
   const openGroupSettingsModal = () => {
     setEditGroupName(conversationName);
@@ -399,8 +590,28 @@ export default function StaffChatScreen() {
     }
     scrollTimeoutsRef.current = [];
     (async () => {
-      const list = await staffGetMessages(conversationId, 50, undefined, staff.id);
-      setMessages(list);
+      const seedFromMemory = staffChatMemoryCache[conversationId]?.messages ?? [];
+      const afterIso = latestMessageCreatedAtIso(seedFromMemory);
+      const useIncremental = Boolean(afterIso && seedFromMemory.length > 0);
+
+      let list: Message[];
+      if (useIncremental) {
+        list = await staffGetMessages(conversationId, 120, undefined, staff.id, {
+          afterCreatedAt: afterIso!,
+        });
+        if (list.length === 0) {
+          staffMarkConversationRead(conversationId, staff.id);
+          setLoading(false);
+          return;
+        }
+      } else {
+        list = await staffGetMessages(conversationId, 50, undefined, staff.id);
+      }
+
+      setMessages((prev) => {
+        const base = prev.length > 0 ? prev : staffChatMemoryCache[conversationId]?.messages ?? [];
+        return mergeChatMessagesCapped(list, base);
+      });
       staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
       const scrollToEnd = () => listRef.current?.scrollToEnd({ animated: true });
@@ -416,26 +627,45 @@ export default function StaffChatScreen() {
     return () => scrollTimeoutsRef.current.forEach((t) => clearTimeout(t));
   }, [staff?.id, conversationId]);
 
+  const prefetchKeyRef = useRef('');
+  useEffect(() => {
+    if (!staff?.id || messages.length === 0) return;
+    const incoming = messages
+      .filter((m) => m.message_type === 'text' && m.sender_id !== staff.id && (m.content ?? '').trim())
+      .map((m) => (m.content ?? '').trim())
+      .slice(-8);
+    const key = incoming.join('\u0001');
+    if (key === prefetchKeyRef.current) return;
+    prefetchKeyRef.current = key;
+    prefetchTranslations(incoming);
+  }, [messages, staff?.id]);
+
   useEffect(() => {
     if (!conversationId) return;
     subscriptionRef.current = subscribeToMessages(
       conversationId,
       (newMsg) => {
-        setMessages((prev) => {
-          const withoutTemp = prev.filter((m) => !String(m.id).startsWith('temp-'));
-          if (withoutTemp.some((m) => m.id === newMsg.id)) return prev;
-          return [...withoutTemp, newMsg];
-        });
+        setMessages((prev) => upsertIncomingChatMessage(prev, newMsg, { ownSenderId: staff?.id }));
+        if (
+          newMsg.message_type === 'text' &&
+          newMsg.sender_id !== staff?.id &&
+          (newMsg.content ?? '').trim()
+        ) {
+          prefetchTranslations([(newMsg.content ?? '').trim()]);
+        }
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
       },
       {
         onMessageDeleted: (messageId) => {
           setMessages((prev) => prev.filter((m) => m.id !== messageId));
         },
+        onMessageUpdated: (updated) => {
+          setMessages((prev) => replaceChatMessage(prev, updated));
+        },
       }
     );
     return () => subscriptionRef.current?.unsubscribe?.();
-  }, [conversationId]);
+  }, [conversationId, staff?.id]);
 
   useEffect(() => {
     if (!conversationId || !staff) return;
@@ -463,9 +693,11 @@ export default function StaffChatScreen() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || !staff || !conversationId || sending) return;
-    setSending(true);
+    if (!text || !staff || !conversationId || sendInFlightRef.current) return;
+    const mentions = syncMentionsWithText(text, pendingMentions);
+    sendInFlightRef.current = true;
     setInput('');
+    setPendingMentions([]);
     typingPresenceRef.current?.updateTyping(false);
     const tempId = `temp-${Date.now()}`;
     const optimistic: Message = {
@@ -493,94 +725,74 @@ export default function StaffChatScreen() {
       reply_to_id: null,
       scheduled_at: null,
       created_at: new Date().toISOString(),
+      mentions: mentions.length ? mentions : [],
     };
     setMessages((prev) => [...prev, optimistic]);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-    const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
-      conversationId,
-      staff.id,
-      staff.full_name || staff.email,
-      staff.profile_image ?? null,
-      text
-    );
-    setSending(false);
-    if (error) {
-      setInput(text);
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
-      return;
-    }
-    if (sent) {
-      const convId = nextConversationId ?? conversationId;
-      const { notifyConversationRecipients } = await import('@/lib/notificationService');
-      notifyConversationRecipients({
-        conversationId: convId,
-        excludeStaffId: staff.id,
-        title: conversationName || t('notifNewMessage'),
-        body: text.slice(0, 80) + (text.length > 80 ? '…' : ''),
-        data: { conversationId: convId, url: `/staff/chat/${convId}` },
-      }).catch(() => {});
-      if (nextConversationId !== conversationId) {
-        router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
-        return;
-      }
-      listRef.current?.scrollToEnd({ animated: true });
-    }
-  };
-
-  const sendImageFromSource = async (source: 'camera' | 'library') => {
-    if (!staff || !conversationId || sending) return;
-    if (source === 'camera') {
-      const granted = await ensureCameraPermission({
-        title: t('chatCameraPermissionTitle'),
-        message: t('chatCameraPermissionMessage'),
-        settingsMessage: t('chatCameraPermissionSettings'),
-      });
-      if (!granted) return;
-    } else {
-      const granted = await ensureMediaLibraryPermission({
-        title: t('chatGalleryPermissionTitle'),
-        message: t('chatGalleryPermissionMessage'),
-        settingsMessage: t('chatGalleryPermissionSettings'),
-      });
-      if (!granted) {
-        return;
-      }
-    }
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, allowsEditing: false })
-      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, allowsEditing: false });
-    if (result.canceled || !result.assets[0]?.uri) return;
-    const uri = result.assets[0].uri;
-    setSending(true);
     try {
-      console.log('[StaffChat] Resim seçildi, uri:', uri?.slice?.(0, 80));
-      const arrayBuffer = await uriToArrayBuffer(uri);
-      console.log('[StaffChat] uriToArrayBuffer OK, byteLength:', arrayBuffer?.byteLength);
-      const { mime } = getMimeAndExt(uri, 'image');
-      console.log('[StaffChat] mime:', mime);
-      const mediaUrl = await uploadImageMessageForStaff(arrayBuffer, mime);
-      if (!mediaUrl) {
-        console.warn('[StaffChat] uploadImageMessageForStaff null döndü');
-        Alert.alert(t('error'), t('imageUploadFailedShort'));
-        return;
-      }
-      console.log('[StaffChat] mediaUrl alındı:', mediaUrl?.slice?.(0, 60));
       const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
         conversationId,
         staff.id,
         staff.full_name || staff.email,
         staff.profile_image ?? null,
-        t('photo'),
-        'image',
-        mediaUrl
+        text,
+        'text',
+        undefined,
+        undefined,
+        undefined,
+        mentions.length ? mentions : undefined
       );
       if (error) {
+        setInput(text);
+        setPendingMentions(mentions);
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
         Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
         return;
       }
       if (sent) {
+        setMessages((prev) => upsertIncomingChatMessage(prev, sent, { ownSenderId: staff.id }));
         const convId = nextConversationId ?? conversationId;
+        const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
+        void notifyChatMessageWithMentions({
+          conversationId: convId,
+          conversationTitle: conversationName || t('notifNewMessage'),
+          messageText: text,
+          mentions,
+          senderDisplayName: staff.full_name || staff.email || '',
+          excludeStaffId: staff.id,
+          chatUrl: `/staff/chat/${convId}`,
+          mentionPushBody: t('chatMentionPushBody', {
+            name: staff.full_name || staff.email,
+            preview,
+          }),
+          defaultPushBody: preview,
+        });
+        if (nextConversationId !== conversationId) {
+          router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
+          return;
+        }
+        listRef.current?.scrollToEnd({ animated: true });
+      }
+    } finally {
+      sendInFlightRef.current = false;
+    }
+  };
+
+  const sendImagesFromLibrary = async () => {
+    if (!staff || !conversationId || sending) return;
+    const uris = await pickChatImagesFromLibrary();
+    if (!uris.length) return;
+    setSending(true);
+    try {
+      const actor = {
+        kind: 'staff' as const,
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        conversationId,
+      };
+      const { conversationId: convId, sentMessages, failed } = await sendChatImageUris(actor, uris, t('photo'));
+      if (sentMessages.length) {
         const { notifyConversationRecipients } = await import('@/lib/notificationService');
         notifyConversationRecipients({
           conversationId: convId,
@@ -589,18 +801,53 @@ export default function StaffChatScreen() {
           body: t('staffChatPhotoSentBody'),
           data: { conversationId: convId, url: `/staff/chat/${convId}` },
         }).catch(() => {});
-        if (nextConversationId !== conversationId) {
-          router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
-          return;
-        }
-        const list = await staffGetMessages(nextConversationId, 50, undefined, staff.id);
-        setMessages(list);
+        setMessages((prev) =>
+          sentMessages.reduce((acc, m) => upsertIncomingChatMessage(acc, m, { ownSenderId: staff.id }), prev)
+        );
         listRef.current?.scrollToEnd({ animated: true });
       }
+      if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
-      const err = e as Error;
-      console.error('[StaffChat] Resim yükleme hatası:', err?.message, err?.stack);
-      Alert.alert(t('error'), err?.message ?? t('imageSendFailed'));
+      Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendImageFromCamera = async () => {
+    if (!staff || !conversationId || sending) return;
+    const granted = await ensureCameraPermission({
+      title: t('chatCameraPermissionTitle'),
+      message: t('chatCameraPermissionMessage'),
+      settingsMessage: t('chatCameraPermissionSettings'),
+    });
+    if (!granted) return;
+    const uri = await pickChatImageFromCamera();
+    if (!uri) return;
+    setSending(true);
+    try {
+      const actor = {
+        kind: 'staff' as const,
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        conversationId,
+      };
+      const { sentMessages, failed, conversationId: convId } = await sendChatImageUris(actor, [uri], t('photo'));
+      if (sentMessages[0]) {
+        const { notifyConversationRecipients } = await import('@/lib/notificationService');
+        notifyConversationRecipients({
+          conversationId: convId,
+          excludeStaffId: staff.id,
+          title: conversationName || t('notifNewMessage'),
+          body: t('staffChatPhotoSentBody'),
+          data: { conversationId: convId, url: `/staff/chat/${convId}` },
+        }).catch(() => {});
+        setMessages((prev) => upsertIncomingChatMessage(prev, sentMessages[0], { ownSenderId: staff.id }));
+        listRef.current?.scrollToEnd({ animated: true });
+      } else if (failed) Alert.alert(t('error'), t('imageSendFailed'));
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
     } finally {
       setSending(false);
     }
@@ -668,13 +915,93 @@ export default function StaffChatScreen() {
     }
   };
 
-  const showImageOptions = () => {
+  const videoBatchActive = getChatVideoBatchSummary(videoUploads).active;
+
+  useEffect(() => {
+    if (!conversationId) return;
+    const id = setInterval(() => {
+      expireStaleChatVideoUploadsForConversation(conversationId);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [conversationId]);
+
+  useEffect(() => {
+    const summary = getChatVideoBatchSummary(videoUploads);
+    if (!summary.active && summary.total > 0 && summary.failed === 0) {
+      const timer = setTimeout(() => {
+        if (conversationId) pruneDoneChatVideoUploads(conversationId);
+      }, 2800);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [videoUploads, conversationId]);
+
+  const sendVideoFromSource = async (source: 'camera' | 'library') => {
+    if (!staff || !conversationId || videoBatchActive) return;
+    const actor = {
+      kind: 'staff' as const,
+      staffId: staff.id,
+      staffName: staff.full_name || staff.email,
+      staffAvatar: staff.profile_image ?? null,
+      conversationId,
+    };
+    const handlers = createSessionChatVideoHandlers(conversationId, actor, {
+      setMessages,
+      onConversationId: (convId) => {
+        if (convId !== conversationId) {
+          router.replace({ pathname: '/staff/chat/[id]', params: { id: convId } });
+        }
+      },
+      onBatchReady: ({ conversationId: convId }) => {
+        void import('@/lib/notificationService').then(({ notifyConversationRecipients }) =>
+          notifyConversationRecipients({
+            conversationId: convId,
+            excludeStaffId: staff.id,
+            title: conversationName || t('notifNewMessage'),
+            body: t('staffChatVideoSentBody'),
+            data: { conversationId: convId, url: `/staff/chat/${convId}` },
+          })
+        );
+        listRef.current?.scrollToEnd({ animated: true });
+      },
+      onBatchComplete: ({ failed, lastError }) => {
+        if (failed > 0) {
+          Alert.alert(t('error'), lastError?.trim() || t('chatMediaPartialFail', { count: failed }));
+        }
+      },
+    });
+    try {
+      await sendChatVideoFromPickerWithSession(actor, source, handlers);
+      listRef.current?.scrollToEnd({ animated: true });
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('chatVideoSendFailed'));
+    }
+  };
+
+  const retryVideoUpload = (upload: ChatVideoUploadState) => {
+    if (!staff || !conversationId) return;
+    void retryChatVideoUploadWithSession(
+      {
+        kind: 'staff',
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        conversationId,
+      },
+      upload,
+      { setMessages }
+    );
+  };
+
+  const showAttachOptions = () => {
     Alert.alert(
-      t('sendPhotoTitle'),
+      t('chatAttachTitle'),
       undefined,
       [
-        { text: t('takePhoto'), onPress: () => sendImageFromSource('camera') },
-        { text: t('chooseFromGallery'), onPress: () => sendImageFromSource('library') },
+        { text: t('takePhoto'), onPress: () => void sendImageFromCamera() },
+        { text: t('chatPickMultiplePhotos'), onPress: () => void sendImagesFromLibrary() },
+        { text: t('chatPickMultipleVideos'), onPress: () => void sendVideoFromSource('library') },
+        { text: t('chatRecordVideo'), onPress: () => sendVideoFromSource('camera') },
         { text: t('cancel'), style: 'cancel' },
       ]
     );
@@ -738,23 +1065,45 @@ export default function StaffChatScreen() {
       >
         <FlatList
           ref={listRef}
-          data={messages}
-          keyExtractor={(item) => item.id}
+          data={chatListItems}
+          keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => { if (messages.length > 0) listRef.current?.scrollToEnd({ animated: false }); }}
           onLayout={Platform.OS === 'android' ? () => { if (messages.length > 0) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false })); } : undefined}
           renderItem={({ item }) => {
-            const isOwn = item.sender_id === staff?.id;
-            const bubbleColor = isOwn ? (myBubbleColor ?? BUBBLE_OTHER_DIRECT) : (isGroup ? getBubbleColorForSender(item.sender_id) : BUBBLE_OTHER_DIRECT);
+            const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
+            if (msg.message_type === 'screenshot_notice') {
+              return <ChatScreenshotNotice message={msg} />;
+            }
+            const isOwn = msg.sender_id === staff?.id;
+            const bubbleColor = isOwn ? (myBubbleColor ?? BUBBLE_OTHER_DIRECT) : (isGroup ? getBubbleColorForSender(msg.sender_id) : BUBBLE_OTHER_DIRECT);
+            const resolveVideoUpload = (m: Message) =>
+              videoUploads[m.id] ?? Object.values(videoUploads).find((s) => s.messageId === m.id);
             return (
               <MessageBubble
-                msg={item}
+                msg={msg}
                 isOwn={isOwn}
                 isGroup={isGroup}
+                imageAlbum={item.kind === 'image_album' ? item.messages : undefined}
+                videoAlbum={item.kind === 'video_album' ? item.messages : undefined}
+                videoUploads={videoUploads}
                 onImagePress={setFullscreenImageUri}
                 onDelete={handleDeleteMessage}
                 bubbleColor={bubbleColor}
+                videoUpload={resolveVideoUpload(msg)}
+                onVideoRetry={
+                  resolveVideoUpload(msg)?.phase === 'failed'
+                    ? () => {
+                        const st = resolveVideoUpload(msg);
+                        if (st) void retryVideoUpload(st);
+                      }
+                    : undefined
+                }
+                onVideoRetryForMessage={(m) => {
+                  const st = resolveVideoUpload(m);
+                  if (st?.phase === 'failed') void retryVideoUpload(st);
+                }}
               />
             );
           }}
@@ -763,7 +1112,7 @@ export default function StaffChatScreen() {
               <View style={styles.emptyIcon}>
                 <Ionicons name="chatbubble-outline" size={40} color={theme.colors.textMuted} />
               </View>
-              <Text style={styles.emptyTitle}>Henüz mesaj yok</Text>
+              <Text style={styles.emptyTitle}>{t('staffChatNoMessages')}</Text>
               <Text style={styles.emptyText}>
                 {isGroup ? t('staffChatEmptyGroupFirst') : t('staffChatEmptyDirectFirst')}
               </Text>
@@ -773,7 +1122,9 @@ export default function StaffChatScreen() {
         {typingNames.length > 0 ? (
           <View style={styles.typingRow}>
             {typingNames.length === 1 ? (
-              <Text style={styles.typingText} numberOfLines={1}>{typingNames[0]} yazıyor...</Text>
+              <Text style={styles.typingText} numberOfLines={1}>
+                {t('staffChatTypingOne', { name: typingNames[0] })}
+              </Text>
             ) : (
               <View style={styles.typingMultiRow}>
                 {typingNames.slice(0, 4).map((name) => (
@@ -786,14 +1137,15 @@ export default function StaffChatScreen() {
             )}
           </View>
         ) : null}
-        <View style={styles.inputRow}>
-          <TextInput
+        <ChatVideoBatchBar states={videoUploads} />
+        <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
+          <ChatMentionComposer
             style={styles.input}
-            placeholder={t('messageInputPlaceholder')}
+            placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('messageInputPlaceholder')}
             placeholderTextColor={theme.colors.textMuted}
             value={input}
-            onChangeText={(t) => {
-              setInput(t);
+            onChangeText={(next) => {
+              setInput(next);
               typingPresenceRef.current?.updateTyping(true);
               if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
               typingTimeoutRef.current = setTimeout(() => {
@@ -801,27 +1153,32 @@ export default function StaffChatScreen() {
                 typingTimeoutRef.current = null;
               }, 3000);
             }}
+            participants={mentionParticipants}
+            mentions={pendingMentions}
+            onMentionsChange={setPendingMentions}
+            enabled={mentionEnabled}
             multiline
             maxLength={2000}
             onSubmitEditing={send}
           />
-          <TouchableOpacity style={styles.mediaBtn} onPress={showImageOptions} disabled={sending} activeOpacity={0.7}>
-            <Ionicons name="camera-outline" size={20} color={theme.colors.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.mediaBtn} onPress={() => sendImageFromSource('library')} disabled={sending} activeOpacity={0.7}>
-            <Ionicons name="images-outline" size={20} color={theme.colors.textMuted} />
+          <TouchableOpacity style={styles.mediaBtn} onPress={showAttachOptions} disabled={sending} activeOpacity={0.7}>
+            <Ionicons name="add-circle-outline" size={22} color={theme.colors.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+            style={styles.mediaBtn}
+            onPress={() => sendVideoFromSource('library')}
+            disabled={videoBatchActive}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="videocam-outline" size={20} color={theme.colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
             onPress={send}
-            disabled={!input.trim() || sending}
+            disabled={!input.trim()}
             activeOpacity={0.85}
           >
-            {sending ? (
-              <ActivityIndicator size="small" color={theme.colors.white} />
-            ) : (
-              <Ionicons name="send" size={20} color={theme.colors.white} />
-            )}
+            <Ionicons name="send" size={20} color={theme.colors.white} />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -833,7 +1190,7 @@ export default function StaffChatScreen() {
           onPress={() => setShowGroupSettings(false)}
         >
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.bubbleColorModalBox}>
-            <Text style={styles.bubbleColorModalTitle}>Grup ayarları</Text>
+            <Text style={styles.bubbleColorModalTitle}>{t('staffChatGroupSettings')}</Text>
             <View style={styles.modalAvatarRow}>
               <TouchableOpacity
                 onPress={pickAvatarForGroup}
@@ -853,9 +1210,9 @@ export default function StaffChatScreen() {
                   </View>
                 ) : null}
               </TouchableOpacity>
-              <Text style={styles.modalAvatarHint}>Profil resmi</Text>
+              <Text style={styles.modalAvatarHint}>{t('staffChatProfilePhoto')}</Text>
             </View>
-            <Text style={styles.modalLabel}>Grup adı</Text>
+            <Text style={styles.modalLabel}>{t('staffChatGroupName')}</Text>
             <TextInput
               style={styles.modalInput}
               value={editGroupName}
@@ -879,7 +1236,7 @@ export default function StaffChatScreen() {
             </View>
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowGroupSettings(false)}>
-                <Text style={styles.modalCancelText}>İptal</Text>
+                <Text style={styles.modalCancelText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalSaveBtn, savingGroup && styles.modalSaveBtnDisabled]}
@@ -900,7 +1257,7 @@ export default function StaffChatScreen() {
       <Modal visible={showBubbleColorModal} transparent animationType="fade">
         <TouchableOpacity activeOpacity={1} style={styles.bubbleColorModalOverlay} onPress={() => setShowBubbleColorModal(false)}>
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.bubbleColorModalBox}>
-            <Text style={styles.bubbleColorModalTitle}>Mesaj balon renginiz</Text>
+            <Text style={styles.bubbleColorModalTitle}>{t('chatYourBubbleColorTitle')}</Text>
             <View style={styles.bubbleColorRow}>
               {BUBBLE_COLOR_OPTIONS.map((c) => (
                 <TouchableOpacity
@@ -911,24 +1268,13 @@ export default function StaffChatScreen() {
               ))}
             </View>
             <TouchableOpacity style={styles.bubbleColorModalClose} onPress={() => setShowBubbleColorModal(false)}>
-              <Text style={styles.bubbleColorModalCloseText}>Kapat</Text>
+              <Text style={styles.bubbleColorModalCloseText}>{t('close')}</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
 
-      <Modal visible={!!fullscreenImageUri} transparent animationType="fade">
-        <TouchableOpacity activeOpacity={1} style={styles.imageModalOverlay} onPress={() => setFullscreenImageUri(null)}>
-          <TouchableOpacity activeOpacity={1} style={[styles.imageModalContent, { maxWidth: winWidth, maxHeight: winHeight }]} onPress={() => {}}>
-            {fullscreenImageUri ? (
-              <CachedImage uri={fullscreenImageUri} style={[styles.imageModalImage, { width: winWidth, height: winHeight }]} contentFit="contain" />
-            ) : null}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.imageModalCloseBtn} onPress={() => setFullscreenImageUri(null)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Ionicons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      <ChatFullscreenImageModal uri={fullscreenImageUri} onClose={() => setFullscreenImageUri(null)} />
     </>
   );
 }
@@ -1091,28 +1437,24 @@ const styles = StyleSheet.create({
   readIcon: {
     marginLeft: 2,
   },
+  bubbleVideo: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+    ...Platform.select({
+      ios: { shadowOpacity: 0 },
+      android: { elevation: 0 },
+    }),
+  },
+  bubbleTimeVideo: {
+    color: theme.colors.textMuted,
+    marginTop: 4,
+  },
+  chatVideoWrap: { marginBottom: 0 },
   imageWrap: { marginTop: 2, width: 200, height: 200, borderRadius: 12, overflow: 'hidden' },
   imageWrapPlaceholder: { backgroundColor: theme.colors.borderLight },
   bubbleImage: { width: 200, height: 200, borderRadius: 12 },
-  imageModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageModalContent: { justifyContent: 'center', alignItems: 'center' },
-  imageModalImage: { maxWidth: '100%', maxHeight: '100%' },
-  imageModalCloseBtn: {
-    position: 'absolute',
-    top: 48,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   bubbleColorModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   bubbleColorModalBox: { backgroundColor: theme.colors.surface, borderRadius: 16, padding: 24, width: '100%', maxWidth: 320 },
   bubbleColorModalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 20 },
@@ -1234,7 +1576,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 36,
+    paddingBottom: 8,
     backgroundColor: theme.colors.surface,
     borderTopWidth: 1,
     borderTopColor: theme.colors.borderLight,

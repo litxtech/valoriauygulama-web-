@@ -2,23 +2,19 @@ import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessTransferTourManagement } from '@/lib/transferTourPermissions';
+import { StaffStackBackButton, STAFF_TABS_FALLBACK, buildStaffNestedStackOptions } from '@/lib/staffStackBack';
 
 export default function StaffTransferTourLayout() {
   const { t } = useTranslation();
   const staff = useAuthStore((s) => s.staff);
   const isMgmt = canAccessTransferTourManagement(staff);
   return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: '#fff' },
-        headerTintColor: '#1a1d21',
-        headerBackTitle: t('back'),
-      }}
-    >
+    <Stack screenOptions={buildStaffNestedStackOptions(t)}>
       <Stack.Screen
         name="index"
         options={{
           title: isMgmt ? t('transferTourAdminMenu') : t('transferTourNavTitle'),
+          headerLeft: () => <StaffStackBackButton fallback={STAFF_TABS_FALLBACK} />,
         }}
       />
       <Stack.Screen name="guest/[id]" options={{ title: t('transferTourNavTitle') }} />

@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/authStore';
+import { organizationKindLabel } from '@/lib/organizationKinds';
 
 type OrgRow = { id: string; name: string; slug: string; kind: string };
 
@@ -79,15 +81,20 @@ const APP_PERMISSIONS = [
   { key: 'satis_komisyon', label: 'Satış / komisyon' },
   { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeler' },
   { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesi' },
+  { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi oluşturma' },
+  { key: 'yemek_listesi_mutfak_onay', label: 'Mutfak günlük onayı' },
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
   { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri yönetimi' },
   { key: 'teknik_varliklar', label: 'Teknik QR (müdahale kaydı)' },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR salt okunur' },
+  { key: 'emanet_buluntu', label: 'Emanet / buluntu kaydı oluşturma' },
 ];
 
 export default function ApproveStaffScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, organizationId: organizationIdParam } = useLocalSearchParams<{ id: string; organizationId?: string }>();
   const router = useRouter();
+  const { staff: me } = useAuthStore();
+  const canPickAnyOrg = me?.app_permissions?.super_admin === true || me?.role === 'admin';
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [app, setApp] = useState<Application | null>(null);
@@ -110,10 +117,13 @@ export default function ApproveStaffScreen() {
     satis_komisyon: false,
     tum_sozlesmeler: false,
     yarin_oda_temizlik_listesi: false,
+    yemek_listesi_olustur: false,
+    yemek_listesi_mutfak_onay: false,
     kbs_mrz_scan: false,
     teknik_varlik_yonetimi: false,
     teknik_varliklar: false,
     teknik_varliklar_okuma: false,
+    emanet_buluntu: false,
   });
   const [organizations, setOrganizations] = useState<OrgRow[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
@@ -134,12 +144,24 @@ export default function ApproveStaffScreen() {
         if (cancelled) return;
         const rows = (data as OrgRow[]) ?? [];
         setOrganizations(rows);
-        if (rows.length) setOrganizationId((prev) => prev ?? rows[0].id);
+        if (!rows.length) return;
+        const fromRoute =
+          typeof organizationIdParam === 'string' && rows.some((o) => o.id === organizationIdParam)
+            ? organizationIdParam
+            : null;
+        const fromAdmin =
+          me?.organization_id && rows.some((o) => o.id === me.organization_id) ? me.organization_id : null;
+        const fallback = rows[0].id;
+        setOrganizationId((prev) => prev ?? fromRoute ?? fromAdmin ?? fallback);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [me?.organization_id, organizationIdParam]);
+
+  const organizationOptions = canPickAnyOrg
+    ? organizations
+    : organizations.filter((o) => o.id === me?.organization_id);
 
   useEffect(() => {
     if (!id) return;
@@ -251,17 +273,34 @@ export default function ApproveStaffScreen() {
 
       <Text style={styles.sectionTitle}>Atanacak bilgiler</Text>
       <Text style={styles.label}>İşletme (otel / tur ofisi) *</Text>
-      <View style={styles.chips}>
-        {organizations.map((o) => (
-          <TouchableOpacity
-            key={o.id}
-            style={[styles.chip, organizationId === o.id && styles.chipActive]}
-            onPress={() => setOrganizationId(o.id)}
-          >
-            <Text style={[styles.chipText, organizationId === o.id && styles.chipTextActive]}>{o.name}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {organizationId && organizationOptions.some((o) => o.id === organizationId) ? (
+        <View style={styles.orgSelectedBanner}>
+          <Text style={styles.orgSelectedLabel}>Atanacak işletme</Text>
+          <Text style={styles.orgSelectedName}>
+            {organizationOptions.find((o) => o.id === organizationId)?.name ??
+              organizations.find((o) => o.id === organizationId)?.name}
+          </Text>
+          <Text style={styles.orgSelectedHint}>
+            {organizationKindLabel(
+              organizationOptions.find((o) => o.id === organizationId)?.kind ??
+                organizations.find((o) => o.id === organizationId)?.kind
+            )}
+          </Text>
+        </View>
+      ) : null}
+      {canPickAnyOrg && organizationOptions.length > 1 ? (
+        <View style={styles.chips}>
+          {organizationOptions.map((o) => (
+            <TouchableOpacity
+              key={o.id}
+              style={[styles.chip, organizationId === o.id && styles.chipActive]}
+              onPress={() => setOrganizationId(o.id)}
+            >
+              <Text style={[styles.chipText, organizationId === o.id && styles.chipTextActive]}>{o.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
       <Text style={styles.label}>Sözleşme tipi</Text>
       <View style={styles.chips}>
         {CONTRACT_TYPES.map((c) => (
@@ -398,6 +437,17 @@ const styles = StyleSheet.create({
   },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  orgSelectedBanner: {
+    backgroundColor: '#ebf4ff',
+    borderWidth: 1,
+    borderColor: '#bee3f8',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  orgSelectedLabel: { fontSize: 12, fontWeight: '600', color: '#4a5568', marginBottom: 4 },
+  orgSelectedName: { fontSize: 17, fontWeight: '800', color: '#1a365d' },
+  orgSelectedHint: { fontSize: 12, color: '#4a5568', marginTop: 4 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#e2e8f0' },
   chipActive: { backgroundColor: '#1a365d' },

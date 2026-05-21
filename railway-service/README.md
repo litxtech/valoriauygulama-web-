@@ -1,19 +1,21 @@
-# KBS gateway (Node / Fastify)
+# KBS Ops API (`railway-service`)
 
-Üretimde **Hetzner VPS** üzerinde çalışan kanonik **KBS çıkış katmanı** (repo klasör adı tarihsel olarak `railway-service`).
+Mobil ve Supabase Edge’in konuştuğu **dış KBS API** (Fastify).
 
-- **Dinleme:** `PORT` (ör. **4000**), `0.0.0.0`
-- **Sağlık:** `GET /health` → `service: valoria-kbs-gateway`
-- **Edge köprüsü:** Mobil `supabase.functions.invoke('ops-proxy')` → Supabase secret `KBS_GATEWAY_URL` (örn. `http://178.104.12.20:4000`) + `KBS_GATEWAY_TOKEN` (`x-kbs-gateway-token`)
-- **İç KBS HTTP:** `GATEWAY_BASE_URL` + `GATEWAY_SHARED_SECRET` (SOAP/XML veya mevcut iç gateway)
-- **Gerçek KBS kimlikleri:** yalnızca bu sunucu ortamında (`KBS_CREDENTIAL_SECRET` vb.); mobil ve Supabase uygulama kodunda yok.
+## Üretim: Railway
 
-## Uçlar
+- **Root Directory:** `railway-service`
+- **Health:** `GET /health`
+- **Kurulum:** [`../deploy/RAILWAY_KURULUM.md`](../deploy/RAILWAY_KURULUM.md)
 
-- `POST /submissions/check-in` veya **`POST /kbs/check-in`**
-- `POST /submissions/check-out` veya **`POST /kbs/check-out`**
-- Diğer OPS yolları (odalar, izinler, …) mevcut modüllerde.
+`KBS_GATEWAY_URL` (Supabase) = bu servisin public URL’si (ör. `https://valoriahotel-production.up.railway.app`).
 
-Yerelde: `npm run dev` (klasör içinde) veya monorepo kökünden `npm run start:ops-api` (build sonrası). Gateway’i tek başına denemek: kökte `START_KBS_GATEWAY=1 npm start`.
+İç SOAP: `GATEWAY_BASE_URL` → Railway’de **kbs-core** (`kbs-gateway-service`) URL’si.
 
-PM2/systemd: `../deploy/GATEWAY_PM2.md`
+## Yerel
+
+```bash
+npm ci && npm run build && npm run dev
+```
+
+İki süreç birlikte (ops + core): repo kökünde `npm run build:kbs-stack`, sonra `deploy/GATEWAY_PM2.md` (yalnızca yerel).

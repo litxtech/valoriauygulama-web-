@@ -16,7 +16,9 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
+import { roomStatusLabel } from '@/lib/i18nLookup';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { shareContractPdf, type GuestForPdf } from '@/lib/contractPdf';
@@ -37,19 +39,14 @@ type AcceptanceRow = {
   signer_name?: string | null;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  available: 'Müsait',
-  occupied: 'Dolu',
-  cleaning: 'Temizlik',
-  maintenance: 'Bakım',
-  out_of_order: 'Kullanılmıyor',
-};
-
-function formatTry(n: number): string {
-  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 2 }).format(n);
+function formatTry(n: number, locale: string): string {
+  const loc = locale.startsWith('ar') ? 'ar-SA' : locale.startsWith('tr') ? 'tr-TR' : 'en-US';
+  return new Intl.NumberFormat(loc, { style: 'currency', currency: 'TRY', maximumFractionDigits: 2 }).format(n);
 }
 
 export default function StaffAcceptancesScreen() {
+  const { t, i18n } = useTranslation();
+  const dateLoc = (i18n.language || 'tr').split('-')[0];
   const staffId = useAuthStore((s) => s.staff?.id);
   const [rows, setRows] = useState<AcceptanceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,13 +188,13 @@ export default function StaffAcceptancesScreen() {
     if (!assignTarget) return;
     const roomId = selectedRoomId;
     if (!roomId) {
-      Alert.alert('Uyarı', 'Önce bir oda seçin.');
+      Alert.alert(t('warning'), t('staffAcceptWarnSelectRoom'));
       return;
     }
     const price = priceInput.trim() ? parseFloat(priceInput.replace(',', '.')) : null;
     const nights = nightsInput.trim() ? parseInt(nightsInput, 10) : null;
     if (price == null || price < 0 || !nights || nights < 1) {
-      Alert.alert('Hata', 'Geçerli bir fiyat ve en az 1 gün girin. Maliye raporu için zorunludur.');
+      Alert.alert(t('error'), t('staffAcceptErrPriceNights'));
       return;
     }
     const totalNet = price * nights;
@@ -250,7 +247,7 @@ export default function StaffAcceptancesScreen() {
       setNightsInput('');
       await load();
     } catch (e) {
-      Alert.alert('Hata', (e as Error)?.message ?? 'Oda atanamadı.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('staffAcceptErrAssign'));
     }
     setAssigning(false);
   };
@@ -261,13 +258,10 @@ export default function StaffAcceptancesScreen() {
 
   const clearRoom = async () => {
     if (!assignTarget) return;
-    Alert.alert(
-      'Oda atamasını kaldır',
-      'Misafir beklemede durumuna döner; maliye satırları ve check-in sıfırlanır. Emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Kaldır',
+    Alert.alert(t('staffAcceptRemoveTitle'), t('staffAcceptRemoveBody'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('staffAcceptRemoveBtn'),
           style: 'destructive',
           onPress: () => {
             void (async () => {
@@ -303,7 +297,7 @@ export default function StaffAcceptancesScreen() {
                 setNightsInput('');
                 await load();
               } catch (e) {
-                Alert.alert('Hata', (e as Error)?.message ?? 'Oda kaldırılamadı.');
+                Alert.alert(t('error'), (e as Error)?.message ?? t('staffAcceptErrRemove'));
               }
               setAssigning(false);
             })();
@@ -315,7 +309,7 @@ export default function StaffAcceptancesScreen() {
 
   const downloadPdf = async (item: AcceptanceRow) => {
     if (!item.guest_id) {
-      Alert.alert('Bilgi', 'Bu onay kaydında imzalayan misafir bilgisi yok; PDF oluşturulamaz.');
+      Alert.alert(t('info'), t('staffAcceptNoSignerPdf'));
       return;
     }
     setPdfLoadingId(item.id);
@@ -325,7 +319,7 @@ export default function StaffAcceptancesScreen() {
         .select('full_name, phone, email, id_number, verified_at, created_at, signature_data, rooms(room_number), contract_templates(title, content), total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
         .eq('id', item.guest_id)
         .single();
-      if (error || !guest) throw new Error(error?.message ?? 'Misafir bulunamadı.');
+      if (error || !guest) throw new Error(error?.message ?? t('staffAcceptErrGuest'));
       const forPdf: GuestForPdf = {
         ...guest,
         rooms: Array.isArray(guest.rooms) ? (guest.rooms[0] ?? null) : guest.rooms,
@@ -333,7 +327,7 @@ export default function StaffAcceptancesScreen() {
       };
       await shareContractPdf(forPdf);
     } catch (e) {
-      Alert.alert('Hata', (e as Error)?.message ?? 'PDF oluşturulamadı.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('staffAcceptErrPdf'));
     } finally {
       setPdfLoadingId(null);
     }
@@ -345,7 +339,7 @@ export default function StaffAcceptancesScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Yükleniyor...</Text>
+        <Text style={styles.loadingText}>{t('loading')}</Text>
       </View>
     );
   }
@@ -355,16 +349,16 @@ export default function StaffAcceptancesScreen() {
       <View style={styles.headerCard}>
         <Ionicons name="document-text" size={28} color={theme.colors.primary} />
         <View style={styles.headerTextWrap}>
-          <Text style={styles.headerTitle}>Sözleşme onayları – Oda ataması</Text>
-          <Text style={styles.headerSub}>Size atanan onaylara oda atayın. Misafir check-in sürecini tamamlar.</Text>
+          <Text style={styles.headerTitle}>{t('staffAcceptHeaderTitle')}</Text>
+          <Text style={styles.headerSub}>{t('staffAcceptHeaderSub')}</Text>
         </View>
       </View>
 
       {rows.length === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="folder-open-outline" size={48} color={theme.colors.textMuted} />
-          <Text style={styles.emptyTitle}>Size atanmış onay yok</Text>
-          <Text style={styles.emptySub}>Admin panelinden size sözleşme onayı atandığında burada listelenecektir.</Text>
+          <Text style={styles.emptyTitle}>{t('staffAcceptEmptyTitle')}</Text>
+          <Text style={styles.emptySub}>{t('staffAcceptEmptySub')}</Text>
         </View>
       ) : (
         <FlatList
@@ -380,23 +374,25 @@ export default function StaffAcceptancesScreen() {
                 <View style={styles.tokenBadge}>
                   <Text style={styles.tokenText}>{item.token.slice(0, 12)}…</Text>
                 </View>
-                <Text style={styles.date}>{new Date(item.accepted_at).toLocaleString('tr-TR')}</Text>
+                <Text style={styles.date}>{new Date(item.accepted_at).toLocaleString(dateLoc)}</Text>
               </View>
               {item.signer_name ? (
                 <View style={styles.signerRow}>
                   <Ionicons name="create-outline" size={14} color="#0f766e" />
-                  <Text style={styles.signerText}>İmzalayan: {item.signer_name}</Text>
+                  <Text style={styles.signerText}>{t('staffAcceptSigner', { name: item.signer_name })}</Text>
                 </View>
               ) : null}
               <View style={styles.roomRow}>
-                <Text style={styles.roomLabel}>Oda:</Text>
-                <Text style={styles.roomValue}>{item.room_number ?? '— Atanmadı'}</Text>
+                <Text style={styles.roomLabel}>{t('staffAcceptRoomLabel')}</Text>
+                <Text style={styles.roomValue}>{item.room_number ?? t('staffAcceptRoomUnassigned')}</Text>
               </View>
-              <Text style={styles.meta}>Dil: {item.contract_lang.toUpperCase()}</Text>
+              <Text style={styles.meta}>{t('staffAcceptLang', { lang: item.contract_lang.toUpperCase() })}</Text>
               <View style={styles.cardActions}>
                 <TouchableOpacity style={styles.assignRoomBtn} onPress={() => openRoomModal(item)}>
                   <Ionicons name="bed-outline" size={18} color="#fff" />
-                  <Text style={styles.assignRoomBtnText}>{item.room_id ? 'Oda değiştir' : 'Oda ata'}</Text>
+                  <Text style={styles.assignRoomBtnText}>
+                    {item.room_id ? t('staffAcceptChangeRoom') : t('staffAcceptAssignRoom')}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.pdfBtn, (pdfLoadingId === item.id || !item.guest_id) && styles.pdfBtnDisabled]}
@@ -429,14 +425,17 @@ export default function StaffAcceptancesScreen() {
             style={styles.modalContentWrap}
           >
             <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-              <Text style={styles.modalTitle}>Oda seçin – Fiyat ve gün (Maliye)</Text>
+              <Text style={styles.modalTitle}>{t('staffAcceptModalTitle')}</Text>
               {assignTarget && (
                 <Text style={styles.modalSub}>
-                  Onay: {assignTarget.token.slice(0, 12)}… · {new Date(assignTarget.accepted_at).toLocaleString('tr-TR')}
+                  {t('staffAcceptModalSub', {
+                    token: assignTarget.token.slice(0, 12),
+                    date: new Date(assignTarget.accepted_at).toLocaleString(dateLoc),
+                  })}
                 </Text>
               )}
               <TouchableOpacity style={styles.clearRoomBtn} onPress={() => clearRoom()} disabled={assigning}>
-                <Text style={styles.clearRoomText}>Oda atamasını kaldır</Text>
+                <Text style={styles.clearRoomText}>{t('staffAcceptClearRoom')}</Text>
               </TouchableOpacity>
               <FlatList
                 data={rooms}
@@ -448,55 +447,53 @@ export default function StaffAcceptancesScreen() {
                     onPress={() => selectRoomForAssign(item.id)}
                     disabled={assigning}
                   >
-                    <Text style={styles.roomItemNum}>Oda {item.room_number}</Text>
+                    <Text style={styles.roomItemNum}>{t('staffAcceptRoomItem', { number: item.room_number })}</Text>
                     {item.floor != null && (
-                      <Text style={styles.roomItemFloor}>Kat {item.floor}</Text>
+                      <Text style={styles.roomItemFloor}>{t('staffAcceptFloor', { floor: item.floor })}</Text>
                     )}
                     <View style={[styles.roomStatusBadge, { backgroundColor: item.status === 'available' ? theme.colors.success : theme.colors.textMuted }]}>
-                      <Text style={styles.roomStatusText}>{STATUS_LABELS[item.status] ?? item.status}</Text>
+                      <Text style={styles.roomStatusText}>{roomStatusLabel(item.status)}</Text>
                     </View>
                   </TouchableOpacity>
                 )}
               />
               {selectedRoomId && (
                 <View style={styles.priceForm}>
-                  <Text style={styles.priceManualHint}>
-                    Oda kartındaki liste fiyatı buraya otomatik yazılmaz. Konaklama bedelini siz girin.
-                  </Text>
-                  <Text style={styles.priceFormLabel}>Gece başı fiyat (₺)</Text>
+                  <Text style={styles.priceManualHint}>{t('staffAcceptPriceHint')}</Text>
+                  <Text style={styles.priceFormLabel}>{t('staffAcceptPricePerNight')}</Text>
                   <TextInput
                     style={styles.priceInput}
                     value={priceInput}
                     onChangeText={setPriceInput}
                     keyboardType="decimal-pad"
-                    placeholder="Örn. 1500"
+                    placeholder={t('staffAcceptPricePlaceholder')}
                   />
-                  <Text style={styles.priceFormLabel}>Kaç gün kalacak?</Text>
+                  <Text style={styles.priceFormLabel}>{t('staffAcceptNightsLabel')}</Text>
                   <TextInput
                     style={styles.priceInput}
                     value={nightsInput}
                     onChangeText={setNightsInput}
                     keyboardType="number-pad"
-                    placeholder="Örn. 3"
+                    placeholder={t('staffAcceptNightsPlaceholder')}
                   />
                   {stayPreview && (
                     <View style={styles.liveAmountCard}>
-                      <Text style={styles.liveAmountTitle}>Maliye özeti (canlı)</Text>
+                      <Text style={styles.liveAmountTitle}>{t('staffAcceptFinanceLive')}</Text>
                       <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>Net konaklama</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.totalNet)}</Text>
+                        <Text style={styles.liveAmountLabel}>{t('staffAcceptNetStay')}</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.totalNet, dateLoc)}</Text>
                       </View>
                       <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>KDV</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.vatAmount)}</Text>
+                        <Text style={styles.liveAmountLabel}>{t('staffAcceptVat')}</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.vatAmount, dateLoc)}</Text>
                       </View>
                       <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>Konaklama vergisi</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.accommodationTaxAmount)}</Text>
+                        <Text style={styles.liveAmountLabel}>{t('staffAcceptAccTax')}</Text>
+                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.accommodationTaxAmount, dateLoc)}</Text>
                       </View>
                       <View style={[styles.liveAmountRow, styles.liveAmountRowTotal]}>
-                        <Text style={styles.liveAmountLabelTotal}>Genel toplam (net + vergiler)</Text>
-                        <Text style={styles.liveAmountValueTotal}>{formatTry(stayPreview.grandTotal)}</Text>
+                        <Text style={styles.liveAmountLabelTotal}>{t('staffAcceptGrandTotal')}</Text>
+                        <Text style={styles.liveAmountValueTotal}>{formatTry(stayPreview.grandTotal, dateLoc)}</Text>
                       </View>
                     </View>
                   )}
@@ -508,7 +505,7 @@ export default function StaffAcceptancesScreen() {
                     {assigning ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Text style={styles.confirmAssignBtnText}>Odaya yerleştir</Text>
+                      <Text style={styles.confirmAssignBtnText}>{t('staffAcceptConfirmAssign')}</Text>
                     )}
                   </TouchableOpacity>
                 </View>
@@ -520,7 +517,7 @@ export default function StaffAcceptancesScreen() {
                 style={styles.modalClose}
                 onPress={() => !assigning && setRoomModalVisible(false)}
               >
-                <Text style={styles.modalCloseText}>Kapat</Text>
+                <Text style={styles.modalCloseText}>{t('close')}</Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>

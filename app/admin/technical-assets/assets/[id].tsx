@@ -10,6 +10,7 @@ import {
   TextInput,
   Platform,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import ViewShot from 'react-native-view-shot';
@@ -31,6 +32,8 @@ import {
   type TechLocationRow,
   type TechRelatedAsset,
 } from '@/lib/technicalAssets';
+import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 
 const STATUSES = ['active', 'inactive', 'maintenance', 'fault'] as const;
 const CRIT = ['low', 'medium', 'high', 'critical'] as const;
@@ -73,6 +76,9 @@ export default function AdminTechnicalAssetDetailScreen() {
   const [tagline, setTagline] = useState('');
   const [description, setDescription] = useState('');
   const [photosRaw, setPhotosRaw] = useState('');
+  const [usageGuideText, setUsageGuideText] = useState('');
+  const [usageGuideVideoUrl, setUsageGuideVideoUrl] = useState('');
+  const [usageVideoUploading, setUsageVideoUploading] = useState(false);
 
   const locFiltered = useMemo(() => locations.filter((l) => l.building_id === buildingId), [locations, buildingId]);
 
@@ -96,6 +102,8 @@ export default function AdminTechnicalAssetDetailScreen() {
     setDescription(row.description ?? '');
     const pu = row.photo_urls;
     setPhotosRaw(Array.isArray(pu) ? (pu as string[]).join('\n') : '');
+    setUsageGuideText(row.usage_guide_text ?? '');
+    setUsageGuideVideoUrl(row.usage_guide_video_url ?? '');
   }, []);
 
   const load = useCallback(async () => {
@@ -279,6 +287,8 @@ export default function AdminTechnicalAssetDetailScreen() {
           label_tagline: tagline.trim() || null,
           description: description.trim() || null,
           photo_urls: urls,
+          usage_guide_text: usageGuideText.trim() || null,
+          usage_guide_video_url: usageGuideVideoUrl.trim() || null,
           criticality,
           updated_by_staff_id: staff?.id ?? null,
         })
@@ -326,6 +336,36 @@ export default function AdminTechnicalAssetDetailScreen() {
         },
       },
     ]);
+  };
+
+  const pickUsageVideo = async () => {
+    const granted = await ensureMediaLibraryPermission({
+      title: 'Galeri',
+      message: 'Kullanım videosu seçmek için galeri erişimi gerekir.',
+      settingsMessage: 'Ayarlardan galeri iznini açın.',
+    });
+    if (!granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      quality: 0.85,
+      videoMaxDuration: 600,
+    });
+    if (result.canceled || !result.assets[0]?.uri) return;
+    setUsageVideoUploading(true);
+    try {
+      const org = orgId ?? 'org';
+      const { publicUrl } = await uploadUriToPublicBucket({
+        bucketId: 'tech-assets',
+        uri: result.assets[0].uri,
+        kind: 'video',
+        subfolder: `usage-guides/${org}/${asset?.id ?? 'draft'}`,
+      });
+      setUsageGuideVideoUrl(publicUrl);
+    } catch (e) {
+      Alert.alert('Hata', e instanceof Error ? e.message : 'Video yüklenemedi.');
+    } finally {
+      setUsageVideoUploading(false);
+    }
   };
 
   const deleteAsset = () => {
@@ -453,6 +493,46 @@ export default function AdminTechnicalAssetDetailScreen() {
       <Text style={styles.label}>Fotoğraf URL (satır / virgül)</Text>
       <TextInput style={[styles.input, styles.tall]} value={photosRaw} onChangeText={setPhotosRaw} multiline placeholderTextColor="#a0aec0" />
 
+      <Text style={[styles.section, { marginTop: 20 }]}>Nasıl kullanılır (personel)</Text>
+      <Text style={styles.label}>Talimat metni</Text>
+      <TextInput
+        style={[styles.input, styles.tall]}
+        value={usageGuideText}
+        onChangeText={setUsageGuideText}
+        multiline
+        placeholder="Örn. kazan açma, basınç kontrolü, güvenlik adımları…"
+        placeholderTextColor="#a0aec0"
+      />
+      <Text style={styles.label}>Eğitim videosu</Text>
+      {usageGuideVideoUrl.trim() ? (
+        <Text style={styles.videoUrl} numberOfLines={2}>
+          {usageGuideVideoUrl.trim()}
+        </Text>
+      ) : (
+        <Text style={styles.videoEmpty}>Henüz video yok.</Text>
+      )}
+      <View style={styles.videoActions}>
+        <TouchableOpacity
+          style={[styles.usageVideoBtn, usageVideoUploading && { opacity: 0.6 }]}
+          onPress={pickUsageVideo}
+          disabled={usageVideoUploading}
+        >
+          {usageVideoUploading ? (
+            <ActivityIndicator color="#1a365d" />
+          ) : (
+            <>
+              <Ionicons name="videocam-outline" size={20} color="#1a365d" />
+              <Text style={styles.btnSecondaryText}>Video seç / yükle</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        {usageGuideVideoUrl.trim() ? (
+          <TouchableOpacity style={styles.btnClearVideo} onPress={() => setUsageGuideVideoUrl('')}>
+            <Text style={styles.btnClearVideoText}>Videoyu kaldır</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
       <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.7 }]} onPress={saveFields} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Değişiklikleri kaydet</Text>}
       </TouchableOpacity>
@@ -539,6 +619,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   btnSecondaryText: { color: '#1a365d', fontWeight: '700' },
+  videoUrl: { fontSize: 11, color: '#475569', marginTop: 6, fontFamily: 'monospace' },
+  videoEmpty: { fontSize: 13, color: '#94a3b8', marginTop: 6, fontStyle: 'italic' },
+  videoActions: { marginTop: 10, gap: 8, alignSelf: 'stretch' },
+  usageVideoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#edf2f7',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignSelf: 'stretch',
+  },
+  btnClearVideo: { alignSelf: 'center', paddingVertical: 8 },
+  btnClearVideoText: { color: '#e53e3e', fontWeight: '700', fontSize: 14 },
   section: { alignSelf: 'stretch', marginTop: 20, fontWeight: '900', color: '#1a365d', fontSize: 16 },
   label: { alignSelf: 'stretch', marginTop: 12, fontSize: 12, fontWeight: '700', color: '#4a5568' },
   input: {

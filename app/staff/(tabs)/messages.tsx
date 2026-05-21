@@ -14,6 +14,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { staffDeleteConversation, staffListConversations, subscribeToConversationList, staffSetConversationMuted } from '@/lib/messagingApi';
@@ -22,7 +23,8 @@ import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { SwipeToDelete } from '@/components/SwipeToDelete';
 
-const ALL_STAFF_GROUP_NAME = 'Tüm Çalışanlar';
+/** Veritabanındaki sabit grup adı (karşılaştırma için) */
+const ALL_STAFF_GROUP_NAME_DB = 'Tüm Çalışanlar';
 let conversationListCache: ConversationWithMeta[] = [];
 let conversationListCacheUpdatedAt = 0;
 let conversationListDirty = false;
@@ -30,13 +32,14 @@ const LIST_CACHE_TTL_MS = 45_000;
 const MIN_LOAD_INTERVAL_MS = 2_500;
 const STAFF_MESSAGES_PERSIST_KEY = 'staff_messages_list_cache_v1';
 
-function formatTime(iso: string | null): string {
+function formatTime(iso: string | null, lang: string): string {
   if (!iso) return '';
   const d = new Date(iso);
   const now = new Date();
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-  if (d.getTime() > now.getTime() - 86400000 * 2) return 'Dün';
-  return d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+  const loc = lang.startsWith('ar') ? 'ar-SA' : lang.startsWith('tr') ? 'tr-TR' : 'en-US';
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+  if (d.getTime() > now.getTime() - 86400000 * 2) return i18n.t('staffMessagesYesterday');
+  return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' });
 }
 
 function ConversationRow({
@@ -52,11 +55,11 @@ function ConversationRow({
   onDelete?: () => void;
   staffId?: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const unread = item.unread_count ?? 0;
   const isGroup = item.type === 'group';
-  const isAllStaff = item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME;
-  const displayName = item.name || t('messages');
+  const isAllStaff = item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME_DB;
+  const displayName = isAllStaff ? t('staffAllStaffGroupName') : item.name || t('messages');
   const isMuted = item.is_muted ?? false;
 
   return (
@@ -96,7 +99,7 @@ function ConversationRow({
                 {displayName}
               </Text>
             </View>
-            <Text style={styles.rowTime}>{formatTime(item.last_message_at ?? null)}</Text>
+            <Text style={styles.rowTime}>{formatTime(item.last_message_at ?? null, i18n.language)}</Text>
           </View>
           <Text
             style={[styles.rowPreview, unread > 0 && styles.rowPreviewUnread]}
@@ -130,7 +133,7 @@ function ConversationRow({
 
 export default function StaffMessagesTabScreen() {
   const router = useRouter();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { staff } = useAuthStore();
   const { setUnreadCount } = useStaffUnreadMessagesStore();
   const [conversations, setConversations] = useState<ConversationWithMeta[]>(() => conversationListCache);
@@ -252,7 +255,7 @@ export default function StaffMessagesTabScreen() {
 
   if (!staff) return null;
 
-  const allStaffConv = conversations.find((c) => c.type === 'group' && c.name === ALL_STAFF_GROUP_NAME);
+  const allStaffConv = conversations.find((c) => c.type === 'group' && c.name === ALL_STAFF_GROUP_NAME_DB);
   const editableGroupConv = allStaffConv ?? conversations.find((c) => c.type === 'group') ?? null;
   const otherConvs = conversations.filter((c) => !(allStaffConv && c.id === allStaffConv.id));
   const sections: { title: string; data: ConversationWithMeta[] }[] = [];
@@ -350,7 +353,7 @@ export default function StaffMessagesTabScreen() {
               onPress={() => router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } })}
               onDelete={() => handleDeleteConversation(item)}
               onMutePress={
-                item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME && staff
+                item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME_DB && staff
                   ? async () => {
                       const next = !(item.is_muted ?? false);
                       await staffSetConversationMuted(item.id, staff.id, next);

@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation, usePathname } from 'expo-router';
+import { navigateAdminBack, ADMIN_TABS_FALLBACK } from '@/lib/adminStackBack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -145,6 +146,8 @@ function NavRowButton({
 
 export default function ContractsHubScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { staff } = useAuthStore();
   const { selectedOrganizationId } = useAdminOrgStore();
@@ -236,7 +239,7 @@ export default function ContractsHubScreen() {
         <View style={styles.headerRow}>
           <TouchableOpacity
             style={styles.headerBack}
-            onPress={() => router.back()}
+            onPress={() => navigateAdminBack(router, navigation, pathname, ADMIN_TABS_FALLBACK)}
             activeOpacity={0.8}
             accessibilityLabel="Geri"
           >

@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  AppState,
   ActivityIndicator,
   Platform,
   Modal,
@@ -20,14 +19,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/constants/theme';
-import { Camera, CameraView } from 'expo-camera';
-import { parseMrzToNormalized } from '@/lib/scanner/mrzParser';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { formatIsoDateTr } from '@/lib/scanner/mrzDates';
 import { formatIcao3ForTr } from '@/lib/scanner/mrzIssuingLabel';
-import { extractMrzFromLines } from '@/lib/scanner/mrzExtractLines';
-import { ocrLinesLookLikeMrz } from '@/lib/scanner/mrzPresence';
-import { MRZ_OCR_ENGINE_EXPO, ocrLinesFromImage } from '@/lib/scanner/ocrLinesFromImage';
+import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
+import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
+import { MrzVisionScanner, type MrzVisionUiState } from '@/components/mrz/MrzVisionScanner';
+import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
 import { canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
 import {
   MRZ_FRAME_BORDER,
@@ -35,7 +33,6 @@ import {
   frameKindFromGate,
   type MrzCameraFrameKind,
 } from '@/lib/scanner/mrzFrameTheme';
-import * as FileSystem from 'expo-file-system';
 import { apiPost } from '@/lib/kbsApi';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
 import { useTranslation } from 'react-i18next';
@@ -48,23 +45,6 @@ import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
 
 type UpsertData = { guestId: string; guestDocumentId: string; scanStatus: string };
 
-/** Düşük çözünürlüklü peek karesi: tam kayıt öncesi MRZ’nin gerçekten doğrulanabilir olduğunu doğrular. */
-function peekGateValidMrzFromLines(lines: string[]): { mrz: string; parsed: ParsedDocument } | null {
-  if (!ocrLinesLookLikeMrz(lines)) return null;
-  const mrz = extractMrzFromLines(lines);
-  if (!mrz?.trim()) return null;
-  const parsed = parseMrzToNormalized(mrz);
-  const gate = canSaveMrzDocument({ rawMrz: mrz, parsed });
-  if (!gate.allowed) return null;
-  return { mrz, parsed };
-}
-
-/** Otomatik tarama açıldıktan hemen sonra ilk kareyi geciktir (UI otursun). */
-const MRZ_ARM_FIRST_SAMPLE_DELAY_MS = 900;
-/** Otomatik mod: aynı MRZ hash’inin peş peşe doğrulanması (yanlış pozitif azaltma). */
-const MRZ_STREAK_AUTO_NEEDED = 2;
-const MRZ_STREAK_WINDOW_MS = 3800;
-const MRZ_LIVE_SAMPLE_MS = 920;
 const MRZ_CONFIDENCE_WARN_BELOW = 0.92;
 const MRZ_SOUND_PREF_KEY = 'kbs_mrz_scan_sound_enabled';
 
@@ -73,41 +53,25 @@ export default function KbsScanScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
-  type PermStatus = 'granted' | 'denied' | 'undetermined';
-  const [permStatus, setPermStatus] = useState<PermStatus | null>(null);
-  const [canAskAgain, setCanAskAgain] = useState(true);
-  const [requesting, setRequesting] = useState(false);
-
-  const cameraRef = useRef<CameraView | null>(null);
-  const [cameraMounted, setCameraMounted] = useState(false);
-  /** expo-camera: önizleme hazır (`onCameraReady`). takePictureAsync bundan önce çağrılmamalı. */
-  const [cameraReady, setCameraReady] = useState(false);
-  const cameraReadyRef = useRef(false);
-  /** Bu zaman damgasından önce otomatik kare örneklemesi yok (ms epoch). */
-  const autoCaptureAllowedAfterRef = useRef(0);
-  /** Kullanıcı «Taramayı başlat» demeden otomatik döngü çalışmaz. */
-  const [liveScanArmed, setLiveScanArmed] = useState(false);
-  const liveScanArmedRef = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [capturing, setCapturing] = useState(false);
+  const [visionUi, setVisionUi] = useState<MrzVisionUiState>({
+    frameKind: 'idle',
+    hint: '',
+    showSpinner: false,
+    successGlow: false,
+  });
   const [stepLabel, setStepLabel] = useState<string | null>(null);
-  const [frameKind, setFrameKind] = useState<MrzCameraFrameKind>('hunting');
+  const [frameKind, setFrameKind] = useState<MrzCameraFrameKind>('idle');
   const [detailOpen, setDetailOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const successPulse = useRef(new Animated.Value(0)).current;
 
-  const inFlightRef = useRef(false);
   const frameKindRef = useRef(frameKind);
-  const mrzStreakRef = useRef(0);
-  const lastStreakHashRef = useRef<string | null>(null);
-  const lastStreakTsRef = useRef(0);
   const busyRef = useRef(false);
   const pendingSaveRef = useRef<{
     parsed: ParsedDocument;
     mrzLine: string;
   } | null>(null);
-  const ocrErrAlertRef = useRef(false);
-  const camErrAlertRef = useRef(false);
 
   const [pendingSave, setPendingSave] = useState<{
     parsed: ParsedDocument;
@@ -141,10 +105,8 @@ export default function KbsScanScreen() {
   const [editExpiryDate, setEditExpiryDate] = useState('');
   const [editNationality, setEditNationality] = useState('');
   const successBeepVariantRef = useRef(0);
-  /** Karanlık ortam: MRZ için flaş (varsayılan açık; üst bardan kapatılabilir). */
-  const [torchEnabled, setTorchEnabled] = useState(true);
-  /** Ardışık peek’te MRZ doğrulandı; tam çekimden hemen önce kullanıcıya gösterilir. */
-  const [mrzDetectWarmup, setMrzDetectWarmup] = useState(false);
+  /** Flaş varsayılan kapalı; üst bardaki düğmeyle açılır. */
+  const [torchEnabled, setTorchEnabled] = useState(false);
 
   const staff = useAuthStore((s) => s.staff);
   const allowedMrz = canStaffUseMrzScan(staff);
@@ -178,56 +140,9 @@ export default function KbsScanScreen() {
     }
   }, [staff, router]);
 
-  const refreshPermission = useCallback(async () => {
-    try {
-      const p = await Camera.getCameraPermissionsAsync();
-      setPermStatus(p.status as PermStatus);
-      setCanAskAgain(p.canAskAgain ?? true);
-    } catch {
-      setPermStatus('undetermined');
-      setCanAskAgain(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshPermission();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refreshPermission();
-    });
-    return () => sub.remove();
-  }, [refreshPermission]);
-
-  useEffect(() => {
-    if (permStatus !== 'granted') {
-      setCameraMounted(false);
-      return;
-    }
-    const delay = Platform.OS === 'android' ? 680 : 160;
-    const mountTimer = setTimeout(() => setCameraMounted(true), delay);
-    return () => clearTimeout(mountTimer);
-  }, [permStatus]);
-
-  useEffect(() => {
-    if (!cameraMounted) {
-      setCameraReady(false);
-      cameraReadyRef.current = false;
-      autoCaptureAllowedAfterRef.current = 0;
-      setMrzDetectWarmup(false);
-      setLiveScanArmed(false);
-      liveScanArmedRef.current = false;
-    }
-  }, [cameraMounted]);
-
-  useEffect(() => {
-    cameraReadyRef.current = cameraReady;
-  }, [cameraReady]);
-
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
-  useEffect(() => {
-    liveScanArmedRef.current = liveScanArmed;
-  }, [liveScanArmed]);
   useEffect(() => {
     frameKindRef.current = frameKind;
   }, [frameKind]);
@@ -267,19 +182,6 @@ export default function KbsScanScreen() {
     return () => clearTimeout(id);
   }, [frameKind]);
 
-  const handleRequestPermission = useCallback(async () => {
-    setRequesting(true);
-    try {
-      const result = await Camera.requestCameraPermissionsAsync();
-      setPermStatus(result.status as PermStatus);
-      setCanAskAgain(result.canAskAgain ?? true);
-    } catch {
-      setPermStatus('undetermined');
-    } finally {
-      setRequesting(false);
-    }
-  }, []);
-
   const buildMergedParsed = useCallback(
     (ps: { parsed: ParsedDocument; mrzLine: string }): ParsedDocument => {
       const p = ps.parsed;
@@ -306,164 +208,49 @@ export default function KbsScanScreen() {
     [editFirstName, editLastName, editDocNumber, editBirthDate, editExpiryDate, editNationality]
   );
 
-  /**
-   * Canlı önizleme üzerinden tek kare örneklenir → OCR → MRZ doğrulama.
-   * expo-camera kısıtı: ham piksel buffer’ı yok; kare diske yazılmadan hemen silinir (galeri yok).
-   */
-  const runLiveMrzSample = useCallback(
-    async (opts?: { manual?: boolean }) => {
-      if (inFlightRef.current) return;
-      if (!cameraMounted) return;
-      if (!cameraReadyRef.current) return;
-      if (pendingSaveRef.current) return;
-      if (busyRef.current) return;
+  const onMrzLockedRef = useRef<(payload: { mrz: string; parsed: ParsedDocument }) => void>(() => {});
 
-      const manual = opts?.manual === true;
-      if (!manual && !liveScanArmedRef.current) return;
-      if (!manual && Date.now() < autoCaptureAllowedAfterRef.current) return;
-
-      setUpsertResult(null);
-      inFlightRef.current = true;
-      setCapturing(true);
-      setFrameKind('reading');
-      setStepLabel(manual ? 'MRZ analizi…' : t('kbsMrzScanBusy'));
-
-      let sampleUri: string | null = null;
-      try {
-        const camAny = cameraRef.current as any;
-        if (!camAny?.takePictureAsync) {
-          if (!camErrAlertRef.current) {
-            camErrAlertRef.current = true;
-            Alert.alert(t('kbsCameraAlertTitle'), t('kbsPhotoModeUnavailable'));
-          }
-          setFrameKind('idle');
-          return;
-        }
-
-        const q = torchEnabled ? 0.87 : manual ? 0.86 : 0.8;
-        const photo = await camAny.takePictureAsync({ quality: q, skipProcessing: true });
-        sampleUri = (photo?.uri as string | undefined) ?? null;
-        if (!sampleUri) {
-          setFrameKind(manual ? 'no_mrz' : 'hunting');
-          return;
-        }
-
-        const { lines } = await ocrLinesFromImage(sampleUri);
-        setLastOcrPreview(`OCR | ${lines.slice(0, 10).join(' | ') || '—'}`);
-
-        const gated = peekGateValidMrzFromLines(lines);
-        if (!gated) {
-          mrzStreakRef.current = 0;
-          lastStreakHashRef.current = null;
-          lastStreakTsRef.current = 0;
-          setMrzDetectWarmup(false);
-          setLastMrz(null);
-          setLastParsed(null);
-          setFrameKind(manual ? 'no_mrz' : 'hunting');
-          return;
-        }
-
-        const { mrz, parsed: preParsed } = gated;
-        let streakOk = manual;
-        if (!manual) {
-          const h = gated.mrz.trim();
-          const now = Date.now();
-          if (lastStreakHashRef.current !== h || now - lastStreakTsRef.current > MRZ_STREAK_WINDOW_MS) {
-            mrzStreakRef.current = 1;
-            lastStreakHashRef.current = h;
-            lastStreakTsRef.current = now;
-          } else {
-            mrzStreakRef.current += 1;
-          }
-          if (mrzStreakRef.current >= 1 && mrzStreakRef.current < MRZ_STREAK_AUTO_NEEDED) {
-            setMrzDetectWarmup(true);
-          } else {
-            setMrzDetectWarmup(false);
-          }
-          streakOk = mrzStreakRef.current >= MRZ_STREAK_AUTO_NEEDED;
-        }
-
-        if (!streakOk) {
-          setFrameKind('hunting');
-          return;
-        }
-
-        mrzStreakRef.current = 0;
-        lastStreakHashRef.current = null;
-        lastStreakTsRef.current = 0;
-        setMrzDetectWarmup(false);
-
-        if (mrz === lastCommittedMrzRef.current) {
-          Alert.alert(t('kbsSameDocumentTitle'), t('kbsSameDocumentMessage'));
-          setFrameKind('hunting');
-          return;
-        }
-
-        const fp = fingerprintFromMrzQueued({
-          mrzLine: mrz,
-          documentNumber: preParsed.documentNumber,
-          birthDate: preParsed.birthDate,
-          nationalityCode: preParsed.nationalityCode,
-          firstName: preParsed.firstName,
-          lastName: preParsed.lastName,
-        });
-        if (hasQueuedConflict(fp)) {
-          Alert.alert('Zaten listede', 'Bu belge bu MRZ oturumunda zaten sıraya alınmış.');
-          setFrameKind('hunting');
-          return;
-        }
-
-        setLastMrz(mrz);
-        setLastParsed(preParsed);
-
-        setPendingSave({ parsed: preParsed, mrzLine: mrz });
-        setFrameKind('ready_save');
-
-        const v = successBeepVariantRef.current;
-        successBeepVariantRef.current = v + 1;
-        void playMrzReadSuccessBeep(v, soundEnabled);
-        triggerMrzSuccessHaptic(v, true);
-        successPulse.setValue(0);
-        Animated.sequence([
-          Animated.timing(successPulse, { toValue: 1, duration: 140, useNativeDriver: true }),
-          Animated.timing(successPulse, { toValue: 0, duration: 520, useNativeDriver: true }),
-        ]).start();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg === 'OCR_NOT_SUPPORTED' || msg.includes('OCR_NOT_SUPPORTED')) {
-          if (!ocrErrAlertRef.current) {
-            ocrErrAlertRef.current = true;
-            Alert.alert(t('scanErrorTitle'), t('ocrNotSupportedOnDevice'));
-          }
-          setFrameKind('idle');
-          return;
-        }
-        setFrameKind(manual ? 'suspect_ocr' : 'hunting');
-      } finally {
-        if (sampleUri) {
-          try {
-            await FileSystem.deleteAsync(sampleUri, { idempotent: true });
-          } catch {
-            /* ignore */
-          }
-        }
-        inFlightRef.current = false;
-        setCapturing(false);
-        setStepLabel(null);
-      }
-    },
-    [cameraMounted, t, torchEnabled, soundEnabled, hasQueuedConflict, successPulse]
-  );
+  const visionScanEnabled = !pendingSave && !busy;
 
   useEffect(() => {
-    if (!cameraMounted || !cameraReady || permStatus !== 'granted') return undefined;
-    if (pendingSave) return undefined;
-    if (!liveScanArmed) return undefined;
-    const id = setInterval(() => {
-      void runLiveMrzSample();
-    }, MRZ_LIVE_SAMPLE_MS);
-    return () => clearInterval(id);
-  }, [cameraMounted, cameraReady, permStatus, pendingSave, liveScanArmed, runLiveMrzSample]);
+    onMrzLockedRef.current = ({ mrz, parsed: preParsed }) => {
+      if (pendingSaveRef.current) return;
+      setUpsertResult(null);
+
+      if (mrz === lastCommittedMrzRef.current) {
+        Alert.alert(t('kbsSameDocumentTitle'), t('kbsSameDocumentMessage'));
+        return;
+      }
+
+      const fp = fingerprintFromMrzQueued({
+        mrzLine: mrz,
+        documentNumber: preParsed.documentNumber,
+        birthDate: preParsed.birthDate,
+        nationalityCode: preParsed.nationalityCode,
+        firstName: preParsed.firstName,
+        lastName: preParsed.lastName,
+      });
+      if (hasQueuedConflict(fp)) {
+        Alert.alert('Zaten listede', 'Bu belge bu MRZ oturumunda zaten sıraya alınmış.');
+        return;
+      }
+
+      setLastMrz(mrz);
+      setLastParsed(preParsed);
+      setPendingSave({ parsed: preParsed, mrzLine: mrz });
+      setFrameKind('ready_save');
+
+      const v = successBeepVariantRef.current;
+      successBeepVariantRef.current = v + 1;
+      void playMrzReadSuccessBeep(v, soundEnabled);
+      triggerMrzSuccessHaptic(v, true);
+      successPulse.setValue(0);
+      Animated.sequence([
+        Animated.timing(successPulse, { toValue: 1, duration: 140, useNativeDriver: true }),
+        Animated.timing(successPulse, { toValue: 0, duration: 520, useNativeDriver: true }),
+      ]).start();
+    };
+  }, [t, soundEnabled, hasQueuedConflict, successPulse]);
 
   const buildUpsertPayload = useCallback(
     (ps: { parsed: ParsedDocument; mrzLine: string }, deferReady: boolean) => {
@@ -473,7 +260,7 @@ export default function KbsScanScreen() {
         parsed: merged,
         scanConfidence: merged.confidence,
         rawMrz: merged.rawMrz,
-        ocrEngine: MRZ_OCR_ENGINE_EXPO,
+        ocrEngine: MRZ_OCR_ENGINE_VISION_MLKIT,
         deferReady,
         kbsPersonKind,
         usageKind,
@@ -509,7 +296,7 @@ export default function KbsScanScreen() {
           scanConfidence: merged.confidence,
           rawMrz: merged.rawMrz,
           arrivalGroupId: null,
-          ocrEngine: MRZ_OCR_ENGINE_EXPO,
+          ocrEngine: MRZ_OCR_ENGINE_VISION_MLKIT,
           deferReady,
           kbsPersonKind,
           usageKind,
@@ -526,8 +313,6 @@ export default function KbsScanScreen() {
           setPendingSave(null);
           setUpsertResult(local.data);
           setFrameKind('success');
-          setLiveScanArmed(false);
-          liveScanArmedRef.current = false;
           if (deferReady) {
             bumpQueued();
             registerQueuedFingerprint(
@@ -561,8 +346,6 @@ export default function KbsScanScreen() {
         setPendingSave(null);
         setUpsertResult(res.data);
         setFrameKind('success');
-        setLiveScanArmed(false);
-        liveScanArmedRef.current = false;
         if (deferReady) {
           bumpQueued();
           registerQueuedFingerprint(
@@ -610,10 +393,7 @@ export default function KbsScanScreen() {
     const ok = await savePendingToServer(true);
     if (ok) {
       setUpsertResult(null);
-      setFrameKind('hunting');
-      setLiveScanArmed(true);
-      liveScanArmedRef.current = true;
-      autoCaptureAllowedAfterRef.current = Date.now() + MRZ_ARM_FIRST_SAMPLE_DELAY_MS;
+      setFrameKind('idle');
     }
   }, [savePendingToServer]);
 
@@ -628,40 +408,12 @@ export default function KbsScanScreen() {
     await savePendingToServer(false);
   }, [savePendingToServer]);
 
-  const armLiveScan = useCallback(() => {
-    setLiveScanArmed(true);
-    liveScanArmedRef.current = true;
-    autoCaptureAllowedAfterRef.current = Date.now() + MRZ_ARM_FIRST_SAMPLE_DELAY_MS;
-    setUpsertResult(null);
-    setFrameKind('hunting');
-  }, []);
-
-  const disarmLiveScan = useCallback(() => {
-    setLiveScanArmed(false);
-    liveScanArmedRef.current = false;
-    mrzStreakRef.current = 0;
-    lastStreakHashRef.current = null;
-    lastStreakTsRef.current = 0;
-    setMrzDetectWarmup(false);
-    setFrameKind('hunting');
-  }, []);
-
+  const overlayFrameKind = pendingSave ? frameKind : visionUi.frameKind;
   const framePillText = useMemo(() => {
-    if (frameKind === 'reading') {
-      return stepLabel || t('kbsMrzScanBusy');
-    }
-    if (frameKind === 'ready_save') {
-      return 'MRZ okundu. Bilgileri kontrol edin.';
-    }
-    if (frameKind === 'hunting') {
-      if (capturing) return t('kbsMrzScanBusy');
-      if (!liveScanArmed) return 'Otomatik tarama kapalı. «Taramayı başlat» veya tek kare.';
-      if (mrzDetectWarmup) return 'MRZ aranıyor…';
-      return 'Belgeyi MRZ alanı görünecek şekilde hizalayın.';
-    }
+    if (pendingSave) return t('kbsMrzFrameReadySave');
+    if (stepLabel) return stepLabel;
+    if (visionUi.hint) return visionUi.hint;
     switch (frameKind) {
-      case 'idle':
-        return t('kbsMrzScanAlignPassportIdMrz');
       case 'no_mrz':
         return t('kbsMrzScanReadFailedHold');
       case 'suspect_ocr':
@@ -671,9 +423,9 @@ export default function KbsScanScreen() {
       case 'success':
         return t('kbsMrzFrameSuccess');
       default:
-        return t('kbsMrzScanAlignPassportIdMrz');
+        return t('kbsMrzFrameAutoHunting');
     }
-  }, [frameKind, stepLabel, t, mrzDetectWarmup, capturing, liveScanArmed]);
+  }, [pendingSave, frameKind, stepLabel, visionUi.hint, t]);
 
   const fmt = (v: string | null | undefined) => (v != null && String(v).length > 0 ? String(v) : '—');
 
@@ -718,14 +470,8 @@ export default function KbsScanScreen() {
   );
 
   const discardPending = useCallback(() => {
-    mrzStreakRef.current = 0;
-    lastStreakHashRef.current = null;
-    lastStreakTsRef.current = 0;
-    setMrzDetectWarmup(false);
     setPendingSave(null);
-    setFrameKind('hunting');
-    setLiveScanArmed(false);
-    liveScanArmedRef.current = false;
+    setFrameKind('idle');
   }, []);
 
   if (!allowedMrz) {
@@ -736,70 +482,35 @@ export default function KbsScanScreen() {
     );
   }
 
-  if (permStatus === null) {
+  if (!isMrzVisionScannerAvailable()) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="small" color={theme.colors.primary} />
-        <Text style={styles.message}>Kamera izni kontrol ediliyor...</Text>
+      <View style={styles.root}>
+        <MrzNativeBuildRequired />
       </View>
     );
   }
 
-  if (permStatus !== 'granted') {
-    return (
-      <View style={styles.centered}>
-        <View style={styles.permCard}>
-          <Text style={styles.permTitle}>MRZ Tarama</Text>
-          <Text style={styles.permSub}>Pasaport/ID MRZ okumak için kamera izni gerekiyor.</Text>
-          <TouchableOpacity
-            style={[styles.permBtn, requesting && { opacity: 0.75 }]}
-            onPress={canAskAgain ? handleRequestPermission : () => Camera.requestCameraPermissionsAsync()}
-            disabled={requesting}
-            activeOpacity={0.85}
-          >
-            {requesting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.permBtnText}>{canAskAgain ? 'Devam' : 'Ayarları aç'}</Text>}
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  const pillBg = MRZ_FRAME_PILL_BG[frameKind];
-
-  const shutterDisabled = capturing || busy || !!pendingSave || !cameraMounted || !cameraReady;
+  const pillBg = MRZ_FRAME_PILL_BG[overlayFrameKind];
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
 
-      {!cameraMounted ? (
-        <View style={[styles.centered, styles.rootCameraBg]}>
-          <Text style={styles.messageLight}>Kamera hazırlanıyor...</Text>
-        </View>
+      {!pendingSave ? (
+        <MrzVisionScanner
+          enabled={visionScanEnabled}
+          torchEnabled={torchEnabled}
+          onUiStateChange={setVisionUi}
+          onLocked={(payload) => onMrzLockedRef.current(payload)}
+          onOcrPreview={setLastOcrPreview}
+        />
       ) : (
-        <>
-          <CameraView
-            ref={(r) => {
-              cameraRef.current = r;
-            }}
-            style={StyleSheet.absoluteFillObject}
-            facing="back"
-            enableTorch={torchEnabled}
-            onCameraReady={() => {
-              setCameraReady(true);
-              cameraReadyRef.current = true;
-            }}
-            onMountError={() => {
-              setCameraReady(false);
-              cameraReadyRef.current = false;
-              autoCaptureAllowedAfterRef.current = 0;
-            }}
-          />
-          <View style={styles.vignette} pointerEvents="none" />
-        </>
+        <View style={[StyleSheet.absoluteFillObject, styles.contentPageBg]} />
       )}
 
       <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+        {!pendingSave ? (
+        <>
         <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
           <Pressable
             onPress={() => router.back()}
@@ -874,73 +585,32 @@ export default function KbsScanScreen() {
               style={[
                 styles.mrzFrame,
                 {
-                  borderColor: MRZ_FRAME_BORDER[frameKind],
+                  borderColor: MRZ_FRAME_BORDER[overlayFrameKind],
                   borderWidth:
-                    frameKind === 'success' || frameKind === 'reading' || frameKind === 'ready_save' ? 3.5 : 3,
+                    overlayFrameKind === 'success' ||
+                    overlayFrameKind === 'reading' ||
+                    overlayFrameKind === 'signal' ||
+                    overlayFrameKind === 'ready_save'
+                      ? 3.5
+                      : 3,
                 },
               ]}
             />
           </View>
-          <Text style={styles.frameHint}>
-            {pendingSave
-              ? 'Bilgileri kontrol edin.'
-              : liveScanArmed
-                ? 'Belgeyi MRZ alanı görünecek şekilde hizalayın.'
-                : 'Hizalayın; otomatik kare yok. İsterseniz «Taramayı başlat» veya tek kare.'}
-          </Text>
+          {!pendingSave ? (
+            <Text style={styles.frameHint}>{t('kbsScanFrameHintAuto')}</Text>
+          ) : null}
         </View>
 
         <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
           <View style={[styles.statusPill, { backgroundColor: pillBg }]}>
-            {frameKind === 'reading' || capturing ? (
+            {visionUi.showSpinner || (busy && stepLabel) ? (
               <ActivityIndicator size="small" color="#fff" style={styles.pillSpinner} />
             ) : null}
             <Text style={styles.statusPillText} numberOfLines={3}>
               {framePillText}
             </Text>
           </View>
-
-          {!pendingSave ? (
-            <View style={styles.autoCol}>
-              {!liveScanArmed ? (
-                <TouchableOpacity
-                  style={[styles.armScanBtn, (capturing || busy || !cameraReady) && { opacity: 0.55 }]}
-                  onPress={armLiveScan}
-                  disabled={capturing || busy || !cameraReady}
-                  activeOpacity={0.9}
-                >
-                  <Ionicons name="scan-outline" size={22} color="#fff" />
-                  <Text style={styles.armScanBtnText}>Taramayı başlat</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity style={styles.disarmBtn} onPress={disarmLiveScan} activeOpacity={0.85}>
-                  <Text style={styles.disarmBtnText}>Taramayı durdur</Text>
-                </TouchableOpacity>
-              )}
-              <View style={styles.autoRow}>
-                <Text style={styles.autoHint} numberOfLines={5}>
-                  {liveScanArmed
-                    ? 'MRZ aranıyor… İki kez üst üste doğrulanınca okuma kilitlenir. İsterseniz tek kare de deneyin.'
-                    : 'Önce hizalayın; otomatik kare yok. Tek kare ile anında deneme veya taramayı başlatın.'}
-                </Text>
-                <Pressable
-                  onPress={() => void runLiveMrzSample({ manual: true })}
-                  disabled={shutterDisabled}
-                  style={({ pressed }) => [
-                    styles.manualFab,
-                    shutterDisabled && styles.manualFabDisabled,
-                    pressed && !shutterDisabled && { opacity: 0.88 },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Tek kare MRZ"
-                >
-                  {capturing ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={22} color="#fff" />}
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <Text style={styles.reviewMiniHint}>Aşağıdaki karttan bilgileri onaylayın.</Text>
-          )}
 
           {upsertResult && !pendingSave ? (
             <View style={styles.successDock}>
@@ -977,12 +647,13 @@ export default function KbsScanScreen() {
             </View>
           ) : null}
         </View>
+        </>
+        ) : null}
       </View>
 
       <Modal
         visible={!!pendingSave}
         animationType="slide"
-        transparent
         onRequestClose={() => {
           if (busy) return;
           Alert.alert('İptal', 'Okumayı iptal etmek istiyor musunuz?', [
@@ -991,12 +662,13 @@ export default function KbsScanScreen() {
           ]);
         }}
       >
-        <View style={styles.reviewOverlay}>
-          <View style={[styles.reviewSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={[styles.reviewOverlay, styles.reviewOverlaySolid]}>
+          <View style={[styles.reviewSheet, styles.reviewSheetFull, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <View style={styles.reviewGrab} />
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.reviewTitle}>MRZ başarıyla okundu</Text>
-              <Text style={styles.reviewSubtitle}>Bilgileri kontrol edin. Listeye eklemeden KBS’ye gönderilmez.</Text>
+              <Text style={styles.reviewTitle}>{t('kbsMrzContentPageTitle')}</Text>
+              <Text style={styles.reviewSubtitle}>{t('kbsMrzContentPageSubtitle')}</Text>
+              {pendingSave ? renderFieldsBlock(pendingSave.parsed) : null}
               {pendingSave &&
               pendingSave.parsed.confidence != null &&
               pendingSave.parsed.confidence < MRZ_CONFIDENCE_WARN_BELOW ? (
@@ -1004,7 +676,7 @@ export default function KbsScanScreen() {
                   Düşük güven skoru ({pendingSave.parsed.confidence.toFixed(2)}). Alanları MRZ ile karşılaştırın.
                 </Text>
               ) : null}
-              <Text style={styles.reviewSection}>Kimlik (MRZ)</Text>
+              <Text style={styles.reviewSection}>Kimlik (düzenlenebilir)</Text>
               <Text style={styles.reviewLabel}>Ad</Text>
               <TextInput
                 value={editFirstName}
@@ -1145,10 +817,7 @@ export default function KbsScanScreen() {
           </Pressable>
         </View>
         <ScrollView style={styles.modalBody} contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}>
-          <Text style={styles.help}>
-            MRZ, kamera önizlemesinden periyodik kare örneklenerek okunur; kare dosyası galeriye eklenmez ve işlem sonunda
-            silinmeye çalışılır. Sunucuya yalnızca MRZ metni ve onayladığınız form alanları gider.
-          </Text>
+          <Text style={styles.help}>{t('kbsMrzLiveScanHelp')}</Text>
           {lastOcrPreview ? <Text style={styles.muted}>Son OCR satırları: {lastOcrPreview}</Text> : null}
           {lastParsed ? (
             renderFieldsBlock(lastParsed)
@@ -1185,6 +854,14 @@ const rowStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
   rootCameraBg: { backgroundColor: '#000' },
+  contentPageBg: { backgroundColor: theme.colors.backgroundSecondary },
+  liveHint: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 4,
+  },
   vignette: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.22)',
@@ -1257,6 +934,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
+  reviewOverlaySolid: {
+    backgroundColor: theme.colors.backgroundSecondary,
+    justifyContent: 'flex-start',
+  },
   reviewSheet: {
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20,
@@ -1264,6 +945,12 @@ const styles = StyleSheet.create({
     maxHeight: '88%',
     paddingHorizontal: 18,
     paddingTop: 8,
+  },
+  reviewSheetFull: {
+    flex: 1,
+    maxHeight: '100%',
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
   },
   reviewGrab: {
     alignSelf: 'center',

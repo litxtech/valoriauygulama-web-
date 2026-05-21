@@ -37,14 +37,11 @@ export async function applyRTLAndReloadIfNeeded(newLangCode: string): Promise<vo
     // DevSettings yok (production)
   }
 
-  const msg = shouldBeRTL
-    ? 'Arapça düzeni için uygulamayı yeniden başlatmanız gerekiyor.'
-    : 'Yerleşim normal görünüm için uygulamayı yeniden başlatmanız gerekiyor.';
   try {
     const i18n = require('@/i18n').default;
-    const ok = i18n.t?.('ok') ?? 'Tamam';
-    Alert.alert('', msg, [{ text: ok }]);
+    const msg = shouldBeRTL ? i18n.t('rtlReloadMsgAr') : i18n.t('rtlReloadMsgLtr');
+    Alert.alert('', msg, [{ text: i18n.t('ok') }]);
   } catch {
-    Alert.alert('', msg, [{ text: 'OK' }]);
+    Alert.alert('', shouldBeRTL ? 'Restart the app for RTL.' : 'Restart the app for LTR.', [{ text: 'OK' }]);
   }
 }

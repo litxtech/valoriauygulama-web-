@@ -79,6 +79,11 @@ const FEATURE_TOGGLES: FeatureToggleDef[] = [
     titleKey: 'staffNotifMentionTitle',
     hintKey: 'staffNotifMentionHint',
   },
+  {
+    key: 'staff_meal_menu_daily',
+    titleKey: 'staffNotifMealMenuDailyTitle',
+    hintKey: 'staffNotifMealMenuDailyHint',
+  },
 ];
 
 export default function StaffNotificationPrefsScreen() {

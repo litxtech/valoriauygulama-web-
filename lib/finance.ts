@@ -1,6 +1,7 @@
 /**
  * Çek defteri + borç/alacak — tipler ve bildirim yardımcıları.
  */
+import i18n from '@/i18n';
 import { sendNotification } from '@/lib/notificationService';
 
 export type FinanceCheckDirection = 'given' | 'received';
@@ -38,11 +39,16 @@ export const CHECK_STATUS_LABELS: Record<FinanceCheckStatus, string> = {
   cancelled: 'İptal',
 };
 
-export const DEBT_STATUS_LABELS: Record<DebtStatus, string> = {
-  open: 'Açık',
-  partial: 'Kısmi',
-  closed: 'Kapandı',
-};
+export const DEBT_STATUS_LABELS: Record<DebtStatus, string> = new Proxy(
+  { open: 'open', partial: 'partial', closed: 'closed' } as Record<DebtStatus, string>,
+  {
+    get(_t, prop: string) {
+      const k = `debtStatus_${prop}`;
+      const v = i18n.t(k);
+      return v === k ? String(prop) : v;
+    },
+  }
+);
 
 export const PAYMENT_METHOD_LABELS: Record<DebtPaymentMethod, string> = {
   cash: 'Nakit',
@@ -53,7 +59,9 @@ export const PAYMENT_METHOD_LABELS: Record<DebtPaymentMethod, string> = {
 };
 
 export function fmtMoneyTry(amount: number): string {
-  return new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount) + ' ₺';
+  const lang = i18n.language || 'tr';
+  const loc = lang.startsWith('ar') ? 'ar-SA' : lang.startsWith('tr') ? 'tr-TR' : 'en-US';
+  return new Intl.NumberFormat(loc, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount) + ' ₺';
 }
 
 export type DebtEntryNotifyShape = {

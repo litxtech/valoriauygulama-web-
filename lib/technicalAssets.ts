@@ -58,9 +58,15 @@ export type TechAssetRow = {
   photo_urls: string[] | unknown;
   qr_payload: string;
   label_tagline: string | null;
+  usage_guide_text: string | null;
+  usage_guide_video_url: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export function techAssetHasUsageGuide(row: Pick<TechAssetRow, 'usage_guide_text' | 'usage_guide_video_url'>): boolean {
+  return Boolean(row.usage_guide_text?.trim() || row.usage_guide_video_url?.trim());
+}
 
 export type TechAssetDetail = TechAssetRow & {
   buildingName?: string | null;

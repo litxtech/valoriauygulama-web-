@@ -1,5 +1,5 @@
 import { ReactNode, useMemo, useRef } from 'react';
-import { Animated, PanResponder, StyleSheet, View } from 'react-native';
+import { Animated, I18nManager, PanResponder, Platform, StyleSheet, View } from 'react-native';
 
 type SwipeToDeleteProps = {
   children: ReactNode;
@@ -7,8 +7,15 @@ type SwipeToDeleteProps = {
   onSwipeDelete: () => void;
 };
 
-const SWIPE_TRIGGER = 84;
-const SWIPE_MAX = 108;
+/** Distance (px) finger must travel in the delete direction to confirm delete */
+const SWIPE_TRIGGER = 52;
+/** Max visual slide while dragging */
+const SWIPE_MAX = 76;
+
+function swipeTowardDeleteDx(gestureDx: number) {
+  // LTR: sola kaydır → negatif dx. RTL: ekranda aynı “sil” yönü çoğu listede ters.
+  return I18nManager.isRTL ? gestureDx : -gestureDx;
+}
 
 export function SwipeToDelete({
   children,
@@ -29,9 +36,10 @@ export function SwipeToDelete({
   const triggerDelete = () => {
     if (lockedRef.current) return;
     lockedRef.current = true;
+    const out = I18nManager.isRTL ? SWIPE_MAX : -SWIPE_MAX;
     Animated.sequence([
       Animated.timing(translateX, {
-        toValue: SWIPE_MAX,
+        toValue: out,
         duration: 110,
         useNativeDriver: true,
       }),
@@ -51,14 +59,20 @@ export function SwipeToDelete({
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gesture) => {
           if (!enabled || lockedRef.current) return false;
-          return gesture.dx > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy);
+          const toward = swipeTowardDeleteDx(gesture.dx);
+          // Hafif çapraz kaydırmada dikey listeyi çalmaması için yatay baskı
+          return (
+            toward > MOVE_ACTIVATE && Math.abs(gesture.dx) > Math.abs(gesture.dy) + MOVE_DOMINANCE
+          );
         },
         onPanResponderMove: (_, gesture) => {
-          const next = Math.max(0, Math.min(SWIPE_MAX, gesture.dx));
-          translateX.setValue(next);
+          const toward = swipeTowardDeleteDx(gesture.dx);
+          const clamped = Math.max(0, Math.min(SWIPE_MAX, toward));
+          const tx = I18nManager.isRTL ? clamped : -clamped;
+          translateX.setValue(tx);
         },
         onPanResponderRelease: (_, gesture) => {
-          if (gesture.dx >= SWIPE_TRIGGER) {
+          if (swipeTowardDeleteDx(gesture.dx) >= SWIPE_TRIGGER) {
             triggerDelete();
             return;
           }

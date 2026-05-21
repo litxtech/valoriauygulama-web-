@@ -44,6 +44,15 @@ export type SubmitCheckOutPayload = {
   checkOutAt?: string | null; // ISO datetime preferred
 };
 
+export type SubmitDeletePayload = {
+  hotelId: string;
+  guestDocumentId: string;
+  transactionId: string;
+  documentNumber?: string | null;
+  /** tc_citizen | ykn_foreign | foreign — SOAP operasyonu seçimi */
+  kbsPersonKind?: string | null;
+};
+
 export type ProviderResponse = {
   externalReference?: string;
   summary?: unknown;
@@ -58,6 +67,7 @@ export type ProviderTestResponse = {
 export interface OfficialSubmissionProvider {
   submitCheckIn(payload: SubmitCheckInPayload, credentials: ProviderCredentials): Promise<ProviderResponse>;
   submitCheckOut(payload: SubmitCheckOutPayload, credentials: ProviderCredentials): Promise<ProviderResponse>;
+  submitDelete(payload: SubmitDeletePayload, credentials: ProviderCredentials): Promise<ProviderResponse>;
   submitUpdate?(payload: unknown, credentials: ProviderCredentials): Promise<ProviderResponse>;
   testConnection(credentials: ProviderCredentials): Promise<ProviderTestResponse>;
 }

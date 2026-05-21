@@ -13,7 +13,7 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.9',
+  version: '2.2.11',
   orientation: 'portrait',
   icon: './assets/icon.png',
   scheme: 'valoria',
@@ -28,10 +28,11 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '16',
+    buildNumber: '18',
     newArchEnabled: true,
     infoPlist: {
-      NSCameraUsageDescription: 'Sözleşme onayı için QR kod okutmanız gerekiyor.',
+      NSCameraUsageDescription:
+        'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
       NSLocationWhenInUseUsageDescription: 'Uygulama açıkken oteli haritada göstermek ve size yaklaştığınızda check-in için kolaylık sunmak üzere konum kullanılır.',
       NSMicrophoneUsageDescription: 'Sesli mesaj kaydi icin mikrofon erisimi gerekir.',
@@ -39,9 +40,13 @@ const baseConfig = {
       ITSAppUsesNonExemptEncryption: false,
     },
   },
+  /** SDK 54+: sistem gezinme çubuğu / edge-to-edge (kontrast + inset uyumu) */
+  androidNavigationBar: {
+    enforceContrast: true,
+  },
   android: {
     newArchEnabled: true,
-    versionCode: 17,
+    versionCode: 19,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {
@@ -57,6 +62,15 @@ const baseConfig = {
       'android.permission.NFC',
       // Android 13+ (API 33): bildirim izni manifest’te tanımlı olmalı
       'android.permission.POST_NOTIFICATIONS',
+    ],
+    /**
+     * Play Fotoğraf/Video politikası: galeri için READ_MEDIA_* kullanmıyoruz;
+     * expo-image-picker Android Photo Picker + kamera. expo-screen-capture API 34+ DETECT_SCREEN_CAPTURE.
+     */
+    blockedPermissions: [
+      'android.permission.READ_MEDIA_IMAGES',
+      'android.permission.READ_MEDIA_VIDEO',
+      'android.permission.READ_MEDIA_AUDIO',
     ],
   },
   plugins: [
@@ -75,7 +89,26 @@ const baseConfig = {
         barcodeScannerEnabled: true,
       },
     ],
+    [
+      'react-native-vision-camera',
+      {
+        cameraPermissionText:
+          'Pasaport ve kimlik MRZ alanını canlı okumak için kamera kullanılır; fotoğraf galeriye kaydedilmez.',
+        enableMicrophonePermission: false,
+      },
+    ],
+    './plugins/withVisionCameraMrz.js',
     'expo-location',
+    [
+      'expo-image-picker',
+      {
+        photosPermission:
+          'Profil fotoğrafı, belge, stok faturası, görev ve sohbet ekleri için galeriden seçim yapılır.',
+        cameraPermission: 'Barkod, belge ve fotoğraf çekmek için kamera kullanılır.',
+        microphonePermission:
+          'Gönderi ve sohbette video kaydı için mikrofon kullanılır (yalnızca siz kayıt başlattığınızda).',
+      },
+    ],
     'expo-apple-authentication',
     [
       'expo-splash-screen',

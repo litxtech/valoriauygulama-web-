@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { GatewayClient } from '../../integrations/gateway-client/gatewayClient.js';
@@ -276,6 +277,102 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/submissions/check-in', handleCheckIn);
   app.post('/kbs/check-in', handleCheckIn);
+
+  const DeleteSchema = z.object({
+    guestDocumentId: z.string().uuid(),
+    guestStayId: z.string().uuid().optional()
+  });
+
+  const handleDelete = async (req: FastifyRequest) => {
+    const auth = req.auth;
+    if (!auth) throw Errors.unauthorized();
+    const body = DeleteSchema.parse(req.body);
+    const allowed =
+      auth.role === 'admin' || auth.role === 'manager'
+        ? true
+        : await hasPermission({
+            supabase: app.supabase,
+            hotelId: auth.hotelId,
+            userId: auth.authUserId,
+            code: 'kbs.credentials.edit'
+          });
+    assertHasPermission(allowed, 'kbs.credentials.edit', auth);
+
+    const { data: doc, error: docErr } = await app.supabase
+      .schema('ops')
+      .from('guest_documents')
+      .select('id, hotel_id, document_number, kbs_person_kind')
+      .eq('id', body.guestDocumentId)
+      .maybeSingle();
+    if (docErr || !doc) throw Errors.notFound('Guest document not found');
+    if (doc.hotel_id !== auth.hotelId) throw Errors.forbidden('Hotel scope mismatch');
+
+    const transactionId = crypto.randomUUID();
+    const gwRes = await gw.post<{ externalReference?: string; summary?: unknown }>('/gateway/delete', {
+      hotelId: auth.hotelId,
+      guestDocumentId: body.guestDocumentId,
+      transactionId,
+      documentNumber: doc.document_number ?? null,
+      kbsPersonKind: doc.kbs_person_kind ?? null
+    });
+
+    if (!gwRes.ok) {
+      await recordKbsGatewayResult(app.supabase, {
+        hotelId: auth.hotelId,
+        transactionId,
+        guestDocumentId: body.guestDocumentId,
+        status: 'failed',
+        errorMessage: gwRes.error.message,
+        requestSummary: { transactionType: 'delete' }
+      });
+      return { ok: false, error: gwRes.error };
+    }
+
+    const sentAt = new Date().toISOString();
+    await app.supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update({ scan_status: 'draft', submitted_at: null })
+      .eq('id', body.guestDocumentId);
+
+    if (body.guestStayId) {
+      await app.supabase
+        .schema('ops')
+        .from('guest_stays')
+        .update({
+          stay_status: 'deleted_from_kbs',
+          kbs_delete_status: 'sent',
+          deleted_by: auth.authUserId,
+          kbs_delete_error_message: null,
+          updated_at: sentAt
+        })
+        .eq('id', body.guestStayId)
+        .eq('hotel_id', auth.hotelId);
+    }
+
+    await recordKbsGatewayResult(app.supabase, {
+      hotelId: auth.hotelId,
+      transactionId,
+      guestDocumentId: body.guestDocumentId,
+      status: 'success',
+      responseSummary: gwRes.data
+    });
+
+    await writeAudit({
+      supabase: app.supabase,
+      hotelId: auth.hotelId,
+      actorUserId: auth.authUserId,
+      action: 'kbs.delete.single',
+      entityType: 'guest_document',
+      entityId: body.guestDocumentId,
+      metadata: { transactionId, guestStayId: body.guestStayId ?? null }
+    });
+
+    return { ok: true, data: { transactionId, ...gwRes.data } };
+  };
+
+  app.post('/submissions/delete', handleDelete);
+  app.post('/kbs/delete', handleDelete);
 
   app.post('/submissions/retry', async (req) => {
     const auth = req.auth;

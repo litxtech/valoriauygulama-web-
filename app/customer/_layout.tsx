@@ -19,7 +19,7 @@ type GuestStatusRow = {
 export default function CustomerLayout() {
   const router = useRouter();
   const { t } = useTranslation();
-  const { user, staff, loading, signOut, loadSession } = useAuthStore();
+  const { user, staff, staffCheckComplete, signOut } = useAuthStore();
   const [guestStatus, setGuestStatus] = useState<GuestStatusRow | null | undefined>(undefined);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   /** Zustand gecikse bile (anonim misafir) Supabase istemci oturumu varsa müşteri yığınını aç. */
@@ -44,13 +44,8 @@ export default function CustomerLayout() {
   const hasAuth = !!(user ?? clientSession?.user);
 
   useEffect(() => {
-    if (clientSession?.user && !user && !loading) {
-      void loadSession();
-    }
-  }, [clientSession?.user?.id, user?.id, loading, loadSession]);
-
-  useEffect(() => {
     if (!sessionResolved) return;
+    if (!staffCheckComplete) return;
     if (staff) {
       router.replace('/staff');
       return;
@@ -67,9 +62,10 @@ export default function CustomerLayout() {
     } else {
       authAlertShown.current = false;
     }
-  }, [sessionResolved, hasAuth, staff, t, router]);
+  }, [sessionResolved, hasAuth, staff, staffCheckComplete, t, router]);
 
   useEffect(() => {
+    if (!staffCheckComplete) return;
     if (staff) {
       setGuestStatus(null);
       return;
@@ -93,7 +89,7 @@ export default function CustomerLayout() {
         deletion_reason: row?.deletion_reason ?? null,
       });
     })();
-  }, [user?.id, clientSession?.user?.id, staff, hasAuth]);
+  }, [user?.id, clientSession?.user?.id, staff, staffCheckComplete, hasAuth]);
 
   const guestDeleted = !!guestStatus && !!guestStatus.deleted_at;
   const guestBanned = !!(guestStatus && guestStatus.banned_until && new Date(guestStatus.banned_until) > new Date());
@@ -118,7 +114,7 @@ export default function CustomerLayout() {
     doConfirm();
   }, [guestDeleted]);
 
-  if (!sessionResolved) {
+  if (!sessionResolved || !staffCheckComplete) {
     return (
       <View style={[styles.blockScreen, { flex: 1 }]}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -232,6 +228,22 @@ export default function CustomerLayout() {
         options={{
           headerShown: true,
           title: t('screenRoomService'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="hotel-menu/index"
+        options={{
+          headerShown: true,
+          title: t('screenHotelKitchenMenu'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="hotel-menu/[id]"
+        options={{
+          headerShown: true,
+          title: t('screenHotelKitchenMenu'),
           headerBackTitle: t('back'),
         }}
       />

@@ -7,16 +7,20 @@ import {
   StyleSheet,
   ActivityIndicator,
   Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
-import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
+import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import type { PostTagValue } from '@/lib/feedPostTags';
 import { feedSharedText } from '@/lib/feedSharedI18n';
+import { useTranslation } from 'react-i18next';
+import { FeedTextTranslate } from '@/components/FeedTextTranslate';
+import { FastPress } from '@/components/ui/FastPress';
 
 const SPACING = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20 } as const;
 
@@ -93,6 +97,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   onMenu,
   horizontalInset = SPACING.lg,
 }: StaffFeedPostCardProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const introOpacity = useRef(new Animated.Value(0)).current;
   const introTranslateY = useRef(new Animated.Value(10)).current;
@@ -100,7 +105,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   const rawTitle = (title ?? '').trim();
   const isShort = rawTitle.length > 0 && rawTitle.length <= SHORT_TITLE_MAX_LEN && !rawTitle.includes('\n\n');
   const showReadMore = rawTitle.length > 140;
-  const showAuthorAvatar = !isGuestPost;
+  const showAuthorAvatar = true;
 
   const ringGlow = isGuestPost
     ? 'rgba(74,111,138,0.5)'
@@ -118,17 +123,31 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
 
   const splitHeader = showAuthorAvatar && onAvatarPress != null && onAuthorPress != null;
 
+  const showRoleChip =
+    !!roleLabel &&
+    roleLabel !== '—' &&
+    roleLabel !== t('visitorTypeGuest') &&
+    roleLabel !== t('visitorTypeStaff');
+
+  const avatarUri = (authorAvatarUrl ?? '').trim() || null;
+
   const avatarBlock = showAuthorAvatar ? (
     <View style={[styles.avatarWrap, { shadowColor: ringGlow }]}>
-      <AvatarWithBadge badge={authorBadge} avatarSize={36} badgeSize={11} showBadge={false}>
-        {authorAvatarUrl ? (
-          <CachedImage uri={authorAvatarUrl} style={styles.avatarImg} contentFit="cover" transition={0} />
-        ) : (
-          <View style={styles.avatarPh}>
-            <Text style={styles.avatarLetter}>{(authorName || '?').charAt(0).toUpperCase()}</Text>
-          </View>
-        )}
-      </AvatarWithBadge>
+      {avatarUri ? (
+        <CachedImage
+          uri={avatarUri}
+          style={styles.avatarImg}
+          contentFit="cover"
+          transition={0}
+          recyclingKey={avatarUri}
+        />
+      ) : (
+        <View style={[styles.avatarPh, isGuestPost && styles.avatarPhGuest]}>
+          <Text style={[styles.avatarLetter, isGuestPost && styles.avatarLetterGuest]}>
+            {(authorName || '?').charAt(0).toUpperCase()}
+          </Text>
+        </View>
+      )}
     </View>
   ) : null;
 
@@ -136,7 +155,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
     <>
       <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={styles.name} />
       <View style={styles.metaRow}>
-        {roleLabel ? (
+        {showRoleChip ? (
           <View style={styles.roleChip}>
             <Text style={styles.roleChipText} numberOfLines={1}>
               {roleLabel}
@@ -144,15 +163,19 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
           </View>
         ) : null}
         <Text style={styles.time} numberOfLines={1}>
-          {timeAgo || 'şimdi'}
+          {timeAgo || t('feedNow')}
         </Text>
       </View>
       <Text style={styles.dateTime}>{createdAtLabel}</Text>
-      {isGuestPost ? <Text style={styles.guestHint}>Misafir paylaşımı</Text> : null}
     </>
   );
 
   useEffect(() => {
+    if (Platform.OS === 'android') {
+      introOpacity.setValue(1);
+      introTranslateY.setValue(0);
+      return;
+    }
     Animated.parallel([
       Animated.timing(introOpacity, {
         toValue: 1,
@@ -167,13 +190,15 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
     ]).start();
   }, [introOpacity, introTranslateY]);
 
+  const Outer = Platform.OS === 'android' ? View : Animated.View;
+  const outerAnimStyle =
+    Platform.OS === 'android'
+      ? undefined
+      : { opacity: introOpacity, transform: [{ translateY: introTranslateY }] };
+
   return (
-    <Animated.View
-      style={[
-        styles.outer,
-        { marginHorizontal: horizontalInset },
-        { opacity: introOpacity, transform: [{ translateY: introTranslateY }] },
-      ]}
+    <Outer
+      style={[styles.outer, { marginHorizontal: horizontalInset }, outerAnimStyle]}
     >
       <View style={styles.pressable}>
         <View style={styles.surface}>
@@ -234,19 +259,20 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
                   </Text>
                   {showReadMore && !expanded ? (
                     <TouchableOpacity onPress={() => setExpanded(true)} hitSlop={8} activeOpacity={0.7}>
-                      <Text style={styles.readMore}>Devamını oku</Text>
+                      <Text style={styles.readMore}>{t('feedReadMore')}</Text>
                     </TouchableOpacity>
                   ) : null}
                   {expanded && showReadMore ? (
                     <TouchableOpacity onPress={() => setExpanded(false)} hitSlop={8} activeOpacity={0.7}>
-                      <Text style={styles.readMore}>Daha az</Text>
+                      <Text style={styles.readMore}>{t('feedReadLess')}</Text>
                     </TouchableOpacity>
                   ) : null}
+                  <FeedTextTranslate text={rawTitle} />
                 </View>
               ) : null}
 
               {commentPreview && commentPreview.length > 0 ? (
-                <TouchableOpacity style={styles.commentPreviewWrap} onPress={onComment} activeOpacity={0.85}>
+                <FastPress style={styles.commentPreviewWrap} onPress={onComment} activeOpacity={0.85}>
                   {commentPreview.slice(0, 2).map((c, idx) => (
                     <View key={`${idx}-${c.author}`} style={styles.commentPreviewRow}>
                       <Text style={styles.commentPreviewAuthor} numberOfLines={1}>
@@ -258,11 +284,11 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
                     </View>
                   ))}
                   {commentCount > commentPreview.length ? (
-                    <Text style={styles.commentPreviewMore}>Tüm yorumları gör</Text>
+                    <Text style={styles.commentPreviewMore}>{t('feedSeeAllComments')}</Text>
                   ) : (
-                    <Text style={styles.commentPreviewMore}>Yorumlara bak</Text>
+                    <Text style={styles.commentPreviewMore}>{t('feedViewComments')}</Text>
                   )}
-                </TouchableOpacity>
+                </FastPress>
               ) : null}
 
               <View style={styles.actionsRow}>
@@ -304,17 +330,23 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
                   ) : null}
                 </View>
 
-                <TouchableOpacity onPress={onDetailsPress} activeOpacity={0.88} style={styles.detailsBtnWrap}>
-                  <LinearGradient colors={pds.gradientPremium} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.detailsBtn}>
-                    <Text style={styles.detailsBtnText}>{feedSharedText('feedDetailsButton')}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
+                <FastPress onPress={onDetailsPress} activeOpacity={0.88} style={styles.detailsBtnWrap} rippleColor="rgba(255,255,255,0.2)">
+                  {Platform.OS === 'android' ? (
+                    <View style={[styles.detailsBtn, styles.detailsBtnAndroid]}>
+                      <Text style={styles.detailsBtnText}>{feedSharedText('feedDetailsButton')}</Text>
+                    </View>
+                  ) : (
+                    <LinearGradient colors={pds.gradientPremium} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.detailsBtn}>
+                      <Text style={styles.detailsBtnText}>{feedSharedText('feedDetailsButton')}</Text>
+                    </LinearGradient>
+                  )}
+                </FastPress>
               </View>
             </View>
           </View>
         </View>
       </View>
-    </Animated.View>
+    </Outer>
   );
 });
 
@@ -360,7 +392,11 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   avatarWrap: {
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    flexShrink: 0,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.55,
     shadowRadius: 6,
@@ -370,6 +406,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
+    backgroundColor: theme.colors.borderLight,
   },
   avatarPh: {
     width: 36,
@@ -408,7 +445,6 @@ const styles = StyleSheet.create({
   roleChipText: { fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary },
   time: { fontSize: 12, fontWeight: '500', color: pds.subtext },
   dateTime: { fontSize: 11, color: pds.subtext, marginTop: 2 },
-  guestHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 2, fontStyle: 'italic' },
   menuBtn: { padding: SPACING.sm, marginTop: -4 },
   tagRow: { marginTop: 10 },
   tagPill: {
@@ -495,6 +531,9 @@ const styles = StyleSheet.create({
     borderRadius: pds.actionBtnRadius,
     paddingVertical: 10,
     paddingHorizontal: 16,
+  },
+  detailsBtnAndroid: {
+    backgroundColor: pds.indigo,
   },
   detailsBtnText: { color: '#fff', fontSize: 13, fontWeight: '800' },
 });

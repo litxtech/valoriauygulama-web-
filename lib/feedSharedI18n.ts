@@ -68,6 +68,10 @@ const UI = {
     staffDeletePostConfirm: 'Bu paylaşımı silmek istediğinize emin misiniz?',
     staffDeletePostNoPermission: 'Paylaşım silinemedi. Yetkiniz olmayabilir.',
     feedDetailsButton: 'Detayları Gör',
+    feedTranslateSee: 'Çeviriyi gör',
+    feedTranslateShow: 'Çeviriyi göster',
+    feedTranslateHide: 'Çeviriyi gizle',
+    feedTranslateError: 'Çeviri yapılamadı',
   },
   en: {
     feedReportSpam: 'Spam / repeated content',
@@ -122,6 +126,10 @@ const UI = {
     staffDeletePostConfirm: 'Are you sure you want to delete this post?',
     staffDeletePostNoPermission: 'Could not delete the post. You may not have permission.',
     feedDetailsButton: 'View details',
+    feedTranslateSee: 'See translation',
+    feedTranslateShow: 'Show translation',
+    feedTranslateHide: 'Hide translation',
+    feedTranslateError: 'Could not translate',
   },
   ar: {
     feedReportSpam: 'محتوى مزعج / مكرر',
@@ -175,6 +183,10 @@ const UI = {
     staffDeletePostConfirm: 'هل تريد بالتأكيد حذف هذا المنشور؟',
     staffDeletePostNoPermission: 'تعذر الحذف. قد لا تملك الصلاحية.',
     feedDetailsButton: 'عرض التفاصيل',
+    feedTranslateSee: 'عرض الترجمة',
+    feedTranslateShow: 'إظهار الترجمة',
+    feedTranslateHide: 'إخفاء الترجمة',
+    feedTranslateError: 'تعذر الترجمة',
   },
   de: {
     feedReportSpam: 'Spam / wiederholter Inhalt',
@@ -226,6 +238,10 @@ const UI = {
     staffDeletePostConfirm: 'Diesen Beitrag wirklich löschen?',
     staffDeletePostNoPermission: 'Löschen nicht möglich. Fehlende Berechtigung?',
     feedDetailsButton: 'Details ansehen',
+    feedTranslateSee: 'Übersetzung anzeigen',
+    feedTranslateShow: 'Übersetzung einblenden',
+    feedTranslateHide: 'Übersetzung ausblenden',
+    feedTranslateError: 'Übersetzung fehlgeschlagen',
   },
   fr: {
     feedReportSpam: 'Spam / contenu répété',
@@ -280,6 +296,10 @@ const UI = {
     staffDeletePostConfirm: 'Supprimer cette publication ?',
     staffDeletePostNoPermission: 'Suppression impossible. Droits insuffisants ?',
     feedDetailsButton: 'Voir le détail',
+    feedTranslateSee: 'Voir la traduction',
+    feedTranslateShow: 'Afficher la traduction',
+    feedTranslateHide: 'Masquer la traduction',
+    feedTranslateError: 'Traduction impossible',
   },
   ru: {
     feedReportSpam: 'Спам / повторяющийся контент',
@@ -334,6 +354,10 @@ const UI = {
     staffDeletePostConfirm: 'Удалить эту публикацию?',
     staffDeletePostNoPermission: 'Не удалось удалить. Возможно, нет прав.',
     feedDetailsButton: 'Подробнее',
+    feedTranslateSee: 'Показать перевод',
+    feedTranslateShow: 'Показать перевод',
+    feedTranslateHide: 'Скрыть перевод',
+    feedTranslateError: 'Не удалось перевести',
   },
   es: {
     feedReportSpam: 'Spam / contenido repetido',
@@ -388,6 +412,10 @@ const UI = {
     staffDeletePostConfirm: '¿Eliminar esta publicación?',
     staffDeletePostNoPermission: 'No se pudo eliminar. ¿Permisos insuficientes?',
     feedDetailsButton: 'Ver detalles',
+    feedTranslateSee: 'Ver traducción',
+    feedTranslateShow: 'Mostrar traducción',
+    feedTranslateHide: 'Ocultar traducción',
+    feedTranslateError: 'No se pudo traducir',
   },
 } as const;
 

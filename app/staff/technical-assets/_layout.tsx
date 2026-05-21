@@ -1,16 +1,18 @@
 import { Stack } from 'expo-router';
+import { StaffStackBackButton, STAFF_TABS_FALLBACK, buildStaffNestedStackOptions } from '@/lib/staffStackBack';
 
 export default function TechnicalAssetsLayout() {
   return (
     <Stack
-      screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: '#fff' },
+      screenOptions={({ navigation }) => ({
+        ...buildStaffNestedStackOptions((k) => k)({ navigation }),
         headerTintColor: '#1a365d',
-        headerTitleStyle: { fontWeight: '700' },
-      }}
+      })}
     >
-      <Stack.Screen name="index" options={{ title: 'Teknik QR Envanter' }} />
+      <Stack.Screen
+        name="index"
+        options={{ title: 'Teknik QR Envanter', headerLeft: () => <StaffStackBackButton fallback={STAFF_TABS_FALLBACK} /> }}
+      />
       <Stack.Screen name="scan" options={{ title: 'QR Tara', headerShown: false }} />
       <Stack.Screen name="[id]" options={{ title: 'Teknik Varlık' }} />
       <Stack.Screen name="log" options={{ title: 'Müdahale Kaydı' }} />

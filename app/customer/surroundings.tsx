@@ -8,9 +8,10 @@ import {
   Linking,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
+import { poiTypeLabel } from '@/lib/i18nLookup';
 
 type Poi = {
   id: string;
@@ -21,16 +22,6 @@ type Poi = {
   lat: number;
   lng: number;
   rating: number | null;
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  restaurant: 'Restoran',
-  cafe: 'Kafe',
-  pharmacy: 'Eczane',
-  hospital: 'Hastane',
-  police: 'Jandarma / Karakol',
-  hotel: 'Otel',
-  other: 'Diğer',
 };
 
 const TYPE_ICON: Record<string, string> = {
@@ -44,25 +35,24 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 export default function SurroundingsScreen() {
-  const router = useRouter();
+  const { t, i18n } = useTranslation();
   const [pois, setPois] = useState<Poi[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      let q = supabase
+      const { data } = await supabase
         .from('pois')
         .select('id, name, type, address, phone, lat, lng, rating')
         .order('name');
-      const { data } = await q;
       setPois((data as Poi[]) ?? []);
       setLoading(false);
     };
     load();
   }, []);
 
-  const openInMaps = (lat: number, lng: number, name: string) => {
+  const openInMaps = (lat: number, lng: number, _name: string) => {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
     Linking.openURL(url).catch(() => {
       Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {});
@@ -74,10 +64,8 @@ export default function SurroundingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>📍 Çevre rehberi</Text>
-      <Text style={styles.subtitle}>
-        Yakındaki restoran, eczane, hastane ve daha fazlası. Yönlendirme için tıklayın.
-      </Text>
+      <Text style={styles.title}>{t('surroundingsTitle')}</Text>
+      <Text style={styles.subtitle}>{t('surroundingsSubtitle')}</Text>
 
       {types.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
@@ -85,16 +73,16 @@ export default function SurroundingsScreen() {
             style={[styles.filterChip, !filter && styles.filterChipActive]}
             onPress={() => setFilter(null)}
           >
-            <Text style={[styles.filterText, !filter && styles.filterTextActive]}>Tümü</Text>
+            <Text style={[styles.filterText, !filter && styles.filterTextActive]}>{t('missingItemsFilterAll')}</Text>
           </TouchableOpacity>
-          {types.map((t) => (
+          {types.map((typeKey) => (
             <TouchableOpacity
-              key={t}
-              style={[styles.filterChip, filter === t && styles.filterChipActive]}
-              onPress={() => setFilter(t)}
+              key={typeKey}
+              style={[styles.filterChip, filter === typeKey && styles.filterChipActive]}
+              onPress={() => setFilter(typeKey)}
             >
-              <Text style={[styles.filterText, filter === t && styles.filterTextActive]}>
-                {TYPE_ICON[t] || '📍'} {TYPE_LABEL[t] || t}
+              <Text style={[styles.filterText, filter === typeKey && styles.filterTextActive]}>
+                {TYPE_ICON[typeKey] || '📍'} {poiTypeLabel(typeKey)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -106,9 +94,7 @@ export default function SurroundingsScreen() {
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
-            {pois.length === 0
-              ? 'Henüz mekan eklenmemiş. Resepsiyondan öneri alabilirsiniz.'
-              : 'Bu kategoride mekan yok.'}
+            {pois.length === 0 ? t('surroundingsEmptyNoPois') : t('surroundingsEmptyCategory')}
           </Text>
         </View>
       ) : (
@@ -122,13 +108,13 @@ export default function SurroundingsScreen() {
             <Text style={styles.cardIcon}>{TYPE_ICON[p.type] || '📍'}</Text>
             <View style={styles.cardBody}>
               <Text style={styles.cardName}>{p.name}</Text>
-              <Text style={styles.cardType}>{TYPE_LABEL[p.type] || p.type}</Text>
+              <Text style={styles.cardType}>{poiTypeLabel(p.type)}</Text>
               {p.address ? <Text style={styles.cardAddress} numberOfLines={1}>{p.address}</Text> : null}
               {p.rating != null && (
                 <Text style={styles.cardRating}>⭐ {Number(p.rating).toFixed(1)}</Text>
               )}
             </View>
-            <Text style={styles.cardArrow}>Yol tarifi →</Text>
+            <Text style={styles.cardArrow}>{t('surroundingsDirections')}</Text>
           </TouchableOpacity>
         ))
       )}

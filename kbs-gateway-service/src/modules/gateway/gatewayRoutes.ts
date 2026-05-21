@@ -94,6 +94,45 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  app.post('/gateway/delete', async (req: any, reply) => {
+    const rawBody = String(req.rawBody ?? '');
+    if (!(await verifyRequest(req, rawBody))) {
+      return reply.status(401).send({ ok: false, error: { code: 'INVALID_SIGNATURE', message: 'Unauthorized' } });
+    }
+
+    const body = z
+      .object({
+        hotelId: z.string().uuid(),
+        guestDocumentId: z.string().uuid(),
+        transactionId: z.string().uuid(),
+        documentNumber: z.string().nullable().optional(),
+        kbsPersonKind: z.string().nullable().optional()
+      })
+      .parse(req.body);
+
+    const credentials = await loadHotelCredentials({
+      supabase: app.supabase,
+      hotelId: body.hotelId,
+      secret: app.env.KBS_CREDENTIAL_SECRET
+    });
+    try {
+      const res = await provider.submitDelete(
+        {
+          hotelId: body.hotelId,
+          guestDocumentId: body.guestDocumentId,
+          transactionId: body.transactionId,
+          documentNumber: body.documentNumber ?? null,
+          kbsPersonKind: body.kbsPersonKind ?? null
+        },
+        credentials
+      );
+      return { ok: true, data: res };
+    } catch (e) {
+      app.log.error({ err: e, transactionId: body.transactionId }, 'provider_delete_failed');
+      return reply.status(502).send({ ok: false, error: { code: 'PROVIDER_ERROR', message: 'Provider delete failed' } });
+    }
+  });
+
   app.post('/gateway/check-out', async (req: any, reply) => {
     const rawBody = String(req.rawBody ?? '');
     if (!(await verifyRequest(req, rawBody))) return reply.status(401).send({ ok: false, error: { code: 'INVALID_SIGNATURE', message: 'Unauthorized' } });

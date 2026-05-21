@@ -21,7 +21,7 @@ import {
 } from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Video, Audio } from 'expo-av';
+import { Video, Audio, ResizeMode } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
@@ -29,14 +29,16 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { theme } from '@/constants/theme';
-import { pds } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth, feedPostMediaHeight } from '@/constants/personelDesignSystem';
 import { formatRelative } from '@/lib/date';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { Skeleton, SkeletonCard } from '@/components/ui/Skeleton';
 import { getOrCreateGuestForCurrentSession, syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName, isOpaqueGuestDisplayString } from '@/lib/guestDisplayName';
+import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
 import { notifyAdmins, sendNotification } from '@/lib/notificationService';
 import { CachedImage } from '@/components/CachedImage';
+import { StoryMuxVideo } from '@/components/StoryMuxVideo';
 import { formatDistanceToNow } from 'date-fns';
 import i18n from '@/i18n';
 import { dateFnsLocaleForApp } from '@/lib/dateFnsLocale';
@@ -51,6 +53,14 @@ import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete'
 import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
+import {
+  buildStaffAvatarLookup,
+  parseFeedGuestEmbed,
+  parseFeedStaffEmbed,
+  resolveFeedAuthorAvatarUrl,
+  unwrapFeedRelation,
+} from '@/lib/feedAuthorJoin';
+import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { formatDateTime } from '@/lib/date';
 import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
 import { complaintsText } from '@/lib/complaintsI18n';
@@ -196,6 +206,7 @@ export default function CustomerHome() {
   );
   const { user } = useAuthStore();
   const [activeStaff, setActiveStaff] = useState<StaffRow[]>([]);
+  const staffAvatarById = useMemo(() => buildStaffAvatarLookup(activeStaff), [activeStaff]);
   const [hotelInfo, setHotelInfo] = useState<HotelInfoRow | null>(null);
   const [feedPosts, setFeedPosts] = useState<FeedPost[]>([]);
   const [myRoom, setMyRoom] = useState<MyRoom | null>(null);
@@ -231,7 +242,6 @@ export default function CustomerHome() {
   const [mentionQuery, setMentionQuery] = useState('');
   const [storyGroups, setStoryGroups] = useState<StaffStoryGroup[]>([]);
   const [storyPlayer, setStoryPlayer] = useState<StoryPlayerState>(null);
-  const [storyVideoReady, setStoryVideoReady] = useState(false);
   const [storyLikeCount, setStoryLikeCount] = useState(0);
   const [storyLikedByMe, setStoryLikedByMe] = useState(false);
   const [storyReplyText, setStoryReplyText] = useState('');
@@ -239,7 +249,6 @@ export default function CustomerHome() {
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyKeyboardH, setStoryKeyboardH] = useState(0);
   const [visibleFeedCount, setVisibleFeedCount] = useState(30);
-  const storyVideoRef = useRef<Video>(null);
   const fullscreenVideoRef = useRef<Video>(null);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
@@ -282,6 +291,10 @@ export default function CustomerHome() {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === 'android') {
+      onlineBlinkOpacity.setValue(1);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(onlineBlinkOpacity, { toValue: 0.35, duration: 700, useNativeDriver: true }),
@@ -325,9 +338,6 @@ export default function CustomerHome() {
 
   const activeStoryGroup = storyPlayer ? storyGroups[storyPlayer.groupIndex] ?? null : null;
   const activeStory = storyPlayer && activeStoryGroup ? activeStoryGroup.stories[storyPlayer.storyIndex] ?? null : null;
-  const storyMediaHeight = storyKeyboardH > 0
-    ? Math.max(180, SCREEN_HEIGHT - storyKeyboardH - 280)
-    : SCREEN_HEIGHT - 340;
   const visibleFeedPosts = useMemo(() => feedPosts.slice(0, visibleFeedCount), [feedPosts, visibleFeedCount]);
 
   const storyGroupIndexByStaffId = useMemo(() => {
@@ -337,16 +347,6 @@ export default function CustomerHome() {
     });
     return m;
   }, [storyGroups]);
-
-  useEffect(() => {
-    if (!activeStory || activeStory.media_type !== 'video') return;
-    setStoryVideoReady(false);
-    const t = setTimeout(() => {
-      storyVideoRef.current?.playAsync().catch(() => {});
-      storyVideoRef.current?.setVolumeAsync(1.0).catch(() => {});
-    }, 200);
-    return () => clearTimeout(t);
-  }, [activeStory?.id, activeStory?.media_type]);
 
   useEffect(() => {
     if (!activeStory?.id || !myGuestId) return;
@@ -414,7 +414,7 @@ export default function CustomerHome() {
     const id = activeStoryGroup?.staff_id;
     if (!id) return;
     closeStoryPlayer();
-    router.push(`/customer/staff/${id}`);
+    openStaffProfileWithVisit(router, id, 'customer');
   }, [activeStoryGroup?.staff_id, closeStoryPlayer, router]);
 
   const toggleStoryLikeAsGuest = useCallback(async () => {
@@ -623,8 +623,7 @@ export default function CustomerHome() {
       setMyLikes(new Set(myLikeIds));
       setCommentsByPost(byPost);
       if (guestId) {
-        const viewRows = ids.map((post_id) => ({ post_id, guest_id: guestId }));
-        supabase.from('feed_post_views').upsert(viewRows, { onConflict: 'post_id,guest_id', ignoreDuplicates: true }).then(() => {});
+        void recordGuestFeedPostViews(ids, guestId);
         const myPostIds = postsWithMedia.filter((p) => p.guest_id === guestId).map((p) => p.id);
         if (myPostIds.length > 0) {
           const { data: vcRows, error: vcErr } = await supabase.rpc('get_my_guest_feed_post_view_counts', {
@@ -656,8 +655,12 @@ export default function CustomerHome() {
     prefetchImageUrls(
       [
         ...posts.flatMap((p) => [
-          p.staff?.profile_image,
-          p.guest?.photo_url,
+          resolveFeedAuthorAvatarUrl({
+            staff: p.staff,
+            guest: p.guest,
+            staffId: p.staff_id,
+            staffAvatarById: buildStaffAvatarLookup(activeStaffFiltered),
+          }),
           p.thumbnail_url,
           p.media_type && p.media_type !== 'video' ? p.media_url : null,
         ]),
@@ -1193,6 +1196,10 @@ export default function CustomerHome() {
                   <Ionicons name="restaurant-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{t('screenRoomService')}</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/hotel-menu')} activeOpacity={0.8}>
+                  <Ionicons name="cafe-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.roomBtnText}>{t('screenHotelKitchenMenu')}</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/(tabs)/messages')} activeOpacity={0.8}>
                   <Ionicons name="sparkles-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{feedSharedText('guestRequestCleaning')}</Text>
@@ -1259,9 +1266,11 @@ export default function CustomerHome() {
                   activeOpacity={0.85}
                   onPress={() => {
                     if (hasStory) openStoryAt(storyGIdx, 0);
-                    else router.push(`/customer/staff/${staff.id}`);
+                    else openStaffProfileWithVisit(router, staff.id, 'customer');
                   }}
-                  onLongPress={hasStory ? () => router.push(`/customer/staff/${staff.id}`) : undefined}
+                  onLongPress={
+                    hasStory ? () => openStaffProfileWithVisit(router, staff.id, 'customer') : undefined
+                  }
                   delayLongPress={1000}
                 >
                   <LinearGradient
@@ -1293,7 +1302,7 @@ export default function CustomerHome() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   activeOpacity={0.85}
-                  onPress={() => router.push(`/customer/staff/${staff.id}`)}
+                  onPress={() => openStaffProfileWithVisit(router, staff.id, 'customer')}
                   style={styles.staffCardTextBlock}
                 >
                   <StaffNameWithBadge
@@ -1340,18 +1349,12 @@ export default function CustomerHome() {
         </View>
       ) : (
         <View style={styles.feedList}>
-          {visibleFeedPosts.map((post) => {
-            const rawStaff = post.staff as {
-              full_name?: string;
-              department?: string;
-              profile_image?: string | null;
-              verification_badge?: 'blue' | 'yellow' | null;
-              organization?: { name?: string | null; kind?: string | null } | null;
-              profile_hidden_by_admin?: boolean | null;
-            } | null;
-            const rawGuest = post.guest;
-            const staffInfo = Array.isArray(rawStaff) ? rawStaff[0] ?? null : rawStaff;
-            const guestInfo = Array.isArray(rawGuest) ? (rawGuest[0] as { full_name?: string | null; photo_url?: string | null } | null) ?? null : (rawGuest as { full_name?: string | null; photo_url?: string | null } | null);
+          {(() => {
+            const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
+            const feedMediaHeight = feedPostMediaHeight(feedCardWidth);
+            return visibleFeedPosts.map((post) => {
+            const staffInfo = parseFeedStaffEmbed(post.staff);
+            const guestInfo = parseFeedGuestEmbed(post.guest);
 
             const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
             const authorName = staffInfo
@@ -1367,11 +1370,16 @@ export default function CustomerHome() {
             const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
             const roleLabel = staffInfo
               ? staffInfo.profile_hidden_by_admin
-                ? '—'
-                : [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ')
-              : t('visitorTypeGuest');
+                ? null
+                : [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ') || null
+              : null;
             const authorBadge = staffInfo?.verification_badge ?? null;
-            const authorAvatarUrl = staffInfo?.profile_image ?? guestInfo?.photo_url ?? null;
+            const authorAvatarUrl = resolveFeedAuthorAvatarUrl({
+              staff: post.staff,
+              guest: post.guest,
+              staffId: post.staff_id,
+              staffAvatarById,
+            });
 
             const hasLocation = (post.lat != null && post.lng != null) || (post.location_label && post.location_label.trim());
             const titlePrefix = hasLocation
@@ -1416,8 +1424,9 @@ export default function CustomerHome() {
                         media_url: m.media_url,
                         thumbnail_url: m.thumbnail_url,
                       }))}
-                      width={SCREEN_WIDTH - HORIZONTAL_GUTTER * 2}
-                      height={Math.round((SCREEN_WIDTH - HORIZONTAL_GUTTER * 2) * 1.25)}
+                      width={feedCardWidth}
+                      height={feedMediaHeight}
+                      videoPosterOnly={Platform.OS === 'android'}
                       onPressItem={(item) => {
                         if (item.media_type === 'video') {
                           setFullscreenPostMedia({
@@ -1457,7 +1466,7 @@ export default function CustomerHome() {
             return (
               <View key={post.id}>
                 <StaffFeedPostCard
-                  horizontalInset={16}
+                  horizontalInset={0}
                   postTag={post.post_tag ?? null}
                   authorName={authorName}
                   authorAvatarUrl={authorAvatarUrl}
@@ -1478,7 +1487,11 @@ export default function CustomerHome() {
                   commentPreview={commentPreview}
                   togglingLike={togglingLike === post.id}
                   deletingPost={deletingPostId === post.id}
-                  onAuthorPress={post.staff_id ? () => router.push(`/customer/staff/${post.staff_id}`) : undefined}
+                  onAuthorPress={
+                    post.staff_id
+                      ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer')
+                      : undefined
+                  }
                   onAvatarPress={
                     post.staff_id
                       ? () => {
@@ -1486,14 +1499,14 @@ export default function CustomerHome() {
                           if (gIdx !== undefined) {
                             openStoryAt(gIdx, 0);
                           } else {
-                            router.push(`/customer/staff/${post.staff_id}`);
+                            openStaffProfileWithVisit(router, post.staff_id!, 'customer');
                           }
                         }
                       : undefined
                   }
                   onAvatarLongPress={
                     post.staff_id && storyGroupIndexByStaffId.get(post.staff_id) !== undefined
-                      ? () => router.push(`/customer/staff/${post.staff_id}`)
+                      ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer')
                       : undefined
                   }
                   onLike={() => toggleLike(post.id, post.staff_id ?? null, post.guest_id ?? null)}
@@ -1525,7 +1538,8 @@ export default function CustomerHome() {
                 </Modal>
               </View>
             );
-          })}
+          });
+          })()}
           {feedPosts.length > visibleFeedCount ? (
             <TouchableOpacity onPress={() => setVisibleFeedCount((c) => c + 30)} style={styles.showAllBtn}>
               <Text style={styles.showAllText}>{feedSharedText('guestShowMore')}</Text>
@@ -1669,79 +1683,29 @@ export default function CustomerHome() {
         visible={!!activeStory}
         transparent
         animationType="fade"
+        statusBarTranslucent
         onRequestClose={closeStoryPlayer}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
+          style={styles.storyFullscreenRoot}
         >
-        <Pressable style={styles.fullscreenOverlay} onPress={closeStoryPlayer}>
           {activeStory ? (
-            <Pressable style={styles.fullscreenImageWrap} onPress={(e) => e.stopPropagation()}>
-              <TouchableOpacity
-                style={styles.storyPlayerAuthorRow}
-                onPress={goToStoryAuthorProfile}
-                activeOpacity={0.85}
-                disabled={!activeStoryGroup?.staff_id}
-                accessibilityRole="button"
-                accessibilityLabel={activeStoryGroup?.author_name ? `${activeStoryGroup.author_name} · profil` : undefined}
-              >
-                {activeStoryGroup?.author_avatar ? (
-                  <CachedImage
-                    uri={activeStoryGroup.author_avatar}
-                    style={styles.storyPlayerAuthorAvatar}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={[styles.storyPlayerAuthorAvatar, styles.storyPlayerAuthorAvatarPh]}>
-                    <Text style={styles.storyPlayerAuthorAvatarLetter}>
-                      {(activeStoryGroup?.author_name ?? '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-                <Text style={styles.storyPlayerAuthorName} numberOfLines={1}>
-                  {activeStoryGroup?.author_name ?? t('visitorTypeStaff')}
-                </Text>
-              </TouchableOpacity>
-              {!!activeStory.caption?.trim() ? (
-                <View style={{ marginBottom: 12 }}>
-                  <Text style={{ color: '#fff', fontSize: 13, textAlign: 'center' }}>{activeStory.caption}</Text>
-                </View>
-              ) : null}
-              <View
-                style={[
-                  styles.storyMediaSlot,
-                  { width: SCREEN_WIDTH - 24, height: storyMediaHeight },
-                ]}
-                pointerEvents="box-none"
-              >
+            <View style={styles.storyFullscreenRoot}>
+              <View style={styles.storyMediaFullscreen} pointerEvents="box-none">
                 {activeStory.media_type === 'video' ? (
-                  <>
-                    <Video
-                      key={activeStory.id}
-                      ref={storyVideoRef}
-                      source={{ uri: activeStory.media_url }}
-                      style={[styles.fullscreenImage, styles.fullscreenVideo, { width: '100%', height: '100%' }]}
-                      useNativeControls
-                      resizeMode="contain"
-                      shouldPlay
-                      isLooping={false}
-                      onLoad={() => setStoryVideoReady(true)}
-                    />
-                    {activeStory.thumbnail_url && !storyVideoReady ? (
-                      <CachedImage
-                        uri={activeStory.thumbnail_url}
-                        style={[StyleSheet.absoluteFillObject, styles.fullscreenPosterImage]}
-                        contentFit="contain"
-                      />
-                    ) : null}
-                  </>
-                ) : (
-                  <CachedImage
-                    uri={activeStory.media_url}
-                    style={[styles.fullscreenImage, { width: '100%', height: '100%' }]}
-                    contentFit="contain"
+                  <StoryMuxVideo
+                    key={activeStory.id}
+                    mediaUrl={activeStory.media_url}
+                    thumbnailUrl={activeStory.thumbnail_url}
+                    style={styles.storyMediaFill}
+                    shouldPlay
+                    resizeMode={ResizeMode.COVER}
+                    useNativeControls
+                    isLooping={false}
                   />
+                ) : (
+                  <CachedImage uri={activeStory.media_url} style={styles.storyMediaFill} contentFit="contain" />
                 )}
                 <TouchableOpacity
                   style={[styles.storyLikeMiniBtn, storyLikedByMe && styles.storyLikeMiniBtnOn]}
@@ -1760,13 +1724,47 @@ export default function CustomerHome() {
                   </Text>
                 </TouchableOpacity>
               </View>
+
+              <View style={[styles.storyChromeTop, { paddingTop: insets.top + 8 }]}>
+                <TouchableOpacity
+                  style={styles.storyPlayerAuthorRow}
+                  onPress={goToStoryAuthorProfile}
+                  activeOpacity={0.85}
+                  disabled={!activeStoryGroup?.staff_id}
+                  accessibilityRole="button"
+                  accessibilityLabel={activeStoryGroup?.author_name ? `${activeStoryGroup.author_name} · profil` : undefined}
+                >
+                  {activeStoryGroup?.author_avatar ? (
+                    <CachedImage
+                      uri={activeStoryGroup.author_avatar}
+                      style={styles.storyPlayerAuthorAvatar}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={[styles.storyPlayerAuthorAvatar, styles.storyPlayerAuthorAvatarPh]}>
+                      <Text style={styles.storyPlayerAuthorAvatarLetter}>
+                        {(activeStoryGroup?.author_name ?? '?').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={styles.storyPlayerAuthorName} numberOfLines={1}>
+                    {activeStoryGroup?.author_name ?? t('visitorTypeStaff')}
+                  </Text>
+                </TouchableOpacity>
+                {!!activeStory.caption?.trim() ? (
+                  <Text style={styles.storyFullscreenCaption} numberOfLines={3}>
+                    {activeStory.caption}
+                  </Text>
+                ) : null}
+              </View>
+
               <View
-                style={{
-                  width: SCREEN_WIDTH - 24,
-                  marginTop: 12,
-                  gap: 8,
-                  marginBottom: storyKeyboardH > 0 ? Math.max(8, storyKeyboardH - 10) : 0,
-                }}
+                style={[
+                  styles.storyChromeBottom,
+                  {
+                    paddingBottom: Math.max(insets.bottom, 12) + (storyKeyboardH > 0 ? storyKeyboardH - insets.bottom : 0),
+                  },
+                ]}
               >
                 <View style={styles.storyReplyInputRow}>
                   <TextInput
@@ -1798,16 +1796,16 @@ export default function CustomerHome() {
                   </View>
                 ) : null}
               </View>
-            </Pressable>
+
+              <TouchableOpacity
+                style={[styles.fullscreenCloseBtn, { top: insets.top + 8 }]}
+                onPress={closeStoryPlayer}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={40} color="rgba(255,255,255,0.9)" />
+              </TouchableOpacity>
+            </View>
           ) : null}
-          <TouchableOpacity
-            style={[styles.fullscreenCloseBtn, { top: insets.top + 8 }]}
-            onPress={closeStoryPlayer}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="close-circle" size={40} color="rgba(255,255,255,0.9)" />
-          </TouchableOpacity>
-        </Pressable>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -2284,7 +2282,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 4,
   },
-  feedList: { gap: 14 },
+  feedList: { gap: pds.cardGap },
   feedItem: {
     flexDirection: 'column',
     backgroundColor: theme.colors.surface,
@@ -2562,11 +2560,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-  storyMediaSlot: {
-    position: 'relative',
-    alignSelf: 'center',
-    borderRadius: 14,
-    overflow: 'hidden',
+  storyFullscreenRoot: { flex: 1, backgroundColor: '#000' },
+  storyMediaFullscreen: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  storyMediaFill: { width: '100%', height: '100%' },
+  storyChromeTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 4,
+    paddingHorizontal: 16,
+    paddingRight: 56,
+  },
+  storyChromeBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 4,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  storyFullscreenCaption: {
+    color: '#fff',
+    fontSize: 13,
+    marginTop: 8,
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   storyLikeMiniBtn: {
     position: 'absolute',
