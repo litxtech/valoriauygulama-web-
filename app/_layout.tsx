@@ -13,6 +13,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
+import { applyPublicWebRoute } from '@/lib/publicWebRoute';
 import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
@@ -151,12 +152,36 @@ function AppIconBadgeSync() {
   const guestUnread = useGuestNotificationStore((s) => s.unreadCount);
   const staffMsgUnread = useStaffUnreadMessagesStore((s) => s.unreadCount);
   const guestMsgUnread = useGuestMessagingStore((s) => s.unreadCount);
+  const storeSyncedRef = useRef(false);
+
+  const pushBadgeFromStores = () => {
+    const s = useAuthStore.getState().staff;
+    const notif = s
+      ? useStaffNotificationStore.getState().unreadCount
+      : useGuestNotificationStore.getState().unreadCount;
+    const msg = s
+      ? useStaffUnreadMessagesStore.getState().unreadCount
+      : useGuestMessagingStore.getState().unreadCount;
+    void setOsAppIconBadgeCount(Math.min(999, notif + msg));
+  };
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isExpoGo) return;
+    storeSyncedRef.current = false;
+    void refreshBadgeCountsFromStores().finally(() => {
+      storeSyncedRef.current = true;
+      pushBadgeFromStores();
+    });
+  }, [staff?.id]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isExpoGo) return;
     const notif = staff ? staffUnread : guestUnread;
     const msg = staff ? staffMsgUnread : guestMsgUnread;
-    void setOsAppIconBadgeCount(Math.min(999, notif + msg));
+    const total = Math.min(999, notif + msg);
+    // Store henüz yüklenmeden 0 yazmak push/APNs rozetini siler (iOS açılış/ön plan).
+    if (!storeSyncedRef.current && total === 0) return;
+    void setOsAppIconBadgeCount(total);
   }, [staff?.id, staff, staffUnread, guestUnread, staffMsgUnread, guestMsgUnread]);
 
   useEffect(() => {
@@ -165,27 +190,6 @@ function AppIconBadgeSync() {
       void refreshBadgeCountsFromStores();
     });
   }, []);
-
-  useEffect(() => {
-    const staffId = staff?.id;
-    if (!staffId) return;
-    void useStaffNotificationStore.getState().refresh();
-    void useStaffUnreadMessagesStore.getState().refreshUnread(staffId);
-  }, [staff?.id]);
-
-  useEffect(() => {
-    if (Platform.OS === 'web' || isExpoGo || staff) return;
-    void useGuestNotificationStore.getState().refresh();
-    void (async () => {
-      await useGuestMessagingStore.getState().loadStoredToken();
-      const token = useGuestMessagingStore.getState().appToken;
-      if (!token) return;
-      const { guestListConversations } = await import('@/lib/messagingApi');
-      const list = await guestListConversations(token);
-      const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
-      useGuestMessagingStore.getState().setUnreadCount(total);
-    })();
-  }, [staff]);
 
   return null;
 }
@@ -197,15 +201,17 @@ function RootLayoutInner() {
   const dotPhase = useRef(new Animated.Value(0)).current;
   const dotTopY = dotPhase.interpolate({ inputRange: [0, 1], outputRange: [-9, 9] });
   const dotBottomY = dotPhase.interpolate({ inputRange: [0, 1], outputRange: [9, -9] });
+  const router = useRouter();
+  const setQR = useGuestFlowStore((s) => s.setQR);
+  const user = useAuthStore((s) => s.user);
+  const staff = useAuthStore((s) => s.staff);
+  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
+  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
+  const authBootPending = !!user && !staffCheckComplete && !staffCheckUnavailable;
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    const task = InteractionManager.runAfterInteractions(() => {
-      void initPushNotificationsPresentation();
-    });
-    return () => {
-      (task as { cancel?: () => void })?.cancel?.();
-    };
+    void initPushNotificationsPresentation();
   }, []);
 
   // LayoutAnimation.configureNext native callback sızıntısını önle (yazarken donma / 501 pending callbacks)
@@ -310,13 +316,6 @@ function RootLayoutInner() {
       .then(() => log.info('RootLayout', 'SplashScreen gizlendi'))
       .catch((e) => log.error('RootLayout', 'SplashScreen hatası', e));
   }, []);
-  const router = useRouter();
-  const setQR = useGuestFlowStore((s) => s.setQR);
-  const user = useAuthStore((s) => s.user);
-  const staff = useAuthStore((s) => s.staff);
-  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
-  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
-  const authBootPending = !!user && !staffCheckComplete && !staffCheckUnavailable;
 
   useEffect(() => {
     const sub = initAuthListener();
@@ -351,6 +350,19 @@ function RootLayoutInner() {
     });
     return () => sub.remove();
   }, [staff?.id]);
+
+  // iOS: arka planda gelen push rozeti, uygulama açılınca store 0 ile ezilmesin diye son bildirimden tekrar uygula
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || isExpoGo) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      void getLastNotificationResponseAsync().then((response) => {
+        const n = response?.notification as import('expo-notifications').Notification | undefined;
+        if (n) void applyBadgeFromExpoNotificationPayload(n);
+      });
+    });
+    return () => sub.remove();
+  }, []);
 
   // Bildirime tıklandığında yönlendir (aynı mantık hem listener hem cold start için)
   const handleNotificationResponse = (data: Record<string, unknown> | undefined) => {
@@ -567,9 +579,6 @@ function RootLayoutInner() {
           if (nt === 'staff_board_announcement' || nt === 'admin_announcement') {
             await useStaffBoardStore.getState().loadList(staff.id);
           }
-          const n = useStaffNotificationStore.getState().unreadCount;
-          const m = useStaffUnreadMessagesStore.getState().unreadCount;
-          void setOsAppIconBadgeCount(Math.min(999, n + m));
         })();
       } else {
         void (async () => {
@@ -582,9 +591,6 @@ function RootLayoutInner() {
             const total = list.reduce((acc, c) => acc + (c.unread_count ?? 0), 0);
             useGuestMessagingStore.getState().setUnreadCount(total);
           }
-          const n = useGuestNotificationStore.getState().unreadCount;
-          const m = useGuestMessagingStore.getState().unreadCount;
-          void setOsAppIconBadgeCount(Math.min(999, n + m));
         })();
       }
     });
@@ -752,11 +758,13 @@ function RootLayoutInner() {
       }
     };
 
-    // Web: QR ile açıldığında getInitialURL bazen path vermiyor; tarayıcı URL'sini kesin kullan
+    // Web: QR — valoria.tr/menü, /sözleşme, /maliye (+ eski /menu, /guest/sign-one)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const href = window.location.href;
-      const path = (window.location.pathname || '').replace(/\/$/, '');
-      if (path === '/guest/sign-one' || href.includes('/guest/sign-one')) {
+      const path = window.location.pathname || '';
+      const search = window.location.search || '';
+      if (applyPublicWebRoute(router, path, search)) return;
+      if (path.includes('/guest/sign-one') || href.includes('/guest/sign-one')) {
         handleUrl(href);
       }
     }
@@ -800,6 +808,8 @@ function RootLayoutInner() {
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="guest" options={{ headerShown: false }} />
         <Stack.Screen name="menu" options={{ headerShown: false }} />
+        <Stack.Screen name="sozlesme" options={{ headerShown: false }} />
+        <Stack.Screen name="maliye" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
         <Stack.Screen
           name="admin"

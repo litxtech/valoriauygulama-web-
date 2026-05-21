@@ -15,19 +15,16 @@ import {
   updateGuestStay,
 } from '@/lib/kbsStays/guestStaysDb';
 import type { CheckoutType, GuestStayRow } from '@/lib/kbsStays/types';
-import { supabase } from '@/lib/supabase';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 export type KbsServiceResult<T = void> =
   | { ok: true; data: T; manualKbsPanelRequired?: boolean }
   | { ok: false; userMessage: string; technicalMessage?: string };
 
 async function resolveAuthContext(): Promise<{ hotelId: string; userId: string } | null> {
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
-  if (!uid) return null;
-  const { data: au } = await supabase.schema('ops').from('app_users').select('hotel_id').eq('id', uid).maybeSingle();
-  if (!au?.hotel_id) return null;
-  return { hotelId: au.hotel_id, userId: uid };
+  const ctx = await resolveOpsHotelIdForCaller();
+  if (!ctx.ok) return null;
+  return { hotelId: ctx.hotelId, userId: ctx.userId };
 }
 
 function friendlyError(msg: string): string {

@@ -155,7 +155,7 @@ const baseConfig = {
     iosDisplayInForeground: true,
   },
   extra: {
-    router: { origin: 'https://valoriahotel-el4r.vercel.app' },
+    router: { origin: process.env.EXPO_PUBLIC_APP_URL || 'https://valoria.tr' },
     eas: { projectId: 'b6913ae8-bafd-4899-96bc-ae995a4bcec1' },
     devClientScheme,
     public: {

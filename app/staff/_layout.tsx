@@ -10,11 +10,15 @@ import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
 import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
 import { PersonnelWarningGate } from '@/components/staff/PersonnelWarningGate';
+import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
 import {
   StaffStackBackButton,
   resolveStaffBackFallback,
   staffStackGestureForNavigation,
+  staffStackScrollSafeGestureOptions,
 } from '@/lib/staffStackBack';
+import { prefetchStaffMealMenuBrowse } from '@/lib/staffMealMenuCache';
 
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
@@ -78,6 +82,14 @@ export default function StaffLayout() {
   const isDeleted = !!staff?.deleted_at;
 
   useStaffPresence(isBanned || isDeleted ? undefined : staff?.id);
+
+  useEffect(() => {
+    if (staff && canStaffUseMrzScan(staff)) void preloadMrzVisionScanner();
+  }, [staff?.id]);
+
+  useEffect(() => {
+    if (staff?.organization_id) prefetchStaffMealMenuBrowse(staff.organization_id);
+  }, [staff?.organization_id]);
 
   // Root _layout'ta initAuthListener zaten loadSession çağırıyor; burada tekrar çağırmak
   // loading: true yapıp layout'u null döndürüyor ve arkadaki lobi görünüyordu.
@@ -280,6 +292,9 @@ export default function StaffLayout() {
       <Stack.Screen name="lost-found/index" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/new" options={{ title: t('lfNewRecord'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/[id]" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/index" options={{ title: 'Tesis günlüğü', headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/new" options={{ title: 'Yeni tesis kaydı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/[id]" options={{ title: 'Kayıt detayı', headerBackTitle: t('back') }} />
       <Stack.Screen name="internal-complaints/new" options={{ title: t('profileUiStaffComplaint'), headerBackTitle: t('back') }} />
       <Stack.Screen
         name="documents/[id]"
@@ -295,13 +310,22 @@ export default function StaffLayout() {
         name="mrz-scan"
         options={{ headerShown: false, contentStyle: { backgroundColor: '#000' } }}
       />
-      <Stack.Screen name="meal-menu" options={{ title: t('staffMealMenuTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="meal-menu"
+        options={{ title: t('staffMealMenuTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
       <Stack.Screen name="hotel-menu/index" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
       <Stack.Screen name="hotel-menu/[id]" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
       <Stack.Screen name="hotel-menu/manage" options={{ title: t('hotelKitchenMenuManageTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="hotel-menu/edit" options={{ headerBackTitle: t('back') }} />
-      <Stack.Screen name="meal-menu-edit" options={{ title: t('staffMealMenuEditTitle'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="meal-menu-history" options={{ title: t('staffMealHistoryTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="meal-menu-edit"
+        options={{ title: t('staffMealMenuEditTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen
+        name="meal-menu-history"
+        options={{ title: t('staffMealHistoryTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
       <Stack.Screen name="salary-history" options={{ title: t('salaryHistory'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />

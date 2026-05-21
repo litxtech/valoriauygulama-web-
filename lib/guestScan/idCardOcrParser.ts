@@ -335,7 +335,6 @@ export function parseIdCardFromOcrLines(lines: string[]): ParsedDocument & Turki
   const confidence =
     docNo && isUsablePersonName(firstName) && isUsablePersonName(lastName) && birthDate ? 0.82 : docNo ? 0.58 : 0.35;
 
-  const parents = extractParentNamesFromOcr(L);
   let documentType: ParsedDocument['documentType'] = 'other';
   if (isTc) documentType = 'id_card';
   else if (isYkn || isGkk) documentType = 'residence_permit';
@@ -357,8 +356,8 @@ export function parseIdCardFromOcrLines(lines: string[]): ParsedDocument & Turki
     checksumsValid: null,
     warnings,
     documentSeries: serial,
-    motherName: parents.motherName,
-    fatherName: parents.fatherName,
+    motherName: null,
+    fatherName: null,
   };
 }
 
@@ -370,7 +369,6 @@ export function enrichParsedWithIdCardOcr(
   lines: string[]
 ): ParsedDocument & TurkishIdOcrExtras {
   const id = parseIdCardFromOcrLines(lines);
-  const parents = extractParentNamesFromOcr(lines);
   const serial = extractDocumentSerialFromOcr(lines) ?? id.documentSeries;
   const joined = normLines(lines).join('\n');
   const ykn = joined.match(YKN_RE)?.[1] ?? null;
@@ -386,8 +384,6 @@ export function enrichParsedWithIdCardOcr(
   }
 
   const names = mergeNameFields(parsed, id, lines);
-  const motherName = coalescePersonName(parents.motherName, id.motherName);
-  const fatherName = coalescePersonName(parents.fatherName, id.fatherName);
 
   let documentType = parsed.documentType;
   if (documentType === 'other' && (id.documentType === 'residence_permit' || detectTemporaryProtection(lines))) {
@@ -411,8 +407,8 @@ export function enrichParsedWithIdCardOcr(
     nationalityCode: natCode,
     issuingCountryCode: issuing,
     documentSeries: serial,
-    motherName,
-    fatherName,
+    motherName: null,
+    fatherName: null,
     confidence: parsed.confidence ?? id.confidence,
   };
 }

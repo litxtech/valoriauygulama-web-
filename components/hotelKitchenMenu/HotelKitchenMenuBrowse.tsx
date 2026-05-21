@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { useAuthStore } from '@/stores/authStore';
-import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
 import {
   View,
   Text,
@@ -22,17 +20,17 @@ import { theme } from '@/constants/theme';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
-import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
 import {
   distinctCategoryTitles,
+  fetchGuestFavoriteItemIds,
   fetchHotelKitchenMenuForGuest,
   fetchHotelKitchenMenuItems,
   getHotelKitchenMenuCache,
   isBreakfastCategory,
-  resolveLightboxUrls,
-  coverImageUrl,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 
 type SectionFilter = 'all' | 'breakfast';
 
@@ -43,7 +41,6 @@ type Props = {
   detailHref: (id: string) => Href;
   manageHref?: Href;
   showManage?: boolean;
-  showPublicQr?: boolean;
 };
 
 function groupByCategory(items: HotelKitchenMenuItemWithImages[]): MenuSection[] {
@@ -60,10 +57,9 @@ function groupByCategory(items: HotelKitchenMenuItemWithImages[]): MenuSection[]
   return order.map((title) => ({ title, data: map.get(title)! }));
 }
 
-export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManage, showPublicQr }: Props) {
+export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManage }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
-  const staff = useAuthStore((s) => s.staff);
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -73,17 +69,18 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
-  const [qrOpen, setQrOpen] = useState(false);
 
   const cacheKey = 'list:available';
 
   const applyRows = useCallback(
-    (rows: HotelKitchenMenuItemWithImages[]) => {
-      if (mode === 'guest') {
+    (rows: HotelKitchenMenuItemWithImages[], favIds?: Set<string>) => {
+      if (mode === 'guest' && favIds) {
+        setFavorites(favIds);
+      } else if (mode === 'guest') {
         setFavorites(new Set(rows.filter((r) => r.is_favorited).map((r) => r.id)));
       }
       setItems(rows);
-      prefetchImageUrls(rows.map((r) => coverImageUrl(r)), 24);
+      scheduleMenuImagePrefetch(rows);
     },
     [mode]
   );
@@ -92,16 +89,27 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
     async (opts?: { silent?: boolean; skipCache?: boolean }) => {
       const cached = !opts?.skipCache ? getHotelKitchenMenuCache(cacheKey) : null;
       try {
-        const rows =
-          mode === 'guest'
-            ? await fetchHotelKitchenMenuForGuest({ skipCache: opts?.skipCache })
-            : await fetchHotelKitchenMenuItems({ availableOnly: true, skipCache: opts?.skipCache });
-        applyRows(rows);
+        if (mode === 'guest') {
+          const rows = await fetchHotelKitchenMenuForGuest({
+            skipCache: opts?.skipCache,
+            withFavorites: false,
+          });
+          applyRows(rows);
+          void fetchGuestFavoriteItemIds()
+            .then((favIds) => setFavorites(favIds))
+            .catch(() => {});
+        } else {
+          const rows = await fetchHotelKitchenMenuItems({
+            availableOnly: true,
+            skipCache: opts?.skipCache,
+          });
+          applyRows(rows);
+        }
       } catch {
         if (!cached?.length) setItems([]);
       }
     },
-    [mode, applyRows]
+    [mode, applyRows, cacheKey]
   );
 
   useFocusEffect(
@@ -119,10 +127,12 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
     }, [load, cacheKey, applyRows])
   );
 
-  const openImage = useCallback(async (item: HotelKitchenMenuItemWithImages) => {
-    const urls = await resolveLightboxUrls(item);
-    if (urls.length) setLightbox({ urls, index: 0 });
-  }, []);
+  const openImage = useCallback(
+    (item: HotelKitchenMenuItemWithImages) => {
+      openHotelMenuLightbox(item, setLightbox, 0);
+    },
+    []
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -174,41 +184,35 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
 
   const ListHeader = (
     <View>
-      <LinearGradient
-        colors={[...menuUi.heroGradient]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.hero, { paddingTop: 8 }]}
-      >
-        <View style={styles.heroIconWrap}>
-          <Ionicons name="restaurant" size={28} color="#fff" />
+      <View style={styles.pageHeader}>
+        <View style={styles.titleRow}>
+          <View style={styles.titleIcon}>
+            <Ionicons name="restaurant" size={18} color={menuUi.accentDeep} />
+          </View>
+          <View style={styles.titleTexts}>
+            <Text style={styles.pageTitle}>{t('hotelKitchenMenuHeroTitle')}</Text>
+            <Text style={styles.pageSub} numberOfLines={1}>
+              {t('hotelKitchenMenuIntro')}
+            </Text>
+          </View>
         </View>
-        <Text style={styles.heroTitle}>{t('hotelKitchenMenuHeroTitle')}</Text>
-        <Text style={styles.heroSub}>{t('hotelKitchenMenuIntro')}</Text>
-        <View style={styles.searchRow}>
-          <Ionicons name="search" size={18} color="rgba(255,255,255,0.9)" />
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={16} color={theme.colors.textMuted} />
           <TextInput
             style={styles.searchInput}
             placeholder={t('hotelKitchenMenuSearchPh')}
-            placeholderTextColor="rgba(255,255,255,0.55)"
+            placeholderTextColor={theme.colors.textMuted}
             value={search}
             onChangeText={setSearch}
             returnKeyType="search"
           />
           {search.length > 0 ? (
             <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.75)" />
+              <Ionicons name="close-circle" size={18} color={theme.colors.textMuted} />
             </TouchableOpacity>
           ) : null}
         </View>
-      </LinearGradient>
-
-      {showPublicQr && staff?.organization_id ? (
-        <TouchableOpacity style={styles.qrOutlineBtn} onPress={() => setQrOpen(true)} activeOpacity={0.88}>
-          <Ionicons name="qr-code-outline" size={20} color={menuUi.accentDeep} />
-          <Text style={styles.qrOutlineBtnText}>{t('publicKitchenMenuQrTitle')}</Text>
-        </TouchableOpacity>
-      ) : null}
+      </View>
 
       {showManage && manageHref ? (
         <TouchableOpacity style={styles.manageBtn} onPress={() => router.push(manageHref)} activeOpacity={0.88}>
@@ -339,14 +343,6 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
         onClose={() => setLightbox(null)}
       />
 
-      {showPublicQr ? (
-        <HotelKitchenMenuQrSheet
-          visible={qrOpen}
-          organizationId={staff?.organization_id}
-          organizationName={staff?.organization?.name}
-          onClose={() => setQrOpen(false)}
-        />
-      ) : null}
     </View>
   );
 }
@@ -355,85 +351,55 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: menuUi.warmBg },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingHint: { fontSize: 14, color: theme.colors.textMuted },
-  hero: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    borderRadius: 22,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    overflow: 'hidden',
-    ...menuUi.shadow,
-  },
-  heroIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+  pageHeader: { marginHorizontal: 16, marginTop: 6, marginBottom: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  titleIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: menuUi.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
   },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#fff',
-    letterSpacing: -0.3,
-  },
-  heroSub: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
-    lineHeight: 20,
-    marginTop: 6,
-    marginBottom: 14,
-  },
-  searchRow: {
+  titleTexts: { flex: 1, minWidth: 0 },
+  pageTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, letterSpacing: -0.2 },
+  pageSub: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 1 },
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    marginTop: 10,
+    backgroundColor: menuUi.cardBg,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    minHeight: 40,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: theme.colors.border,
+    ...menuUi.shadowSm,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: '#fff',
-    paddingVertical: 10,
+    fontSize: 14,
+    color: theme.colors.text,
+    paddingVertical: 6,
     paddingHorizontal: 8,
   },
-  qrOutlineBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: menuUi.cardBg,
-    borderWidth: 2,
-    borderColor: menuUi.accent,
-  },
-  qrOutlineBtnText: { color: menuUi.accentDeep, fontWeight: '700', fontSize: 15 },
-  manageBtn: { marginHorizontal: 16, marginTop: 10, borderRadius: 14, overflow: 'hidden', ...menuUi.shadowSm },
+  manageBtn: { marginHorizontal: 16, marginTop: 10, borderRadius: 12, overflow: 'hidden', ...menuUi.shadowSm },
   manageBtnGrad: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 13,
+    paddingVertical: 10,
   },
-  manageBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  sectionRow: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 16 },
+  manageBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  sectionRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginTop: 10 },
   sectionChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
+    gap: 5,
+    paddingVertical: 8,
     borderRadius: 14,
     backgroundColor: menuUi.cardBg,
     borderWidth: 1,
@@ -442,10 +408,10 @@ const styles = StyleSheet.create({
   sectionChipOn: { backgroundColor: menuUi.accent, borderColor: menuUi.accent },
   sectionChipText: { fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary },
   sectionChipTextOn: { color: '#fff' },
-  catScrollContent: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4, gap: 8 },
+  catScrollContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 2, gap: 6 },
   catChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 20,
     backgroundColor: menuUi.cardBg,
     marginRight: 8,
@@ -457,8 +423,8 @@ const styles = StyleSheet.create({
   catChipTextOn: { color: menuUi.accentDeep, fontWeight: '700' },
   resultCount: {
     marginHorizontal: 20,
-    marginTop: 12,
-    marginBottom: 4,
+    marginTop: 8,
+    marginBottom: 2,
     fontSize: 13,
     fontWeight: '600',
     color: theme.colors.textMuted,
@@ -466,8 +432,8 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
+    marginTop: 14,
+    marginBottom: 6,
     paddingHorizontal: 4,
     gap: 10,
   },

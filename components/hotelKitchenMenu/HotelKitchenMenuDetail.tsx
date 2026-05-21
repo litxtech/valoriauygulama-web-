@@ -25,6 +25,8 @@ import {
   toggleHotelKitchenMenuFavorite,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
+import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 
 type Props = {
   itemId: string;
@@ -56,6 +58,11 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
       .finally(() => setLoading(false));
   }, [load]);
 
+  useEffect(() => {
+    if (!item?.images?.length) return;
+    void prefetchImageUrls(item.images.map((im) => im.image_url), 8);
+  }, [item?.id, item?.images]);
+
   const onToggleFavorite = async () => {
     if (mode !== 'guest') return;
     setToggling(true);
@@ -74,8 +81,8 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
   };
 
   const openLightbox = (index: number) => {
-    const urls = item?.images.map((im) => im.image_url).filter(Boolean) ?? [];
-    if (urls.length) setLightbox({ urls, index });
+    if (!item) return;
+    openHotelMenuLightbox(item, setLightbox, index);
   };
 
   if (loading) {

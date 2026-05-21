@@ -1,39 +1,76 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useTranslation } from 'react-i18next';
-import { MrzVisionScanner, type MrzVisionUiState, type MrzLockedPayload } from '@/components/mrz/MrzVisionScanner';
+import type { MrzLockedPayload, MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
 import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
 import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
+import {
+  getMrzVisionScannerCached,
+  preloadMrzVisionScanner,
+  type MrzVisionScannerComponent,
+} from '@/lib/scanner/mrzVisionScannerLoader';
 import { GuestScannerOverlay } from '@/components/kbs/GuestScannerOverlay';
 import { scanDocumentFromGallery } from '@/lib/guestScan/galleryScan';
 import { playKbsScanSound } from '@/lib/kbsScanSounds';
 import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
 import type { GuestScanLockPayload } from '@/lib/guestScan/types';
 
-const LOCK_DEBOUNCE_MS = 2000;
+const LOCK_DEBOUNCE_MS = 400;
 
 type Props = {
   enabled: boolean;
   soundEnabled: boolean;
+  /** Artırıldığında kilitleme / OCR döngüsü sıfırlanır (tam remount gerekmez). */
+  scanResetToken?: number;
+  /** Onay veya bekleme sırasında kamera önizlemesi açık kalsın. */
+  keepCameraWarm?: boolean;
   groupCount?: number;
   onLocked: (payload: GuestScanLockPayload) => void;
   onBack: () => void;
   onGalleryError?: (message: string) => void;
 };
 
-export function GuestIdentityScanner({ enabled, soundEnabled, groupCount, onLocked, onBack, onGalleryError }: Props) {
+export function GuestIdentityScanner({
+  enabled,
+  soundEnabled,
+  scanResetToken = 0,
+  keepCameraWarm = true,
+  groupCount,
+  onLocked,
+  onBack,
+  onGalleryError,
+}: Props) {
   const { t } = useTranslation();
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [ui, setUi] = useState<MrzVisionUiState>({
-    frameKind: 'idle',
-    hint: '',
+    frameKind: 'hunting',
+    hint: t('kbsMrzLiveCameraWarming'),
     showSpinner: false,
     successGlow: false,
   });
+  const [VisionScanner, setVisionScanner] = useState<MrzVisionScannerComponent | null>(() =>
+    getMrzVisionScannerCached()
+  );
   const lockUntilRef = useRef(0);
   const visionOk = isMrzVisionScannerAvailable();
+
+  useEffect(() => {
+    if (!visionOk) return;
+    if (VisionScanner) return;
+    let cancelled = false;
+    void preloadMrzVisionScanner().then((Comp) => {
+      if (!cancelled && Comp) setVisionScanner(() => Comp);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visionOk, VisionScanner]);
+
+  useEffect(() => {
+    lockUntilRef.current = 0;
+  }, [scanResetToken]);
 
   const handleVisionLocked = useCallback(
     async (p: MrzLockedPayload) => {
@@ -80,12 +117,18 @@ export function GuestIdentityScanner({ enabled, soundEnabled, groupCount, onLock
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <MrzVisionScanner
-        enabled={enabled}
-        torchEnabled={torchEnabled}
-        onUiStateChange={setUi}
-        onLocked={handleVisionLocked}
-      />
+      {VisionScanner ? (
+        <VisionScanner
+          enabled={enabled}
+          keepCameraWarm={keepCameraWarm}
+          resetToken={scanResetToken}
+          torchEnabled={torchEnabled}
+          onUiStateChange={setUi}
+          onLocked={handleVisionLocked}
+        />
+      ) : (
+        <View style={styles.loader} />
+      )}
       <GuestScannerOverlay
         hint={ui.hint || t('kbsGuestScanMrzSearching')}
         frameKind={ui.frameKind}
@@ -105,4 +148,5 @@ export function GuestIdentityScanner({ enabled, soundEnabled, groupCount, onLock
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
+  loader: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

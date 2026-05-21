@@ -24,7 +24,12 @@ import { formatIsoDateTr } from '@/lib/scanner/mrzDates';
 import { formatIcao3ForTr } from '@/lib/scanner/mrzIssuingLabel';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
-import { MrzVisionScanner, type MrzVisionUiState } from '@/components/mrz/MrzVisionScanner';
+import {
+  getMrzVisionScannerCached,
+  preloadMrzVisionScanner,
+  type MrzVisionScannerComponent,
+} from '@/lib/scanner/mrzVisionScannerLoader';
+import type { MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
 import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
 import { canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
 import {
@@ -42,6 +47,12 @@ import { inferKbsPersonKind, type KbsPersonKind, type UsageKind } from '@/lib/kb
 import { fingerprintFromMrzQueued, useKbsMrzBatchStore } from '@/stores/kbsMrzBatchStore';
 import { playMrzReadSuccessBeep } from '@/lib/mrzScanBeep';
 import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
+import { preloadOpsAppUserForSession } from '@/lib/resolveOpsHotelId';
+import {
+  clearMrzLockRecord,
+  recordMrzLock,
+  shouldAcceptMrzLock,
+} from '@/lib/scanner/mrzScanCycle';
 
 type UpsertData = { guestId: string; guestDocumentId: string; scanStatus: string };
 
@@ -81,7 +92,7 @@ export default function KbsScanScreen() {
   const [lastParsed, setLastParsed] = useState<ParsedDocument | null>(null);
   const [lastOcrPreview, setLastOcrPreview] = useState<string | null>(null);
   const [upsertResult, setUpsertResult] = useState<UpsertData | null>(null);
-  const lastCommittedMrzRef = useRef<string | null>(null);
+  const lastAutoLockRef = useRef({ key: null as string | null, at: 0 });
 
   const startBatchSession = useKbsMrzBatchStore((s) => s.startSession);
   const bumpQueued = useKbsMrzBatchStore((s) => s.bumpQueued);
@@ -107,12 +118,29 @@ export default function KbsScanScreen() {
   const successBeepVariantRef = useRef(0);
   /** Flaş varsayılan kapalı; üst bardaki düğmeyle açılır. */
   const [torchEnabled, setTorchEnabled] = useState(false);
+  const [scanResetToken, setScanResetToken] = useState(0);
+  const [VisionScanner, setVisionScanner] = useState<MrzVisionScannerComponent | null>(() =>
+    getMrzVisionScannerCached()
+  );
 
   const staff = useAuthStore((s) => s.staff);
   const allowedMrz = canStaffUseMrzScan(staff);
   useEffect(() => {
-    if (allowedMrz) startBatchSession();
+    if (!allowedMrz) return;
+    startBatchSession();
+    let cancelled = false;
+    preloadOpsAppUserForSession();
+    void preloadMrzVisionScanner().then((Comp) => {
+      if (!cancelled && Comp) setVisionScanner(() => Comp);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [allowedMrz, startBatchSession]);
+
+  const bumpScanReset = useCallback(() => {
+    setScanResetToken((n) => n + 1);
+  }, []);
   useEffect(() => {
     void (async () => {
       try {
@@ -150,7 +178,7 @@ export default function KbsScanScreen() {
     pendingSaveRef.current = pendingSave;
     if (!pendingSave) return;
     const p = pendingSave.parsed;
-    setEditFirstName(p.firstName ?? '');
+    setEditFirstName([p.firstName, p.middleName].filter(Boolean).join(' ').trim() || '');
     setEditLastName(p.lastName ?? '');
     setEditDocNumber(p.documentNumber ?? '');
     setEditBirthDate(p.birthDate && p.birthDate.length >= 10 ? p.birthDate.slice(0, 10) : '');
@@ -158,7 +186,8 @@ export default function KbsScanScreen() {
     setEditNationality(p.nationalityCode ?? '');
     setKbsPersonKind(inferKbsPersonKind(p));
     setUsageKind('konaklama');
-    setDocumentSeries('');
+    const mrzSerial = (p as ParsedDocument & { documentSeries?: string | null }).documentSeries;
+    setDocumentSeries(mrzSerial?.trim() ?? '');
     setFatherName('');
     setMotherName('');
     setPlateNumber('');
@@ -185,7 +214,10 @@ export default function KbsScanScreen() {
   const buildMergedParsed = useCallback(
     (ps: { parsed: ParsedDocument; mrzLine: string }): ParsedDocument => {
       const p = ps.parsed;
-      const fn = editFirstName.trim() || p.firstName;
+      const fn =
+        editFirstName.trim() ||
+        [p.firstName, p.middleName].filter(Boolean).join(' ').trim() ||
+        p.firstName;
       const ln = editLastName.trim() || p.lastName;
       const dn = editDocNumber.trim() || p.documentNumber;
       const bdRaw = editBirthDate.trim();
@@ -214,13 +246,15 @@ export default function KbsScanScreen() {
 
   useEffect(() => {
     onMrzLockedRef.current = ({ mrz, parsed: preParsed }) => {
-      if (pendingSaveRef.current) return;
+      if (pendingSaveRef.current) {
+        bumpScanReset();
+      }
       setUpsertResult(null);
 
-      if (mrz === lastCommittedMrzRef.current) {
-        Alert.alert(t('kbsSameDocumentTitle'), t('kbsSameDocumentMessage'));
+      if (!shouldAcceptMrzLock(lastAutoLockRef.current.key, lastAutoLockRef.current.at, mrz)) {
         return;
       }
+      recordMrzLock(lastAutoLockRef.current, mrz);
 
       const fp = fingerprintFromMrzQueued({
         mrzLine: mrz,
@@ -232,6 +266,7 @@ export default function KbsScanScreen() {
       });
       if (hasQueuedConflict(fp)) {
         Alert.alert('Zaten listede', 'Bu belge bu MRZ oturumunda zaten sıraya alınmış.');
+        bumpScanReset();
         return;
       }
 
@@ -250,7 +285,7 @@ export default function KbsScanScreen() {
         Animated.timing(successPulse, { toValue: 0, duration: 520, useNativeDriver: true }),
       ]).start();
     };
-  }, [t, soundEnabled, hasQueuedConflict, successPulse]);
+  }, [t, soundEnabled, hasQueuedConflict, successPulse, bumpScanReset]);
 
   const buildUpsertPayload = useCallback(
     (ps: { parsed: ParsedDocument; mrzLine: string }, deferReady: boolean) => {
@@ -277,7 +312,8 @@ export default function KbsScanScreen() {
   );
 
   const savePendingToServer = useCallback(
-    async (deferReady: boolean): Promise<boolean> => {
+    async (opts: { deferReady: boolean; skipQueue?: boolean }): Promise<boolean> => {
+      const { deferReady, skipQueue = false } = opts;
       if (!pendingSave) return false;
       const merged = buildMergedParsed(pendingSave);
       const gate = canSaveMrzDocument({ rawMrz: pendingSave.mrzLine, parsed: merged });
@@ -288,7 +324,7 @@ export default function KbsScanScreen() {
       }
       setBusy(true);
       setFrameKind('reading');
-      setStepLabel('Kaydediliyor…');
+      setStepLabel(skipQueue ? t('staffMrzArchiveSaving') : 'Kaydediliyor…');
       const payload = buildUpsertPayload(pendingSave, deferReady);
       try {
         const local = await upsertGuestDocumentLocal({
@@ -304,16 +340,16 @@ export default function KbsScanScreen() {
           plateNumber: plateNumber.trim() || null,
           guestPhone: guestPhone.trim() || null,
           forwardDated,
-          mrzBatchKey: batchKey,
+          mrzBatchKey: skipQueue ? null : batchKey,
           fatherName: fatherName.trim() || null,
           motherName: motherName.trim() || null
         });
         if (local.ok) {
-          lastCommittedMrzRef.current = pendingSave.mrzLine;
           setPendingSave(null);
+          bumpScanReset();
           setUpsertResult(local.data);
           setFrameKind('success');
-          if (deferReady) {
+          if (deferReady && !skipQueue) {
             bumpQueued();
             registerQueuedFingerprint(
               fingerprintFromMrzQueued({
@@ -342,11 +378,11 @@ export default function KbsScanScreen() {
           );
           return false;
         }
-        lastCommittedMrzRef.current = pendingSave.mrzLine;
         setPendingSave(null);
+        bumpScanReset();
         setUpsertResult(res.data);
         setFrameKind('success');
-        if (deferReady) {
+        if (deferReady && !skipQueue) {
           bumpQueued();
           registerQueuedFingerprint(
             fingerprintFromMrzQueued({
@@ -386,11 +422,12 @@ export default function KbsScanScreen() {
       motherName,
       bumpQueued,
       registerQueuedFingerprint,
+      bumpScanReset,
     ]
   );
 
   const onQueueAndNext = useCallback(async () => {
-    const ok = await savePendingToServer(true);
+    const ok = await savePendingToServer({ deferReady: true });
     if (ok) {
       setUpsertResult(null);
       setFrameKind('idle');
@@ -398,15 +435,27 @@ export default function KbsScanScreen() {
   }, [savePendingToServer]);
 
   const onQueueAndFinish = useCallback(async () => {
-    const ok = await savePendingToServer(true);
+    const ok = await savePendingToServer({ deferReady: true });
     if (ok && batchKey) {
       router.push({ pathname: '/staff/kbs/batch', params: { batchKey } } as never);
     }
   }, [savePendingToServer, batchKey, router]);
 
   const onSaveReadyDirect = useCallback(async () => {
-    await savePendingToServer(false);
+    await savePendingToServer({ deferReady: false });
   }, [savePendingToServer]);
+
+  const onSaveArchiveOnly = useCallback(async () => {
+    const ok = await savePendingToServer({ deferReady: true, skipQueue: true });
+    if (!ok) return;
+    Alert.alert(t('staffMrzArchiveSavedTitle'), t('staffMrzArchiveSavedBody'), [
+      { text: t('staffMrzContinueScan'), style: 'cancel', onPress: () => setFrameKind('idle') },
+      {
+        text: t('staffPassportsTitle'),
+        onPress: () => router.push('/staff/profile/passports' as never),
+      },
+    ]);
+  }, [savePendingToServer, router, t]);
 
   const overlayFrameKind = pendingSave ? frameKind : visionUi.frameKind;
   const framePillText = useMemo(() => {
@@ -472,7 +521,9 @@ export default function KbsScanScreen() {
   const discardPending = useCallback(() => {
     setPendingSave(null);
     setFrameKind('idle');
-  }, []);
+    clearMrzLockRecord(lastAutoLockRef.current);
+    bumpScanReset();
+  }, [bumpScanReset]);
 
   if (!allowedMrz) {
     return (
@@ -496,16 +547,18 @@ export default function KbsScanScreen() {
     <View style={styles.root}>
       <StatusBar style="light" />
 
-      {!pendingSave ? (
-        <MrzVisionScanner
+      {VisionScanner ? (
+        <VisionScanner
           enabled={visionScanEnabled}
+          keepCameraWarm={!!pendingSave}
+          resetToken={scanResetToken}
           torchEnabled={torchEnabled}
           onUiStateChange={setVisionUi}
           onLocked={(payload) => onMrzLockedRef.current(payload)}
           onOcrPreview={setLastOcrPreview}
         />
       ) : (
-        <View style={[StyleSheet.absoluteFillObject, styles.contentPageBg]} />
+        <View style={[StyleSheet.absoluteFillObject, styles.rootCameraBg]} />
       )}
 
       <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
@@ -546,6 +599,15 @@ export default function KbsScanScreen() {
               accessibilityLabel={soundEnabled ? 'Ses açık' : 'Ses kapalı'}
             >
               <Ionicons name={soundEnabled ? 'volume-high-outline' : 'volume-mute-outline'} size={24} color="#fff" />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/staff/profile/passports' as never)}
+              style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.75 }]}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={t('staffPassportsTitle')}
+            >
+              <Ionicons name="folder-open-outline" size={24} color="#fff" />
             </Pressable>
             <Pressable
               onPress={() => batchKey && router.push({ pathname: '/staff/kbs/batch', params: { batchKey } } as never)}
@@ -772,6 +834,18 @@ export default function KbsScanScreen() {
                 <Text style={styles.reviewForwardText}>İleri tarihli</Text>
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={[styles.reviewBtnArchive, busy && { opacity: 0.65 }]}
+                onPress={() => void onSaveArchiveOnly()}
+                disabled={busy}
+                activeOpacity={0.9}
+              >
+                <View style={styles.reviewBtnArchiveInner}>
+                  <Ionicons name="save-outline" size={20} color="#fff" />
+                  <Text style={styles.reviewBtnArchiveText}>{t('staffMrzSaveArchiveOnly')}</Text>
+                </View>
+              </TouchableOpacity>
+              <Text style={styles.reviewArchiveHint}>{t('staffMrzSaveArchiveHint')}</Text>
               <TouchableOpacity
                 style={[styles.reviewBtnPrimary, busy && { opacity: 0.65 }]}
                 onPress={() => void onQueueAndNext()}
@@ -1000,6 +1074,21 @@ const styles = StyleSheet.create({
   kbsChipLightTextOn: { color: '#fff' },
   reviewForwardRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   reviewForwardText: { color: theme.colors.text, fontWeight: '700', fontSize: 14 },
+  reviewBtnArchive: {
+    backgroundColor: '#0369a1',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  reviewBtnArchiveInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  reviewBtnArchiveText: { color: '#fff', fontWeight: '900', fontSize: 16 },
+  reviewArchiveHint: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 17,
+  },
   reviewBtnPrimary: {
     backgroundColor: theme.colors.primary,
     borderRadius: 14,

@@ -43,10 +43,28 @@ export const pds = {
 /** Feed gönderi medyası: 4:5 (yükseklik = genişlik × oran) */
 export const FEED_POST_MEDIA_HEIGHT_RATIO = 1.25;
 
+/** Video önizleme: 4:5 (fotoğraflarla aynı yükseklik; 16:9 çok küçük kalıyordu) */
+export const FEED_VIDEO_MEDIA_HEIGHT_RATIO = FEED_POST_MEDIA_HEIGHT_RATIO;
+
 export function feedPostCardWidth(screenWidth: number, sideInsetPerEdge = pds.outerPadding) {
   return screenWidth - sideInsetPerEdge * 2;
 }
 
 export function feedPostMediaHeight(cardWidth: number) {
   return Math.round(cardWidth * FEED_POST_MEDIA_HEIGHT_RATIO);
+}
+
+export function feedPostVideoMediaHeight(cardWidth: number) {
+  return Math.round(cardWidth * FEED_VIDEO_MEDIA_HEIGHT_RATIO);
+}
+
+/** Videolu gönderi: büyük 4:5 önizleme; yalnızca fotoğraf: aynı oran. */
+export function feedPostMediaHeightForItems(
+  cardWidth: number,
+  items: { media_type: 'image' | 'video' }[]
+) {
+  if (items.length > 0 && items.some((m) => m.media_type === 'video')) {
+    return feedPostVideoMediaHeight(cardWidth);
+  }
+  return feedPostMediaHeight(cardWidth);
 }

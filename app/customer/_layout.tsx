@@ -232,6 +232,22 @@ export default function CustomerLayout() {
         }}
       />
       <Stack.Screen
+        name="facility-journal/index"
+        options={{
+          headerShown: true,
+          title: 'Tesis kayıtları',
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="facility-journal/[id]"
+        options={{
+          headerShown: true,
+          title: 'Tesis kaydı',
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
         name="hotel-menu/index"
         options={{
           headerShown: true,

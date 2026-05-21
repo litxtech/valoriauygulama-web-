@@ -1,5 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, Dimensions } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  Pressable,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+} from 'react-native';
 import {
   Camera,
   useCameraDevice,
@@ -24,27 +31,35 @@ import {
 import type { MrzCameraFrameKind } from '@/lib/scanner/mrzFrameTheme';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
-export type MrzVisionUiState = {
-  frameKind: MrzCameraFrameKind;
-  hint: string;
-  showSpinner: boolean;
-  successGlow: boolean;
-};
+import type { MrzLockedPayload, MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
+import {
+  clearMrzLockRecord,
+  recordMrzLock,
+  shouldAcceptMrzLock,
+} from '@/lib/scanner/mrzScanCycle';
 
-export type MrzLockedPayload = { mrz: string; parsed: ParsedDocument };
+export type { MrzVisionUiState, MrzLockedPayload } from '@/components/mrz/mrzVisionTypes';
 
 type Props = {
   enabled: boolean;
   torchEnabled: boolean;
+  /** Her turda artırın — kilitleme + stabilite sıfırlanır. */
+  resetToken?: number;
+  /** Onay ekranında kamera önizlemesi açık kalsın (hızlı 2. tarama). */
+  keepCameraWarm?: boolean;
   onUiStateChange: (ui: MrzVisionUiState) => void;
   onLocked: (payload: MrzLockedPayload) => void;
   onOcrPreview?: (preview: string) => void;
 };
 
-const TARGET_FPS = 18;
-const REFOCUS_INTERVAL_MS = 2200;
-/** MRZ şeridi pasaport/kimlik alt bölgesinde — odak noktası */
-const MRZ_FOCUS = { x: 0.5, y: 0.72 } as const;
+const TARGET_FPS = 12;
+const REFOCUS_INTERVAL_MS = 4500;
+const UNLOCK_AFTER_LOCK_MS = 500;
+/** Kamera init sonrası ilk karelerde OCR atla — önizleme hızlı görünsün */
+const OCR_WARMUP_FRAMES = 2;
+/** GuestScannerOverlay mrzFrame ile uyumlu (merkez ~%62 dikey) */
+const MRZ_FOCUS_X_RATIO = 0.5;
+const MRZ_FOCUS_Y_RATIO = 0.62;
 
 function mapPhaseToFrameKind(
   phase: ReturnType<typeof assessMrzFrameReadiness>['phase']
@@ -63,32 +78,44 @@ function mapPhaseToFrameKind(
   }
 }
 
+function resetScanCycle(
+  lockedRef: MutableRefObject<boolean>,
+  stabilityRef: MutableRefObject<ReturnType<typeof createMrzStabilityState>>
+) {
+  lockedRef.current = false;
+  stabilityRef.current = createMrzStabilityState();
+}
+
 export function MrzVisionScanner({
   enabled,
   torchEnabled,
+  resetToken = 0,
+  keepCameraWarm = false,
   onUiStateChange,
   onLocked,
   onOcrPreview,
 }: Props) {
   const { t } = useTranslation();
   const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const device = useCameraDevice('back', {
+    physicalDevices: ['wide-angle-camera'],
+  });
   const cameraRef = useRef<CameraType>(null);
+  const viewLayoutRef = useRef({ width: 0, height: 0 });
   const lockedRef = useRef(false);
+  const lastLockRef = useRef({ key: null as string | null, at: 0 });
+  const ocrWarmupRef = useRef(0);
   const stabilityRef = useRef(createMrzStabilityState());
   const [successGlow, setSuccessGlow] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
-  const screenAspect = Dimensions.get('window').height / Dimensions.get('window').width;
   const format = useCameraFormat(device, [
-    { videoResolution: 'max' },
+    { videoResolution: { width: 1280, height: 720 } },
     { fps: 30 },
-    { autoFocusSystem: 'phase-detection' },
-    { videoAspectRatio: screenAspect },
   ]);
 
   const { textRecognition } = useTextRecognition({
     language: 'LATIN',
-    scaleFactor: 1,
+    scaleFactor: 1.5,
     invertColors: torchEnabled,
   });
 
@@ -108,9 +135,46 @@ export function MrzVisionScanner({
     void requestPermission();
   }, [requestPermission]);
 
+  useEffect(() => {
+    setPreviewReady(false);
+  }, [device?.id]);
+
+  useEffect(() => {
+    if (!enabled || previewReady) return;
+    pushUi('hunting', 'kbsMrzLiveCameraWarming', false);
+  }, [enabled, previewReady, pushUi]);
+
+  const focusAt = useCallback(
+    (x: number, y: number) => {
+      if (!device?.supportsFocus) return;
+      void cameraRef.current?.focus({ x, y }).catch(() => {});
+    },
+    [device?.supportsFocus]
+  );
+
   const focusMrzRegion = useCallback(() => {
-    void cameraRef.current?.focus(MRZ_FOCUS).catch(() => {});
-  }, []);
+    const { width, height } = viewLayoutRef.current;
+    if (width < 2 || height < 2) return;
+    focusAt(width * MRZ_FOCUS_X_RATIO, height * MRZ_FOCUS_Y_RATIO);
+  }, [focusAt]);
+
+  const onCameraLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const { width, height } = e.nativeEvent.layout;
+      viewLayoutRef.current = { width, height };
+      if (previewReady) focusMrzRegion();
+    },
+    [focusMrzRegion, previewReady]
+  );
+
+  const onTapFocus = useCallback(
+    (e: GestureResponderEvent) => {
+      if (!enabled) return;
+      const { locationX, locationY } = e.nativeEvent;
+      focusAt(locationX, locationY);
+    },
+    [enabled, focusAt]
+  );
 
   useEffect(() => {
     if (!enabled || !previewReady) return undefined;
@@ -119,15 +183,18 @@ export function MrzVisionScanner({
   }, [enabled, previewReady, focusMrzRegion]);
 
   useEffect(() => {
-    if (enabled) {
-      lockedRef.current = false;
-      stabilityRef.current = createMrzStabilityState();
+    resetScanCycle(lockedRef, stabilityRef);
+    clearMrzLockRecord(lastLockRef.current);
+    ocrWarmupRef.current = 0;
+    setSuccessGlow(false);
+    if (enabled || keepCameraWarm) {
       pushUi('hunting', 'kbsMrzFrameAutoHunting', false);
       if (previewReady) focusMrzRegion();
     }
-  }, [enabled, pushUi, previewReady, focusMrzRegion]);
+  }, [enabled, resetToken, keepCameraWarm, pushUi, previewReady, focusMrzRegion]);
 
   const onCameraInitialized = useCallback(() => {
+    ocrWarmupRef.current = 0;
     setPreviewReady(true);
     focusMrzRegion();
     if (enabled) pushUi('hunting', 'kbsMrzFrameAutoHunting', false);
@@ -141,6 +208,10 @@ export function MrzVisionScanner({
     useCallback(
       (fullText: string, blocksJson: string, frameHeight: number) => {
         if (!enabled || lockedRef.current) return;
+        if (ocrWarmupRef.current < OCR_WARMUP_FRAMES) {
+          ocrWarmupRef.current += 1;
+          return;
+        }
 
         const blocks = mrzBlocksFromMlKitJson(blocksJson, frameHeight);
         const readiness = assessMrzFrameReadiness(fullText, blocks, stabilityRef.current);
@@ -153,15 +224,25 @@ export function MrzVisionScanner({
 
         const analyzed = analyzeOcrLinesForMrzLive(readiness.lines);
         if (analyzed.phase !== 'locking' || !analyzed.locked) {
-          pushUi('signal', 'kbsMrzFrameLockActive', true);
+          pushUi('signal', 'kbsMrzFrameLockActive', false);
+          return;
+        }
+
+        const mrz = analyzed.locked.mrz;
+        if (!shouldAcceptMrzLock(lastLockRef.current.key, lastLockRef.current.at, mrz)) {
           return;
         }
 
         lockedRef.current = true;
+        recordMrzLock(lastLockRef.current, mrz);
         setSuccessGlow(true);
         pushUi('success', 'kbsMrzFrameSuccess', false, true);
         onLocked(analyzed.locked);
-        setTimeout(() => setSuccessGlow(false), 2400);
+        setTimeout(() => setSuccessGlow(false), 1400);
+        setTimeout(() => {
+          resetScanCycle(lockedRef, stabilityRef);
+          if (enabled) pushUi('hunting', 'kbsMrzFrameAutoHunting', false);
+        }, UNLOCK_AFTER_LOCK_MS);
       },
       [enabled, onLocked, onOcrPreview, pushUi]
     ),
@@ -193,7 +274,6 @@ export function MrzVisionScanner({
     return (
       <View style={styles.placeholder}>
         <Text style={styles.placeholderText}>{t('kbsMrzCameraPermission')}</Text>
-        <ActivityIndicator color="#fff" style={{ marginTop: 12 }} />
       </View>
     );
   }
@@ -207,22 +287,36 @@ export function MrzVisionScanner({
   }
 
   const cameraLive = hasPermission && !!device;
+  /** Kamera önizlemesi hemen; OCR `enabled` iken. Onay ekranında `keepCameraWarm` ile dondurulmaz. */
+  const cameraActive = cameraLive && (enabled || keepCameraWarm);
 
   return (
     <View style={StyleSheet.absoluteFill}>
-      <Camera
-        ref={cameraRef}
+      <Pressable
         style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={cameraLive}
-        format={format}
-        torch={torchEnabled ? 'on' : 'off'}
-        onError={onCameraError}
-        onInitialized={onCameraInitialized}
-        frameProcessor={enabled ? frameProcessor : undefined}
-        videoStabilizationMode="off"
-        pixelFormat="yuv"
-      />
+        onLayout={onCameraLayout}
+        onPress={onTapFocus}
+        accessibilityRole="button"
+        accessibilityLabel={t('kbsMrzTapToFocus')}
+      >
+        <Camera
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={cameraActive}
+          format={format}
+          fps={[15, 30]}
+          torch={torchEnabled ? 'on' : 'off'}
+          onError={onCameraError}
+          onInitialized={onCameraInitialized}
+          frameProcessor={enabled ? frameProcessor : undefined}
+          videoStabilizationMode="off"
+          pixelFormat="yuv"
+          photoQualityBalance="quality"
+          enableBufferCompression={false}
+          lowLightBoost={!torchEnabled && device.supportsLowLightBoost}
+        />
+      </Pressable>
       {successGlow ? <View style={styles.successGlow} pointerEvents="none" /> : null}
       <View style={styles.vignette} pointerEvents="none" />
     </View>

@@ -88,6 +88,7 @@ const APP_PERMISSIONS = [
   { key: 'teknik_varliklar', label: 'Teknik QR (müdahale kaydı)' },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR salt okunur' },
   { key: 'emanet_buluntu', label: 'Emanet / buluntu kaydı oluşturma' },
+  { key: 'tesis_gunlugu', label: 'Tesis günlüğü kaydı oluşturma' },
 ];
 
 export default function ApproveStaffScreen() {
@@ -124,6 +125,7 @@ export default function ApproveStaffScreen() {
     teknik_varliklar: false,
     teknik_varliklar_okuma: false,
     emanet_buluntu: false,
+    tesis_gunlugu: false,
   });
   const [organizations, setOrganizations] = useState<OrgRow[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);

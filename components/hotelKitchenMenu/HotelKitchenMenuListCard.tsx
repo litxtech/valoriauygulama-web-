@@ -1,6 +1,5 @@
-import { View, Text, StyleSheet, TouchableOpacity, Pressable, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
@@ -31,13 +30,12 @@ export function HotelKitchenMenuListCard({
   trailingIcon = 'chevron-forward',
 }: Props) {
   const { t } = useTranslation();
-  const { width } = useWindowDimensions();
   const cover = coverImageUrl(item);
   const isManage = variant === 'manage';
   const photoCount = item.image_count ?? item.images.length;
   const catColor = categoryAccentColor(item.category_title);
   const desc = (item.description ?? '').trim();
-  const imageH = isManage ? 88 : Math.min(width - 40, 220) * 0.55;
+  const thumbSize = isManage ? 72 : 76;
 
   if (isManage) {
     return (
@@ -76,197 +74,116 @@ export function HotelKitchenMenuListCard({
   }
 
   return (
-    <TouchableOpacity style={[styles.browseCard, menuUi.shadow]} activeOpacity={0.92} onPress={onPress}>
+    <TouchableOpacity style={[styles.browseCard, menuUi.shadowSm]} activeOpacity={0.92} onPress={onPress}>
+      <View style={[styles.browseAccent, { backgroundColor: catColor }]} />
       <Pressable
         onPress={cover && onImagePress ? onImagePress : undefined}
         disabled={!cover || !onImagePress}
-        style={[styles.browseImageWrap, { height: imageH }]}
+        style={[styles.browseThumbWrap, { width: thumbSize, height: thumbSize }]}
       >
         {cover ? (
           <CachedImage
             uri={cover}
-            style={StyleSheet.absoluteFill}
+            style={styles.browseThumb}
             contentFit="cover"
             recyclingKey={item.id}
-            priority="normal"
+            priority="high"
           />
         ) : (
-          <View style={[StyleSheet.absoluteFill, styles.imagePh]}>
-            <Ionicons name="restaurant" size={48} color={menuUi.accent} />
+          <View style={[styles.browseThumb, styles.imagePh]}>
+            <Ionicons name="restaurant" size={26} color={menuUi.accent} />
           </View>
         )}
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.55)']}
-          style={styles.imageGrad}
-          pointerEvents="none"
-        />
-        <View style={[styles.catChip, { backgroundColor: catColor }]}>
-          <Text style={styles.catChipText} numberOfLines={1}>
-            {item.category_title}
-          </Text>
-        </View>
         {showFavorite && favorited ? (
-          <View style={styles.favBadge}>
-            <Ionicons name="heart" size={16} color="#fff" />
+          <View style={styles.browseFavDot}>
+            <Ionicons name="heart" size={10} color="#fff" />
           </View>
         ) : null}
         {photoCount > 1 ? (
-          <View style={styles.photoPill}>
-            <Ionicons name="images" size={12} color="#fff" />
-            <Text style={styles.photoPillText}>{photoCount}</Text>
-          </View>
-        ) : null}
-        {cover && onImagePress ? (
-          <View style={styles.zoomHint}>
-            <Ionicons name="expand-outline" size={16} color="#fff" />
+          <View style={styles.browsePhotoBadge}>
+            <Ionicons name="images" size={9} color="#fff" />
+            <Text style={styles.browsePhotoBadgeText}>{photoCount}</Text>
           </View>
         ) : null}
       </Pressable>
 
       <View style={styles.browseBody}>
+        <Text style={[styles.browseCategory, { color: catColor }]} numberOfLines={1}>
+          {item.category_title}
+        </Text>
         <Text style={styles.browseName} numberOfLines={2}>
           {item.name}
         </Text>
         {desc ? (
-          <Text style={styles.browseDesc} numberOfLines={2}>
+          <Text style={styles.browseDesc} numberOfLines={1}>
             {desc}
           </Text>
         ) : null}
         <View style={styles.browseFooter}>
-          <View style={styles.pricePill}>
-            <Text style={styles.priceText}>{formatMenuPrice(item.price)}</Text>
-          </View>
-          <View style={styles.footerRight}>
-            {item.served_in_hotel_restaurant ? (
-              <View style={styles.hotelBadge}>
-                <Ionicons name="business-outline" size={13} color={menuUi.accentDeep} />
-                <Text style={styles.hotelBadgeText} numberOfLines={1}>
-                  {t('hotelKitchenMenuServedInHotel')}
-                </Text>
-              </View>
-            ) : null}
-            <Ionicons name="arrow-forward-circle" size={28} color={menuUi.accent} />
-          </View>
+          <Text style={styles.browsePrice}>{formatMenuPrice(item.price)}</Text>
+          {item.served_in_hotel_restaurant ? (
+            <Ionicons name="business-outline" size={14} color={menuUi.accentDeep} />
+          ) : null}
         </View>
       </View>
+      <Ionicons name="chevron-forward" size={20} color={menuUi.accent} style={styles.browseChevron} />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   browseCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: menuUi.cardBg,
-    borderRadius: 20,
-    marginBottom: 16,
+    borderRadius: 14,
+    marginBottom: 10,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(184,134,11,0.15)',
+    borderColor: 'rgba(184,134,11,0.12)',
   },
-  browseImageWrap: {
+  browseAccent: { width: 3, alignSelf: 'stretch' },
+  browseThumbWrap: { marginLeft: 10, marginVertical: 10, position: 'relative' },
+  browseThumb: {
     width: '100%',
+    height: '100%',
+    borderRadius: 12,
     backgroundColor: menuUi.imagePlaceholder,
-    position: 'relative',
-  },
-  imageGrad: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '45%',
   },
   imagePh: { justifyContent: 'center', alignItems: 'center', backgroundColor: menuUi.imagePlaceholder },
-  catChip: {
+  browseFavDot: {
     position: 'absolute',
-    top: 12,
-    left: 12,
-    maxWidth: '70%',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  catChipText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  favBadge: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    top: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: menuUi.favorite,
     alignItems: 'center',
     justifyContent: 'center',
-    ...menuUi.shadowSm,
+    borderWidth: 1.5,
+    borderColor: menuUi.cardBg,
   },
-  photoPill: {
+  browsePhotoBadge: {
     position: 'absolute',
-    bottom: 12,
-    right: 12,
+    bottom: 2,
+    right: 2,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    gap: 2,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
-  photoPillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  zoomHint: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: 10,
-    padding: 6,
-  },
-  browseBody: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16 },
-  browseName: {
-    fontSize: 19,
-    fontWeight: '800',
-    color: theme.colors.text,
-    letterSpacing: -0.3,
-    lineHeight: 24,
-  },
-  browseDesc: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: theme.colors.textSecondary,
-    marginTop: 6,
-  },
-  browseFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    gap: 8,
-  },
-  pricePill: {
-    backgroundColor: menuUi.priceBg,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(184,134,11,0.25)',
-  },
-  priceText: { fontSize: 17, fontWeight: '800', color: menuUi.price },
-  footerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
-  hotelBadge: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: menuUi.accentSoft,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 10,
-    maxWidth: '72%',
-  },
-  hotelBadgeText: { fontSize: 10, fontWeight: '600', color: menuUi.accentDeep, flexShrink: 1 },
+  browsePhotoBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
+  browseBody: { flex: 1, paddingVertical: 10, paddingHorizontal: 10, minWidth: 0 },
+  browseCategory: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
+  browseName: { fontSize: 15, fontWeight: '700', color: theme.colors.text, marginTop: 2, lineHeight: 19 },
+  browseDesc: { fontSize: 12, lineHeight: 16, color: theme.colors.textSecondary, marginTop: 2 },
+  browseFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  browsePrice: { fontSize: 14, fontWeight: '800', color: menuUi.price },
+  browseChevron: { marginRight: 10 },
   manageCard: {
     flexDirection: 'row',
     alignItems: 'center',

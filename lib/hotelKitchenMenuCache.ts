@@ -1,4 +1,4 @@
-import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
+import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenuTypes';
 
 type Entry = { at: number; rows: HotelKitchenMenuItemWithImages[] };
 

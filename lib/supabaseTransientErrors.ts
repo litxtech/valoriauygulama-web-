@@ -10,6 +10,16 @@ export function isPostgrestSchemaCacheError(
   return m.includes('schema cache') && m.includes('retry');
 }
 
+/** Data API → Exposed schemas listesinde `ops` yok (HTTP 406). */
+export function isOpsSchemaNotExposedError(
+  e: { code?: string; message?: string; status?: number } | null | undefined
+): boolean {
+  if (!e) return false;
+  if (e.code === 'PGRST106' || e.status === 406) return true;
+  const m = (e.message ?? '').toLowerCase();
+  return m.includes('pgrst106') || m.includes('exposed schemas') || m.includes('invalid schema');
+}
+
 export function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

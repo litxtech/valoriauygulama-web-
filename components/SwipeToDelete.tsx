@@ -11,6 +11,10 @@ type SwipeToDeleteProps = {
 const SWIPE_TRIGGER = 52;
 /** Max visual slide while dragging */
 const SWIPE_MAX = 76;
+/** Min horizontal travel before pan responder takes over the list scroll */
+const MOVE_ACTIVATE = 8;
+/** Horizontal must exceed vertical by this margin to count as a swipe */
+const MOVE_DOMINANCE = 4;
 
 function swipeTowardDeleteDx(gestureDx: number) {
   // LTR: sola kaydır → negatif dx. RTL: ekranda aynı “sil” yönü çoğu listede ters.

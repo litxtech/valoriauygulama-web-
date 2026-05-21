@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import { useTranslation } from 'react-i18next';
 import { useKbsMrzBatchStore } from '@/stores/kbsMrzBatchStore';
+import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
 
 function Tile(props: { title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
   return (
@@ -28,6 +30,11 @@ export default function StaffKbsTab() {
   const staff = useAuthStore((s) => s.staff);
   const showMrz = canStaffUseMrzScan(staff);
   const batchKey = useKbsMrzBatchStore((s) => s.batchKey);
+
+  useEffect(() => {
+    if (showMrz) void preloadMrzVisionScanner();
+  }, [showMrz]);
+
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>

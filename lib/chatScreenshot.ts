@@ -7,6 +7,7 @@ import { log } from '@/lib/logger';
 import { addScreenshotListenerSafe, isExpoScreenCaptureNativeAvailable } from '@/lib/expoScreenCaptureSafe';
 
 const SCREENSHOT_DEBOUNCE_MS = 4000;
+let loggedNativeMissing = false;
 
 type ScreenshotActor =
   | {
@@ -127,7 +128,10 @@ export function useChatScreenshotListener(
     let cancelled = false;
 
     if (!isExpoScreenCaptureNativeAvailable()) {
-      log.info('chatScreenshot', 'native module missing — rebuild dev client after expo-screen-capture install');
+      if (!loggedNativeMissing) {
+        loggedNativeMissing = true;
+        log.info('chatScreenshot', 'native module missing — rebuild dev client after expo-screen-capture install');
+      }
       return;
     }
 

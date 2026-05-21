@@ -44,11 +44,18 @@ export function staffStackCanPop(navigation: NavigationProp<ParamListBase>): boo
   return (navigation.getState()?.routes?.length ?? 0) > 1;
 }
 
+/** ScrollView / form ekranları: kaydırma ile geri yanlışlıkla tetiklenmesin (admin ile aynı). */
+export const staffStackScrollSafeGestureOptions = {
+  gestureEnabled: false,
+  fullScreenGestureEnabled: false,
+} as const;
+
+/** Kenar kaydırması; tam ekran geri ScrollView ile çakışır. */
 export function staffStackGestureForNavigation(navigation: NavigationProp<ParamListBase>) {
   const canPop = staffStackCanPop(navigation);
   return {
     gestureEnabled: canPop,
-    fullScreenGestureEnabled: canPop,
+    fullScreenGestureEnabled: false,
   } as const;
 }
 

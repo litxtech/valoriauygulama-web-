@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
-  Image,
   Pressable,
   Text,
   StyleSheet,
@@ -15,6 +14,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CachedImage } from '@/components/CachedImage';
+import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 
 type Props = {
   visible: boolean;
@@ -42,13 +43,13 @@ function LightboxImagePage({ uri, pageW, pageH, iosZoom }: { uri: string; pageW:
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
-        <Image source={{ uri }} style={{ width: pageW, height: pageH }} resizeMode="contain" />
+        <CachedImage uri={uri} style={{ width: pageW, height: pageH }} contentFit="contain" priority="high" recyclingKey={uri} />
       </ScrollView>
     );
   }
   return (
     <View style={{ width: pageW, height: pageH, justifyContent: 'center', alignItems: 'center' }}>
-      <Image source={{ uri }} style={{ width: pageW, height: pageH }} resizeMode="contain" />
+      <CachedImage uri={uri} style={{ width: pageW, height: pageH }} contentFit="contain" priority="high" recyclingKey={uri} />
     </View>
   );
 }
@@ -70,12 +71,13 @@ export function BreakfastPhotoLightbox({
 
   useEffect(() => {
     if (!visible) return;
+    void prefetchImageUrls(list, 8);
     const i = Math.min(Math.max(0, initialIndex), Math.max(0, list.length - 1));
     setPage(i);
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ x: i * width, animated: false });
     });
-  }, [visible, initialIndex, list.length, width]);
+  }, [visible, initialIndex, list, width]);
 
   const onMomentumEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {

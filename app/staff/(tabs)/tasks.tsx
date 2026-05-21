@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -78,6 +79,31 @@ type AssignmentRow = {
 };
 
 type CreatorMini = { id: string; full_name: string | null; role: string | null };
+
+const STAFF_TASKS_ASSIGNMENTS_CACHE_KEY = 'valoria_staff_tasks_assignments_v1';
+const ASSIGNMENTS_CACHE_TTL_MS = 60_000;
+
+type AssignmentsCacheBundle = {
+  staffId: string;
+  assignments: AssignmentRow[];
+  creatorMap: Record<string, CreatorMini>;
+  roomMap: Record<string, Room>;
+  updatedAt: number;
+};
+
+let assignmentsSessionCache: AssignmentsCacheBundle | null = null;
+let roomsSessionCache: { rooms: Room[]; counts: Record<string, number>; updatedAt: number } | null = null;
+
+function applyAssignmentsBundle(
+  bundle: AssignmentsCacheBundle,
+  setAssignments: (v: AssignmentRow[]) => void,
+  setCreatorMap: (v: Record<string, CreatorMini>) => void,
+  setRoomMap: (v: Record<string, Room>) => void
+) {
+  setAssignments(bundle.assignments);
+  setCreatorMap(bundle.creatorMap);
+  setRoomMap(bundle.roomMap);
+}
 
 const statusLabel = (s: RoomStatus) => roomStatusLabel(s);
 
@@ -199,12 +225,20 @@ export default function StaffTasksTabScreen() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const [tab, setTab] = useState<TabKey>('assignments');
-  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
-  const [creatorMap, setCreatorMap] = useState<Record<string, CreatorMini>>({});
-  const [roomMap, setRoomMap] = useState<Record<string, Room>>({});
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [assignments, setAssignments] = useState<AssignmentRow[]>(
+    () => assignmentsSessionCache?.assignments ?? []
+  );
+  const [creatorMap, setCreatorMap] = useState<Record<string, CreatorMini>>(
+    () => assignmentsSessionCache?.creatorMap ?? {}
+  );
+  const [roomMap, setRoomMap] = useState<Record<string, Room>>(
+    () => assignmentsSessionCache?.roomMap ?? {}
+  );
+  const [rooms, setRooms] = useState<Room[]>(() => roomsSessionCache?.rooms ?? []);
+  const [loading, setLoading] = useState(() => !(assignmentsSessionCache?.assignments.length));
+  const [roomsLoading, setRoomsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const roomsTabLoadStartedRef = useRef(false);
   const [filter, setFilter] = useState<RoomStatus | 'all'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
@@ -221,7 +255,9 @@ export default function StaffTasksTabScreen() {
   const [contractPreviewHtml, setContractPreviewHtml] = useState<string | null>(null);
   const [contractPreviewKey, setContractPreviewKey] = useState(0);
   const [pdfActionLoading, setPdfActionLoading] = useState(false);
-  const [roomContractHistoryCounts, setRoomContractHistoryCounts] = useState<Record<string, number>>({});
+  const [roomContractHistoryCounts, setRoomContractHistoryCounts] = useState<Record<string, number>>(
+    () => roomsSessionCache?.counts ?? {}
+  );
 
   const sortedRoomHistory = useMemo(() => sortRoomStayHistoryRows(roomHistoryRows), [roomHistoryRows]);
 
@@ -349,24 +385,33 @@ export default function StaffTasksTabScreen() {
         return;
       }
       const list = (data ?? []) as AssignmentRow[];
-      setAssignments(list);
+      let nextCreatorMap: Record<string, CreatorMini> = {};
       const creatorIds = [...new Set(list.map((a) => a.created_by_staff_id).filter(Boolean))] as string[];
       if (creatorIds.length) {
         const { data: creators } = await supabase
           .from('staff')
           .select('id, full_name, role')
           .in('id', creatorIds);
-        setCreatorMap(
-          Object.fromEntries((creators ?? []).map((c: CreatorMini) => [c.id, c]))
-        );
-      } else setCreatorMap({});
+        nextCreatorMap = Object.fromEntries((creators ?? []).map((c: CreatorMini) => [c.id, c]));
+      }
+      let nextRoomMap: Record<string, Room> = {};
       const ids = [...new Set(list.flatMap((a) => a.room_ids ?? []))];
       if (ids.length) {
         const { data: rdata } = await supabase.from('rooms').select('id, room_number, floor, status').in('id', ids);
-        setRoomMap(
-          Object.fromEntries(((rdata ?? []) as Room[]).map((r) => [r.id, r]))
-        );
-      } else setRoomMap({});
+        nextRoomMap = Object.fromEntries(((rdata ?? []) as Room[]).map((r) => [r.id, r]));
+      }
+      setAssignments(list);
+      setCreatorMap(nextCreatorMap);
+      setRoomMap(nextRoomMap);
+      const bundle: AssignmentsCacheBundle = {
+        staffId: staff.id,
+        assignments: list,
+        creatorMap: nextCreatorMap,
+        roomMap: nextRoomMap,
+        updatedAt: Date.now(),
+      };
+      assignmentsSessionCache = bundle;
+      void AsyncStorage.setItem(STAFF_TASKS_ASSIGNMENTS_CACHE_KEY, JSON.stringify(bundle)).catch(() => {});
     } catch {
       setAssignments([]);
       setRoomMap({});
@@ -380,48 +425,105 @@ export default function StaffTasksTabScreen() {
       .select('id, room_number, floor, status')
       .order('floor', { ascending: true, nullsFirst: false })
       .order('room_number');
-    setRooms((data as Room[]) ?? []);
+    const list = (data as Room[]) ?? [];
+    setRooms(list);
+    roomsSessionCache = {
+      rooms: list,
+      counts: roomsSessionCache?.counts ?? {},
+      updatedAt: Date.now(),
+    };
+    return list;
   }, []);
 
-  const loadRoomContractHistoryCounts = useCallback(async () => {
-    if (!staff?.id) return;
+  const loadRoomContractHistoryCounts = useCallback(async (): Promise<Record<string, number>> => {
+    if (!staff?.id) return {};
     try {
       const { data, error } = await supabase.rpc('get_room_contract_history_counts');
-      if (error || data == null) {
-        setRoomContractHistoryCounts({});
-        return;
-      }
+      if (error || data == null) return {};
       const raw = typeof data === 'string' ? (JSON.parse(data) as unknown) : data;
-      if (!raw || typeof raw !== 'object') {
-        setRoomContractHistoryCounts({});
-        return;
-      }
+      if (!raw || typeof raw !== 'object') return {};
       const next: Record<string, number> = {};
       for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
         const n = typeof v === 'number' ? v : Number(v);
         next[k] = Number.isFinite(n) ? n : 0;
       }
-      setRoomContractHistoryCounts(next);
+      return next;
     } catch {
-      setRoomContractHistoryCounts({});
+      return {};
     }
   }, [staff?.id]);
 
-  const loadAll = useCallback(async () => {
-    await Promise.all([loadAssignments(), loadRooms(), loadRoomContractHistoryCounts()]);
+  const loadRoomsTabData = useCallback(
+    async (opts?: { showRoomsSpinner?: boolean }) => {
+      if (!staff?.id) return;
+      if (opts?.showRoomsSpinner) setRoomsLoading(true);
+      try {
+        const [roomList, counts] = await Promise.all([loadRooms(), loadRoomContractHistoryCounts()]);
+        setRoomContractHistoryCounts(counts);
+        roomsSessionCache = { rooms: roomList, counts, updatedAt: Date.now() };
+      } finally {
+        setRoomsLoading(false);
+      }
+    },
+    [staff?.id, loadRooms, loadRoomContractHistoryCounts]
+  );
+
+  const loadAssignmentsFirst = useCallback(async () => {
+    await loadAssignments();
     setLoading(false);
     setRefreshing(false);
-  }, [loadAssignments, loadRooms, loadRoomContractHistoryCounts]);
+  }, [loadAssignments]);
 
   useEffect(() => {
     if (!staff?.id) {
       setLoading(false);
       return;
     }
-    loadAll();
-  }, [staff?.id, loadAll]);
+    let cancelled = false;
+    const cached = assignmentsSessionCache;
+    if (cached?.staffId === staff.id && cached.assignments.length > 0) {
+      applyAssignmentsBundle(cached, setAssignments, setCreatorMap, setRoomMap);
+      setLoading(false);
+    } else {
+      (async () => {
+        try {
+          const raw = await AsyncStorage.getItem(STAFF_TASKS_ASSIGNMENTS_CACHE_KEY);
+          if (!raw || cancelled) return;
+          const parsed = JSON.parse(raw) as AssignmentsCacheBundle;
+          if (parsed?.staffId !== staff.id || !Array.isArray(parsed.assignments)) return;
+          assignmentsSessionCache = parsed;
+          applyAssignmentsBundle(parsed, setAssignments, setCreatorMap, setRoomMap);
+        } catch {
+          // bozuk cache açılışı engellemesin
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+    }
+    const stale =
+      !cached ||
+      cached.staffId !== staff.id ||
+      Date.now() - cached.updatedAt > ASSIGNMENTS_CACHE_TTL_MS;
+    if (stale) {
+      void loadAssignmentsFirst();
+    } else {
+      setLoading(false);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [staff?.id, loadAssignmentsFirst]);
 
-  /** Sekmeye her dönüşte loadAll tetiklemek hem flicker hem gereksiz trafik; ilk mount + çekme yeterli */
+  useEffect(() => {
+    if (tab !== 'rooms' || !staff?.id) return;
+    const roomsFresh =
+      roomsSessionCache && Date.now() - roomsSessionCache.updatedAt < ASSIGNMENTS_CACHE_TTL_MS;
+    if (roomsTabLoadStartedRef.current && roomsFresh && rooms.length > 0) return;
+    roomsTabLoadStartedRef.current = true;
+    void loadRoomsTabData({ showRoomsSpinner: rooms.length === 0 });
+  }, [tab, staff?.id, loadRoomsTabData, rooms.length]);
+
+  /** Sekmeye her dönüşte tam yenileme flicker üretir; cache + TTL yeterli */
 
   const focusId = Array.isArray(focusAssignment) ? focusAssignment[0] : focusAssignment;
 
@@ -434,7 +536,12 @@ export default function StaffTasksTabScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadAll();
+    if (tab === 'rooms') {
+      roomsTabLoadStartedRef.current = true;
+      void loadRoomsTabData().finally(() => setRefreshing(false));
+      return;
+    }
+    void loadAssignmentsFirst();
   };
 
   const updateStatus = async (roomId: string, newStatus: RoomStatus) => {
@@ -844,7 +951,12 @@ export default function StaffTasksTabScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, tab === 'rooms' && styles.tabOn]}
-          onPress={() => setTab('rooms')}
+          onPress={() => {
+            setTab('rooms');
+            if (staff?.id && rooms.length === 0 && !roomsLoading) {
+              void loadRoomsTabData({ showRoomsSpinner: true });
+            }
+          }}
           activeOpacity={0.85}
         >
           <Ionicons name="grid-outline" size={20} color={tab === 'rooms' ? theme.colors.white : theme.colors.textSecondary} />
@@ -1030,6 +1142,10 @@ export default function StaffTasksTabScreen() {
             );
           }}
         />
+      ) : roomsLoading && rooms.length === 0 ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
       ) : (
         <ScrollView
           contentContainerStyle={styles.listPad}

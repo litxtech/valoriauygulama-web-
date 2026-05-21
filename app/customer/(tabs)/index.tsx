@@ -29,7 +29,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth, feedPostMediaHeight } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
 import { formatRelative } from '@/lib/date';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { Skeleton, SkeletonCard } from '@/components/ui/Skeleton';
@@ -49,8 +49,10 @@ import { blockUserForGuest, getHiddenUsersForGuest } from '@/lib/userBlocks';
 import { useTranslation } from 'react-i18next';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { collectFeedPostPrefetchUrls } from '@/lib/feedPrefetchUrls';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
 import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
+import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
 import {
@@ -654,19 +656,18 @@ export default function CustomerHome() {
 
     prefetchImageUrls(
       [
-        ...posts.flatMap((p) => [
+        ...collectFeedPostPrefetchUrls(posts),
+        ...posts.map((p) =>
           resolveFeedAuthorAvatarUrl({
             staff: p.staff,
             guest: p.guest,
             staffId: p.staff_id,
             staffAvatarById: buildStaffAvatarLookup(activeStaffFiltered),
-          }),
-          p.thumbnail_url,
-          p.media_type && p.media_type !== 'video' ? p.media_url : null,
-        ]),
+          })
+        ),
         ...activeStaffFiltered.map((s) => s.profile_image),
       ],
-      56
+      64
     );
 
     let myRoomValue: MyRoom | null = null;
@@ -1200,6 +1201,14 @@ export default function CustomerHome() {
                   <Ionicons name="cafe-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{t('screenHotelKitchenMenu')}</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.roomBtn}
+                  onPress={() => router.push('/customer/facility-journal')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="clipboard-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.roomBtnText}>Tesis kayıtları</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/(tabs)/messages')} activeOpacity={0.8}>
                   <Ionicons name="sparkles-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{feedSharedText('guestRequestCleaning')}</Text>
@@ -1351,7 +1360,6 @@ export default function CustomerHome() {
         <View style={styles.feedList}>
           {(() => {
             const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
-            const feedMediaHeight = feedPostMediaHeight(feedCardWidth);
             return visibleFeedPosts.map((post) => {
             const staffInfo = parseFeedStaffEmbed(post.staff);
             const guestInfo = parseFeedGuestEmbed(post.guest);
@@ -1394,6 +1402,7 @@ export default function CustomerHome() {
                 : []);
             const imageUri = postMediaItems.length > 0 ? (postMediaItems[0].thumbnail_url || postMediaItems[0].media_url) : null;
             const hasMedia = !!imageUri;
+            const feedMediaHeight = feedPostMediaHeightForItems(feedCardWidth, postMediaItems);
 
             const mediaEl =
               hasMedia ? (
@@ -1404,9 +1413,9 @@ export default function CustomerHome() {
                     const isVideo = firstItem?.media_type === 'video';
                     if (isVideo) {
                       setFullscreenPostMedia({
-                        uri: firstItem.media_url || firstItem.thumbnail_url || '',
+                        uri: firstItem.media_url,
                         mediaType: 'video',
-                        posterUri: firstItem.thumbnail_url || firstItem.media_url || undefined,
+                        posterUri: firstItem.thumbnail_url ?? undefined,
                       });
                     } else {
                       setFullscreenPostMedia({
@@ -1416,7 +1425,7 @@ export default function CustomerHome() {
                     }
                   }}
                 >
-                  <View style={styles.postImageWrap}>
+                  <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
                     <FeedMediaCarousel
                       items={postMediaItems.map((m) => ({
                         id: m.id,
@@ -1426,13 +1435,13 @@ export default function CustomerHome() {
                       }))}
                       width={feedCardWidth}
                       height={feedMediaHeight}
-                      videoPosterOnly={Platform.OS === 'android'}
+                      videoPosterOnly
                       onPressItem={(item) => {
                         if (item.media_type === 'video') {
                           setFullscreenPostMedia({
-                            uri: item.media_url || item.thumbnail_url || '',
+                            uri: item.media_url,
                             mediaType: 'video',
-                            posterUri: item.thumbnail_url || item.media_url || undefined,
+                            posterUri: item.thumbnail_url ?? undefined,
                           });
                         } else {
                           setFullscreenPostMedia({
@@ -1873,52 +1882,29 @@ export default function CustomerHome() {
       <Modal
         visible={!!fullscreenPostMedia}
         transparent
-        animationType="fade"
+        animationType="none"
+        statusBarTranslucent
         onRequestClose={() => setFullscreenPostMedia(null)}
       >
-        <Pressable
-          style={[styles.fullscreenOverlay, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
-          onPress={() => setFullscreenPostMedia(null)}
-        >
+        <View style={styles.fullscreenOverlay}>
           {fullscreenPostMedia ? (
             <>
-              <View style={styles.fullscreenImageWrap} pointerEvents="box-none">
-                {fullscreenPostMedia.mediaType === 'video' ? (
-                  <>
-                    <Video
-                      key={fullscreenPostMedia.uri}
-                      ref={fullscreenVideoRef}
-                      source={{ uri: fullscreenPostMedia.uri }}
-                      usePoster={false}
-                      style={[styles.fullscreenImage, styles.fullscreenVideo, { width: SCREEN_WIDTH - 48, height: SCREEN_HEIGHT - 96 }]}
-                      useNativeControls={false}
-                      resizeMode="contain"
-                      isLooping={false}
-                      shouldPlay
-                      isMuted={false}
-                      onLoad={() => {
-                        setFullscreenVideoReady(true);
-                        fullscreenVideoRef.current?.playAsync().catch(() => {});
-                        fullscreenVideoRef.current?.setVolumeAsync(1.0).catch(() => {});
-                      }}
-                    />
-                    {fullscreenPostMedia.posterUri && !fullscreenVideoReady ? (
-                      <CachedImage
-                        uri={fullscreenPostMedia.posterUri}
-                        style={[StyleSheet.absoluteFillObject, styles.fullscreenPosterImage, { width: SCREEN_WIDTH - 48, height: SCREEN_HEIGHT - 96 }]}
-                        contentFit="contain"
-                        pointerEvents="none"
-                      />
-                    ) : null}
-                  </>
-                ) : (
+              {fullscreenPostMedia.mediaType === 'video' ? (
+                <FeedFullscreenVideoPlayer
+                  ref={fullscreenVideoRef}
+                  uri={fullscreenPostMedia.uri}
+                  posterUri={fullscreenPostMedia.posterUri}
+                  onReady={() => setFullscreenVideoReady(true)}
+                />
+              ) : (
+                <Pressable style={styles.fullscreenImageWrap} onPress={() => setFullscreenPostMedia(null)}>
                   <CachedImage
                     uri={fullscreenPostMedia.uri}
-                    style={[styles.fullscreenImage, { width: SCREEN_WIDTH - 48, height: SCREEN_HEIGHT - 96 }]}
+                    style={[styles.fullscreenImage, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
                     contentFit="contain"
                   />
-                )}
-              </View>
+                </Pressable>
+              )}
               <TouchableOpacity
                 style={[styles.fullscreenCloseBtn, { top: insets.top + 8 }]}
                 onPress={() => setFullscreenPostMedia(null)}
@@ -1928,7 +1914,7 @@ export default function CustomerHome() {
               </TouchableOpacity>
             </>
           ) : null}
-        </Pressable>
+        </View>
       </Modal>
     </ScrollView>
   );
@@ -2436,7 +2422,6 @@ const styles = StyleSheet.create({
   postImageWrap: {
     position: 'relative',
     width: '100%',
-    aspectRatio: 4 / 5,
     overflow: 'hidden',
     borderRadius: 16,
     backgroundColor: theme.colors.borderLight,
@@ -2688,25 +2673,15 @@ const styles = StyleSheet.create({
   fullscreenOverlay: {
     flex: 1,
     backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   fullscreenImageWrap: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 48,
   },
   fullscreenImage: { backgroundColor: '#000' },
-  fullscreenVideo: {
-    borderRadius: 14,
-    overflow: 'hidden',
-  },
-  fullscreenPosterImage: {
-    borderRadius: 14,
-    overflow: 'hidden',
-  },
+  fullscreenVideo: { backgroundColor: '#000' },
+  fullscreenPosterImage: { backgroundColor: 'transparent' },
   fullscreenCloseBtn: {
     position: 'absolute',
     right: 16,

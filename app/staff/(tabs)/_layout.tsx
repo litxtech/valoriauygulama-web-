@@ -10,7 +10,7 @@ import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
-import { AppTabBarCenterMessageButton } from '@/components/AppTabBarCenterMessageButton';
+import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -33,7 +33,6 @@ import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
-import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -210,6 +209,7 @@ export default function StaffTabsLayout() {
           ? {
               role: staff.role,
               app_permissions: staff.app_permissions,
+              hidden_menu_item_ids: staff.hidden_menu_item_ids,
               kbs_access_enabled: staff.kbs_access_enabled,
               department: staff.department,
             }
@@ -220,6 +220,7 @@ export default function StaffTabsLayout() {
       t,
       staff?.role,
       staff?.app_permissions,
+      staff?.hidden_menu_item_ids,
       staff?.kbs_access_enabled,
       staff?.department,
       menuQuickSignals,
@@ -449,18 +450,9 @@ export default function StaffTabsLayout() {
           headerTitle: t('teamChat'),
           tabBarActiveTintColor: pds.indigo,
           tabBarShowLabel: false,
-          tabBarItemStyle: {
-            justifyContent: 'center',
-            alignItems: 'center',
-          },
-          tabBarButton: (props) => (
-            <AppTabBarCenterMessageButton
-              {...props}
-              unreadCount={unreadMessagesCount}
-              accessibilityLabel={t('messages')}
-            />
+          tabBarIcon: ({ focused }) => (
+            <CenterMessageTabBarIcon focused={focused} unreadCount={unreadMessagesCount} />
           ),
-          tabBarIcon: () => null,
         }}
       />
       <Tabs.Screen
@@ -487,19 +479,7 @@ export default function StaffTabsLayout() {
         options={{
           title: t('kbsNavOperation'),
           headerTitle: t('kbsNavOperation'),
-          tabBarActiveTintColor: pds.indigo,
-          tabBarLabel: t('kbsNavOperation'),
-          href:
-            !isKbsUiEnabled() || (staff?.role !== 'admin' && staff?.kbs_access_enabled === false) ? null : undefined,
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'scan' : 'scan-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen

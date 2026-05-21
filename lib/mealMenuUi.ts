@@ -176,3 +176,17 @@ export function buildEmptyDaysMap(keys: string[]): Record<string, MealFields> {
   }
   return map;
 }
+
+/** Personel ana sayfa: listede / tarih şeridinde başlangıç günü (bugün veya ileri ayın 1'i). */
+export function mealMenuBrowseAnchorYmd(viewMonth: Date, todayYmd: string): string {
+  const monthStart = ymdForDayInMonth(viewMonth, 1);
+  const monthEnd = ymdForDayInMonth(viewMonth, daysInMonthFromDate(viewMonth));
+  if (monthEnd < todayYmd) return monthEnd;
+  if (monthStart >= todayYmd) return monthStart;
+  return todayYmd;
+}
+
+export function isCurrentOrFutureMealMonth(viewMonth: Date, todayYmd: string): boolean {
+  const monthEnd = ymdForDayInMonth(viewMonth, daysInMonthFromDate(viewMonth));
+  return monthEnd >= todayYmd;
+}

@@ -49,7 +49,10 @@ export function ymdInViewMonth(viewMonth: Date, day: number): string {
   return `${viewMonth.getFullYear()}-${pad2(viewMonth.getMonth() + 1)}-${pad2(day)}`;
 }
 
-export function rowToMealFields(r: MealMenuDayRow): MealFields {
+export function rowToMealFields(r: MealMenuDayRow | null | undefined): MealFields {
+  if (!r) {
+    return { breakfast: '', lunch: '', dinner: '' };
+  }
   return {
     breakfast: r.breakfast?.trim() ?? '',
     lunch: r.lunch?.trim() ?? '',
@@ -61,32 +64,13 @@ export function mealDayHasContent(fields: MealFields): boolean {
   return !!(fields.breakfast || fields.lunch || fields.dinner);
 }
 
-export async function fetchMealMenuForMonth(
-  organizationId: string,
-  viewMonth: Date
-): Promise<{ menu: MealMenuMonthMeta | null; days: MealMenuDayRow[] }> {
-  const periodMonthStr = periodMonthFromDate(viewMonth);
-  const { data: menu, error: menuErr } = await supabase
-    .from('staff_meal_menus')
-    .select('id, period_month, title, notify_daily, pdf_approver_name, pdf_footer_note')
-    .eq('organization_id', organizationId)
-    .eq('period_month', periodMonthStr)
-    .maybeSingle();
-
-  if (menuErr) throw new Error(menuErr.message);
-  if (!menu) return { menu: null, days: [] };
-
-  const { data: dayRows, error: dayErr } = await supabase
-    .from('staff_meal_menu_days')
-    .select('id, meal_date, breakfast, lunch, dinner, notes')
-    .eq('menu_id', menu.id)
-    .order('meal_date', { ascending: true });
-
-  if (dayErr) throw new Error(dayErr.message);
-
+function mergeMenuDaysForMonth(
+  viewMonth: Date,
+  dayRows: MealMenuDayRow[] | null | undefined
+): MealMenuDayRow[] {
   const dim = daysInMonthFromViewMonth(viewMonth);
   const byDate: Record<string, MealMenuDayRow> = {};
-  for (const r of (dayRows ?? []) as MealMenuDayRow[]) {
+  for (const r of dayRows ?? []) {
     byDate[r.meal_date.slice(0, 10)] = r;
   }
   const merged: MealMenuDayRow[] = [];
@@ -101,7 +85,61 @@ export async function fetchMealMenuForMonth(
       }
     );
   }
-  return { menu: menu as MealMenuMonthMeta, days: merged };
+  return merged;
+}
+
+/** Menü + günler tek istek (nested select). */
+export async function fetchMealMenuForMonth(
+  organizationId: string,
+  viewMonth: Date
+): Promise<{ menu: MealMenuMonthMeta | null; days: MealMenuDayRow[] }> {
+  const periodMonthStr = periodMonthFromDate(viewMonth);
+  const { data: raw, error: menuErr } = await supabase
+    .from('staff_meal_menus')
+    .select(
+      `id, period_month, title, notify_daily, pdf_approver_name, pdf_footer_note,
+       staff_meal_menu_days (id, meal_date, breakfast, lunch, dinner, notes)`
+    )
+    .eq('organization_id', organizationId)
+    .eq('period_month', periodMonthStr)
+    .maybeSingle();
+
+  if (menuErr) throw new Error(menuErr.message);
+  if (!raw) return { menu: null, days: [] };
+
+  const nested = raw as MealMenuMonthMeta & {
+    staff_meal_menu_days?: MealMenuDayRow[] | null;
+  };
+  const dayRows = nested.staff_meal_menu_days ?? [];
+  const menu: MealMenuMonthMeta = {
+    id: nested.id,
+    period_month: nested.period_month,
+    title: nested.title,
+    notify_daily: nested.notify_daily,
+    pdf_approver_name: nested.pdf_approver_name,
+    pdf_footer_note: nested.pdf_footer_note,
+  };
+  return { menu, days: mergeMenuDaysForMonth(viewMonth, dayRows) };
+}
+
+/** Liste ekranı: personel join yok, daha hızlı. */
+export async function fetchKitchenConfirmationsForMenuLite(
+  menuId: string
+): Promise<Record<string, MealKitchenConfirmation>> {
+  const { data, error } = await supabase
+    .from('staff_meal_menu_day_confirmations')
+    .select(
+      'id, menu_id, meal_date, confirmed_by_staff_id, prepared_meals, took_samples, preserved_samples, note, confirmed_at'
+    )
+    .eq('menu_id', menuId);
+
+  if (error) throw new Error(error.message);
+  const map: Record<string, MealKitchenConfirmation> = {};
+  for (const raw of data ?? []) {
+    const row = raw as MealKitchenConfirmation;
+    map[row.meal_date.slice(0, 10)] = row;
+  }
+  return map;
 }
 
 export async function fetchKitchenConfirmationsForMenu(menuId: string): Promise<Record<string, MealKitchenConfirmation>> {
@@ -122,6 +160,25 @@ export async function fetchKitchenConfirmationsForMenu(menuId: string): Promise<
     };
   }
   return map;
+}
+
+export type StaffMealMenuBrowseBundle = {
+  menu: MealMenuMonthMeta | null;
+  days: MealMenuDayRow[];
+  confirmations: Record<string, MealKitchenConfirmation>;
+};
+
+/** Menü verisi önce, mutfak onayları paralel tamamlanır. */
+export async function fetchStaffMealMenuBrowse(
+  organizationId: string,
+  viewMonth: Date
+): Promise<StaffMealMenuBrowseBundle> {
+  const { menu, days } = await fetchMealMenuForMonth(organizationId, viewMonth);
+  if (!menu?.id) {
+    return { menu, days, confirmations: {} };
+  }
+  const confirmations = await fetchKitchenConfirmationsForMenuLite(menu.id);
+  return { menu, days, confirmations };
 }
 
 export async function fetchPastMealMenuMonths(organizationId: string, limit = 24): Promise<MealMenuMonthMeta[]> {

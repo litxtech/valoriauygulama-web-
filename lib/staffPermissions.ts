@@ -54,6 +54,19 @@ export function hasBreakfastConfirmCreatePermission(staff: StaffPermissionSlice)
   return staff.app_permissions?.kahvalti_teyit_olustur === true;
 }
 
+/** Tesis günlüğü: kayıt oluşturma ve yetkili kayıtları görüntüleme (admin veya tesis_gunlugu). */
+export function canAccessFacilityJournal(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.tesis_gunlugu === true;
+}
+
+/** Kayıt tipi tanımlama — yalnızca admin. */
+export function canManageFacilityJournalTypes(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  return staff.role === 'admin';
+}
+
 /** Emanet / buluntu: kayıt oluşturma, liste, teslim (admin veya emanet_buluntu yetkisi). */
 export function canAccessLostFound(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
@@ -84,12 +97,26 @@ export function canManageHotelKitchenMenu(staff: StaffPermissionSlice): boolean 
   return staff.app_permissions?.otel_mutfak_menu === true;
 }
 
-/** Günlük mutfak onayı (yemek yapıldı / numune / muhafaza). */
-export function canSubmitMealMenuKitchenConfirm(staff: StaffPermissionSlice): boolean {
+/** Mutfak günlük onay push / panel ile aynı departmanlar (274). */
+export const MEAL_MENU_KITCHEN_DEPARTMENTS = new Set([
+  'kitchen',
+  'kitchen_staff',
+  'mutfak',
+  'chef',
+  'head_chef',
+  'pastry',
+]);
+
+/** Günlük mutfak onayı paneli: yalnızca mutfak personeli veya `yemek_listesi_mutfak_onay` yetkisi. */
+export function isMealMenuKitchenStaff(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (staff.role === 'admin') return true;
-  const p = staff.app_permissions ?? {};
-  return p.yemek_listesi_mutfak_onay === true || p.yemek_listesi_olustur === true;
+  if (staff.app_permissions?.yemek_listesi_mutfak_onay === true) return true;
+  const dept = (staff.department ?? '').trim().toLowerCase();
+  return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
+}
+
+export function canSubmitMealMenuKitchenConfirm(staff: StaffPermissionSlice): boolean {
+  return isMealMenuKitchenStaff(staff);
 }
 
 /** Personel uygulaması: Teknik QR / Akıllı envanter modülüne giriş (QR okuma + talimatlar). */

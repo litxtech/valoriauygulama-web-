@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { emitPermissionLiveChange, onPermissionLiveChange } from '@/lib/permissionLive';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 type PermStatus = 'granted' | 'denied' | 'undetermined' | 'unavailable';
 
@@ -79,8 +80,7 @@ async function getStatus(key: string): Promise<PermStatus> {
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
       }
       case 'notifications': {
-        const Notifications = await import('expo-notifications');
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
       }
       case 'microphone': {
@@ -141,8 +141,7 @@ async function requestPermission(key: string): Promise<PermStatus> {
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
       }
       case 'notifications': {
-        const Notifications = await import('expo-notifications');
-        const { status } = await Notifications.requestPermissionsAsync();
+        const { status } = await ExpoNotifications.requestPermissionsAsync();
         emitPermissionLiveChange();
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
       }

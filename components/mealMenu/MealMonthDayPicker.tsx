@@ -1,4 +1,5 @@
-import { ScrollView, TouchableOpacity, Text, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useRef } from 'react';
+import { ScrollView, TouchableOpacity, Text, StyleSheet, View, Dimensions } from 'react-native';
 import { parseYmd } from '@/lib/mealMenuUi';
 import { formatTrShortDayLabelFromYmd } from '@/lib/mealMenuDate';
 
@@ -33,17 +34,46 @@ export function MealMonthDayPicker({
 }: Props) {
   const chipStyle = compact ? styles.chipCompact : styles.chip;
   const rowStyle = compact ? styles.rowCompact : styles.row;
+  const scrollRef = useRef<ScrollView>(null);
+  const chipStride = (compact ? 40 : 52) + (compact ? 5 : 8);
+
+  const scrollToSelected = useCallback(
+    (animated: boolean) => {
+      const idx = days.findIndex((d) => d.ymd === selectedYmd);
+      if (idx < 0) return;
+      const chipW = compact ? 40 : 52;
+      const viewport = Dimensions.get('window').width - 32;
+      const centerX = idx * chipStride + chipW / 2 - viewport / 2;
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ x: Math.max(0, centerX), animated });
+      });
+    },
+    [days, selectedYmd, compact, chipStride]
+  );
+
+  useEffect(() => {
+    if (!days.length) return;
+    scrollToSelected(false);
+  }, [days, selectedYmd, scrollToSelected]);
 
   return (
     <View style={styles.wrap}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={rowStyle}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={rowStyle}
+      >
         {days.map((d) => {
           const selected = d.ymd === selectedYmd;
           const { day, weekdayShort } = parseYmd(d.ymd);
           return (
             <TouchableOpacity
               key={d.ymd}
-              onPress={() => onSelect(d.ymd)}
+              onPress={() => {
+                onSelect(d.ymd);
+                scrollToSelected(true);
+              }}
               activeOpacity={0.85}
               style={[
                 chipStyle,

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { getExpoPushTokenAsync, savePushTokenForStaff, isExpoGo } from '@/lib/notificationsPush';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import type { StaffPersonnelWarningSeverity } from '@/lib/staffPersonnelWarnings';
@@ -134,8 +135,7 @@ export default function StaffNotificationsScreen() {
     // Push iznini otomatik isteme: sadece durum kontrol et.
     if (!isExpoGo) {
       try {
-        const Notifications = await import('expo-notifications').then((m) => m.default);
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
       } catch {
         setPushPerm('unknown');
@@ -206,8 +206,7 @@ export default function StaffNotificationsScreen() {
         setPushPerm('granted');
       } else {
         try {
-          const Notifications = await import('expo-notifications').then((m) => m.default);
-          const { status } = await Notifications.getPermissionsAsync();
+          const { status } = await ExpoNotifications.getPermissionsAsync();
           setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
           if (status === 'denied') {
             Alert.alert(t('staffNotifPermDeniedTitle'), t('staffNotifPermDeniedBody'), [

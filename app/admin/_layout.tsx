@@ -297,6 +297,13 @@ export default function AdminLayout() {
         }}
       />
       <Stack.Screen name="lost-found/[id]" options={{ title: 'Emanet detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="facility-journal/index" options={{ title: 'Tesis günlüğü', headerRight: renderHeaderRight }} />
+      <Stack.Screen
+        name="facility-journal/new"
+        options={{ title: 'Yeni tesis kaydı', headerBackTitle: t('back'), headerRight: renderHeaderRight }}
+      />
+      <Stack.Screen name="facility-journal/[id]" options={{ title: 'Kayıt detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="facility-journal/types" options={{ title: 'Kayıt tipleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/all" options={{ title: t('adminDocumentsAll'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/new" options={{ title: t('adminDocumentsUpload'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerRight: renderHeaderRight }} />

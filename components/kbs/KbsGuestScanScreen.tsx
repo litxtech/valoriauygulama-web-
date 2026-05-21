@@ -10,6 +10,8 @@ import { useGuestScanSessionStore } from '@/stores/guestScanSessionStore';
 import { mapLockPayloadToGuestItem } from '@/lib/guestScan/mapParsedToItem';
 import { fingerprintFromMrzQueued } from '@/stores/kbsMrzBatchStore';
 import type { GuestScanLockPayload } from '@/lib/guestScan/types';
+import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
+import { preloadOpsAppUserForSession } from '@/lib/resolveOpsHotelId';
 
 const SOUND_KEY = 'kbs_mrz_scan_sound_enabled';
 
@@ -32,6 +34,7 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   const hasDuplicate = useGuestScanSessionStore((s) => s.hasDuplicate);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [scanEnabled, setScanEnabled] = useState(true);
+  const [scanResetToken, setScanResetToken] = useState(0);
   const sessionBootstrapped = useRef(false);
 
   const isGroup = mode === 'group' || mode === 'family' || (session?.sessionType !== 'single');
@@ -55,11 +58,14 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
     void AsyncStorage.getItem(SOUND_KEY).then((v) => {
       if (v === '0') setSoundEnabled(false);
     });
+    void preloadMrzVisionScanner();
+    preloadOpsAppUserForSession();
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       setScanEnabled(true);
+      setScanResetToken((n) => n + 1);
     }, [])
   );
 
@@ -76,6 +82,7 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
       });
       if (hasDuplicate(fp)) {
         Alert.alert(t('kbsGuestDuplicateTitle'), t('kbsGuestDuplicateBody'));
+        setScanResetToken((n) => n + 1);
         return;
       }
       setScanEnabled(false);
@@ -102,6 +109,8 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   return (
     <GuestIdentityScanner
       enabled={scanEnabled}
+      keepCameraWarm
+      scanResetToken={scanResetToken}
       soundEnabled={soundEnabled}
       groupCount={session?.items.length ?? 0}
       onLocked={onLocked}

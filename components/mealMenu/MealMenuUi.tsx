@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   View,
   Text,
@@ -394,11 +395,24 @@ type MealDayViewCardProps = {
   isToday: boolean;
   palette: Palette;
   compact?: boolean;
+  /** Boş günler de kart olarak listelensin (bugünden itibaren sıra). */
+  showWhenEmpty?: boolean;
+  emptyMessage?: string;
+  selected?: boolean;
 };
 
-export function MealDayViewCard({ ymd, fields, isToday, palette, compact = false }: MealDayViewCardProps) {
+export function MealDayViewCard({
+  ymd,
+  fields,
+  isToday,
+  palette,
+  compact = false,
+  showWhenEmpty = false,
+  emptyMessage = 'Bu gün için menü henüz girilmedi.',
+  selected = false,
+}: MealDayViewCardProps) {
   const slots = MEAL_SLOTS.filter((s) => fields[s.key]?.trim());
-  if (slots.length === 0) return null;
+  if (slots.length === 0 && !showWhenEmpty) return null;
   const title = compact ? formatTrShortDayLabelFromYmd(ymd) : formatTrFullDayLabelFromYmd(ymd);
   const cardStyle = compact ? dayStyles.cardCompact : dayStyles.card;
   const topStyle = compact ? dayStyles.cardTopCompact : dayStyles.cardTop;
@@ -406,8 +420,11 @@ export function MealDayViewCard({ ymd, fields, isToday, palette, compact = false
     <View
       style={[
         cardStyle,
-        { backgroundColor: palette.surface, borderColor: isToday ? palette.primary : palette.border },
-        isToday && dayStyles.cardToday,
+        {
+          backgroundColor: palette.surface,
+          borderColor: selected || isToday ? palette.primary : palette.border,
+        },
+        (isToday || selected) && dayStyles.cardToday,
       ]}
     >
       <View style={topStyle}>
@@ -429,9 +446,13 @@ export function MealDayViewCard({ ymd, fields, isToday, palette, compact = false
           ) : null}
         </View>
       </View>
-      {slots.map((slot) => (
-        <MealSlotReadRow key={slot.key} slotKey={slot.key} text={fields[slot.key]} compact={compact} />
-      ))}
+      {slots.length === 0 ? (
+        <Text style={[dayStyles.emptyDayText, { color: palette.textMuted }]}>{emptyMessage}</Text>
+      ) : (
+        slots.map((slot) => (
+          <MealSlotReadRow key={slot.key} slotKey={slot.key} text={fields[slot.key]} compact={compact} />
+        ))
+      )}
     </View>
   );
 }
@@ -449,7 +470,7 @@ export function MealMenuEmptyState({
   title: string;
   message: string;
   palette: Palette;
-  action?: React.ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <View style={[emptyStyles.wrap, { backgroundColor: palette.surface, borderColor: palette.border }]}>
@@ -741,6 +762,7 @@ const dayStyles = StyleSheet.create({
     borderRadius: 6,
   },
   todayChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  emptyDayText: { fontSize: 13, lineHeight: 18, marginTop: 2, fontStyle: 'italic' },
 });
 
 const emptyStyles = StyleSheet.create({

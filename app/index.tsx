@@ -28,6 +28,8 @@ import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { hasPolicyConsent } from '@/lib/policyConsent';
+import { applyPublicWebRoute, isPublicWebPath } from '@/lib/publicWebRoute';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
 const GEOFENCE_LOCATION_PERMISSION_PROMPT_KEY = '@valoria/geofence_location_permission_prompt_shown';
@@ -185,8 +187,7 @@ export default function HomeScreen() {
     let cancelled = false;
     const loadNotificationStatus = async () => {
       try {
-        const Notifications = await import('expo-notifications');
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         if (cancelled) return;
         if (status === 'granted' || status === 'denied' || status === 'undetermined') {
           setNotifStatus(status);
@@ -203,18 +204,10 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // QR ile açılan web: URL'de /guest/sign-one ve ?t= varsa sözleşme sayfasına git (router bazen önce index açar)
+  // QR ile açılan web: valoria.tr/menü, /sözleşme, /maliye
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const pathname = window.location.pathname || '';
-    const search = window.location.search || '';
-    if (!pathname.includes('/guest/sign-one')) return;
-    const params = new URLSearchParams(search);
-    const t = params.get('t') || params.get('token');
-    const l = params.get('l') || params.get('lang') || 'tr';
-    if (t) {
-      router.replace({ pathname: '/guest/sign-one', params: { t, l: l || 'tr' } });
-    }
+    applyPublicWebRoute(router, window.location.pathname || '', window.location.search || '');
   }, [router]);
 
   useEffect(() => {
@@ -298,6 +291,7 @@ export default function HomeScreen() {
     if (staffCheckUnavailable && !staff) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
+      if (isPublicWebPath(pathname)) return;
       if (pathname.includes('/guest/sign-one')) return;
     }
     const path = staff ? '/staff' : '/customer';
@@ -517,8 +511,7 @@ export default function HomeScreen() {
     if (Platform.OS === 'web' || notifLoading) return;
     setNotifLoading(true);
     try {
-      const Notifications = await import('expo-notifications');
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await ExpoNotifications.requestPermissionsAsync();
       if (status === 'granted' || status === 'denied' || status === 'undetermined') {
         setNotifStatus(status);
       }

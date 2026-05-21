@@ -8,6 +8,16 @@ import { log } from '@/lib/logger';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import { uploadBufferToPublicBucket } from '@/lib/storagePublicUpload';
 import type { MessagingActor, Message, Conversation, ConversationWithMeta } from '@/lib/messaging';
+import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
+
+/** Sohbet gönderimi catch — RN ağ hatalarında kullanıcıya anlaşılır metin. */
+export function formatChatMessageSendError(e: unknown, fallback: string): string {
+  const msg = e instanceof Error ? e.message : typeof e === 'string' ? e : fallback;
+  if (isSupabaseUnavailableError(msg)) {
+    return 'Sunucuya bağlanılamıyor. İnternet bağlantınızı kontrol edip tekrar deneyin.';
+  }
+  return msg.trim() || fallback;
+}
 
 // ----- Staff (authenticated) -----
 

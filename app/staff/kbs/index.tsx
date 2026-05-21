@@ -1,2 +1,4 @@
-export { default } from '../(tabs)/kbs';
+import StaffKbsTab from '../(tabs)/kbs';
+
+export default StaffKbsTab;
 

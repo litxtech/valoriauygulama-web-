@@ -28,7 +28,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth, feedPostMediaHeight } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDistanceToNow } from 'date-fns';
@@ -55,6 +55,7 @@ import { loadFeedPostViewers, recordStaffFeedPostViews, type FeedPostViewerRow }
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { collectFeedPostPrefetchUrls } from '@/lib/feedPrefetchUrls';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
 import { notifyGuestsOfNewFeedPost } from '@/lib/notifyNewFeedPost';
 import {
@@ -81,6 +82,7 @@ import { pollStoryPlaybackReady } from '@/lib/muxStoryUpload';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
+import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import { MentionableText } from '@/components/MentionableText';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -315,7 +317,10 @@ export default function StaffHomeScreen() {
         if (Array.isArray(parsed.myLikePostIds)) setMyLikes(new Set(parsed.myLikePostIds));
         if (Array.isArray(parsed.notificationPostIds)) setNotificationPrefs(new Set(parsed.notificationPostIds));
         if (parsed.commentsByPost && typeof parsed.commentsByPost === 'object') setCommentsByPost(parsed.commentsByPost);
-        if ((parsed.posts?.length ?? 0) > 0) setLoading(false);
+        if ((parsed.posts?.length ?? 0) > 0) {
+          setLoading(false);
+          prefetchImageUrls(collectFeedPostPrefetchUrls(parsed.posts), Platform.OS === 'android' ? 40 : 64);
+        }
       })
       .catch(() => {});
     return () => {
@@ -581,21 +586,18 @@ export default function StaffHomeScreen() {
     const avatarLookup = buildStaffAvatarLookup(staffListRows);
     prefetchImageUrls(
       [
-        ...list.flatMap((p) => {
-          return [
-            resolveFeedAuthorAvatarUrl({
-              staff: p.staff,
-              guest: p.guest,
-              staffId: p.staff_id,
-              staffAvatarById: avatarLookup,
-            }),
-            p.thumbnail_url,
-            p.media_type && p.media_type !== 'video' ? p.media_url : null,
-          ];
-        }),
+        ...collectFeedPostPrefetchUrls(list),
+        ...list.map((p) =>
+          resolveFeedAuthorAvatarUrl({
+            staff: p.staff,
+            guest: p.guest,
+            staffId: p.staff_id,
+            staffAvatarById: avatarLookup,
+          })
+        ),
         ...staffListRows.map((s) => s.profile_image),
       ],
-      Platform.OS === 'android' ? 28 : 56
+      Platform.OS === 'android' ? 40 : 64
     );
     void recordStaffFeedPostViews(ids, staff.id);
   }, [staff?.id, loadStaffList]);
@@ -1696,7 +1698,6 @@ export default function StaffHomeScreen() {
             );
           }
           const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
-          const feedMediaHeight = feedPostMediaHeight(feedCardWidth);
           return visiblePosts.map((p) => {
             const maySeeHiddenFull = staff?.role === 'admin';
             const likeCount = likeCounts[p.id] ?? 0;
@@ -1752,21 +1753,22 @@ export default function StaffHomeScreen() {
                 ? [{ media_type: p.media_type === 'video' ? 'video' : 'image', media_url: p.media_url || p.thumbnail_url || '', thumbnail_url: p.thumbnail_url, sort_order: 0 }]
                 : []);
             const hasMedia = mediaItems.length > 0;
+            const feedMediaHeight = feedPostMediaHeightForItems(feedCardWidth, mediaItems);
             const mediaEl =
               hasMedia ? (
-                <View style={styles.postImageWrap}>
+                <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
                   <FeedMediaCarousel
                     items={mediaItems.map((m, i) => ({ id: `${p.id}-${i}`, media_type: m.media_type, media_url: m.media_url, thumbnail_url: m.thumbnail_url }))}
                     width={feedCardWidth}
                     height={feedMediaHeight}
-                    videoPosterOnly={Platform.OS === 'android'}
+                    videoPosterOnly
                     onPressItem={(item) => {
                       if (item.media_type === 'video') {
                         setFullscreenPostMedia({
                           uri: item.media_url,
                           mediaType: 'video',
                           postId: p.id,
-                          posterUri: item.thumbnail_url || item.media_url,
+                          posterUri: item.thumbnail_url ?? undefined,
                         });
                       } else {
                         setFullscreenPostMedia({
@@ -2279,45 +2281,23 @@ export default function StaffHomeScreen() {
       <Modal
         visible={!!fullscreenPostMedia}
         transparent
-        animationType="fade"
+        animationType="none"
+        statusBarTranslucent
         onRequestClose={() => { setFullscreenPostMedia(null); setCommentsSheetPostId(null); }}
       >
-        <Pressable
-          style={[styles.fullscreenOverlay, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
-          onPress={() => { setFullscreenPostMedia(null); setCommentsSheetPostId(null); }}
-        >
+        <View style={styles.fullscreenOverlay}>
           {fullscreenPostMedia ? (
             <>
-              <View style={styles.fullscreenImageWrap} pointerEvents="box-none">
-                {fullscreenPostMedia.mediaType === 'video' ? (
-                  <>
-                    <Video
-                      key={fullscreenPostMedia.uri}
-                      ref={fullscreenVideoRef}
-                      source={{ uri: fullscreenPostMedia.uri }}
-                      usePoster={false}
-                      style={[styles.fullscreenImage, styles.fullscreenVideo, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
-                      useNativeControls={false}
-                      resizeMode="contain"
-                      isLooping={false}
-                      shouldPlay
-                      isMuted={false}
-                      progressUpdateIntervalMillis={500}
-                      onLoad={() => {
-                        setFullscreenVideoReady(true);
-                        fullscreenVideoRef.current?.playAsync().catch(() => {});
-                        fullscreenVideoRef.current?.setVolumeAsync(1.0).catch(() => {});
-                      }}
-                    />
-                    {fullscreenPostMedia.posterUri && !fullscreenVideoReady ? (
-                      <CachedImage
-                        uri={fullscreenPostMedia.posterUri}
-                        style={[StyleSheet.absoluteFillObject, styles.fullscreenPosterImage, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
-                        contentFit="contain"
-                        pointerEvents="none"
-                      />
-                    ) : null}
-                    <View style={styles.fullscreenSeekZones} pointerEvents="box-none">
+              {fullscreenPostMedia.mediaType === 'video' ? (
+                <>
+                  <FeedFullscreenVideoPlayer
+                    ref={fullscreenVideoRef}
+                    uri={fullscreenPostMedia.uri}
+                    posterUri={fullscreenPostMedia.posterUri}
+                    progressUpdateIntervalMillis={500}
+                    onReady={() => setFullscreenVideoReady(true)}
+                  />
+                  <View style={styles.fullscreenSeekZones} pointerEvents="box-none">
                       <Pressable
                         style={styles.fullscreenSeekZoneLeft}
                         onPress={(e) => {
@@ -2346,17 +2326,21 @@ export default function StaffHomeScreen() {
                       />
                     </View>
                   </>
-                ) : (
+              ) : (
+                <Pressable
+                  style={styles.fullscreenImageWrap}
+                  onPress={() => { setFullscreenPostMedia(null); setCommentsSheetPostId(null); }}
+                >
                   <CachedImage
                     uri={fullscreenPostMedia.uri}
                     style={[styles.fullscreenImage, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
                     contentFit="contain"
                   />
-                )}
-              </View>
+                </Pressable>
+              )}
             </>
           ) : null}
-        </Pressable>
+        </View>
       </Modal>
 
       <Modal
@@ -2991,7 +2975,6 @@ const styles = StyleSheet.create({
   postImageWrap: {
     position: 'relative',
     width: '100%',
-    aspectRatio: 4 / 5,
     overflow: 'hidden',
     borderRadius: 16,
     backgroundColor: theme.colors.borderLight,
@@ -3211,8 +3194,6 @@ const styles = StyleSheet.create({
   fullscreenOverlay: {
     flex: 1,
     backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   fullscreenImageWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   fullscreenImage: {},

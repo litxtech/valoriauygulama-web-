@@ -10,7 +10,7 @@ import { Platform } from 'react-native';
 import { encode as encodeBase64 } from 'base64-arraybuffer';
 import { getInfoAsync, uploadAsync, FileSystemUploadType } from 'expo-file-system/legacy';
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
-import { uriToArrayBuffer, getMimeAndExt } from '@/lib/uploadMedia';
+import { uriToArrayBuffer, getMimeAndExt, isLocalFileUriForUpload, copyUriToCacheForUpload } from '@/lib/uploadMedia';
 
 /** `supabase/functions/upload-app-storage` ile uyumlu (yakl. 3MB ham dosya) */
 const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
@@ -91,7 +91,9 @@ function contentTypeForFeedUpload(kind: PublicUploadKind, ext: string, mime: str
 }
 
 function storageContentType(bucketId: string, kind: PublicUploadKind, ext: string, mime: string): string {
-  if (bucketId === 'feed-media') return contentTypeForFeedUpload(kind, ext, mime);
+  if (bucketId === 'feed-media' || bucketId === 'facility-journal') {
+    return contentTypeForFeedUpload(kind, ext, mime);
+  }
   return stripMimeParams(mime);
 }
 
@@ -103,13 +105,10 @@ function normalizeLocalUriForNativeUpload(uri: string): string {
   return u;
 }
 
-/** Video: belleğe okumadan Storage'a doğrudan yüklenebilir. */
-function isNativeVideoUploadCandidate(uri: string, kind: PublicUploadKind): boolean {
-  if (Platform.OS === 'web' || kind !== 'video') return false;
-  const u = uri.trim();
-  if (u.startsWith('file://')) return true;
-  if (Platform.OS === 'android' && u.startsWith('/')) return true;
-  return false;
+function nativeUploadTimeoutMs(fileSizeBytes: number): number {
+  const assumedBps = 100_000;
+  const byThroughput = Math.ceil(fileSizeBytes / assumedBps) * 1000;
+  return Math.max(120_000, Math.min(FEED_MEDIA_UPLOAD_TIMEOUT_MS + 20 * 60 * 1000, byThroughput + 8000));
 }
 
 function buildStorageObjectUploadUrl(bucketId: string, objectPathInBucket: string): string {
@@ -138,15 +137,20 @@ async function uploadLocalFileToSupabaseStorageNative(params: {
   }
 
   const url = buildStorageObjectUploadUrl(params.bucketId, params.objectPath);
-  const result = await uploadAsync(url, local, {
-    httpMethod: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.accessToken}`,
-      apikey: supabaseAnonKey,
-      'Content-Type': params.contentType,
-    },
-    uploadType: FileSystemUploadType.BINARY_CONTENT,
-  });
+  const result = await promiseWithTimeout(
+    uploadAsync(url, local, {
+      httpMethod: 'POST',
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': params.contentType,
+        'x-upsert': 'false',
+      },
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
+    }),
+    nativeUploadTimeoutMs(info.size),
+    'Dosya yükleme zaman aşımı — bağlantınızı kontrol edip tekrar deneyin.'
+  );
 
   if (result.status < 200 || result.status >= 300) {
     let msg = `Storage yüklemesi başarısız (HTTP ${result.status})`;
@@ -192,9 +196,31 @@ export async function uploadUriToPublicBucket(params: {
   kind?: PublicUploadKind;
   /** auth uid altında alt klasör, örn. "stock", "staff/abc" */
   subfolder?: string;
+  /** Tesis günlüğü vb.: mümkünse belleğe almadan doğrudan Storage REST */
+  preferStreamUpload?: boolean;
 }): Promise<{ publicUrl: string; path: string }> {
   const kind = params.kind ?? 'image';
-  const { ext, mime } = getMimeAndExt(params.uri, kind === 'video' ? 'video' : 'image');
+  let uploadUri = params.uri;
+
+  if (
+    params.bucketId === 'facility-journal' &&
+    (kind === 'video' || !isLocalFileUriForUpload(uploadUri))
+  ) {
+    if (!isLocalFileUriForUpload(uploadUri)) {
+      uploadUri = await copyUriToCacheForUpload(uploadUri, kind === 'video' ? 'video' : 'image');
+    }
+  } else if (kind === 'video' && !isLocalFileUriForUpload(uploadUri)) {
+    uploadUri = await copyUriToCacheForUpload(uploadUri, 'video');
+  }
+  if (
+    params.preferStreamUpload &&
+    kind === 'image' &&
+    !isLocalFileUriForUpload(uploadUri)
+  ) {
+    uploadUri = await copyUriToCacheForUpload(uploadUri, 'image');
+  }
+
+  const { ext, mime } = getMimeAndExt(uploadUri, kind === 'video' ? 'video' : 'image');
   const uploadMime = storageContentType(params.bucketId, kind, ext, mime);
 
   const sub = (params.subfolder ?? '').replace(/^\/+|\/+$/g, '');
@@ -202,14 +228,20 @@ export async function uploadUriToPublicBucket(params: {
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const fileName = sub ? `${uid}/${sub}/${unique}.${ext}` : `${uid}/${unique}.${ext}`;
 
-  if (isNativeVideoUploadCandidate(params.uri, kind)) {
+  const useStream =
+    isLocalFileUriForUpload(uploadUri) &&
+    (kind === 'video' ||
+      params.preferStreamUpload === true ||
+      params.bucketId === 'facility-journal');
+
+  if (useStream) {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) throw new Error('Oturum gerekli.');
     await uploadLocalFileToSupabaseStorageNative({
       bucketId: params.bucketId,
       objectPath: fileName,
-      localUri: params.uri,
+      localUri: uploadUri,
       contentType: uploadMime,
       accessToken: token,
     });
@@ -217,16 +249,21 @@ export async function uploadUriToPublicBucket(params: {
     return { publicUrl: data.publicUrl, path: fileName };
   }
 
-  const arrayBuffer = await uriToArrayBuffer(params.uri, { mediaKind: kind === 'video' ? 'video' : 'image' });
+  if (kind === 'video') {
+    throw new Error(
+      'Video dosyası hazırlanamadı. Galeriden yeniden seçin veya uygulamayı yeniden başlatıp deneyin.'
+    );
+  }
+
+  const arrayBuffer = await uriToArrayBuffer(uploadUri, { mediaKind: 'image' });
   if (params.bucketId === 'feed-media' && arrayBuffer.byteLength > FEED_MEDIA_MAX_BYTES) {
     throw new Error(
       'Dosya çok büyük (feed için üst sınır ~150 MB). Daha kısa bir video seçin; iOS’ta tekrar seçince sıkıştırılmış dosya kullanılır.'
     );
   }
-  /** Video doğrudan Storage INSERT = storage.objects RLS; küçük feed medyası Edge (service role) ile aynı yolu kullanır. */
+  /** Video / tesis günlüğü: Edge/base64 yavaş veya 400; doğrudan Storage. */
   const tryEdge =
-    arrayBuffer.byteLength <= EDGE_UPLOAD_MAX_BYTES &&
-    (kind !== 'video' || params.bucketId === 'feed-media');
+    params.bucketId !== 'facility-journal' && arrayBuffer.byteLength <= EDGE_UPLOAD_MAX_BYTES;
 
   let edgeErr: unknown = null;
   if (tryEdge) {
@@ -322,14 +359,18 @@ export async function uploadGuestFeedMedia(params: {
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const fileName = `guest_${params.guestId}/${unique}.${ext}`;
 
-  if (isNativeVideoUploadCandidate(params.uri, kind)) {
+  let guestUri = params.uri;
+  if (kind === 'video' && !isLocalFileUriForUpload(guestUri)) {
+    guestUri = await copyUriToCacheForUpload(guestUri, 'video');
+  }
+  if (isLocalFileUriForUpload(guestUri) && kind === 'video') {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) throw new Error('Oturum gerekli.');
     await uploadLocalFileToSupabaseStorageNative({
       bucketId: 'feed-media',
       objectPath: fileName,
-      localUri: params.uri,
+      localUri: guestUri,
       contentType: uploadMime,
       accessToken: token,
     });
@@ -337,7 +378,7 @@ export async function uploadGuestFeedMedia(params: {
     return { publicUrl: data.publicUrl, path: fileName };
   }
 
-  const arrayBuffer = await uriToArrayBuffer(params.uri, { mediaKind: kind === 'video' ? 'video' : 'image' });
+  const arrayBuffer = await uriToArrayBuffer(guestUri, { mediaKind: kind === 'video' ? 'video' : 'image' });
   if (arrayBuffer.byteLength > FEED_MEDIA_MAX_BYTES) {
     throw new Error(
       'Dosya çok büyük (feed için üst sınır ~150 MB). Daha kısa bir video seçin; iOS’ta tekrar seçince sıkıştırılmış dosya kullanılır.'

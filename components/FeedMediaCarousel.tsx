@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, StyleSheet, Text, Platform } from 'react-native';
-import { Video } from 'expo-av';
+import { View, ScrollView, StyleSheet, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
+import { FeedVideoCardPreview } from '@/components/FeedVideoCardPreview';
 import { FastPress } from '@/components/ui/FastPress';
 
 export type FeedMediaItem = {
@@ -17,9 +17,9 @@ type Props = {
   width: number;
   height: number;
   onPressItem?: (item: FeedMediaItem) => void;
-  /** İlk slaytta video decode edildiğinde / hata (detay sayfası “yükleniyor” overlay’i için). */
+  /** Eski API: video artık poster ile anında hazır; detay sayfası overlay’i için hemen çağrılır. */
   onFirstVideoReady?: () => void;
-  /** Feed listesinde Android: Video decode etme, poster + play ikonu (dokunma/UI yükü). */
+  /** @deprecated Her zaman poster kullanılır; tam video decode edilmez. */
   videoPosterOnly?: boolean;
 };
 
@@ -29,15 +29,14 @@ export function FeedMediaCarousel({
   height,
   onPressItem,
   onFirstVideoReady,
-  videoPosterOnly = false,
 }: Props) {
   const safeItems = useMemo(() => items.filter((x) => !!x.media_url), [items]);
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
-    if (!videoPosterOnly || !onFirstVideoReady) return;
+    if (!onFirstVideoReady) return;
     if (safeItems.some((i) => i.media_type === 'video')) onFirstVideoReady();
-  }, [videoPosterOnly, onFirstVideoReady, safeItems]);
+  }, [onFirstVideoReady, safeItems]);
 
   if (safeItems.length === 0) return null;
 
@@ -62,33 +61,23 @@ export function FeedMediaCarousel({
             onPress={() => onPressItem?.(item)}
             rippleColor="rgba(255,255,255,0.12)"
           >
-            {item.media_type === 'video' && (videoPosterOnly || (Platform.OS === 'android' && idx !== activeIndex)) ? (
-              <View style={{ width, height }}>
-                <CachedImage
-                  uri={item.thumbnail_url || item.media_url}
-                  style={{ width, height }}
-                  contentFit="cover"
+            {item.media_type === 'video' ? (
+              <View style={[styles.mediaClip, { width, height }]}>
+                <FeedVideoCardPreview
+                  item={item}
+                  allowVideoFrameFallback={idx === activeIndex}
                 />
                 <View style={styles.playOverlay} pointerEvents="none">
                   <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.92)" />
                 </View>
               </View>
-            ) : item.media_type === 'video' ? (
-              <Video
-                source={{ uri: item.media_url }}
-                style={{ width, height }}
-                resizeMode="cover"
-                shouldPlay={false}
-                isMuted
-                useNativeControls={false}
-                onLoad={idx === 0 ? () => onFirstVideoReady?.() : undefined}
-                onError={idx === 0 ? () => onFirstVideoReady?.() : undefined}
-              />
             ) : (
               <CachedImage
                 uri={item.thumbnail_url || item.media_url}
                 style={{ width, height }}
                 contentFit="cover"
+                priority="high"
+                recyclingKey={item.id ?? item.media_url}
               />
             )}
           </FastPress>
@@ -116,6 +105,10 @@ export function FeedMediaCarousel({
 
 const styles = StyleSheet.create({
   wrap: { position: 'relative', overflow: 'hidden' },
+  mediaClip: {
+    overflow: 'hidden',
+    backgroundColor: '#0a0a0a',
+  },
   playOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

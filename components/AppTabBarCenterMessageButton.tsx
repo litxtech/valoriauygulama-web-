@@ -1,28 +1,18 @@
-import { View, Text, TouchableOpacity, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar } from '@/constants/tabBarTheme';
 
-const { size: MSG_SIZE, icon: MSG_ICON, lift: MSG_LIFT } = appTabBar.centerMessage;
+const { size: MSG_SIZE, icon: MSG_ICON } = appTabBar.centerMessage;
 
 const styles = StyleSheet.create({
-  tabBtn: {
-    flex: 1,
+  wrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
-  column: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    maxWidth: '100%',
-  },
-  iconWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: MSG_SIZE,
+    height: MSG_SIZE,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -52,8 +42,8 @@ const styles = StyleSheet.create({
   },
   badge: {
     position: 'absolute',
-    top: -5,
-    right: -7,
+    top: -4,
+    right: -6,
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -71,77 +61,38 @@ const styles = StyleSheet.create({
   },
 });
 
-type Props = BottomTabBarButtonProps & {
+type IconProps = {
+  focused: boolean;
   unreadCount: number;
-  accessibilityLabel: string;
 };
 
-export function AppTabBarCenterMessageButton({
-  accessibilityLabel,
-  unreadCount,
-  style,
-  onPress,
-  accessibilityState,
-  testID,
-  href,
-}: Props) {
-  const focused = !!accessibilityState?.selected;
-  const scale = focused ? 1.1 : 1;
-
-  const iconColumn = (
-    <View style={styles.column}>
-      <View style={[styles.iconWrap, { transform: [{ translateY: -MSG_LIFT }, { scale }] }]}>
-        {Platform.OS === 'android' ? (
-          <View style={[styles.circle, styles.circleAndroid, !focused && styles.circleDim]}>
-            <Ionicons name="paper-plane" size={MSG_ICON} color="#fff" />
-          </View>
-        ) : (
-          <LinearGradient
-            colors={pds.gradientPremium}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.circle, !focused && styles.circleDim]}
-          >
-            <Ionicons name="paper-plane" size={MSG_ICON} color="#fff" />
-          </LinearGradient>
-        )}
-        {unreadCount > 0 ? (
-          <View style={styles.badge} pointerEvents="none">
-            <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-
-  if (Platform.OS === 'android') {
-    return (
-      <Pressable
-        style={[style, styles.tabBtn, { borderWidth: 0 }]}
-        onPress={onPress}
-        android_ripple={{ color: 'rgba(99,102,241,0.2)', borderless: false }}
-        testID={testID}
-        accessibilityRole="button"
-        accessibilityState={accessibilityState}
-        accessibilityLabel={accessibilityLabel}
-      >
-        {iconColumn}
-      </Pressable>
-    );
-  }
+/**
+ * Orta mesaj sekmesi — tabBarIcon ile kullan (özel tabBarButton ikon satırını atlar, aşağıda kalır).
+ */
+export function CenterMessageTabBarIcon({ focused, unreadCount }: IconProps) {
+  const scale = focused ? 1.05 : 1;
 
   return (
-    <TouchableOpacity
-      style={[style, styles.tabBtn]}
-      onPress={onPress}
-      activeOpacity={0.88}
-      testID={testID}
-      href={href}
-      accessibilityRole="button"
-      accessibilityState={accessibilityState}
-      accessibilityLabel={accessibilityLabel}
-    >
-      {iconColumn}
-    </TouchableOpacity>
+    <View style={[styles.wrap, { transform: [{ scale }] }]}>
+      {Platform.OS === 'android' ? (
+        <View style={[styles.circle, styles.circleAndroid, !focused && styles.circleDim]}>
+          <Ionicons name="chatbubbles" size={MSG_ICON} color="#fff" />
+        </View>
+      ) : (
+        <LinearGradient
+          colors={pds.gradientPremium}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.circle, !focused && styles.circleDim]}
+        >
+          <Ionicons name="chatbubbles" size={MSG_ICON} color="#fff" />
+        </LinearGradient>
+      )}
+      {unreadCount > 0 ? (
+        <View style={styles.badge} pointerEvents="none">
+          <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+        </View>
+      ) : null}
+    </View>
   );
 }

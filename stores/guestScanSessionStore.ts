@@ -3,7 +3,7 @@ import type { GuestScanItem, GuestScanSession, GuestScanSessionType } from '@/li
 import { fingerprintFromMrzQueued, type MrzQueuedFingerprint } from '@/stores/kbsMrzBatchStore';
 import { createGuestScanSessionDb, persistGuestScanItemDb } from '@/lib/guestScan/guestScanSessionDb';
 import type { SubmitOneResult } from '@/lib/guestScan/submitGroupToKbs';
-import { supabase } from '@/lib/supabase';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 type State = {
   session: GuestScanSession | null;
@@ -70,11 +70,9 @@ export const useGuestScanSessionStore = create<State>((set, get) => ({
     });
     set((st) => ({ fingerprints: [...st.fingerprints, fp] }));
 
-    const { data: userData } = await supabase.auth.getUser();
-    const uid = userData.user?.id;
-    if (uid && !s.id.startsWith('local-')) {
-      const { data: au } = await supabase.schema('ops').from('app_users').select('hotel_id').eq('id', uid).maybeSingle();
-      if (au?.hotel_id) void persistGuestScanItemDb(item, au.hotel_id);
+    if (!s.id.startsWith('local-')) {
+      const ctx = await resolveOpsHotelIdForCaller();
+      if (ctx.ok) void persistGuestScanItemDb(item, ctx.hotelId);
     }
   },
 

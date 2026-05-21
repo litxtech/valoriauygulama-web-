@@ -25,6 +25,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   staffGetMessages,
   staffSendMessage,
+  formatChatMessageSendError,
   staffMarkConversationRead,
   staffGetConversationHeader,
   staffSetConversationMuted,
@@ -35,6 +36,8 @@ import {
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
 import { mergeChatMessagesCapped, replaceChatMessage, upsertIncomingChatMessage, latestMessageCreatedAtIso, capChatMessageList, type Message } from '@/lib/messaging';
+import { scheduleSnapChatListToEndAfterOpen, snapChatListToEnd } from '@/lib/chatListScroll';
+import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import { theme } from '@/constants/theme';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
 import * as ImagePicker from 'expo-image-picker';
@@ -112,6 +115,7 @@ function MessageBubble({
   onVideoRetryForMessage,
   imageAlbum,
   videoAlbum,
+  mediaPreloadReady = true,
 }: {
   msg: Message;
   isOwn: boolean;
@@ -125,6 +129,7 @@ function MessageBubble({
   onVideoRetryForMessage?: (msg: Message) => void;
   imageAlbum?: Message[];
   videoAlbum?: Message[];
+  mediaPreloadReady?: boolean;
 }) {
   const { t } = useTranslation();
   const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
@@ -163,6 +168,7 @@ function MessageBubble({
           isOwn={own}
           videoUploads={videoUploads}
           onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+          deferLocalVideo={!mediaPreloadReady}
         />
       );
     }
@@ -179,6 +185,7 @@ function MessageBubble({
             uploadPhase={upload?.phase}
             uploadFailed={upload?.phase === 'failed'}
             onRetry={onVideoRetry}
+            preloadEnabled={mediaPreloadReady}
           />
         </View>
       );
@@ -319,15 +326,18 @@ export default function StaffChatScreen() {
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const [allStaffMuted, setAllStaffMuted] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const initialScrollDoneRef = useRef(false);
   const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading);
 
   useEffect(() => {
     setMessages([]);
+    initialScrollDoneRef.current = false;
     setLoading(true);
   }, [conversationId]);
 
@@ -582,13 +592,14 @@ export default function StaffChatScreen() {
     winWidth,
   ]);
 
-  const scrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const openScrollCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!staff || !conversationId) {
       setLoading(false);
       return;
     }
-    scrollTimeoutsRef.current = [];
+    openScrollCleanupRef.current?.();
+    openScrollCleanupRef.current = null;
     (async () => {
       const seedFromMemory = staffChatMemoryCache[conversationId]?.messages ?? [];
       const afterIso = latestMessageCreatedAtIso(seedFromMemory);
@@ -602,6 +613,13 @@ export default function StaffChatScreen() {
         if (list.length === 0) {
           staffMarkConversationRead(conversationId, staff.id);
           setLoading(false);
+          const cached = staffChatMemoryCache[conversationId]?.messages ?? [];
+          if (cached.length > 0) {
+            openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
+              hasImages: cached.some((m) => m.message_type === 'image'),
+              hasVideos: cached.some((m) => m.message_type === 'video'),
+            });
+          }
           return;
         }
       } else {
@@ -614,17 +632,15 @@ export default function StaffChatScreen() {
       });
       staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
-      const scrollToEnd = () => listRef.current?.scrollToEnd({ animated: true });
-      const hasImage = list.some((m: Message) => m.message_type === 'image');
-      if (Platform.OS === 'android') {
-        scrollToEnd();
-        scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 150), setTimeout(scrollToEnd, 450));
-        if (hasImage) scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 750));
-      } else {
-        scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 150));
-      }
+      openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
+        hasImages: list.some((m: Message) => m.message_type === 'image'),
+        hasVideos: list.some((m: Message) => m.message_type === 'video'),
+      });
     })();
-    return () => scrollTimeoutsRef.current.forEach((t) => clearTimeout(t));
+    return () => {
+      openScrollCleanupRef.current?.();
+      openScrollCleanupRef.current = null;
+    };
   }, [staff?.id, conversationId]);
 
   const prefetchKeyRef = useRef('');
@@ -772,7 +788,17 @@ export default function StaffChatScreen() {
           return;
         }
         listRef.current?.scrollToEnd({ animated: true });
+      } else {
+        setInput(text);
+        setPendingMentions(mentions);
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        Alert.alert(t('messageSendFailedTitle'), t('chatMessageBlockedBody'));
       }
+    } catch (e) {
+      setInput(text);
+      setPendingMentions(mentions);
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
     } finally {
       sendInFlightRef.current = false;
     }
@@ -1069,8 +1095,11 @@ export default function StaffChatScreen() {
           keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => { if (messages.length > 0) listRef.current?.scrollToEnd({ animated: false }); }}
-          onLayout={Platform.OS === 'android' ? () => { if (messages.length > 0) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false })); } : undefined}
+          {...CHAT_FLAT_LIST_PROPS}
+          onContentSizeChange={() => {
+            if (messages.length === 0 || initialScrollDoneRef.current) return;
+            snapChatListToEnd(listRef);
+          }}
           renderItem={({ item }) => {
             const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
             if (msg.message_type === 'screenshot_notice') {
@@ -1104,6 +1133,7 @@ export default function StaffChatScreen() {
                   const st = resolveVideoUpload(m);
                   if (st?.phase === 'failed') void retryVideoUpload(st);
                 }}
+                mediaPreloadReady={heavyMediaReady}
               />
             );
           }}

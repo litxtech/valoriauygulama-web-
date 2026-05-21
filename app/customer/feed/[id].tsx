@@ -30,6 +30,7 @@ import i18n from '@/i18n';
 import { getHiddenUsersForGuest } from '@/lib/userBlocks';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
 import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
+import { feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
 import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { MentionableText } from '@/components/MentionableText';
@@ -496,7 +497,15 @@ export default function CustomerFeedPostDetail() {
           </View>
         )}
         {imageUri ? (
-          <View style={[styles.mediaWrap, { width: winWidth - 32 }]}>
+          <View
+            style={[
+              styles.mediaWrap,
+              {
+                width: winWidth - 32,
+                height: feedPostMediaHeightForItems(winWidth - 32, postMediaItems),
+              },
+            ]}
+          >
             <FeedMediaCarousel
               items={postMediaItems.map((m) => ({
                 id: m.id,
@@ -505,15 +514,10 @@ export default function CustomerFeedPostDetail() {
                 thumbnail_url: m.thumbnail_url,
               }))}
               width={winWidth - 32}
-              height={winWidth - 32}
+              height={feedPostMediaHeightForItems(winWidth - 32, postMediaItems)}
+              videoPosterOnly
               onFirstVideoReady={isVideo ? () => setVideoLoading(false) : undefined}
             />
-            {isVideo && videoLoading ? (
-              <View style={styles.videoLoadingOverlay} pointerEvents="none">
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={styles.videoLoadingText}>{t('loading')}</Text>
-              </View>
-            ) : null}
           </View>
         ) : (
           <View style={[styles.textOnlyBlock, { width: winWidth - 32 }]}>
@@ -770,7 +774,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  mediaWrap: { aspectRatio: 1, backgroundColor: theme.colors.borderLight },
+  mediaWrap: { overflow: 'hidden', backgroundColor: theme.colors.borderLight },
   video: { width: '100%', height: '100%' },
   videoLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,

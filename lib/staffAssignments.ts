@@ -1,6 +1,25 @@
 /** Personel görev atamaları — ortak etiketler (admin + personel ekranları) */
 import i18n from '@/i18n';
 
+/** `staff_assignments.task_type` — DB CHECK ile uyumlu */
+export const ASSIGNMENT_TASK_TYPE_KEYS = [
+  'general',
+  'reception',
+  'housekeeping',
+  'technical',
+  'security',
+] as const;
+
+export type AssignmentTaskType = (typeof ASSIGNMENT_TASK_TYPE_KEYS)[number];
+
+/** `staff_assignments.priority` */
+export const ASSIGNMENT_PRIORITY_KEYS = ['low', 'normal', 'high', 'urgent'] as const;
+
+export type AssignmentPriority = (typeof ASSIGNMENT_PRIORITY_KEYS)[number];
+
+/** `staff_assignments.status` */
+export const ASSIGNMENT_STATUS_KEYS = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
+
 function label(prefix: string, key: string): string {
   const k = `${prefix}_${key}`;
   const v = i18n.t(k);

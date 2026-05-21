@@ -34,7 +34,13 @@ export function parseCheckinUrl(url: string): ParsedCheckinLink | null {
       }
       const token = query.token || query.t;
       const lang = query.lang || query.language || query.l;
-      if (path === 'guest/sign-one') {
+      const head = path.split('/')[0] ?? '';
+      const contractHead =
+        head === 'sozlesme' ||
+        head === 'sözleşme' ||
+        path === 'guest/sign-one' ||
+        path.startsWith('guest/sign-one/');
+      if (contractHead) {
         return { type: 'sign-one', token: token || undefined, lang: lang || undefined };
       }
       if (path === 'guest/contract') {
@@ -57,8 +63,13 @@ export function parseCheckinUrl(url: string): ParsedCheckinLink | null {
     const token = query.token || query.t;
     const lang = query.lang || query.language || query.l;
 
-    // Tek sayfa sözleşme onayı: valoria://guest/sign-one?token=xxx veya .../guest/sign-one?token=xxx&lang=tr
-    if (path === 'guest/sign-one' || path === 'guest/sign-one/') {
+    // Tek sayfa sözleşme: valoria://guest/sign-one veya valoria://sozlesme
+    if (
+      path === 'guest/sign-one' ||
+      path === 'guest/sign-one/' ||
+      path === 'sozlesme' ||
+      path === 'sözleşme'
+    ) {
       return { type: 'sign-one', token: token || undefined, lang: lang || undefined };
     }
 

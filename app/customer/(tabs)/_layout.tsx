@@ -18,7 +18,7 @@ import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar, appTabBarCustomer, vibrantIconColor } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { CachedImage } from '@/components/CachedImage';
-import { AppTabBarCenterMessageButton } from '@/components/AppTabBarCenterMessageButton';
+import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { complaintsText } from '@/lib/complaintsI18n';
 
 const TAB_ICON_SIZE = 24;
@@ -392,18 +392,9 @@ export default function CustomerTabsLayout() {
             </View>
           ),
           tabBarShowLabel: false,
-          tabBarItemStyle: {
-            justifyContent: 'center',
-            alignItems: 'center',
-          },
-          tabBarButton: (props) => (
-            <AppTabBarCenterMessageButton
-              {...props}
-              unreadCount={guestMsgUnread}
-              accessibilityLabel={t('messages')}
-            />
+          tabBarIcon: ({ focused }) => (
+            <CenterMessageTabBarIcon focused={focused} unreadCount={guestMsgUnread} />
           ),
-          tabBarIcon: () => null,
         }}
       />
       <Tabs.Screen

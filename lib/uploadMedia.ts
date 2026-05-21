@@ -162,13 +162,35 @@ export async function copyAndroidContentUriToCacheForPreview(uri: string, kind: 
   if (Platform.OS !== 'android' || !normalized.startsWith('content://')) {
     return normalized;
   }
+  return copyUriToCacheForUpload(normalized, kind);
+}
+
+/** Galeri/kamera URI → cache `file://` (iOS ph://, Android content:// dahil). */
+export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'video'): Promise<string> {
+  const normalized = (uri || '').trim();
+  if (!normalized) return normalized;
+  if (normalized.startsWith('file://')) return normalized;
+  if (Platform.OS === 'android' && normalized.startsWith('/') && !normalized.startsWith('content://')) {
+    return `file://${normalized}`;
+  }
+  if (Platform.OS === 'web') return normalized;
+
   const base = FileSystem.cacheDirectory;
-  if (!base) return normalized;
+  if (!base) {
+    throw new Error('Önbellek dizini yok. Uygulamayı yeniden başlatıp tekrar deneyin.');
+  }
   const ext = kind === 'video' ? 'mp4' : 'jpg';
-  const name = `preview_${Date.now()}_${Math.random().toString(36).slice(2, 11)}.${ext}`;
+  const name = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 11)}.${ext}`;
   const dest = `${base}${name}`;
   await FileSystem.copyAsync({ from: normalized, to: dest });
-  return dest;
+  return dest.startsWith('file://') ? dest : `file://${dest}`;
+}
+
+/** Yerel dosyadan doğrudan Storage REST yüklemesi mümkün mü? */
+export function isLocalFileUriForUpload(uri: string): boolean {
+  const u = (uri || '').trim();
+  if (Platform.OS === 'web') return u.startsWith('file://') || u.startsWith('blob:');
+  return u.startsWith('file://') || (Platform.OS === 'android' && u.startsWith('/'));
 }
 
 /** URI veya dosya adından MIME ve uzantı tahmini. */

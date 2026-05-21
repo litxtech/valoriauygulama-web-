@@ -19,6 +19,7 @@ import {
   promiseWithTimeout,
   FEED_MEDIA_UPLOAD_TIMEOUT_MS,
 } from '@/lib/storagePublicUpload';
+import { extractAndUploadFeedVideoThumbnail } from '@/lib/feedVideoThumbnail';
 import { getOrCreateGuestForCaller, getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName } from '@/lib/guestDisplayName';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
@@ -184,7 +185,7 @@ export default function CustomerNewFeedPostScreen() {
             itemsForUpload.map(async (item, i) => {
               if (item.type === 'video') setUploadStepLabel(t('feedVideoCompressing'));
               const uriReady = await ensureLocalFeedUploadUri(item.uri, item.type);
-              const { publicUrl } = await promiseWithTimeout(
+              const uploadVideo = promiseWithTimeout(
                 uploadGuestFeedMedia({
                   uri: uriReady,
                   guestId,
@@ -193,6 +194,11 @@ export default function CustomerNewFeedPostScreen() {
                 resolveUploadTimeoutMs(item.type, itemsForUpload.length),
                 t('feedUploadTimeout')
               );
+              const thumbPromise =
+                item.type === 'video'
+                  ? extractAndUploadFeedVideoThumbnail(uriReady, { guestId })
+                  : Promise.resolve(null);
+              const [{ publicUrl }, thumbnail_url] = await Promise.all([uploadVideo, thumbPromise]);
               setUploadCompleted((prev) => {
                 const next = prev + 1;
                 setUploadStepLabel(
@@ -203,7 +209,7 @@ export default function CustomerNewFeedPostScreen() {
               return {
                 media_type: item.type,
                 media_url: publicUrl,
-                thumbnail_url: item.type === 'image' ? publicUrl : null,
+                thumbnail_url: item.type === 'image' ? publicUrl : thumbnail_url,
                 sort_order: i,
               };
             })

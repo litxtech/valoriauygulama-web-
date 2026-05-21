@@ -17,21 +17,24 @@ import { useRouter, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
-import { sendNotification } from '@/lib/notificationService';
-import { publishTaskAssignmentBoardNotice } from '@/lib/staffBoard';
+import {
+  createStaffAssignmentsForAssignees,
+  dispatchNewTaskAssignmentsNotify,
+} from '@/lib/staffAssignmentCreate';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminButton, AdminCard } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import {
   ASSIGNMENT_TASK_LABELS,
   ASSIGNMENT_PRIORITY_LABELS,
+  ASSIGNMENT_TASK_TYPE_KEYS,
+  ASSIGNMENT_PRIORITY_KEYS,
   STAFF_ROLE_LABELS,
 } from '@/lib/staffAssignments';
-import { uriToArrayBuffer, copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
-import { uploadBufferToPublicBucket } from '@/lib/storagePublicUpload';
+import { copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
-import { MAX_ASSIGNMENT_ATTACHMENTS, STAFF_TASK_MEDIA_BUCKET } from '@/lib/staffAssignmentMedia';
+import { MAX_ASSIGNMENT_ATTACHMENTS } from '@/lib/staffAssignmentMedia';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { AdminStackBackButton } from '@/lib/adminStackBack';
 import { useTranslation } from 'react-i18next';
@@ -39,8 +42,8 @@ import { useTranslation } from 'react-i18next';
 type StaffRow = { id: string; full_name: string | null; role: string | null; department: string | null };
 type RoomRow = { id: string; room_number: string; floor: number | null };
 
-const TASK_TYPES = Object.keys(ASSIGNMENT_TASK_LABELS) as (keyof typeof ASSIGNMENT_TASK_LABELS)[];
-const PRIORITIES = Object.keys(ASSIGNMENT_PRIORITY_LABELS) as (keyof typeof ASSIGNMENT_PRIORITY_LABELS)[];
+const TASK_TYPES = ASSIGNMENT_TASK_TYPE_KEYS;
+const PRIORITIES = ASSIGNMENT_PRIORITY_KEYS;
 
 export default function AdminAssignTaskScreen() {
   const router = useRouter();
@@ -59,8 +62,9 @@ export default function AdminAssignTaskScreen() {
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
-  const [taskType, setTaskType] = useState<string>('housekeeping');
+  const [selectedAssignees, setSelectedAssignees] = useState<Set<string>>(new Set());
+  const [staffSearch, setStaffSearch] = useState('');
+  const [taskType, setTaskType] = useState<string>('general');
   const [priority, setPriority] = useState<string>('normal');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -91,6 +95,36 @@ export default function AdminAssignTaskScreen() {
     if (!q) return rooms;
     return rooms.filter((r) => r.room_number.toLowerCase().includes(q) || String(r.floor ?? '').includes(q));
   }, [rooms, roomSearch]);
+
+  const filteredStaff = useMemo(() => {
+    const q = staffSearch.trim().toLowerCase();
+    if (!q) return staffList;
+    return staffList.filter((s) => {
+      const name = (s.full_name ?? '').toLowerCase();
+      const dept = (s.department ?? '').toLowerCase();
+      const role = (s.role ?? '').toLowerCase();
+      return name.includes(q) || dept.includes(q) || role.includes(q);
+    });
+  }, [staffList, staffSearch]);
+
+  const toggleAssignee = (id: string) => {
+    setSelectedAssignees((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisibleStaff = () => {
+    setSelectedAssignees((prev) => {
+      const next = new Set(prev);
+      filteredStaff.forEach((s) => next.add(s.id));
+      return next;
+    });
+  };
+
+  const clearAssignees = () => setSelectedAssignees(new Set());
 
   const toggleRoom = (id: string) => {
     setSelectedRooms((prev) => {
@@ -191,13 +225,14 @@ export default function AdminAssignTaskScreen() {
       Alert.alert('Oturum', 'Personel oturumu gerekli.');
       return;
     }
-    if (!assigneeId) {
-      Alert.alert('Eksik', 'Görevin atanacağı personeli seçin.');
+    const assigneeIds = Array.from(selectedAssignees);
+    if (assigneeIds.length === 0) {
+      Alert.alert('Eksik', 'Görevin atanacağı en az bir personel seçin.');
       return;
     }
     const t = title.trim();
     if (!t) {
-      Alert.alert('Eksik', 'Görev başlığı yazın (ör. “12–18 kat temizlik”).');
+      Alert.alert('Eksik', 'Görev başlığı yazın (ör. “Stok sayımı”, “3. kat kontrol”, “Gece vardiyası notu”).');
       return;
     }
     let dueAt: string | null = null;
@@ -216,55 +251,18 @@ export default function AdminAssignTaskScreen() {
     setSaving(true);
     try {
       const roomIds = Array.from(selectedRooms);
-      const { data: row, error } = await supabase
-        .from('staff_assignments')
-        .insert({
-          title: t,
-          body: body.trim() || null,
-          task_type: taskType,
-          priority,
-          assigned_staff_id: assigneeId,
-          created_by_staff_id: staff.id,
-          room_ids: roomIds,
-          due_at: dueAt,
-          status: 'pending',
-        })
-        .select('id')
-        .single();
+      const { rows, uploadedUrls } = await createStaffAssignmentsForAssignees({
+        assigneeStaffIds: assigneeIds,
+        createdByStaffId: staff.id,
+        title: t,
+        body: body.trim() || null,
+        taskType,
+        priority,
+        roomIds,
+        dueAt,
+        pendingAttachments,
+      });
 
-      if (error) throw error;
-
-      const assignmentId = row.id as string;
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < pendingAttachments.length; i++) {
-        const item = pendingAttachments[i];
-        const ext = item.type === 'video' ? 'mp4' : 'jpg';
-        const contentType = item.type === 'video' ? 'video/mp4' : 'image/jpeg';
-        let buf: ArrayBuffer;
-        try {
-          buf = await uriToArrayBuffer(item.uri);
-        } catch (e) {
-          throw new Error((e as Error)?.message ?? 'Medya okunamadı');
-        }
-        const { publicUrl } = await uploadBufferToPublicBucket({
-          bucketId: STAFF_TASK_MEDIA_BUCKET,
-          buffer: buf,
-          contentType,
-          extension: ext,
-          subfolder: `tasks/${assignmentId}`,
-        });
-        uploadedUrls.push(publicUrl);
-      }
-      if (uploadedUrls.length > 0) {
-        const { error: patchErr } = await supabase
-          .from('staff_assignments')
-          .update({ attachment_urls: uploadedUrls })
-          .eq('id', assignmentId);
-        if (patchErr) throw patchErr;
-      }
-
-      const assignee = staffList.find((s) => s.id === assigneeId);
-      const assigneeName = assignee?.full_name ?? 'Personel';
       const typeLabel = ASSIGNMENT_TASK_LABELS[taskType] ?? taskType;
       const roomLabels = roomIds
         .map((rid) => rooms.find((r) => r.id === rid)?.room_number)
@@ -278,37 +276,35 @@ export default function AdminAssignTaskScreen() {
         .join('\n')
         .trim() || pushBody;
 
-      const boardRes = await publishTaskAssignmentBoardNotice({
-        assigneeStaffId: assigneeId,
-        createdByStaffId: staff.id,
-        assignmentId,
-        title: t,
-        content: boardContent,
-        priority,
-      });
+      dispatchNewTaskAssignmentsNotify(
+        rows.map((row) => ({
+          assigneeStaffId: row.assigned_staff_id,
+          createdByStaffId: staff.id,
+          assignmentId: row.id,
+          title: t,
+          pushBody,
+          boardContent,
+          priority,
+        }))
+      );
 
-      const notifRes = await sendNotification({
-        staffId: assigneeId,
-        title: 'Yeni görev atandı',
-        body: pushBody,
-        notificationType: 'staff_assignment',
-        category: 'staff',
-        createdByStaffId: staff.id,
-        data: { url: '/staff/tasks', assignmentId },
-      });
+      const assigneeNames = rows
+        .map((row) => staffList.find((s) => s.id === row.assigned_staff_id)?.full_name ?? 'Personel')
+        .join(', ');
+      const countNote =
+        rows.length === 1
+          ? `${assigneeNames} için görev oluşturuldu.`
+          : `${rows.length} personel için görev oluşturuldu (${assigneeNames}).`;
 
-      let notifNote = ' Personel uygulama içi bildirimde ve duyuru panosunda görevi görebilir.';
-      if (boardRes.error) notifNote += ` Pano kaydı başarısız: ${boardRes.error}`;
-      if (notifRes.error) notifNote = ` Bildirim kaydı başarısız: ${notifRes.error}`;
-      notifNote += ' Push için cihazda bildirim izni ve kayıtlı token gerekir.';
-
-      Alert.alert('Görev atandı', `${assigneeName} için görev oluşturuldu.${notifNote}`, [
+      setSaving(false);
+      Alert.alert('Görev atandı', `${countNote} Bildirim ve pano kaydı arka planda iletilir.`, [
         { text: 'Tamam', onPress: () => router.back() },
       ]);
+      return;
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kayıt başarısız.');
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   if (loading) {
@@ -330,33 +326,62 @@ export default function AdminAssignTaskScreen() {
             <View style={styles.heroTextCol}>
               <Text style={styles.heroTitle}>Görev oluştur</Text>
               <Text style={styles.heroSub}>
-                Personel seçin; isteğe bağlı fotoğraf veya video ekleyin. Kayıt sonrası atanana bildirim gider.
+                Her departman ve iş türü için bir veya birden fazla personele görev atayabilirsiniz. İsteğe bağlı fotoğraf veya video ekleyin; her atanan için ayrı görev ve bildirim oluşturulur.
               </Text>
             </View>
           </View>
         </AdminCard>
 
         <AdminCard style={styles.card}>
-          <Text style={styles.sectionLabel}>Atanan personel *</Text>
+          <View style={styles.roomHeader}>
+            <View>
+              <Text style={styles.sectionLabel}>Atanan personel *</Text>
+              <Text style={styles.roomHint}>Birden fazla seçebilirsiniz ({selectedAssignees.size} seçili)</Text>
+            </View>
+            <View style={styles.roomActions}>
+              <TouchableOpacity onPress={selectAllVisibleStaff} hitSlop={8}>
+                <Text style={styles.linkText}>Görünenleri seç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={clearAssignees} hitSlop={8}>
+                <Text style={styles.linkText}>Temizle</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <TextInput
+            style={[styles.input, styles.searchInput]}
+            placeholder="İsim, departman veya rol ara..."
+            placeholderTextColor={adminTheme.colors.textMuted}
+            value={staffSearch}
+            onChangeText={setStaffSearch}
+          />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-            {staffList.map((s) => {
-              const selected = assigneeId === s.id;
+            {filteredStaff.map((s) => {
+              const selected = selectedAssignees.has(s.id);
               const roleL = s.role ? STAFF_ROLE_LABELS[s.role] ?? s.role : '';
               return (
                 <TouchableOpacity
                   key={s.id}
                   style={[styles.personChip, selected && styles.personChipOn]}
-                  onPress={() => setAssigneeId(s.id)}
+                  onPress={() => toggleAssignee(s.id)}
                   activeOpacity={0.85}
                 >
-                  <Text style={[styles.personChipName, selected && styles.personChipNameOn]} numberOfLines={1}>
-                    {s.full_name ?? 'İsimsiz'}
-                  </Text>
-                  {(roleL || s.department) && (
-                    <Text style={[styles.personChipMeta, selected && styles.personChipMetaOn]} numberOfLines={1}>
-                      {[roleL, s.department].filter(Boolean).join(' · ')}
-                    </Text>
-                  )}
+                  <View style={styles.personChipRow}>
+                    <Ionicons
+                      name={selected ? 'checkbox' : 'square-outline'}
+                      size={18}
+                      color={selected ? adminTheme.colors.accent : adminTheme.colors.textMuted}
+                    />
+                    <View style={styles.personChipTextCol}>
+                      <Text style={[styles.personChipName, selected && styles.personChipNameOn]} numberOfLines={1}>
+                        {s.full_name ?? 'İsimsiz'}
+                      </Text>
+                      {(roleL || s.department) && (
+                        <Text style={[styles.personChipMeta, selected && styles.personChipMetaOn]} numberOfLines={1}>
+                          {[roleL, s.department].filter(Boolean).join(' · ')}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -364,7 +389,8 @@ export default function AdminAssignTaskScreen() {
         </AdminCard>
 
         <AdminCard style={styles.card}>
-          <Text style={styles.sectionLabel}>Görev türü</Text>
+          <Text style={styles.sectionLabel}>Kategori</Text>
+          <Text style={[styles.roomHint, styles.categoryHint]}>İşin türünü seçin; çoğu görev için «Genel» yeterlidir.</Text>
           <View style={styles.wrapRow}>
             {TASK_TYPES.map((key) => (
               <TouchableOpacity
@@ -486,8 +512,8 @@ export default function AdminAssignTaskScreen() {
         <AdminCard style={styles.card}>
           <View style={styles.roomHeader}>
             <View>
-              <Text style={styles.sectionLabel}>İlgili odalar</Text>
-              <Text style={styles.roomHint}>Temizlik veya oda bazlı görevlerde numaraları seçin ({selectedRooms.size} seçili)</Text>
+              <Text style={styles.sectionLabel}>İlgili odalar (isteğe bağlı)</Text>
+              <Text style={styles.roomHint}>Oda ile ilgili işlerde numaraları seçin ({selectedRooms.size} seçili)</Text>
             </View>
             <View style={styles.roomActions}>
               <TouchableOpacity onPress={selectAllVisible} hitSlop={8}>
@@ -593,17 +619,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   mt: { marginTop: adminTheme.spacing.md },
+  categoryHint: { marginBottom: adminTheme.spacing.sm, maxWidth: undefined },
   chipsScroll: { maxHeight: 120, marginHorizontal: -4 },
   personChip: {
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderRadius: adminTheme.radius.md,
     backgroundColor: adminTheme.colors.surfaceTertiary,
     borderWidth: 2,
     borderColor: adminTheme.colors.border,
     marginRight: 10,
-    maxWidth: 200,
+    maxWidth: 220,
   },
+  personChipRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  personChipTextCol: { flexShrink: 1, maxWidth: 170 },
   personChipOn: {
     borderColor: adminTheme.colors.accent,
     backgroundColor: adminTheme.colors.warningLight,

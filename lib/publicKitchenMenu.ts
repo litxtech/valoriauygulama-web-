@@ -1,5 +1,16 @@
 import { supabase } from '@/lib/supabase';
-import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
+import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenuTypes';
+import {
+  getPublicMenuCache,
+  invalidatePublicMenuCache,
+  setPublicMenuCache,
+  type PublicMenuBundle,
+} from '@/lib/publicKitchenMenuCache';
+
+export { invalidatePublicMenuCache };
+
+export type { HotelKitchenMenuItemWithImages };
+export type { PublicMenuBundle };
 
 export type PublicKitchenMenuOrg = {
   id: string;
@@ -46,27 +57,36 @@ function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImage
   };
 }
 
-/** Sabit dış menü URL: https://…/menu/{slug} */
-export function buildPublicKitchenMenuUrl(orgSlug: string): string {
-  const slug = orgSlug.trim().toLowerCase();
-  const defaultBase = 'https://valoriahotel-el4r.vercel.app';
-  const base = (process.env.EXPO_PUBLIC_APP_URL ?? defaultBase).replace(/\/$/, '');
-  return `${base}/menu/${encodeURIComponent(slug)}`;
-}
+export { buildPublicKitchenMenuUrl, buildPublicMenuUrl } from '@/lib/appPublicUrl';
 
 export async function fetchPublicKitchenMenuOrg(slug: string): Promise<PublicKitchenMenuOrg | null> {
   const normalized = slug.trim().toLowerCase();
   if (!normalized) return null;
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug')
+    .select('id, name, slug, public_kitchen_menu_enabled')
     .eq('slug', normalized)
-    .eq('public_kitchen_menu_enabled', true)
     .maybeSingle();
 
+  if (error?.message?.includes('public_kitchen_menu_enabled')) {
+    const fallback = await supabase
+      .from('organizations')
+      .select('id, name, slug')
+      .eq('slug', normalized)
+      .maybeSingle();
+    data = fallback.data;
+    error = fallback.error;
+  }
+
   if (error || !data) return null;
-  const row = data as { id: string; name: string; slug: string };
+  const row = data as {
+    id: string;
+    name: string;
+    slug: string;
+    public_kitchen_menu_enabled?: boolean;
+  };
+  if (row.public_kitchen_menu_enabled === false) return null;
   return { id: row.id, name: row.name, slug: row.slug };
 }
 
@@ -81,6 +101,62 @@ export async function fetchOrganizationSlugById(organizationId: string): Promise
   return slug?.trim() ? slug.trim().toLowerCase() : null;
 }
 
+/** Tek istek: slug → otel + menü (dış site hızı) */
+export async function fetchPublicKitchenMenuBySlug(
+  slug: string,
+  opts?: { skipCache?: boolean }
+): Promise<PublicMenuBundle | null> {
+  const normalized = slug.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (!opts?.skipCache) {
+    const cached = getPublicMenuCache(normalized);
+    if (cached) return cached;
+  }
+
+  const { data, error } = await supabase
+    .from('hotel_kitchen_menu_items')
+    .select(
+      `
+      ${LIST_SELECT},
+      organizations!inner (
+        id,
+        name,
+        slug
+      )
+    `
+    )
+    .eq('organizations.slug', normalized)
+    .eq('is_available', true)
+    .order('sort_order', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (!error && data?.length) {
+    const first = data[0] as Record<string, unknown>;
+    const orgRaw = first.organizations as { id: string; name: string; slug: string } | { id: string; name: string; slug: string }[];
+    const orgRow = Array.isArray(orgRaw) ? orgRaw[0] : orgRaw;
+    if (!orgRow?.id) return fetchPublicKitchenMenuBySlugLegacy(normalized);
+    const items = (data as Record<string, unknown>[]).map((row) => mapListRow(row));
+    const bundle: PublicMenuBundle = {
+      org: { id: orgRow.id, name: orgRow.name, slug: orgRow.slug },
+      items,
+    };
+    setPublicMenuCache(normalized, bundle);
+    return bundle;
+  }
+
+  return fetchPublicKitchenMenuBySlugLegacy(normalized);
+}
+
+async function fetchPublicKitchenMenuBySlugLegacy(slug: string): Promise<PublicMenuBundle | null> {
+  const org = await fetchPublicKitchenMenuOrg(slug);
+  if (!org) return null;
+  const items = await fetchPublicKitchenMenuItems(org.id);
+  const bundle: PublicMenuBundle = { org, items };
+  setPublicMenuCache(slug, bundle);
+  return bundle;
+}
+
 export async function fetchPublicKitchenMenuItems(
   organizationId: string
 ): Promise<HotelKitchenMenuItemWithImages[]> {
@@ -92,7 +168,22 @@ export async function fetchPublicKitchenMenuItems(
     .order('sort_order', { ascending: false })
     .order('created_at', { ascending: false });
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.message.includes('cover_image_url')) {
+      const legacy = await supabase
+        .from('hotel_kitchen_menu_items')
+        .select(
+          'id, organization_id, category_title, name, description, price, served_in_hotel_restaurant, is_available, sort_order, created_at, updated_at'
+        )
+        .eq('organization_id', organizationId)
+        .eq('is_available', true)
+        .order('sort_order', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (legacy.error) throw new Error(legacy.error.message);
+      return ((legacy.data ?? []) as Record<string, unknown>[]).map((row) => mapListRow(row));
+    }
+    throw new Error(error.message);
+  }
   return ((data ?? []) as Record<string, unknown>[]).map((row) => mapListRow(row));
 }
 

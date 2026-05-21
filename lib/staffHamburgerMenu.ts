@@ -10,6 +10,7 @@ import {
 import {
   canAccessDocumentManagement,
   canAccessIncidentReports,
+  canAccessFacilityJournal,
   canAccessLostFound,
   canAccessReservationSales,
   canStaffCreateAssignments,
@@ -19,10 +20,12 @@ import {
   isGorevAtaOnlyUser,
   type StaffPermissionSlice,
 } from '@/lib/staffPermissions';
+import { filterStaffMenuSectionsByHidden } from '@/lib/staffMenuVisibility';
 
 export type StaffHamburgerStaff = StaffPermissionSlice & {
   kbs_access_enabled?: boolean;
   department?: string | null;
+  hidden_menu_item_ids?: string[] | null;
 };
 
 export type StaffHamburgerMenuItem = {
@@ -72,6 +75,7 @@ const ACCENTS: Record<string, string> = {
   complaint: '#b45309',
   assets: '#7c3aed',
   my_stock: '#0d9488',
+  facility_journal: '#0f766e',
   debts: '#0369a1',
   mrz: '#ca8a04',
   contracts: '#6366f1',
@@ -80,6 +84,7 @@ const ACCENTS: Record<string, string> = {
   salary_history: '#059669',
   warnings: '#dc2626',
   finance: '#0369a1',
+  audits: '#7c3aed',
 };
 
 function normHref(href: string): string {
@@ -159,6 +164,23 @@ export function buildStaffHamburgerMenuSections(
     icon: 'alert-circle-outline',
     accent: ACCENTS.missing,
   });
+  if (canAccessFacilityJournal(staff)) {
+    const fjBase = isAdmin ? '/admin/facility-journal' : '/staff/facility-journal';
+    push('tools', {
+      id: 'facility_journal_new',
+      label: 'Tesis günlüğü — yeni kayıt',
+      href: `${fjBase}/new`,
+      icon: 'add-circle-outline',
+      accent: ACCENTS.facility_journal,
+    });
+    push('tools', {
+      id: 'facility_journal',
+      label: 'Tesis günlüğü',
+      href: fjBase,
+      icon: 'clipboard-outline',
+      accent: ACCENTS.facility_journal,
+    });
+  }
   if (canAccessLostFound(staff)) {
     const lfBase = isAdmin ? '/admin/lost-found' : '/staff/lost-found';
     push('tools', {
@@ -388,6 +410,13 @@ export function buildStaffHamburgerMenuSections(
   if (isAdmin) {
     push('admin', { id: 'admin_tab', label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: ACCENTS.admin });
     push('admin', {
+      id: 'audits',
+      label: t('perfAuditBoard'),
+      href: '/admin/audits',
+      icon: 'clipboard-outline',
+      accent: ACCENTS.audits,
+    });
+    push('admin', {
       id: 'transfer_a',
       label: t('transferTourNavTitle'),
       href: '/staff/transfer-tour',
@@ -471,9 +500,11 @@ export function buildStaffHamburgerMenuSections(
     admin: t('staffMenuSectionAdmin'),
   };
 
-  return (['nav', 'tools', 'admin'] as const)
+  const built = (['nav', 'tools', 'admin'] as const)
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
+
+  return filterStaffMenuSectionsByHidden(built, staff);
 }
 
 /** Düz liste (geriye uyumluluk) */

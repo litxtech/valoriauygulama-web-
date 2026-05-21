@@ -26,6 +26,7 @@ import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import {
   staffGetMessages,
   staffSendMessage,
+  formatChatMessageSendError,
   staffMarkConversationRead,
   staffGetConversationHeader,
   staffDeleteMessage,
@@ -41,6 +42,8 @@ import {
   capChatMessageList,
   type Message,
 } from '@/lib/messaging';
+import { scheduleSnapChatListToEndAfterOpen, snapChatListToEnd } from '@/lib/chatListScroll';
+import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
@@ -102,6 +105,7 @@ function MessageBubble({
   onVideoRetryForMessage,
   imageAlbum,
   videoAlbum,
+  mediaPreloadReady = true,
 }: {
   msg: Message;
   isOwn: boolean;
@@ -115,6 +119,7 @@ function MessageBubble({
   onVideoRetryForMessage?: (msg: Message) => void;
   imageAlbum?: Message[];
   videoAlbum?: Message[];
+  mediaPreloadReady?: boolean;
 }) {
   const { t } = useTranslation();
   const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
@@ -167,6 +172,7 @@ function MessageBubble({
                   messages={videoAlbum}
                   videoUploads={videoUploads}
                   onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+                  deferLocalVideo={!mediaPreloadReady}
                 />
               ) : isVideo ? (
                 <View style={styles.chatVideoWrap}>
@@ -178,6 +184,7 @@ function MessageBubble({
                     uploadPhase={upload?.phase}
                     uploadFailed={upload?.phase === 'failed'}
                     onRetry={onVideoRetry}
+                    preloadEnabled={mediaPreloadReady}
                   />
                 </View>
               ) : imageAlbum && imageAlbum.length > 1 ? (
@@ -226,6 +233,7 @@ function MessageBubble({
               isOwn
               videoUploads={videoUploads}
               onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+              deferLocalVideo={!mediaPreloadReady}
             />
           ) : isVideo ? (
             <View style={styles.chatVideoWrap}>
@@ -237,6 +245,7 @@ function MessageBubble({
                 uploadPhase={upload?.phase}
                 uploadFailed={upload?.phase === 'failed'}
                 onRetry={onVideoRetry}
+                preloadEnabled={mediaPreloadReady}
               />
             </View>
           ) : imageAlbum && imageAlbum.length > 1 ? (
@@ -287,12 +296,14 @@ export default function AdminChatScreen() {
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const initialScrollDoneRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading);
   const inputRowExtra = Platform.OS === 'android' ? -20 : 56;
   const bottomInset = getEffectiveBottomInset(insets);
   const chatInputBottomPad = getChatInputBottomPadding(insets);
@@ -301,6 +312,7 @@ export default function AdminChatScreen() {
 
   useEffect(() => {
     setMessages([]);
+    initialScrollDoneRef.current = false;
     setLoading(true);
   }, [conversationId]);
 
@@ -411,29 +423,28 @@ export default function AdminChatScreen() {
     setShowGroupSettings(true);
   };
 
-  const scrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const openScrollCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!staff || !conversationId) {
       setLoading(false);
       return;
     }
-    scrollTimeoutsRef.current = [];
+    openScrollCleanupRef.current?.();
+    openScrollCleanupRef.current = null;
     (async () => {
       const list = await staffGetMessages(conversationId, 50, undefined, staff.id);
       setMessages(capChatMessageList(list));
       staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
-      const scrollToEnd = () => listRef.current?.scrollToEnd({ animated: true });
-      const hasImage = list.some((m: Message) => m.message_type === 'image');
-      if (Platform.OS === 'android') {
-        scrollToEnd();
-        scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 150), setTimeout(scrollToEnd, 450));
-        if (hasImage) scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 750));
-      } else {
-        scrollTimeoutsRef.current.push(setTimeout(scrollToEnd, 100));
-      }
+      openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
+        hasImages: list.some((m: Message) => m.message_type === 'image'),
+        hasVideos: list.some((m: Message) => m.message_type === 'video'),
+      });
     })();
-    return () => scrollTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+    return () => {
+      openScrollCleanupRef.current?.();
+      openScrollCleanupRef.current = null;
+    };
   }, [staff, conversationId]);
 
   useEffect(() => {
@@ -523,45 +534,59 @@ export default function AdminChatScreen() {
     };
     setMessages((prev) => [...prev, optimistic]);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-    const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
-      conversationId,
-      staff.id,
-      staff.full_name || staff.email,
-      staff.profile_image ?? null,
-      text,
-      'text',
-      undefined,
-      undefined,
-      undefined,
-      mentions.length ? mentions : undefined
-    );
-    setSending(false);
-    if (error) {
+    try {
+      const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
+        conversationId,
+        staff.id,
+        staff.full_name || staff.email,
+        staff.profile_image ?? null,
+        text,
+        'text',
+        undefined,
+        undefined,
+        undefined,
+        mentions.length ? mentions : undefined
+      );
+      if (error) {
+        setInput(text);
+        setPendingMentions(mentions);
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
+        return;
+      }
+      if (sent) {
+        setMessages((prev) => upsertIncomingChatMessage(prev, sent, { ownSenderId: staff.id }));
+        const convId = nextConversationId ?? conversationId;
+        const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
+        void notifyChatMessageWithMentions({
+          conversationId: convId,
+          conversationTitle: conversationName || t('notifNewMessage'),
+          messageText: text,
+          mentions,
+          senderDisplayName: staff.full_name || staff.email || '',
+          excludeStaffId: staff.id,
+          chatUrl: `/admin/messages/chat/${convId}`,
+          mentionPushBody: t('chatMentionPushBody', { name: staff.full_name || staff.email, preview }),
+          defaultPushBody: preview,
+        });
+        if (nextConversationId !== conversationId) {
+          router.replace({ pathname: '/admin/messages/chat/[id]', params: { id: nextConversationId } });
+          return;
+        }
+        listRef.current?.scrollToEnd({ animated: true });
+      } else {
+        setInput(text);
+        setPendingMentions(mentions);
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        Alert.alert(t('messageSendFailedTitle'), t('chatMessageBlockedBody'));
+      }
+    } catch (e) {
       setInput(text);
       setPendingMentions(mentions);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
-      return;
-    }
-    if (sent) {
-      const convId = nextConversationId ?? conversationId;
-      const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
-      void notifyChatMessageWithMentions({
-        conversationId: convId,
-        conversationTitle: conversationName || t('notifNewMessage'),
-        messageText: text,
-        mentions,
-        senderDisplayName: staff.full_name || staff.email || '',
-        excludeStaffId: staff.id,
-        chatUrl: `/admin/messages/chat/${convId}`,
-        mentionPushBody: t('chatMentionPushBody', { name: staff.full_name || staff.email, preview }),
-        defaultPushBody: preview,
-      });
-      if (nextConversationId !== conversationId) {
-        router.replace({ pathname: '/admin/messages/chat/[id]', params: { id: nextConversationId } });
-        return;
-      }
-      listRef.current?.scrollToEnd({ animated: true });
+      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -836,6 +861,7 @@ export default function AdminChatScreen() {
         data={chatListItems}
         keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
         contentContainerStyle={styles.listContent}
+        {...CHAT_FLAT_LIST_PROPS}
         ListHeaderComponent={
           canEditGroup ? (
             <TouchableOpacity
@@ -884,12 +910,15 @@ export default function AdminChatScreen() {
                 const st = resolveVideoUpload(m);
                 if (st?.phase === 'failed') void retryVideoUpload(st);
               }}
+              mediaPreloadReady={heavyMediaReady}
             />
           );
         }}
         ListEmptyComponent={<Text style={styles.empty}>{t('chatNoMessagesYet')}</Text>}
-        onContentSizeChange={() => { if (messages.length > 0) listRef.current?.scrollToEnd({ animated: false }); }}
-        onLayout={Platform.OS === 'android' ? () => { if (messages.length > 0) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false })); } : undefined}
+        onContentSizeChange={() => {
+          if (messages.length === 0 || initialScrollDoneRef.current) return;
+          snapChatListToEnd(listRef);
+        }}
       />
       {typingNames.length > 0 ? (
         <View style={styles.typingRow}>

@@ -84,6 +84,11 @@ const STAFF_APP_PERMISSIONS = [
     label: 'Teknik QR (salt okunur)',
     desc: 'QR okutup talimatları görür; kayıt ve durum değişikliği yapamaz.',
   },
+  {
+    key: 'tesis_gunlugu',
+    label: 'Tesis günlüğü',
+    desc: 'Değişiklik, zimmet, emanet kayıtları; foto ve video yükleme. Hamburger menüde yeni kayıt butonu görünür.',
+  },
 ];
 
 /** Geçiş kontrolü yetkileri */

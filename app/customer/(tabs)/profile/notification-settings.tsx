@@ -6,6 +6,7 @@ import { getGuestNotificationToken, setGuestNotificationToken } from '@/lib/gues
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { GUEST_PREF_KEYS } from '@/lib/notifications';
 import { getExpoPushTokenAsync, savePushTokenForGuest, isExpoGo } from '@/lib/notificationsPush';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
@@ -29,8 +30,7 @@ export default function CustomerNotificationSettingsScreen() {
   const load = useCallback(async () => {
     if (!isExpoGo) {
       try {
-        const Notifications = await import('expo-notifications').then((m) => m.default);
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
       } catch {
         setPushPerm('unknown');
@@ -86,8 +86,7 @@ export default function CustomerNotificationSettingsScreen() {
         await savePushTokenForGuest(token);
         setPushPerm('granted');
       } else {
-        const Notifications = await import('expo-notifications').then((m) => m.default);
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
       }
     } catch {

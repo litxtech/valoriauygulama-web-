@@ -17,6 +17,7 @@ type Props = {
   videoUploads?: Record<string, ChatVideoUploadState>;
   onPressVideo?: (msg: Message) => void;
   onRetryVideo?: (msg: Message) => void;
+  deferLocalVideo?: boolean;
 };
 
 function uploadForMessage(msg: Message, map?: Record<string, ChatVideoUploadState>) {
@@ -24,7 +25,14 @@ function uploadForMessage(msg: Message, map?: Record<string, ChatVideoUploadStat
   return map[msg.id] ?? Object.values(map).find((s) => s.messageId === msg.id);
 }
 
-export function ChatVideoAlbum({ messages, isOwn, videoUploads, onPressVideo, onRetryVideo }: Props) {
+export function ChatVideoAlbum({
+  messages,
+  isOwn,
+  videoUploads,
+  onPressVideo,
+  onRetryVideo,
+  deferLocalVideo = false,
+}: Props) {
   const { width: winWidth } = useWindowDimensions();
   const cardW = getChatMediaCardWidth(winWidth);
   const layout = layoutChatImageAlbum(messages.length, cardW);
@@ -58,6 +66,7 @@ export function ChatVideoAlbum({ messages, isOwn, videoUploads, onPressVideo, on
                 <ChatVideoPoster
                   posterUri={preview.posterUri || thumb || null}
                   videoUri={preview.videoUri}
+                  deferLocalVideo={deferLocalVideo}
                 />
               ) : (
                 <View style={[StyleSheet.absoluteFillObject, styles.placeholder]} />

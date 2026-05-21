@@ -22,12 +22,11 @@ import { canManageHotelKitchenMenu } from '@/lib/staffPermissions';
 import {
   fetchHotelKitchenMenuItems,
   getHotelKitchenMenuCache,
-  resolveLightboxUrls,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
-import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
 
 const CACHE_KEY = 'list:all';
 
@@ -78,9 +77,8 @@ export default function StaffHotelMenuManageScreen() {
     setRefreshing(false);
   };
 
-  const openImage = useCallback(async (item: HotelKitchenMenuItemWithImages) => {
-    const urls = await resolveLightboxUrls(item);
-    if (urls.length) setLightbox({ urls, index: 0 });
+  const openImage = useCallback((item: HotelKitchenMenuItemWithImages) => {
+    openHotelMenuLightbox(item, setLightbox, 0);
   }, []);
 
   if (!canManageHotelKitchenMenu(staff)) {
@@ -109,10 +107,6 @@ export default function StaffHotelMenuManageScreen() {
       >
         <Text style={styles.manageHeroTitle}>{t('hotelKitchenMenuManageHero')}</Text>
         <Text style={styles.manageHeroSub}>{t('hotelKitchenMenuManageHeroSub')}</Text>
-        <TouchableOpacity style={styles.qrBtn} onPress={() => setQrOpen(true)} activeOpacity={0.88}>
-          <Ionicons name="qr-code-outline" size={20} color="#fff" />
-          <Text style={styles.qrBtnText}>{t('publicKitchenMenuQrTitle')}</Text>
-        </TouchableOpacity>
       </LinearGradient>
       <TouchableOpacity
         style={styles.addBtn}
@@ -158,12 +152,6 @@ export default function StaffHotelMenuManageScreen() {
         onClose={() => setLightbox(null)}
       />
 
-      <HotelKitchenMenuQrSheet
-        visible={qrOpen}
-        organizationId={staff?.organization_id}
-        organizationName={staff?.organization?.name}
-        onClose={() => setQrOpen(false)}
-      />
     </View>
   );
 }
@@ -181,20 +169,6 @@ const styles = StyleSheet.create({
   },
   manageHeroTitle: { fontSize: 20, fontWeight: '800', color: '#fff' },
   manageHeroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 18 },
-  qrBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
-  },
-  qrBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   addBtn: { marginHorizontal: 16, marginTop: 12, borderRadius: 14, overflow: 'hidden', ...menuUi.shadowSm },
   addBtnGrad: {
     flexDirection: 'row',

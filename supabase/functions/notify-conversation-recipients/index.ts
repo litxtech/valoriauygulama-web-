@@ -2,6 +2,7 @@
 // Kullanım: POST { conversationId, excludeAppToken?, excludeStaffId?, title, body, data? }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchAppIconBadgeForGuest, fetchAppIconBadgeForStaff, iconBadgeForPush } from "../_shared/appBadgeFromRpc.ts";
+import { buildExpoPushMessage } from "../_shared/buildExpoPushMessage.ts";
 import { getExpoPushHeaders } from "../_shared/expoPushHeaders.ts";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
@@ -180,17 +181,14 @@ Deno.serve(async (req: Request) => {
 
     const messages = [...byToken.values()].map((row) => {
       const b = badgeForRow(row);
-      return {
+      return buildExpoPushMessage({
         to: row.token,
         title: titleTrim,
         body: displayBody,
-        channelId: ANDROID_CHANNEL_ID,
-        priority: "high" as const,
-        sound: "default" as const,
         badge: b,
-        interruptionLevel: "active" as const,
-        data: { ...payload, app_badge: b },
-      };
+        channelId: ANDROID_CHANNEL_ID,
+        data: payload,
+      });
     });
 
     let sent = 0;

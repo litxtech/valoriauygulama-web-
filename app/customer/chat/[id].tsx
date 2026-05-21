@@ -22,6 +22,7 @@ import { syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
 import {
   guestGetMessages,
   guestSendMessage,
+  formatChatMessageSendError,
   guestMarkConversationRead,
   guestListConversations,
   guestGetConversationHeader,
@@ -39,6 +40,8 @@ import {
   MESSAGING_COLORS,
   type Message,
 } from '@/lib/messaging';
+import { scheduleSnapChatListToEndAfterOpen, snapChatListToEnd } from '@/lib/chatListScroll';
+import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -111,6 +114,7 @@ function MessageBubble({
   onVideoRetryForMessage,
   imageAlbum,
   videoAlbum,
+  mediaPreloadReady = true,
 }: {
   msg: Message;
   isOwn: boolean;
@@ -123,6 +127,7 @@ function MessageBubble({
   onVideoRetryForMessage?: (msg: Message) => void;
   imageAlbum?: Message[];
   videoAlbum?: Message[];
+  mediaPreloadReady?: boolean;
 }) {
   const { t } = useTranslation();
   const guestLabel = t('chatMessageSenderGuest');
@@ -167,6 +172,7 @@ function MessageBubble({
             isOwn={isOwn}
             videoUploads={videoUploads}
             onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
+            deferLocalVideo={!mediaPreloadReady}
           />
         ) : isVideo ? (
           <View style={styles.chatVideoWrap}>
@@ -189,6 +195,7 @@ function MessageBubble({
                 Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id)?.phase === 'failed'
               }
               onRetry={onVideoRetry}
+              preloadEnabled={mediaPreloadReady}
             />
           </View>
         ) : imageAlbum && imageAlbum.length > 1 ? (
@@ -256,6 +263,7 @@ export default function CustomerChatScreen() {
   messagesRef.current = messages;
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading);
 
   useEffect(() => {
     setMessages([]);
@@ -407,6 +415,21 @@ export default function CustomerChatScreen() {
     };
   }, [conversationId, setUnreadCount]);
 
+  const openScrollCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (loading || sortedMessages.length === 0) return;
+    if (initialScrollDoneRef.current) return;
+    openScrollCleanupRef.current?.();
+    openScrollCleanupRef.current = scheduleSnapChatListToEndAfterOpen(listRef, initialScrollDoneRef, {
+      hasImages: sortedMessages.some((m) => m.message_type === 'image'),
+      hasVideos: sortedMessages.some((m) => m.message_type === 'video'),
+    });
+    return () => {
+      openScrollCleanupRef.current?.();
+      openScrollCleanupRef.current = null;
+    };
+  }, [loading, sortedMessages.length]);
+
   const prefetchKeyRef = useRef('');
   useEffect(() => {
     if (messages.length === 0) return;
@@ -538,31 +561,6 @@ export default function CustomerChatScreen() {
       : null
   );
 
-  // Sohbet odasına girildiğinde en son mesaja otomatik kaydır (Android'de layout ve resim yüklemesi geciktiği için birkaç deneme)
-  useEffect(() => {
-    if (!loading && sortedMessages.length > 0 && !initialScrollDoneRef.current) {
-      const scrollToEndOnce = () => listRef.current?.scrollToEnd({ animated: true });
-      const hasImage = sortedMessages.some((m) => m.message_type === 'image');
-      if (Platform.OS === 'android') {
-        scrollToEndOnce();
-        const t1 = setTimeout(scrollToEndOnce, 150);
-        const t2 = setTimeout(() => {
-          initialScrollDoneRef.current = true;
-          scrollToEndOnce();
-        }, 450);
-        const t3 = hasImage ? setTimeout(scrollToEndOnce, 750) : null;
-        return () => {
-          clearTimeout(t1);
-          clearTimeout(t2);
-          if (t3) clearTimeout(t3);
-        };
-      }
-      initialScrollDoneRef.current = true;
-      const t = setTimeout(scrollToEndOnce, 100);
-      return () => clearTimeout(t);
-    }
-  }, [loading, sortedMessages.length]);
-
   const send = async () => {
     const text = input.trim();
     if (!text || !conversationId || sendInFlightRef.current) return;
@@ -654,6 +652,11 @@ export default function CustomerChatScreen() {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       Alert.alert(t('chatMessageBlockedTitle'), t('chatMessageBlockedBody'));
     }
+    } catch (e) {
+      setInput(text);
+      setPendingMentions(mentions);
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
     } finally {
       sendInFlightRef.current = false;
     }
@@ -855,6 +858,7 @@ export default function CustomerChatScreen() {
         data={chatListItems}
         keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
         contentContainerStyle={[styles.listContent, sortedMessages.length > 0 && styles.listContentGrow]}
+        {...CHAT_FLAT_LIST_PROPS}
         renderItem={({ item }) => {
           const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
           if (msg.message_type === 'screenshot_notice') {
@@ -887,19 +891,15 @@ export default function CustomerChatScreen() {
                 const st = resolveVideoUpload(m);
                 if (st?.phase === 'failed') void retryVideoUpload(st);
               }}
+              mediaPreloadReady={heavyMediaReady}
             />
           );
         }}
         ListEmptyComponent={<Text style={styles.empty}>{t('chatEmptyGuestInvite')}</Text>}
         onContentSizeChange={() => {
-          if (sortedMessages.length === 0) return;
-          listRef.current?.scrollToEnd({ animated: false });
+          if (sortedMessages.length === 0 || initialScrollDoneRef.current) return;
+          snapChatListToEnd(listRef);
         }}
-        onLayout={Platform.OS === 'android' ? () => {
-          if (sortedMessages.length > 0 && !initialScrollDoneRef.current) {
-            requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
-          }
-        } : undefined}
       />
       {typingNames.length > 0 ? (
         <View style={styles.typingRow}>

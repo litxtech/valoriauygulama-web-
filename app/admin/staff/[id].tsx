@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,12 @@ import {
   SEVERITY_DESC_TR,
   notificationTitleForSeverity,
 } from '@/lib/staffPersonnelWarnings';
+import {
+  STAFF_MENU_CATALOG,
+  STAFF_MENU_SECTION_LABELS_TR,
+  normalizeHiddenMenuItemIds,
+  type StaffMenuCatalogSection,
+} from '@/lib/staffMenuCatalog';
 
 const WARN_SEVERITY_LEVELS: StaffPersonnelWarningSeverity[] = [
   'reminder',
@@ -125,6 +131,7 @@ const APP_PERMISSIONS = [
   { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
   { key: 'emanet_buluntu', label: 'Emanet / buluntu: kayıt oluşturma ve yönetim' },
+  { key: 'tesis_gunlugu', label: 'Tesis günlüğü: kayıt oluşturma (foto/video)' },
 ];
 
 const APP_PERMISSION_LABELS: Record<string, string> = APP_PERMISSIONS.reduce<Record<string, string>>((acc, item) => {
@@ -170,6 +177,7 @@ const DEFAULT_PERMISSIONS: Record<string, boolean> = {
   teknik_varliklar: false,
   teknik_varliklar_okuma: false,
   emanet_buluntu: false,
+  tesis_gunlugu: false,
 };
 
 type OrgRow = { id: string; name: string; slug: string; kind: string };
@@ -213,6 +221,7 @@ type StaffDetail = {
   kvkk_consent_at?: string | null;
   drives_vehicle?: boolean | null;
   profile_hidden_by_admin?: boolean | null;
+  hidden_menu_item_ids?: unknown;
 };
 
 type StaffRelatedDocument = {
@@ -400,6 +409,9 @@ export default function EditStaffScreen() {
   const [warnImageUploading, setWarnImageUploading] = useState(false);
   const [issuingWarning, setIssuingWarning] = useState(false);
   const [permissionsExpanded, setPermissionsExpanded] = useState(false);
+  const [menuRestrictionsExpanded, setMenuRestrictionsExpanded] = useState(false);
+  const [hiddenMenuItemIds, setHiddenMenuItemIds] = useState<string[]>([]);
+  const [supportsHiddenMenuColumn, setSupportsHiddenMenuColumn] = useState(true);
 
   const loadPersonnelWarnings = useCallback(async () => {
     if (!id) return;
@@ -430,27 +442,39 @@ export default function EditStaffScreen() {
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const STAFF_SELECT_FULL =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, tenure_note, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
-      const STAFF_SELECT_LEGACY =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
-      let { data, error } = await supabase
-        .from('staff')
-        .select(STAFF_SELECT_FULL)
-        .eq('id', id)
-        .single();
-      const msg = String(error?.message ?? '');
-      const tenureMissing =
-        msg.includes('tenure_note') ||
-        msg.includes('does not exist') ||
-        /schema cache/i.test(msg) ||
-        /PGRST204/i.test(msg);
-      if (error && tenureMissing) {
-        setSupportsTenureNoteColumn(false);
-        ({ data, error } = await supabase.from('staff').select(STAFF_SELECT_LEGACY).eq('id', id).single());
-      } else if (!error) {
-        setSupportsTenureNoteColumn(true);
+      const STAFF_BASE =
+        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
+      const isSchemaColMissing = (errMsg: string, col: string) =>
+        errMsg.includes(col) ||
+        errMsg.includes('does not exist') ||
+        /schema cache/i.test(errMsg) ||
+        /PGRST204/i.test(errMsg);
+
+      let tenureOk = true;
+      let menuOk = true;
+      let selectCols = `${STAFF_BASE}, tenure_note, hidden_menu_item_ids`;
+      let { data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single();
+      let errMsg = String(error?.message ?? '');
+
+      if (error && isSchemaColMissing(errMsg, 'tenure_note')) {
+        tenureOk = false;
+        selectCols = `${STAFF_BASE}, hidden_menu_item_ids`;
+        ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
+        errMsg = String(error?.message ?? '');
       }
+      if (error && isSchemaColMissing(errMsg, 'hidden_menu_item_ids')) {
+        menuOk = false;
+        selectCols = tenureOk ? `${STAFF_BASE}, tenure_note` : STAFF_BASE;
+        ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
+        errMsg = String(error?.message ?? '');
+      }
+      if (error && tenureOk && isSchemaColMissing(errMsg, 'tenure_note')) {
+        tenureOk = false;
+        selectCols = menuOk ? `${STAFF_BASE}, hidden_menu_item_ids` : STAFF_BASE;
+        ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
+      }
+      setSupportsTenureNoteColumn(tenureOk);
+      setSupportsHiddenMenuColumn(menuOk);
       if (error || !data) {
         Alert.alert('Hata', 'Çalışan bulunamadı.');
         router.back();
@@ -496,6 +520,7 @@ export default function EditStaffScreen() {
       setKvkkConsentAt(s.kvkk_consent_at ?? '');
       setDrivesVehicle(s.drives_vehicle === true);
       setProfileHiddenByAdmin(s.profile_hidden_by_admin === true);
+      setHiddenMenuItemIds(normalizeHiddenMenuItemIds(s.hidden_menu_item_ids));
     })().finally(() => setLoading(false));
   }, [id]);
 
@@ -558,6 +583,25 @@ export default function EditStaffScreen() {
   const togglePermission = (key: string) => {
     setAppPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const toggleHiddenMenuItem = (itemId: string) => {
+    setHiddenMenuItemIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
+  };
+
+  const menuCatalogBySection = useMemo(() => {
+    const grouped: Record<StaffMenuCatalogSection, typeof STAFF_MENU_CATALOG> = {
+      nav: [],
+      tools: [],
+      admin: [],
+    };
+    for (const entry of STAFF_MENU_CATALOG) {
+      grouped[entry.section].push(entry);
+    }
+    return grouped;
+  }, []);
+
   const guestMessagesBlocked = app_permissions.misafir_mesaj_alabilir === false;
   const toggleGuestMessagesBlocked = (blocked: boolean) => {
     setAppPermissions((prev) => ({ ...prev, misafir_mesaj_alabilir: !blocked }));
@@ -768,6 +812,9 @@ export default function EditStaffScreen() {
         drives_vehicle,
         profile_hidden_by_admin: profileHiddenByAdmin,
       };
+      if (supportsHiddenMenuColumn) {
+        staffExtraUpdate.hidden_menu_item_ids = hiddenMenuItemIds;
+      }
       if (supportsTenureNoteColumn) {
         staffExtraUpdate.tenure_note = tenure_note.trim() || null;
       }
@@ -1368,6 +1415,61 @@ export default function EditStaffScreen() {
           </View>
         </SectionCard>
 
+        <SectionCard
+          title="Menü kısıtlamaları"
+          subtitle="Yetki verilmiş olsa bile hamburger menüde gizlenir. Doğrudan bağlantı erişimini kapatmaz."
+          icon="menu-outline"
+        >
+          {!supportsHiddenMenuColumn ? (
+            <Text style={styles.hintInline}>
+              Veritabanı migration 296 uygulanmadı; menü kısıtlaması kaydedilemez.
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            style={styles.expandToggle}
+            onPress={() => setMenuRestrictionsExpanded((v) => !v)}
+            activeOpacity={0.75}
+            disabled={!supportsHiddenMenuColumn}
+          >
+            <Text style={styles.expandToggleText}>
+              {menuRestrictionsExpanded
+                ? 'Menü öğelerini gizle'
+                : `Menüden gizlenecek öğeler (${hiddenMenuItemIds.length} seçili)`}
+            </Text>
+            <Ionicons
+              name={menuRestrictionsExpanded ? 'chevron-up' : 'chevron-down'}
+              size={20}
+              color={adminTheme.colors.primary}
+            />
+          </TouchableOpacity>
+          {menuRestrictionsExpanded && supportsHiddenMenuColumn
+            ? (['nav', 'tools', 'admin'] as StaffMenuCatalogSection[]).map((sectionId) => (
+                <View key={sectionId} style={{ marginTop: 10 }}>
+                  <Text style={styles.menuSectionHeading}>{STAFF_MENU_SECTION_LABELS_TR[sectionId]}</Text>
+                  {menuCatalogBySection[sectionId].map((entry) => {
+                    const hidden = hiddenMenuItemIds.includes(entry.id);
+                    return (
+                      <TouchableOpacity
+                        key={entry.id}
+                        style={styles.checkRow}
+                        onPress={() => toggleHiddenMenuItem(entry.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons
+                          name={hidden ? 'eye-off-outline' : 'eye-outline'}
+                          size={22}
+                          color={hidden ? adminTheme.colors.warning ?? '#b45309' : adminTheme.colors.textMuted}
+                          style={{ marginRight: 10 }}
+                        />
+                        <Text style={[styles.checkLabel, hidden && styles.checkLabelMuted]}>{entry.labelTr}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))
+            : null}
+        </SectionCard>
+
         <SectionCard title="Doğrulama rozeti" subtitle="Mavi veya sarı tik; kaldırmak için Yok seçin." icon="checkmark-circle-outline">
           <Field label="Rozet seçimi">
             <View style={styles.chips}>
@@ -1795,6 +1897,15 @@ const styles = StyleSheet.create({
   },
   checkbox: { fontSize: 18, marginRight: 10 },
   checkLabel: { fontSize: 14, color: adminTheme.colors.text, flex: 1, lineHeight: 20 },
+  checkLabelMuted: { color: adminTheme.colors.textMuted, textDecorationLine: 'line-through' },
+  menuSectionHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: adminTheme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
   primaryButton: {
     backgroundColor: adminTheme.button.primaryBg,
     paddingVertical: 16,

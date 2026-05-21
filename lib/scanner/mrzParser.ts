@@ -1,7 +1,7 @@
 import { parse } from 'mrz';
 import type { ParsedDocument } from './types';
 import { mrzSixDigitsToIso } from './mrzDates';
-import { sanitizePersonName } from '@/lib/guestScan/personNameUtils';
+import { sanitizePersonName, splitFullNameToFirstLast } from '@/lib/guestScan/personNameUtils';
 
 function cleanMrz(raw: string): string {
   return raw
@@ -21,42 +21,240 @@ function mapMrzSex(v: unknown): 'M' | 'F' | 'X' | null {
   return null;
 }
 
-export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
+function digitsOnly(v: string | null | undefined): string {
+  return v ? String(v).replace(/\D/g, '') : '';
+}
+
+function isTurkishTc(d: string): boolean {
+  if (!/^[1-9]\d{10}$/.test(d)) return false;
+  const digits = d.split('').map((c) => Number(c));
+  if (digits.some((n) => Number.isNaN(n))) return false;
+  let odd = 0;
+  let even = 0;
+  for (let i = 0; i < 9; i++) {
+    if (i % 2 === 0) odd += digits[i]!;
+    else even += digits[i]!;
+  }
+  const tenth = ((odd * 7 - even) % 10 + 10) % 10;
+  if (digits[9] !== tenth) return false;
+  const eleventh = digits.slice(0, 10).reduce((sum, n) => sum + n, 0) % 10;
+  return digits[10] === eleventh;
+}
+
+function isYkn(d: string): boolean {
+  return /^99\d{9}$/.test(d);
+}
+
+/** T.C. kimlik MRZ satırındaki kart seri no (harf+rakam); birleşik OCR alanını ayırır. */
+/** TD1 satır 1: I<TUR sonrası 9 karakterlik kart seri no. */
+function serialFromTd1MrzLine(rawMrz: string): string | null {
+  const line1 = rawMrz.split('\n')[0]?.trim() ?? '';
+  const m =
+    line1.match(/^I<[A-Z]{3}([A-Z0-9]{9})/i) ??
+    line1.replace(/</g, '').match(/^I[A-Z]{3}([A-Z0-9]{9})/i);
+  return m?.[1]?.toUpperCase() ?? null;
+}
+
+function turkishIdCardSerial(mrzDocNo: string | null, tc: string | null, rawMrz?: string): string | null {
+  if (rawMrz) {
+    const fromLine = serialFromTd1MrzLine(rawMrz);
+    if (fromLine) return fromLine;
+  }
+  if (!mrzDocNo) return null;
+  const compact = mrzDocNo.replace(/</g, '').trim();
+  if (!compact) return null;
+  if (tc) {
+    const idx = compact.indexOf(tc);
+    if (idx > 0) {
+      const prefix = compact.slice(0, idx);
+      const m = prefix.match(/^[A-Z]{1,3}\d{5,11}/i);
+      if (m) return m[0]!.toUpperCase();
+    }
+  }
+  const serialMatch = compact.match(/^[A-Z]{1,3}\d{5,9}/i);
+  if (serialMatch) return serialMatch[0]!.toUpperCase();
+  return compact.length <= 12 && /[A-Z]/i.test(compact) ? compact.toUpperCase() : null;
+}
+
+function collectElevenDigitCandidates(...blobs: (string | null | undefined)[]): string[] {
+  const out = new Set<string>();
+  for (const blob of blobs) {
+    if (!blob) continue;
+    const digits = String(blob).replace(/</g, '').replace(/\D/g, '');
+    for (let i = 0; i + 11 <= digits.length; i++) {
+      out.add(digits.slice(i, i + 11));
+    }
+  }
+  return [...out];
+}
+
+function detectDocumentType(res: { format?: string; fields?: Record<string, unknown> }): ParsedDocument['documentType'] {
+  const docTypeRaw = String(res?.format ?? '').toLowerCase();
+  const code = String(res?.fields?.documentCode ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '');
+
+  if (docTypeRaw.includes('td3') || code === 'P') return 'passport';
+  if (docTypeRaw.includes('td1') || docTypeRaw.includes('td2') || code === 'I' || code === 'A' || code === 'C') {
+    return 'id_card';
+  }
+  return 'other';
+}
+
+function isTurkishDocument(nationality: string | null, issuing: string | null): boolean {
+  const nat = (nationality ?? '').toUpperCase();
+  const iss = (issuing ?? '').toUpperCase();
+  return nat === 'TUR' || nat === 'TR' || iss === 'TUR' || iss === 'TR';
+}
+
+/** MRZ kimlik no: pasaport → belge no; T.C. kimlik → TC; yabancı kimlik → belge no. */
+function resolveMrzDocumentNumber(args: {
+  documentType: ParsedDocument['documentType'];
+  fields: Record<string, unknown>;
+  nationalityCode: string | null;
+  issuingCountryCode: string | null;
+  rawMrz: string;
+}): { documentNumber: string | null; documentSeries: string | null } {
+  const { documentType, fields, nationalityCode, issuingCountryCode, rawMrz } = args;
+  const mrzDocNo = fields.documentNumber ? String(fields.documentNumber).replace(/</g, '').trim() : null;
+  const mrzDocDigits = digitsOnly(mrzDocNo);
+  const mrzDocHasLetters = mrzDocNo ? /[A-Z]/i.test(mrzDocNo) : false;
+
+  const optionalBlobs = [fields.optional1, fields.optional2, fields.personalNumber].map((v) =>
+    v == null ? null : String(v)
+  );
+  const rawEleven = collectElevenDigitCandidates(rawMrz);
+  const optionalEleven = collectElevenDigitCandidates(...optionalBlobs);
+  const docEleven = mrzDocHasLetters ? [] : collectElevenDigitCandidates(mrzDocNo);
+  const tcCandidates = [...optionalEleven, ...rawEleven, ...docEleven].filter(isTurkishTc);
+  const yknCandidates = [...optionalEleven, ...rawEleven, ...docEleven].filter(isYkn);
+
+  if (documentType === 'passport') {
+    return { documentNumber: mrzDocNo, documentSeries: null };
+  }
+
+  const turkish = isTurkishDocument(nationalityCode, issuingCountryCode);
+
+  if (documentType === 'id_card') {
+    const ykn = yknCandidates[0] ?? (isYkn(mrzDocDigits) ? mrzDocDigits : null);
+    if (ykn) {
+      return { documentNumber: ykn, documentSeries: mrzDocNo && mrzDocDigits !== ykn ? mrzDocNo : null };
+    }
+
+    if (turkish) {
+      const tc = tcCandidates[0] ?? (!mrzDocHasLetters && isTurkishTc(mrzDocDigits) ? mrzDocDigits : null);
+      const serial = turkishIdCardSerial(mrzDocNo, tc, rawMrz);
+      return {
+        documentNumber: tc ?? (mrzDocHasLetters ? null : mrzDocNo),
+        documentSeries: serial,
+      };
+    }
+
+    return { documentNumber: mrzDocNo, documentSeries: null };
+  }
+
+  const tc = tcCandidates[0];
+  if (tc) return { documentNumber: tc, documentSeries: mrzDocNo };
+  const ykn = yknCandidates[0];
+  if (ykn) return { documentNumber: ykn, documentSeries: null };
+
+  return { documentNumber: mrzDocNo, documentSeries: null };
+}
+
+/** Ad alanında tüm verilen adlar; soyad ayrı — ikisi de tam yazılmaz. */
+function finalizeMrzPersonNames(args: {
+  firstNameRaw: string | null;
+  lastNameRaw: string | null;
+  fullNameRaw: string | null;
+}): Pick<ParsedDocument, 'firstName' | 'lastName' | 'fullName' | 'middleName'> {
+  let firstName = sanitizePersonName(args.firstNameRaw);
+  let lastName = sanitizePersonName(args.lastNameRaw);
+  const fullNameFromField = sanitizePersonName(args.fullNameRaw);
+
+  if (firstName && lastName) {
+    const fn = firstName.toUpperCase();
+    const ln = lastName.toUpperCase();
+    const combined = `${fn} ${ln}`.trim();
+    if (fn === ln) {
+      const split = splitFullNameToFirstLast(firstName);
+      firstName = split.firstName;
+      lastName = split.lastName;
+    } else if (fn === combined || ln === combined) {
+      const split = splitFullNameToFirstLast(fn.length >= ln.length ? firstName : lastName);
+      firstName = split.firstName;
+      lastName = split.lastName;
+    } else if (fn.includes(` ${ln}`) && fn.replace(` ${ln}`, '').trim().length >= 2) {
+      firstName = sanitizePersonName(fn.replace(` ${ln}`, '').trim());
+    } else if (ln.includes(` ${fn}`) && ln.replace(` ${fn}`, '').trim().length >= 2) {
+      lastName = sanitizePersonName(ln.replace(` ${fn}`, '').trim());
+    }
+  }
+
+  if ((!firstName || !lastName) && fullNameFromField) {
+    const split = splitFullNameToFirstLast(fullNameFromField);
+    firstName = firstName ?? split.firstName;
+    lastName = lastName ?? split.lastName;
+  }
+
+  if (!lastName && firstName) {
+    const split = splitFullNameToFirstLast(firstName);
+    if (split.lastName) {
+      firstName = split.firstName;
+      lastName = split.lastName;
+    }
+  }
+
+  if (!firstName && lastName) {
+    const split = splitFullNameToFirstLast(lastName);
+    if (split.firstName) {
+      firstName = split.firstName;
+      lastName = split.lastName;
+    }
+  }
+
+  const fullName =
+    [firstName, lastName].filter(Boolean).join(' ').trim() || fullNameFromField || null;
+
+  return { firstName, lastName, fullName, middleName: null };
+}
+
+export function parseMrzToNormalized(rawMrz: string): ParsedDocument & { documentSeries?: string | null } {
   const raw = cleanMrz(rawMrz);
   const warnings: string[] = [];
 
   try {
     const res: any = parse(raw);
+    const fields = (res?.fields ?? {}) as Record<string, unknown>;
 
-    const docTypeRaw = String(res?.format ?? '').toLowerCase();
-    // ICAO: TD1 = ID-1 (kimlik), TD2 = genelde ID/visa, TD3 = pasaport (MRP 2 satır)
-    let documentType: ParsedDocument['documentType'] = 'other';
-    if (docTypeRaw.includes('td3')) documentType = 'passport';
-    else if (docTypeRaw.includes('td1') || docTypeRaw.includes('td2')) documentType = 'id_card';
+    const documentType = detectDocumentType(res);
 
-    let firstNameRaw = res?.fields?.firstName ?? res?.fields?.givenNames ?? null;
-    let lastNameRaw = res?.fields?.lastName ?? res?.fields?.surname ?? null;
-    let middleName: string | null = null;
-    /** TD3: ikinci/üçüncü ad MRZ’de tek “given” alanında boşlukla gelebilir → KBS için ayır. */
-    if (firstNameRaw && typeof firstNameRaw === 'string') {
-      const parts = firstNameRaw.trim().split(/\s+/).filter(Boolean);
-      if (parts.length >= 2) {
-        firstNameRaw = parts[0] ?? null;
-        middleName = parts.slice(1).join(' ') || null;
-      }
-    }
-    let firstName = sanitizePersonName(firstNameRaw ? String(firstNameRaw) : null);
-    let lastName = sanitizePersonName(lastNameRaw ? String(lastNameRaw) : null);
-    const fullNameRaw =
-      res?.fields?.name
-        ? String(res.fields.name)
-        : [firstName, lastName].filter(Boolean).join(' ').trim() || null;
-    const fullName = sanitizePersonName(fullNameRaw) ?? fullNameRaw;
-    if (!firstName || !lastName) {
-      const fromName = fullName?.split(/\s+/).filter(Boolean) ?? [];
-      if (fromName.length >= 2) {
-        lastName = lastName ?? sanitizePersonName(fromName[fromName.length - 1]);
-        firstName = firstName ?? sanitizePersonName(fromName.slice(0, -1).join(' '));
+    const firstNameRaw = fields.firstName ?? fields.givenNames ?? null;
+    const lastNameRaw = fields.lastName ?? fields.surname ?? null;
+    const fullNameRaw = fields.name ? String(fields.name) : null;
+
+    const names = finalizeMrzPersonNames({
+      firstNameRaw: firstNameRaw ? String(firstNameRaw) : null,
+      lastNameRaw: lastNameRaw ? String(lastNameRaw) : null,
+      fullNameRaw,
+    });
+
+    const issuingRaw =
+      fields.issuingState ?? fields.issuingCountry ?? fields.issuer ?? null;
+    const issuingCountryCode = issuingRaw ? String(issuingRaw).toUpperCase() : null;
+    const nationalityCode = fields.nationality ? String(fields.nationality).toUpperCase() : null;
+
+    const { documentNumber, documentSeries } = resolveMrzDocumentNumber({
+      documentType,
+      fields,
+      nationalityCode,
+      issuingCountryCode,
+      rawMrz: raw,
+    });
+
+    if (documentType === 'id_card' && isTurkishDocument(nationalityCode, issuingCountryCode)) {
+      const tcDigits = digitsOnly(documentNumber);
+      if (!isTurkishTc(tcDigits)) {
+        warnings.push('T.C. kimlik MRZ’de bulunamadı; belge numarasını kontrol edin.');
       }
     }
 
@@ -64,7 +262,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       typeof res?.valid === 'boolean' ? res.valid : typeof res?.validCheckDigits === 'boolean' ? res.validCheckDigits : null;
     if (checksumsValid === false) warnings.push('MRZ checksum validation failed');
 
-    const nat = String(res?.fields?.nationality ?? '').toUpperCase();
+    const nat = String(fields.nationality ?? '').toUpperCase();
     const gcc = new Set(['OMN', 'SAU', 'QAT', 'KWT', 'ARE', 'BHR', 'YEM', 'IRQ', 'IRN', 'JOR', 'LBN', 'SYR', 'PSE']);
     if (nat && gcc.has(nat)) {
       warnings.push(
@@ -72,32 +270,29 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       );
     }
 
-    // mrz@5: issuing country = `issuingState` (ICAO 3-letter), NOT `issuingCountry`
-    const issuingRaw =
-      res?.fields?.issuingState ?? res?.fields?.issuingCountry ?? res?.fields?.issuer ?? null;
-
-    const birthRaw = res?.fields?.birthDate ? String(res.fields.birthDate) : null;
-    const expiryRaw = res?.fields?.expirationDate ? String(res.fields.expirationDate) : null;
+    const birthRaw = fields.birthDate ? String(fields.birthDate) : null;
+    const expiryRaw = fields.expirationDate ? String(fields.expirationDate) : null;
 
     const birthDate = birthRaw && /^\d{6}$/.test(birthRaw) ? mrzSixDigitsToIso(birthRaw, 'birth') : birthRaw;
     const expiryDate = expiryRaw && /^\d{6}$/.test(expiryRaw) ? mrzSixDigitsToIso(expiryRaw, 'expiry') : expiryRaw;
 
     return {
       documentType,
-      fullName,
-      firstName,
-      lastName,
-      middleName,
-      documentNumber: res?.fields?.documentNumber ? String(res.fields.documentNumber) : null,
-      nationalityCode: res?.fields?.nationality ? String(res.fields.nationality) : null,
-      issuingCountryCode: issuingRaw ? String(issuingRaw).toUpperCase() : null,
+      fullName: names.fullName,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      middleName: names.middleName,
+      documentNumber,
+      nationalityCode,
+      issuingCountryCode,
       birthDate,
       expiryDate,
-      gender: mapMrzSex(res?.fields?.sex),
+      gender: mapMrzSex(fields.sex),
       rawMrz: raw,
       confidence: null,
       checksumsValid,
       warnings,
+      documentSeries,
     };
   } catch {
     return {
@@ -116,6 +311,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       confidence: null,
       checksumsValid: null,
       warnings: ['MRZ parse failed'],
+      documentSeries: null,
     };
   }
 }

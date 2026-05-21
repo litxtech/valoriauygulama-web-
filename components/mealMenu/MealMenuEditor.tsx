@@ -15,11 +15,10 @@ import { formatTrFullDayLabelFromYmd, toLocalYmd } from '@/lib/mealMenuDate';
 import {
   DEFAULT_MEAL_MENU_PDF_APPROVER,
   DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE,
-  exportMealMenuPdf,
-  generateMealMenuPdfFile,
-  sendMealMenuPdfToPrinterEmail,
   type MealMenuPdfDay,
 } from '@/lib/mealMenuPdf';
+import { fetchMealMenuForMonth } from '@/lib/staffMealMenu';
+import { invalidateStaffMealMenuCache } from '@/lib/staffMealMenuCache';
 import {
   groupDayKeysByWeek,
   menuStatsFromDaysMap,
@@ -127,62 +126,41 @@ export function MealMenuEditor({
       setDaysMap({});
       return;
     }
-    const { data: menu, error: menuErr } = await supabase
-      .from('staff_meal_menus')
-      .select('id, notify_daily, pdf_approver_name, pdf_footer_note')
-      .eq('organization_id', effectiveOrgId)
-      .eq('period_month', periodMonthStr)
-      .maybeSingle();
-
-    if (menuErr) {
-      Alert.alert('Hata', menuErr.message);
-      setMenuId(null);
-      setDaysMap({});
-      return;
-    }
-
-    if (!menu) {
-      setMenuId(null);
-      setNotifyDaily(true);
-      setDaysMap({});
-      setPdfApproverName(DEFAULT_MEAL_MENU_PDF_APPROVER);
-      setPdfFooterNote(DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
-      return;
-    }
-
-    setMenuId(menu.id);
-    setNotifyDaily(!!menu.notify_daily);
-    setPdfApproverName(
-      (menu as { pdf_approver_name?: string | null }).pdf_approver_name?.trim() || DEFAULT_MEAL_MENU_PDF_APPROVER
-    );
-    setPdfFooterNote(
-      (menu as { pdf_footer_note?: string | null }).pdf_footer_note?.trim() || DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE
-    );
-
-    const { data: dayRows, error: dayErr } = await supabase
-      .from('staff_meal_menu_days')
-      .select('meal_date, breakfast, lunch, dinner')
-      .eq('menu_id', menu.id);
-
-    if (dayErr) {
-      Alert.alert('Hata', dayErr.message);
-      return;
-    }
-
-    const keys = editableMealDayKeys(viewMonth, todayYmd);
-    const map = buildEmptyDaysMap(keys);
-    for (const r of dayRows ?? []) {
-      const d = (r as { meal_date: string; breakfast: string | null; lunch: string | null; dinner: string | null }).meal_date.slice(0, 10);
-      if (map[d]) {
-        map[d] = {
-          breakfast: (r as { breakfast?: string | null }).breakfast ?? '',
-          lunch: (r as { lunch?: string | null }).lunch ?? '',
-          dinner: (r as { dinner?: string | null }).dinner ?? '',
-        };
+    try {
+      const { menu, days } = await fetchMealMenuForMonth(effectiveOrgId, viewMonth);
+      if (!menu) {
+        setMenuId(null);
+        setNotifyDaily(true);
+        setDaysMap({});
+        setPdfApproverName(DEFAULT_MEAL_MENU_PDF_APPROVER);
+        setPdfFooterNote(DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
+        return;
       }
+
+      setMenuId(menu.id);
+      setNotifyDaily(!!menu.notify_daily);
+      setPdfApproverName(menu.pdf_approver_name?.trim() || DEFAULT_MEAL_MENU_PDF_APPROVER);
+      setPdfFooterNote(menu.pdf_footer_note?.trim() || DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
+
+      const keys = editableMealDayKeys(viewMonth, todayYmd);
+      const map = buildEmptyDaysMap(keys);
+      for (const r of days) {
+        const d = r.meal_date.slice(0, 10);
+        if (map[d]) {
+          map[d] = {
+            breakfast: r.breakfast ?? '',
+            lunch: r.lunch ?? '',
+            dinner: r.dinner ?? '',
+          };
+        }
+      }
+      setDaysMap(map);
+    } catch (e: unknown) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Yüklenemedi');
+      setMenuId(null);
+      setDaysMap({});
     }
-    setDaysMap(map);
-  }, [effectiveOrgId, periodMonthStr, viewMonth, todayYmd]);
+  }, [effectiveOrgId, viewMonth, todayYmd]);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,9 +175,15 @@ export function MealMenuEditor({
   }, [load]);
 
   useEffect(() => {
-    const first = editableMealDayKeys(viewMonth, todayYmd)[0];
-    if (first) setExpandedWeeks(new Set([weekKeyForYmd(first)]));
-    else setExpandedWeeks(new Set());
+    const keys = editableMealDayKeys(viewMonth, todayYmd);
+    if (!keys.length) {
+      setExpandedWeeks(new Set());
+      return;
+    }
+    const monthPrefix = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}`;
+    const focusYmd =
+      todayYmd.startsWith(monthPrefix) && keys.includes(todayYmd) ? todayYmd : keys[0];
+    setExpandedWeeks(new Set([weekKeyForYmd(focusYmd)]));
   }, [periodMonthStr, todayYmd, viewMonth]);
 
   const onRefresh = async () => {
@@ -274,6 +258,7 @@ export function MealMenuEditor({
         .eq('id', menuId);
       if (metaErr) throw new Error(metaErr.message);
 
+      invalidateStaffMealMenuCache(effectiveOrgId ?? undefined);
       Alert.alert('Kaydedildi', 'Aylık yemek listesi güncellendi.');
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kaydedilemedi');
@@ -354,6 +339,7 @@ export function MealMenuEditor({
     if (!menuId || !showPdf) return;
     setPdfLoading(true);
     try {
+      const { exportMealMenuPdf } = await import('@/lib/mealMenuPdf');
       await exportMealMenuPdf(await buildPdfPayload());
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'PDF oluşturulamadı.');
@@ -367,6 +353,7 @@ export function MealMenuEditor({
     setPrinterMailLoading(true);
     try {
       const payload = await buildPdfPayload();
+      const { generateMealMenuPdfFile, sendMealMenuPdfToPrinterEmail } = await import('@/lib/mealMenuPdf');
       const uri = await generateMealMenuPdfFile(payload);
       await sendMealMenuPdfToPrinterEmail(payload, uri);
       Alert.alert('Gönderildi', 'Belge yazıcı e-posta adresine gönderildi.');

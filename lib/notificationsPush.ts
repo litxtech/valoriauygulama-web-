@@ -6,6 +6,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
@@ -46,10 +47,9 @@ function normalizeRpcError(error: unknown): {
 /** Expo Go içinde çalışıyoruz; push bildirimleri dev build'de çalışır */
 export const isExpoGo = Constants.appOwnership === 'expo';
 
-async function getNotifications() {
+function getNotifications(): typeof ExpoNotifications | null {
   if (isExpoGo) return null;
-  const Notifications = await import('expo-notifications');
-  return Notifications;
+  return ExpoNotifications;
 }
 
 /** Uygulama açıkken gelen bildirim: üst banner + liste + ses (Expo SDK 54+). Android'de ses kapalıysa heads-up da gelmez. */
@@ -79,7 +79,7 @@ async function shouldMuteByStaffFeaturePreference(notificationType: string): Pro
 export async function initPushNotificationsPresentation(): Promise<void> {
   if (isExpoGo || pushPresentationInitialized) return;
   try {
-    const ExpoN = await import('expo-notifications');
+    const ExpoN = ExpoNotifications;
     const Notifications = ExpoN;
 
     Notifications.setNotificationHandler({
@@ -101,15 +101,14 @@ export async function initPushNotificationsPresentation(): Promise<void> {
         const roomCleaningSoundEnabled = roomCleaningSoundPref == null ? true : roomCleaningSoundPref === '1';
         const muteByLocalPref = roomCleaningMarked && !roomCleaningSoundEnabled;
         const muteByFeaturePref = await shouldMuteByStaffFeaturePreference(notificationType);
+        const playSound = !(muteByPayload || muteByLocalPref || muteByFeaturePref);
         return {
-          // Sunucudan muteSound gelmese bile (deploy gecikmesi vb.) local tercih bu tipte sesi kapatir.
-          shouldPlaySound: !(muteByPayload || muteByLocalPref || muteByFeaturePref),
-        shouldShowBanner: true,
-        shouldShowList: true,
-        // Rozeti burada değil, gelen push içindeki badge / data.app_badge ile
-        // applyBadgeFromExpoNotificationPayload + AppState await sonrası setOsAppIconBadgeCount ile uyguluyoruz
-        // (iOS arka planda aps.badge hâlâ sisteme aittir; çift/yanlış sayı yarışı önlensin).
-        shouldSetBadge: false,
+          shouldPlaySound: playSound,
+          shouldShowAlert: true,
+          shouldShowBanner: true,
+          shouldShowList: true,
+          // Push payload'daki aps.badge / content.badge — iOS ön/arka planda simge sayacı için gerekli.
+          shouldSetBadge: true,
           ...(Platform.OS === 'android'
             ? { priority: ExpoN.AndroidNotificationPriority.MAX }
             : {}),
@@ -195,11 +194,12 @@ const IOS_TOKEN_TIMEOUT_MS = 14000;
 export function registerIOSPushTokenListener(): () => void {
   if (Platform.OS !== 'ios' || isExpoGo) return () => {};
   let removed = false;
-  import('expo-notifications').then((Notifications) => {
-    if (removed) return;
-    const addListener = (Notifications as { addPushTokenListener?: (cb: (token: unknown) => void) => { remove: () => void } }).addPushTokenListener;
-    if (typeof addListener !== 'function') return;
+  const addListener = (ExpoNotifications as {
+    addPushTokenListener?: (cb: (token: unknown) => void) => { remove: () => void };
+  }).addPushTokenListener;
+  if (typeof addListener === 'function') {
     addListener((payload: unknown) => {
+      if (removed) return;
       const data = payload && typeof payload === 'object' && 'data' in payload ? (payload as { data: string }).data : payload;
       const t = typeof data === 'string' ? data : null;
       if (t && t.startsWith('ExponentPushToken')) {
@@ -207,8 +207,10 @@ export function registerIOSPushTokenListener(): () => void {
         log.info('notificationsPush', 'iOS push token listener ile alındı');
       }
     });
-  }).catch(() => {});
-  return () => { removed = true; };
+  }
+  return () => {
+    removed = true;
+  };
 }
 
 /** İzin iste, Expo push token al; yoksa null (web, Expo Go veya izin reddi). */
@@ -217,7 +219,7 @@ export function registerIOSPushTokenListener(): () => void {
 export async function getExpoPushTokenAsync(): Promise<string | null> {
   if (Platform.OS === 'web' || isExpoGo) return null;
   try {
-    const Notifications = await getNotifications();
+    const Notifications = getNotifications();
     if (!Notifications) return null;
     if (Platform.OS === 'android') {
       try {
@@ -358,7 +360,7 @@ export async function getStoredExpoPushToken(): Promise<string | null> {
 export async function setOsAppIconBadgeCount(count: number): Promise<void> {
   if (Platform.OS === 'web' || isExpoGo) return;
   try {
-    const Notifications = await getNotifications();
+    const Notifications = getNotifications();
     if (!Notifications || typeof Notifications.setBadgeCountAsync !== 'function') return;
     const n = Math.max(0, Math.min(999, Math.floor(count)));
     await Notifications.setBadgeCountAsync(n);
@@ -496,7 +498,7 @@ export async function getLastNotificationResponseAsync(): Promise<{
 } | null> {
   if (isExpoGo) return null;
   try {
-    const Notifications = await getNotifications();
+    const Notifications = getNotifications();
     if (!Notifications) return null;
     const response = await Notifications.getLastNotificationResponseAsync();
     if (!response) return null;
@@ -514,12 +516,11 @@ export function addNotificationResponseListener(
   if (isExpoGo) return () => {};
   const noop = (): void => {};
   const cleanup = { remove: noop };
-  import('expo-notifications').then((Notifications) => {
-    const sub = Notifications.addNotificationResponseReceivedListener(
-      handler as (r: import('expo-notifications').NotificationResponse) => void
-    );
-    cleanup.remove = () => sub.remove();
-  }).catch(() => {});
+  const Notifications = ExpoNotifications;
+  const sub = Notifications.addNotificationResponseReceivedListener(
+    handler as (r: import('expo-notifications').NotificationResponse) => void
+  );
+  cleanup.remove = () => sub.remove();
   return () => cleanup.remove();
 }
 
@@ -530,11 +531,10 @@ export function addNotificationReceivedListener(
   if (isExpoGo) return () => {};
   const noop = (): void => {};
   const cleanup = { remove: noop };
-  import('expo-notifications').then((Notifications) => {
-    const sub = Notifications.addNotificationReceivedListener(
-      handler as (n: import('expo-notifications').Notification) => void
-    );
-    cleanup.remove = () => sub.remove();
-  }).catch(() => {});
+  const Notifications = ExpoNotifications;
+  const sub = Notifications.addNotificationReceivedListener(
+    handler as (n: import('expo-notifications').Notification) => void
+  );
+  cleanup.remove = () => sub.remove();
   return () => cleanup.remove();
 }

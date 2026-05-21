@@ -98,6 +98,7 @@ const APP_PERMISSIONS = [
   { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
   { key: 'emanet_buluntu', label: 'Emanet / buluntu: kayıt oluşturma ve yönetim' },
+  { key: 'tesis_gunlugu', label: 'Tesis günlüğü: kayıt oluşturma (foto/video, zimmet/değişiklik)' },
 ];
 
 const CONTRACT_TYPES: { value: string; label: string }[] = [
@@ -176,6 +177,7 @@ export default function AddStaffScreen() {
     teknik_varliklar: false,
     teknik_varliklar_okuma: false,
     emanet_buluntu: false,
+    tesis_gunlugu: false,
   });
   const [notes, setNotes] = useState('');
   const [emergency_contact_name, setEmergencyContactName] = useState('');

@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { getGuestNotificationToken, setGuestNotificationToken } from '@/lib/guestNotificationToken';
 import { getExpoPushTokenAsync, savePushTokenForGuest, isExpoGo } from '@/lib/notificationsPush';
+import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -59,8 +60,7 @@ export default function CustomerNotificationsScreen() {
     const force = opts?.force === true;
     if (!isExpoGo) {
       try {
-        const Notifications = await import('expo-notifications').then((m) => m.default);
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
       } catch {
         setPushPerm('unknown');
@@ -183,8 +183,7 @@ export default function CustomerNotificationsScreen() {
         await savePushTokenForGuest(token);
         setPushPerm('granted');
       } else {
-        const Notifications = await import('expo-notifications').then((m) => m.default);
-        const { status } = await Notifications.getPermissionsAsync();
+        const { status } = await ExpoNotifications.getPermissionsAsync();
         setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
         if (status === 'denied') {
           Alert.alert(t('guestNotifPermDeniedTitle'), t('guestNotifPermDeniedBody'), [

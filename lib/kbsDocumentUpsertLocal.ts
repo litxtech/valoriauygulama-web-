@@ -1,8 +1,15 @@
 import { supabase } from '@/lib/supabase';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { canSaveMrzDocument, isMrzPayload, type MrzSaveBlockReason } from '@/lib/scanner/mrzScanGate';
+import { OPS_SCHEMA_NOT_EXPOSED_MSG, resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
+import { isOpsSchemaNotExposedError } from '@/lib/supabaseTransientErrors';
 
 export type UpsertOk = { guestId: string; guestDocumentId: string; scanStatus: string };
+
+function mapOpsTableError(err: { code?: string; message?: string } | null): string {
+  if (isOpsSchemaNotExposedError(err)) return OPS_SCHEMA_NOT_EXPOSED_MSG;
+  return err?.message ?? 'Veritabanı hatası';
+}
 
 const MRZ_CODE: Record<MrzSaveBlockReason, string> = {
   no_mrz: 'MRZ_NO_MRZ',
@@ -51,20 +58,9 @@ export async function upsertGuestDocumentLocal(args: {
     motherName
   } = args;
 
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
-  if (!uid) return { ok: false, message: 'Oturum yok', code: 'AUTH' };
-
-  const { data: au, error: auErr } = await supabase
-    .schema('ops')
-    .from('app_users')
-    .select('hotel_id')
-    .eq('id', uid)
-    .maybeSingle();
-  if (auErr || !au?.hotel_id) {
-    return { ok: false, message: 'Bu kullanıcı için ops.app_users kaydı yok.', code: 'NO_APP_USER' };
-  }
-  const hotelId = au.hotel_id;
+  const ctx = await resolveOpsHotelIdForCaller();
+  if (!ctx.ok) return { ok: false, message: ctx.message, code: ctx.code };
+  const { hotelId, userId: uid } = ctx;
 
   const effectiveRaw = parsed.rawMrz ?? rawMrz;
   if (isMrzPayload(effectiveRaw)) {
@@ -122,7 +118,7 @@ export async function upsertGuestDocumentLocal(args: {
       .eq('document_type', parsed.documentType)
       .eq('document_number', normalizedDocNo)
       .maybeSingle();
-    if (exErr) return { ok: false, message: exErr.message };
+    if (exErr) return { ok: false, message: mapOpsTableError(exErr), code: exErr.code };
     if (existing) {
       const { data: updated, error: updErr } = await supabase
         .schema('ops')
@@ -142,7 +138,9 @@ export async function upsertGuestDocumentLocal(args: {
         .eq('id', existing.id)
         .select('id, guest_id, scan_status')
         .single();
-      if (updErr || !updated) return { ok: false, message: updErr?.message ?? 'Belge güncellenemedi' };
+      if (updErr || !updated) {
+        return { ok: false, message: mapOpsTableError(updErr), code: updErr?.code };
+      }
 
       const guestUp: Record<string, unknown> = {
         full_name: fullName ?? 'UNKNOWN',
@@ -188,7 +186,7 @@ export async function upsertGuestDocumentLocal(args: {
     .single();
 
   if (gErr || !guest) {
-    return { ok: false, message: gErr?.message ?? 'Misafir kaydı oluşturulamadı' };
+    return { ok: false, message: mapOpsTableError(gErr), code: gErr?.code };
   }
 
   const { data: doc, error: dErr } = await supabase
@@ -233,7 +231,7 @@ export async function upsertGuestDocumentLocal(args: {
         };
       }
     }
-    return { ok: false, message: dErr?.message ?? 'Belge kaydı oluşturulamadı' };
+    return { ok: false, message: mapOpsTableError(dErr), code: dErr?.code };
   }
 
   return {

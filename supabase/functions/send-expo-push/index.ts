@@ -1,6 +1,7 @@
 // Valoria Hotel - Expo Push bildirimleri gönderir (push_tokens tablosundan token alır)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchAppIconBadgeForGuest, fetchAppIconBadgeForStaff, iconBadgeForPush } from "../_shared/appBadgeFromRpc.ts";
+import { buildExpoPushMessage } from "../_shared/buildExpoPushMessage.ts";
 import { getExpoPushHeaders } from "../_shared/expoPushHeaders.ts";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
@@ -137,17 +138,7 @@ Deno.serve(async (req: Request) => {
         if (typed.staff_id && typed.enabled === false) roomCleaningSoundDisabledStaffIds.add(typed.staff_id);
       }
     }
-    const messages: {
-      to: string;
-      title: string;
-      body: string;
-      channelId: string;
-      priority: "high";
-      sound: string | null;
-      badge: number;
-      interruptionLevel: "active";
-      data?: Record<string, unknown>;
-    }[] = [...byToken.values()].map((row) => {
+    const messages: Record<string, unknown>[] = [...byToken.values()].map((row) => {
       const b = badgeForRow(row);
       const disableSoundForThisMessage = !!(
         roomCleaningMarked &&
@@ -155,25 +146,20 @@ Deno.serve(async (req: Request) => {
         roomCleaningSoundDisabledStaffIds.has(row.staff_id) &&
         !isEmergency
       );
-      return {
+      return buildExpoPushMessage({
         to: row.token,
         title: title.trim(),
         body: displayBody,
-        channelId: disableSoundForThisMessage ? ANDROID_SILENT_CHANNEL_ID : resolvedChannel,
-        priority: "high",
-        sound: disableSoundForThisMessage ? null : resolvedSound,
         badge: b,
-        interruptionLevel: "active" as const,
+        channelId: disableSoundForThisMessage ? ANDROID_SILENT_CHANNEL_ID : resolvedChannel,
+        sound: disableSoundForThisMessage ? null : resolvedSound,
         data: {
           ...data,
           ...(disableSoundForThisMessage ? { muteSound: true } : {}),
-          app_badge: b,
-          // Çağıranda screen varsa (feed, mesaj) koru; yoksa Bildirimler
-          screen: (typeof data?.screen === "string" && data.screen.trim()
-            ? data.screen
-            : "notifications"),
+          screen:
+            typeof data?.screen === "string" && data.screen.trim() ? data.screen : "notifications",
         },
-      };
+      });
     });
 
     let sent = 0;

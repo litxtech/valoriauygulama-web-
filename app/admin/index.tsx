@@ -148,6 +148,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/incident-reports', icon: 'document-text-outline', label: 'Tutanaklar' },
       { href: '/admin/missing-items', icon: 'alert-circle-outline', label: 'Eksik Var' },
       { href: '/admin/lost-found', icon: 'briefcase-outline', label: 'Emanet / Buluntu' },
+      { href: '/admin/facility-journal', icon: 'clipboard-outline', label: 'Tesis günlüğü' },
       { href: '/admin/audits', icon: 'clipboard-outline', label: 'Denetim panosu' },
       { href: '/admin/contracts', icon: 'document-outline', label: 'Sözleşmeler' },
       { href: '/admin/contracts/contact-directory', icon: 'call-outline', label: 'İletişim rehberi' },
@@ -155,7 +156,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/staff', icon: 'person-add-outline', label: 'Çalışan ekleme', badge: 0 },
       { href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' },
       { href: '/admin/organizations', icon: 'business-outline', label: 'İşletme yönetimi' },
-      { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR tasarımları' },
+      { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR Merkezi' },
     ],
   },
 ];

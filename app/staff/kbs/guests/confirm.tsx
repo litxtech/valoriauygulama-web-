@@ -17,6 +17,9 @@ import { playKbsScanSound } from '@/lib/kbsScanSounds';
 import type { GuestScanItem } from '@/lib/guestScan/types';
 import { formatIsoDateTr } from '@/lib/scanner/mrzDates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
+import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
+import type { ParsedDocument } from '@/lib/scanner/types';
 
 const SOUND_KEY = 'kbs_mrz_scan_sound_enabled';
 
@@ -50,6 +53,7 @@ export default function KbsGuestConfirmScreen() {
   const setPending = useGuestScanSessionStore((s) => s.setPendingConfirmItem);
   const [draft, setDraft] = useState<GuestScanItem | null>(null);
   const [soundOn, setSoundOn] = useState(true);
+  const [archiveBusy, setArchiveBusy] = useState(false);
 
   useEffect(() => {
     if (pending) setDraft({ ...pending });
@@ -98,6 +102,66 @@ export default function KbsGuestConfirmScreen() {
       setPending(null);
       router.push('/staff/kbs/guests/room' as never);
     });
+  };
+
+  const saveArchiveOnly = async () => {
+    const base = draft.parsed;
+    const docNo = (draft.identityNo ?? draft.passportNo ?? base?.documentNumber ?? '').trim();
+    const fn = (draft.firstName ?? base?.firstName ?? '').trim();
+    const ln = (draft.lastName ?? base?.lastName ?? '').trim();
+    if (!docNo || !fn || !ln) {
+      Alert.alert(t('kbsGuestMissingTitle'), t('staffPassportsEmpty'));
+      return;
+    }
+    const parsed: ParsedDocument = {
+      documentType:
+        base?.documentType ??
+        (draft.documentType === 'passport' ? 'passport' : draft.documentType === 'tc_id' ? 'id_card' : 'other'),
+      fullName: [fn, ln].filter(Boolean).join(' ').trim() || base?.fullName || null,
+      firstName: fn || null,
+      lastName: ln || null,
+      middleName: base?.middleName ?? null,
+      documentNumber: docNo,
+      nationalityCode: draft.nationality ?? base?.nationalityCode ?? null,
+      issuingCountryCode: draft.country ?? base?.issuingCountryCode ?? null,
+      birthDate: draft.birthDate ?? base?.birthDate ?? null,
+      expiryDate: draft.passportExpiryDate ?? base?.expiryDate ?? null,
+      gender: draft.gender ?? base?.gender ?? null,
+      rawMrz: draft.rawMrz ?? base?.rawMrz ?? null,
+      confidence: draft.confidenceScore ?? base?.confidence ?? null,
+      checksumsValid: base?.checksumsValid ?? null,
+      warnings: base?.warnings ?? [],
+    };
+    setArchiveBusy(true);
+    try {
+      const res = await upsertGuestDocumentLocal({
+        parsed,
+        scanConfidence: parsed.confidence,
+        rawMrz: parsed.rawMrz,
+        deferReady: true,
+        ocrEngine: MRZ_OCR_ENGINE_VISION_MLKIT,
+        kbsPersonKind: draft.guestType,
+        usageKind: draft.usageKind,
+        documentSeries: draft.documentSerialNo,
+        plateNumber: draft.plateNumber,
+        guestPhone: draft.guestPhone,
+        forwardDated: draft.forwardDated,
+        fatherName: draft.fatherName,
+        motherName: draft.motherName,
+      });
+      if (!res.ok) {
+        Alert.alert(t('error'), res.message);
+        return;
+      }
+      await playKbsScanSound('read', soundOn);
+      setPending(null);
+      Alert.alert(t('staffMrzArchiveSavedTitle'), t('staffMrzArchiveSavedBody'), [
+        { text: t('staffMrzContinueScan'), onPress: () => router.replace('/staff/mrz-scan' as never) },
+        { text: t('staffPassportsTitle'), onPress: () => router.replace('/staff/profile/passports' as never) },
+      ]);
+    } finally {
+      setArchiveBusy(false);
+    }
   };
 
   return (
@@ -181,6 +245,14 @@ export default function KbsGuestConfirmScreen() {
         onChange={(v) => patch({ plateNumber: v })}
       />
 
+      <TouchableOpacity
+        style={[styles.archiveBtn, archiveBusy && { opacity: 0.65 }]}
+        onPress={() => void saveArchiveOnly()}
+        disabled={archiveBusy}
+      >
+        <Text style={styles.archiveText}>{t('staffMrzSaveArchiveOnly')}</Text>
+      </TouchableOpacity>
+      <Text style={styles.archiveHint}>{t('staffMrzSaveArchiveHint')}</Text>
       <TouchableOpacity style={styles.primaryBtn} onPress={reportNow}>
         <Text style={styles.primaryText}>{t('kbsGuestReportOne')}</Text>
       </TouchableOpacity>
@@ -215,12 +287,21 @@ const styles = StyleSheet.create({
   inputWarn: { borderColor: '#f59e0b' },
   inputIssue: { borderColor: '#ef4444' },
   warnTag: { fontSize: 11, color: '#b45309', marginTop: 4 },
+  archiveBtn: {
+    backgroundColor: '#0369a1',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  archiveText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  archiveHint: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 6, marginBottom: 4, lineHeight: 17 },
   primaryBtn: {
     backgroundColor: theme.colors.primary,
     padding: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 12,
   },
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   secondaryBtn: {

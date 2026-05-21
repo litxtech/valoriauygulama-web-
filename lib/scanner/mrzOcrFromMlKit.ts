@@ -1,4 +1,5 @@
 import { analyzeOcrLinesForMrzLive } from '@/lib/scanner/mrzLiveEngine';
+import { normalizeMrzOcrLine } from '@/lib/scanner/mrzOcrNormalize';
 import { ocrLinesLookLikeMrz } from '@/lib/scanner/mrzPresence';
 
 /** ML Kit OCR blokları (normalize edilmiş 0–1 koordinat). */
@@ -75,13 +76,26 @@ export function linesFromMlKitOcr(
     .map((l) => l.trim())
     .filter(Boolean);
 
+  if (rawLines.length === 1) {
+    const one = normalizeMrzOcrLine(rawLines[0]!);
+    if (one.length >= 88) {
+      return [one.slice(0, 44), one.slice(44, 88), one.slice(88)].filter((l) => l.length >= 20);
+    }
+    if (one.length >= 72 && one.length < 88) {
+      return [one.slice(0, 36), one.slice(36, 72)].filter((l) => l.length >= 20);
+    }
+    if (one.length >= 60) {
+      return [one.slice(0, 30), one.slice(30, 60), one.slice(60)].filter((l) => l.length >= 18);
+    }
+  }
+
   if (!blocks?.length) return rawLines;
 
   const mrzBlocks = blocks.filter((b) => {
     const t = b.text?.trim() ?? '';
     if (t.length < 8) return false;
     const top = b.top ?? 0;
-    return top >= 0.42;
+    return top >= 0.35;
   });
 
   if (mrzBlocks.length === 0) return rawLines;
@@ -104,8 +118,8 @@ export type MrzFrameReadiness = {
   lines: string[];
 };
 
-const STABILITY_NEEDED = 1;
-const STABILITY_WINDOW_MS = 700;
+const STABILITY_NEEDED = 2;
+const STABILITY_WINDOW_MS = 420;
 
 export type MrzStabilityState = {
   lastSnapshot: string;

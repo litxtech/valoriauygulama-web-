@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import type { GuestScanItem, GuestScanSession, GuestScanSessionType } from '@/lib/guestScan/types';
 
 function rowToItem(row: Record<string, unknown>): GuestScanItem {
@@ -38,18 +39,16 @@ function rowToItem(row: Record<string, unknown>): GuestScanItem {
 export async function createGuestScanSessionDb(
   sessionType: GuestScanSessionType
 ): Promise<{ ok: true; session: GuestScanSession } | { ok: false; message: string }> {
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
-  if (!uid) return { ok: false, message: 'Oturum yok' };
-
-  const { data: au } = await supabase.schema('ops').from('app_users').select('hotel_id').eq('id', uid).maybeSingle();
-  if (!au?.hotel_id) return { ok: false, message: 'Otel kullanıcısı bulunamadı' };
+  const ctx = await resolveOpsHotelIdForCaller();
+  if (!ctx.ok) return { ok: false, message: ctx.message };
+  const uid = ctx.userId;
+  const hotelId = ctx.hotelId;
 
   const { data, error } = await supabase
     .schema('ops')
     .from('guest_scan_sessions')
     .insert({
-      hotel_id: au.hotel_id,
+      hotel_id: hotelId,
       created_by: uid,
       session_type: sessionType,
       status: 'draft',

@@ -54,6 +54,8 @@ type Props = {
   uploadPhase?: ChatVideoUploadPhase;
   uploadFailed?: boolean;
   onRetry?: () => void;
+  /** false = yalnızca poster (Android oda açılışı); true = HLS preload */
+  preloadEnabled?: boolean;
 };
 
 function formatDuration(sec: number): string {
@@ -111,6 +113,7 @@ export function ChatVideoMessage({
   uploadPhase,
   uploadFailed = false,
   onRetry,
+  preloadEnabled = true,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -153,9 +156,11 @@ export function ChatVideoMessage({
 
   const playerWidth = winWidth;
   const playerHeight = Math.max(280, winHeight - insets.top - insets.bottom - 8);
+  const enablePreload = preloadEnabled;
+  const deferLocalVideo = Platform.OS === 'android' && !preloadEnabled;
 
   useEffect(() => {
-    if (!hls) {
+    if (!enablePreload || !hls) {
       setPreloaded(false);
       return;
     }
@@ -171,7 +176,7 @@ export function ChatVideoMessage({
     return () => {
       cancelled = true;
     };
-  }, [hls]);
+  }, [hls, enablePreload]);
 
   useEffect(() => {
     if (!fullscreen) {
@@ -258,7 +263,13 @@ export function ChatVideoMessage({
 
   const renderLocalOrThumb = () => {
     if (preview.hasEarlyPreview || thumb) {
-      return <ChatVideoPoster posterUri={preview.posterUri || thumb} videoUri={preview.videoUri} />;
+      return (
+        <ChatVideoPoster
+          posterUri={preview.posterUri || thumb}
+          videoUri={preview.videoUri}
+          deferLocalVideo={deferLocalVideo}
+        />
+      );
     }
     return null;
   };
@@ -366,7 +377,12 @@ export function ChatVideoMessage({
               onPlaybackStatusUpdate={onPreviewStatus}
             />
           ) : thumb ? (
-            <CachedImage uri={thumb} style={StyleSheet.absoluteFillObject} contentFit="cover" priority="high" />
+            <CachedImage
+              uri={thumb}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="cover"
+              priority={enablePreload ? 'high' : 'normal'}
+            />
           ) : (
             <LinearGradient colors={['#252530', '#121218']} style={StyleSheet.absoluteFillObject} />
           )}
@@ -385,15 +401,17 @@ export function ChatVideoMessage({
         </Pressable>
       </Animated.View>
 
-      <Video
-        ref={preloadRef}
-        source={{ uri: hls }}
-        style={styles.preloadHidden}
-        resizeMode={ResizeMode.CONTAIN}
-        shouldPlay={false}
-        isMuted
-        useNativeControls={false}
-      />
+      {enablePreload ? (
+        <Video
+          ref={preloadRef}
+          source={{ uri: hls }}
+          style={styles.preloadHidden}
+          resizeMode={ResizeMode.CONTAIN}
+          shouldPlay={false}
+          isMuted
+          useNativeControls={false}
+        />
+      ) : null}
 
       <Modal
         visible={fullscreen}

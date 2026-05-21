@@ -39,11 +39,14 @@ export function mrzCaptureQualityForPhase(phase: MrzLivePhase, torchOn: boolean)
 export function analyzeOcrLinesForMrzLive(lines: string[]): MrzLiveAnalyzeResult {
   const norm = normalizeMrzOcrLines(lines);
   const probe = norm.length ? norm : lines;
-  if (!ocrLinesLookLikeMrz(probe) && !ocrLinesLookLikeMrz(lines)) {
+  const rawProbe = lines.map((l) => l.trim()).filter((l) => l.length >= 14);
+  if (!ocrLinesLookLikeMrz(probe) && !ocrLinesLookLikeMrz(lines) && !ocrLinesLookLikeMrz(rawProbe)) {
     return { phase: 'watch' };
   }
 
-  const best = extractMrzFromLinesBest(probe.length ? probe : lines);
+  const best =
+    extractMrzFromLinesBest(probe.length ? probe : lines) ??
+    extractMrzFromLinesBest(rawProbe.length ? rawProbe : lines);
   if (!best) {
     return { phase: 'signal' };
   }

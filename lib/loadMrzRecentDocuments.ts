@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 export type MrzRecentDocRow = {
   id: string;
@@ -24,20 +25,9 @@ export type MrzRecentDocRow = {
 export async function loadMrzRecentDocuments(): Promise<
   { ok: true; data: MrzRecentDocRow[] } | { ok: false; message: string; code: string }
 > {
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
-  if (!uid) return { ok: false, message: 'Oturum yok', code: 'AUTH' };
-
-  const { data: au, error: auErr } = await supabase
-    .schema('ops')
-    .from('app_users')
-    .select('hotel_id')
-    .eq('id', uid)
-    .maybeSingle();
-  if (auErr || !au?.hotel_id) {
-    return { ok: false, message: 'Bu kullanıcı için ops.app_users kaydı yok.', code: 'NO_APP_USER' };
-  }
-  const hotelId = au.hotel_id;
+  const ctx = await resolveOpsHotelIdForCaller();
+  if (!ctx.ok) return { ok: false, message: ctx.message, code: ctx.code };
+  const hotelId = ctx.hotelId;
 
   const { data: docs, error: e0 } = await supabase
     .schema('ops')

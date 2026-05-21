@@ -1,33 +1,45 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
   RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { canManageStaffMealMenu, canSubmitMealMenuKitchenConfirm } from '@/lib/staffPermissions';
 import { toLocalYmd } from '@/lib/mealMenuDate';
-import { countFilledSlots } from '@/lib/mealMenuUi';
+import {
+  countFilledSlots,
+  mealMenuBrowseAnchorYmd,
+  monthStartDate,
+  isCurrentOrFutureMealMonth,
+} from '@/lib/mealMenuUi';
 import {
   fetchMealMenuForMonth,
-  fetchKitchenConfirmationsForMenu,
+  fetchKitchenConfirmationsForMenuLite,
   submitKitchenConfirmation,
   rowToMealFields,
   mealDayHasContent,
   summarizeMonthDays,
   type MealKitchenConfirmation,
   type MealMenuDayRow,
+  type MealMenuMonthMeta,
 } from '@/lib/staffMealMenu';
+import {
+  getStaffMealMenuCache,
+  setStaffMealMenuCache,
+  staffMealMenuCacheKey,
+  invalidateStaffMealMenuCache,
+} from '@/lib/staffMealMenuCache';
 import {
   MealMonthNavigator,
   MealMenuStatsStrip,
@@ -38,13 +50,7 @@ import {
 import { MealMonthDayPicker } from '@/components/mealMenu/MealMonthDayPicker';
 import { MealKitchenConfirmPanel } from '@/components/mealMenu/MealKitchenConfirmPanel';
 import { supabase } from '@/lib/supabase';
-import {
-  DEFAULT_MEAL_MENU_PDF_APPROVER,
-  DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE,
-  exportMealMenuPdf,
-  generateMealMenuPdfFile,
-  sendMealMenuPdfToPrinterEmail,
-} from '@/lib/mealMenuPdf';
+import { DEFAULT_MEAL_MENU_PDF_APPROVER, DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE } from '@/lib/mealMenuPdf';
 
 const MONTHS_TR = [
   'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
@@ -77,17 +83,25 @@ export default function StaffMealMenuScreen() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [printerMailLoading, setPrinterMailLoading] = useState(false);
 
-  /** Push / bildirimden gelen gün (YYYY-MM-DD) */
+  const todayStr = toLocalYmd(new Date());
+  const currentMonthStart = useMemo(() => monthStartDate(new Date()), []);
+  const listAnchorYmd = useMemo(
+    () => mealMenuBrowseAnchorYmd(viewMonth, todayStr),
+    [viewMonth, todayStr]
+  );
+  const canGoPrevMonth = viewMonth.getTime() > currentMonthStart.getTime();
+  const periodLabel = `${MONTHS_TR[viewMonth.getMonth()]} ${viewMonth.getFullYear()}`;
+
+  /** Push / bildirimden gelen gün (YYYY-MM-DD); geçmiş günler ana sayfada listelenmez */
   useEffect(() => {
     const raw = typeof mealDateParam === 'string' ? mealDateParam.trim().slice(0, 10) : '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return;
-    setSelectedYmd(raw);
     const [y, m] = raw.split('-').map((x) => parseInt(x, 10));
-    if (y && m) setViewMonth(new Date(y, m - 1, 1));
-  }, [mealDateParam]);
-
-  const todayStr = toLocalYmd(new Date());
-  const periodLabel = `${MONTHS_TR[viewMonth.getMonth()]} ${viewMonth.getFullYear()}`;
+    const vm = y && m ? new Date(y, m - 1, 1) : viewMonth;
+    const anchor = mealMenuBrowseAnchorYmd(vm, todayStr);
+    setSelectedYmd(raw >= anchor ? raw : anchor);
+    if (y && m) setViewMonth(vm);
+  }, [mealDateParam, todayStr]);
 
   useEffect(() => {
     if (!staff?.organization_id) {
@@ -102,59 +116,101 @@ export default function StaffMealMenuScreen() {
       .then(({ data }) => setOrgName((data as { name?: string } | null)?.name ?? null));
   }, [staff?.organization_id]);
 
-  const load = useCallback(async () => {
-    if (!staff?.organization_id) {
-      setMenuId(null);
-      setRows([]);
-      setConfirmations({});
+  const applyMenuBundle = useCallback((menu: MealMenuMonthMeta | null, days: MealMenuDayRow[]) => {
+    setMenuId(menu?.id ?? null);
+    setRows(days);
+    setPdfApproverName(menu?.pdf_approver_name?.trim() || DEFAULT_MEAL_MENU_PDF_APPROVER);
+    setPdfFooterNote(menu?.pdf_footer_note?.trim() || DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
+  }, []);
+
+  const load = useCallback(
+    async (opts?: { background?: boolean }) => {
+      if (!staff?.organization_id) {
+        setMenuId(null);
+        setRows([]);
+        setConfirmations({});
+        return;
+      }
+      const cacheKey = staffMealMenuCacheKey(staff.organization_id, viewMonth);
+      const cached = getStaffMealMenuCache(cacheKey);
+      if (cached && !opts?.background) {
+        applyMenuBundle(cached.menu, cached.days);
+        setConfirmations(canKitchen ? cached.confirmations : {});
+        setLoading(false);
+      } else if (!opts?.background) {
+        setLoading(true);
+      }
+
+      try {
+        const { menu, days } = await fetchMealMenuForMonth(staff.organization_id, viewMonth);
+        applyMenuBundle(menu, days);
+        if (!opts?.background) setLoading(false);
+
+        if (!menu?.id || !canKitchen) {
+          setConfirmations({});
+          setStaffMealMenuCache(cacheKey, { menu, days, confirmations: {} });
+          return;
+        }
+
+        void fetchKitchenConfirmationsForMenuLite(menu.id).then((conf) => {
+          setConfirmations(conf);
+          setStaffMealMenuCache(cacheKey, { menu, days, confirmations: conf });
+        });
+      } catch (e: unknown) {
+        if (!opts?.background) {
+          Alert.alert('Hata', (e as Error)?.message ?? 'Yüklenemedi');
+          setMenuId(null);
+          setRows([]);
+          setConfirmations({});
+          setLoading(false);
+        }
+      }
+    },
+    [staff?.organization_id, viewMonth, applyMenuBundle, canKitchen]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const cacheKey = staff?.organization_id
+        ? staffMealMenuCacheKey(staff.organization_id, viewMonth)
+        : null;
+      const cached = cacheKey ? getStaffMealMenuCache(cacheKey) : null;
+      if (cached) {
+        applyMenuBundle(cached.menu, cached.days);
+        setConfirmations(canKitchen ? cached.confirmations : {});
+        setLoading(false);
+        void load({ background: true });
+      } else {
+        void load();
+      }
+      return undefined;
+    }, [load, staff?.organization_id, viewMonth, applyMenuBundle, canKitchen])
+  );
+
+  useEffect(() => {
+    if (!isCurrentOrFutureMealMonth(viewMonth, todayStr)) {
+      setViewMonth(currentMonthStart);
       return;
     }
-    try {
-      const { menu, days } = await fetchMealMenuForMonth(staff.organization_id, viewMonth);
-      setMenuId(menu?.id ?? null);
-      setRows(days);
-      setPdfApproverName(menu?.pdf_approver_name?.trim() || DEFAULT_MEAL_MENU_PDF_APPROVER);
-      setPdfFooterNote(menu?.pdf_footer_note?.trim() || DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
-      if (menu?.id) {
-        const conf = await fetchKitchenConfirmationsForMenu(menu.id);
-        setConfirmations(conf);
-      } else {
-        setConfirmations({});
-      }
-    } catch (e: unknown) {
-      Alert.alert('Hata', (e as Error)?.message ?? 'Yüklenemedi');
-      setMenuId(null);
-      setRows([]);
-      setConfirmations({});
-    }
-  }, [staff?.organization_id, viewMonth]);
-
-  useEffect(() => {
-    let c = false;
-    (async () => {
-      setLoading(true);
-      await load();
-      if (!c) setLoading(false);
-    })();
-    return () => {
-      c = true;
-    };
-  }, [load]);
-
-  useEffect(() => {
     const prefix = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}`;
-    if (selectedYmd.startsWith(prefix)) return;
-    setSelectedYmd(todayStr.startsWith(prefix) ? todayStr : `${prefix}-01`);
-  }, [viewMonth, todayStr, selectedYmd]);
+    if (selectedYmd.startsWith(prefix) && selectedYmd >= listAnchorYmd) return;
+    setSelectedYmd(listAnchorYmd);
+  }, [viewMonth, todayStr, listAnchorYmd, currentMonthStart]);
 
   const onRefresh = async () => {
+    if (staff?.organization_id) invalidateStaffMealMenuCache(staff.organization_id);
     setRefreshing(true);
     await load();
     setRefreshing(false);
   };
 
+  const upcomingRows = useMemo(
+    () => rows.filter((r) => r.meal_date.slice(0, 10) >= listAnchorYmd),
+    [rows, listAnchorYmd]
+  );
+
   const dayChips = useMemo(() => {
-    return rows.map((r) => {
+    return upcomingRows.map((r) => {
       const ymd = r.meal_date.slice(0, 10);
       const fields = rowToMealFields(r);
       return {
@@ -163,10 +219,15 @@ export default function StaffMealMenuScreen() {
         isToday: ymd === todayStr,
         isPast: ymd < todayStr,
         isFuture: ymd > todayStr,
-        kitchenConfirmed: !!confirmations[ymd],
+        kitchenConfirmed: canKitchen && !!confirmations[ymd],
       };
     });
-  }, [rows, todayStr, confirmations]);
+  }, [upcomingRows, todayStr, confirmations, canKitchen]);
+
+  const upcomingWithContent = useMemo(
+    () => upcomingRows.filter((r) => mealDayHasContent(rowToMealFields(r))).length,
+    [upcomingRows]
+  );
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.meal_date.slice(0, 10) === selectedYmd) ?? null,
@@ -195,6 +256,7 @@ export default function StaffMealMenuScreen() {
     if (!menuId) return;
     setPdfLoading(true);
     try {
+      const { exportMealMenuPdf } = await import('@/lib/mealMenuPdf');
       await exportMealMenuPdf(buildPdfPayload());
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'PDF oluşturulamadı');
@@ -208,6 +270,7 @@ export default function StaffMealMenuScreen() {
     setPrinterMailLoading(true);
     try {
       const payload = buildPdfPayload();
+      const { generateMealMenuPdfFile, sendMealMenuPdfToPrinterEmail } = await import('@/lib/mealMenuPdf');
       const uri = await generateMealMenuPdfFile(payload);
       await sendMealMenuPdfToPrinterEmail(payload, uri);
       Alert.alert('Gönderildi', 'Belge yazıcı e-posta adresine gönderildi.');
@@ -241,7 +304,8 @@ export default function StaffMealMenuScreen() {
         preservedSamples: payload.preserved,
         note: payload.note,
       });
-      await load();
+      if (staff.organization_id) invalidateStaffMealMenuCache(staff.organization_id);
+      await load({ background: true });
       Alert.alert(t('staffMealKitchenConfirmTitle'), t('staffMealKitchenSaved'));
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kaydedilemedi');
@@ -256,20 +320,35 @@ export default function StaffMealMenuScreen() {
     selectedYmd <= todayStr &&
     !!menuId;
 
-  return (
-    <View style={styles.root}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        keyboardShouldPersistTaps="handled"
-      >
+  const renderUpcomingDay = useCallback(
+    ({ item: r }: { item: MealMenuDayRow }) => {
+      const ymd = r.meal_date.slice(0, 10);
+      return (
+        <MealMenuUpcomingDayRow
+          row={r}
+          ymd={ymd}
+          isToday={ymd === todayStr}
+          selected={ymd === selectedYmd}
+          hasConfirmation={canKitchen && !!confirmations[ymd]}
+          emptyMessage={t('staffMealDayEmptyMessage')}
+          kitchenShortLabel={t('staffMealKitchenShort')}
+          onSelect={setSelectedYmd}
+        />
+      );
+    },
+    [selectedYmd, todayStr, confirmations, canKitchen, t]
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <View style={styles.listHeader}>
         <MealMonthNavigator
           periodLabel={periodLabel}
           onPrev={() => shiftMonth(-1)}
           onNext={() => shiftMonth(1)}
           palette={staffMealPalette}
-          subtitle={t('staffMealBrowseSubtitle', { count: monthSummary.withContent })}
+          subtitle={t('staffMealBrowseSubtitle', { count: upcomingWithContent })}
+          prevDisabled={!canGoPrevMonth}
           compact
         />
 
@@ -359,24 +438,7 @@ export default function StaffMealMenuScreen() {
               palette={staffMealPalette}
             />
 
-            {selectedHasContent && selectedFields ? (
-              <MealDayViewCard
-                ymd={selectedYmd}
-                fields={selectedFields}
-                isToday={selectedYmd === todayStr}
-                palette={staffMealPalette}
-                compact
-              />
-            ) : (
-              <MealMenuEmptyState
-                icon="restaurant-outline"
-                title={t('staffMealDayEmptyTitle')}
-                message={t('staffMealDayEmptyMessage')}
-                palette={staffMealPalette}
-              />
-            )}
-
-            {confirmations[selectedYmd] && !showKitchenPanel ? (
+            {canKitchen && confirmations[selectedYmd] && !showKitchenPanel ? (
               <View style={styles.confirmedBanner}>
                 <Ionicons name="shield-checkmark" size={20} color="#16a34a" />
                 <Text style={styles.confirmedBannerText}>{t('staffMealKitchenConfirmedDay')}</Text>
@@ -401,43 +463,110 @@ export default function StaffMealMenuScreen() {
               />
             ) : null}
 
-            <Text style={styles.monthListTitle}>{t('staffMealMonthAllDays')}</Text>
-            {rows
-              .filter((r) => mealDayHasContent(rowToMealFields(r)))
-              .map((r) => {
-                const ymd = r.meal_date.slice(0, 10);
-                const conf = confirmations[ymd];
-                return (
-                  <TouchableOpacity key={ymd} onPress={() => setSelectedYmd(ymd)} activeOpacity={0.9}>
-                    <View style={styles.monthRow}>
-                      <MealDayViewCard
-                        ymd={ymd}
-                        fields={rowToMealFields(r)}
-                        isToday={ymd === todayStr}
-                        palette={staffMealPalette}
-                        compact
-                      />
-                      {conf ? (
-                        <View style={styles.confTag}>
-                          <Ionicons name="checkmark-circle" size={14} color="#16a34a" />
-                          <Text style={styles.confTagText}>{t('staffMealKitchenShort')}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+            <Text style={styles.monthListTitle}>{t('staffMealUpcomingDays')}</Text>
           </>
         )}
-      </ScrollView>
+      </View>
+    ),
+    [
+      periodLabel,
+      canGoPrevMonth,
+      upcomingWithContent,
+      menuId,
+      loading,
+      dayChips,
+      selectedYmd,
+      canManage,
+      pdfLoading,
+      printerMailLoading,
+      staff?.organization_id,
+      monthSummary,
+      selectedFields,
+      confirmations,
+      canKitchen,
+      showKitchenPanel,
+      confirmSaving,
+      selectedHasContent,
+      todayStr,
+      t,
+      router,
+      handleExportPdf,
+      handlePrinterMail,
+      handleKitchenSubmit,
+    ]
+  );
+
+  return (
+    <View style={styles.root}>
+      <FlatList
+        data={!loading && menuId ? upcomingRows : []}
+        keyExtractor={(r) => r.meal_date.slice(0, 10)}
+        renderItem={renderUpcomingDay}
+        ListHeaderComponent={listHeader}
+        contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 24 }]}
+        style={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        removeClippedSubviews
+      />
     </View>
   );
 }
 
+type UpcomingDayRowProps = {
+  row: MealMenuDayRow;
+  ymd: string;
+  isToday: boolean;
+  selected: boolean;
+  hasConfirmation: boolean;
+  emptyMessage: string;
+  kitchenShortLabel: string;
+  onSelect: (ymd: string) => void;
+};
+
+const MealMenuUpcomingDayRow = memo(function MealMenuUpcomingDayRow({
+  row,
+  ymd,
+  isToday,
+  selected,
+  hasConfirmation,
+  emptyMessage,
+  kitchenShortLabel,
+  onSelect,
+}: UpcomingDayRowProps) {
+  const fields = rowToMealFields(row);
+  return (
+    <TouchableOpacity onPress={() => onSelect(ymd)} activeOpacity={0.9}>
+      <View style={styles.monthRow}>
+        <MealDayViewCard
+          ymd={ymd}
+          fields={fields}
+          isToday={isToday}
+          palette={staffMealPalette}
+          compact
+          showWhenEmpty
+          emptyMessage={emptyMessage}
+          selected={selected}
+        />
+        {hasConfirmation ? (
+          <View style={styles.confTag}>
+            <Ionicons name="checkmark-circle" size={14} color="#16a34a" />
+            <Text style={styles.confTagText}>{kitchenShortLabel}</Text>
+          </View>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingTop: 4 },
+  listContent: { paddingHorizontal: 16, paddingTop: 4 },
+  listHeader: {},
   pickerBlock: { marginBottom: 2 },
   linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   loader: { marginTop: 28, marginBottom: 16 },

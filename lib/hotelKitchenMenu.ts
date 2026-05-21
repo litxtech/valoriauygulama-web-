@@ -1,42 +1,21 @@
 import { supabase } from '@/lib/supabase';
+import { invalidatePublicAppOriginCache } from '@/lib/appPublicUrl';
 import {
   getHotelKitchenMenuCache,
   invalidateHotelKitchenMenuCache,
   setHotelKitchenMenuCache,
 } from '@/lib/hotelKitchenMenuCache';
 
+export type {
+  HotelKitchenMenuItemRow,
+  HotelKitchenMenuImageRow,
+  HotelKitchenMenuItemWithImages,
+} from '@/lib/hotelKitchenMenuTypes';
+
 export { invalidateHotelKitchenMenuCache, getHotelKitchenMenuCache } from '@/lib/hotelKitchenMenuCache';
 
 export const HOTEL_KITCHEN_MENU_BUCKET = 'hotel-kitchen-menu';
 export const MAX_HOTEL_KITCHEN_MENU_IMAGES = 5;
-
-export type HotelKitchenMenuItemRow = {
-  id: string;
-  organization_id: string;
-  category_title: string;
-  name: string;
-  description: string | null;
-  price: number;
-  served_in_hotel_restaurant: boolean;
-  is_available: boolean;
-  sort_order: number;
-  cover_image_url?: string | null;
-  image_count?: number;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type HotelKitchenMenuImageRow = {
-  id: string;
-  item_id: string;
-  image_url: string;
-  sort_order: number;
-};
-
-export type HotelKitchenMenuItemWithImages = HotelKitchenMenuItemRow & {
-  images: HotelKitchenMenuImageRow[];
-  is_favorited?: boolean;
-};
 
 export function newHotelKitchenMenuItemId(): string {
   const g = globalThis as { crypto?: { randomUUID?: () => string } };
@@ -194,11 +173,15 @@ export async function fetchGuestFavoriteItemIds(): Promise<Set<string>> {
 
 export async function fetchHotelKitchenMenuForGuest(options?: {
   skipCache?: boolean;
+  /** false = favori sorgusu atlanır (liste daha hızlı açılır) */
+  withFavorites?: boolean;
 }): Promise<HotelKitchenMenuItemWithImages[]> {
-  const [rows, favIds] = await Promise.all([
-    fetchHotelKitchenMenuItems({ availableOnly: true, skipCache: options?.skipCache }),
-    fetchGuestFavoriteItemIds(),
-  ]);
+  const rows = await fetchHotelKitchenMenuItems({
+    availableOnly: true,
+    skipCache: options?.skipCache,
+  });
+  if (options?.withFavorites === false) return rows;
+  const favIds = await fetchGuestFavoriteItemIds();
   return rows.map((r) => ({ ...r, is_favorited: favIds.has(r.id) }));
 }
 
@@ -295,6 +278,7 @@ export async function deleteHotelKitchenMenuItem(itemId: string): Promise<void> 
   });
   if (error) throw new Error(error.message);
   invalidateHotelKitchenMenuCache();
+  invalidatePublicAppOriginCache();
 }
 
 export function distinctCategoryTitles(items: HotelKitchenMenuItemRow[]): string[] {
@@ -318,12 +302,18 @@ export function coverImageUrl(item: HotelKitchenMenuItemWithImages): string | nu
   return item.cover_image_url ?? item.images[0]?.image_url ?? null;
 }
 
-export async function resolveLightboxUrls(item: HotelKitchenMenuItemWithImages): Promise<string[]> {
+/** Liste satırından anında lightbox (ağ beklemeden kapak). */
+export function resolveLightboxUrlsSync(item: HotelKitchenMenuItemWithImages): string[] {
   const fromRow = item.images.map((im) => im.image_url).filter(Boolean);
-  if ((item.image_count ?? 0) > 1 && fromRow.length <= 1) {
-    return fetchHotelKitchenMenuImageUrls(item.id);
-  }
   if (fromRow.length > 0) return fromRow;
   const c = coverImageUrl(item);
   return c ? [c] : [];
+}
+
+export async function resolveLightboxUrls(item: HotelKitchenMenuItemWithImages): Promise<string[]> {
+  const immediate = resolveLightboxUrlsSync(item);
+  const total = item.image_count ?? immediate.length;
+  if (total <= 1 || immediate.length >= total) return immediate;
+  const full = await fetchHotelKitchenMenuImageUrls(item.id);
+  return full.length > 0 ? full : immediate;
 }

@@ -63,8 +63,14 @@ export function canLockMrzLiveScan(args: {
   if (parsed.checksumsValid === false) return false;
 
   const ratio = mrzCharsetRatio(raw);
-  if (ratio < 0.88) return false;
+  if (ratio < 0.84) return false;
   if (!parsed.documentNumber?.trim()) return false;
+
+  const isPassport = parsed.documentType === 'passport';
+  if (isPassport) {
+    return ratio >= 0.86 || parsed.checksumsValid === true;
+  }
+
   if (!parsed.firstName?.trim() && !parsed.lastName?.trim()) return false;
   return true;
 }

@@ -10,12 +10,10 @@ export const appTabBar = {
   inactive: '#6B7280',
   /** Bir sekme rengi bulunamazsa (fallback) */
   fallbackActive: '#6366F1',
-  /** Orta mesaj: diğer sekmelerle hizalı, belirgin ama taşmayan daire. */
+  /** Orta mesaj: tabBarIcon slotunda; yan ikonlardan hafif büyük daire. */
   centerMessage: {
-    size: 40,
-    icon: 22,
-    /** Etiketsiz orta sekme: ikon satırını yan sekmelerle hizalamak için yukarı kaydır */
-    lift: 18,
+    size: 36,
+    icon: 20,
   },
 } as const;
 
