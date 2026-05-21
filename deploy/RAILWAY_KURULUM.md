@@ -34,7 +34,9 @@ Aşağıdakiler **her iki serviste de aynı**:
 | `LOG_LEVEL` | `info` |
 | `NODE_ENV` | `production` |
 
-`PORT` — Railway otomatik verir; elle yazmayın.
+`PORT` — Railway otomatik verir; **elle yazmayın**. Boş `PORT=` değişkeni varsa silin (healthcheck başarısız olur).
+
+Secret’lar (service_role, token, shared secret) Variables’da **Runtime** olarak kalsın; build-time’a taşımayın.
 
 ---
 
@@ -131,6 +133,7 @@ Jandarma reddederse: paneldeki IP/şifre/tesis kodu — Railway tarafı ayakta i
 | Belirti | Çözüm |
 |---------|--------|
 | `/health` 404 | kbs-ops Root Directory `railway-service` değil |
+| Healthcheck failed / service unavailable | Deploy log’da `[kbs-ops] startup failed` — zorunlu env eksik veya `GATEWAY_BASE_URL` geçersiz (https:// ile kbs-core domain) |
 | Bağlantı testi timeout | kbs-core ayakta mı, `GATEWAY_BASE_URL` doğru mu |
 | 401 / gateway token | `KBS_GATEWAY_TOKEN` Supabase = ops servisi |
 | Şifre çözülemedi | `KBS_CREDENTIAL_SECRET` Supabase Edge = iki Railway servisi |

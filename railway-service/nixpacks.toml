@@ -1,0 +1,12 @@
+# Railway/Nixpacks: build sırasında secret ENV/ARG enjekte etme (runtime Variables kullanın).
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-9_x"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/app/server.js"
