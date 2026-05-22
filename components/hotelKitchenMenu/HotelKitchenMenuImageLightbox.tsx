@@ -15,7 +15,7 @@ export function HotelKitchenMenuImageLightbox({ visible, urls, initialIndex = 0,
       urls={urls}
       initialIndex={initialIndex}
       onClose={onClose}
-      accentColor="#fff"
+      accentColor="#f5e6c8"
     />
   );
 }

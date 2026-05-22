@@ -140,6 +140,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         isAvailable,
       };
 
+      // Yeni ürün: görseller storage yolunda bu id kullanılır; RPC kayıt yoksa INSERT yapar (güncelleme değil).
       const savedId = itemId ?? newHotelKitchenMenuItemId();
       const existingUrls = images.filter((im) => im.uploadedUrl).map((im) => im.uploadedUrl!);
       const pendingUris = images.filter((im) => !im.uploadedUrl).map((im) => im.uri);

@@ -55,6 +55,7 @@ import {
   staffMealMenuNotificationHref,
 } from '@/lib/staffMealMenuNotification';
 import { registerBackgroundNotificationTask } from '@/lib/backgroundNotificationTask';
+import { safeRouterReplace } from '@/lib/safeRouter';
 
 if (Platform.OS !== 'web') {
   SplashScreen.preventAutoHideAsync();
@@ -639,13 +640,13 @@ function RootLayoutInner() {
               await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
               clearPendingRoom();
             }
-            router.replace('/');
+            safeRouterReplace(router, '/');
           } catch (e) {
             log.error('RootLayout', 'auth/callback setSession', e);
-            router.replace('/auth/callback');
+            safeRouterReplace(router, '/auth/callback');
           }
         } else {
-          router.replace('/auth/callback');
+          safeRouterReplace(router, '/auth/callback');
         }
         return;
       }
@@ -672,7 +673,10 @@ function RootLayoutInner() {
       // Tek sayfa sözleşme onayı: doğrudan /guest/sign-one (QR okutulunca sayfa hızlıca açılsın)
       if (parsed.type === 'sign-one') {
         if (Platform.OS === 'web') {
-          router.replace({ pathname: '/guest/sign-one', params: { t: parsed.token ?? '', l: parsed.lang ?? 'tr' } });
+          safeRouterReplace(router, {
+            pathname: '/guest/sign-one',
+            params: { t: parsed.token ?? '', l: parsed.lang ?? 'tr' },
+          });
           if (parsed.token) {
             supabase
               .from('room_qr_codes')

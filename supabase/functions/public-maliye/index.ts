@@ -416,7 +416,8 @@ function renderPage(token: string) {
       box.style.display = "block";
       box.innerHTML = "<h3 style='margin:0 0 8px'>Gunluk Musteri Formlari</h3>" + (res.items || []).map((f) =>
         '<div class="doc"><div class="docTitle">' + (f.full_name || "Isimsiz") + '</div><div class="muted">' +
-        (f.created_at || "-") + ' / Oda: ' + (f.room_id || "-") +
+        (f.created_at || "-") + ' / Oda: ' + (f.room_number || f.room_id || "-") +
+        (f.contract_lang ? ' / Dil: ' + f.contract_lang : '') +
         '</div></div>'
       ).join("");
     }
@@ -547,16 +548,16 @@ Deno.serve(async (req: Request) => {
         .limit(1)
         .maybeSingle();
 
-      const { data: latestGuest } = await supabase
-        .from("guests")
-        .select("created_at")
+      const { data: latestAcceptance } = await supabase
+        .from("contract_acceptances")
+        .select("accepted_at")
         .eq("organization_id", orgId)
-        .order("created_at", { ascending: false })
+        .order("accepted_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
       const docsUpdatedAt = latestDocument?.updated_at ?? null;
-      const formsUpdatedAt = latestGuest?.created_at ?? null;
+      const formsUpdatedAt = latestAcceptance?.accepted_at ?? null;
       const version = `${docsUpdatedAt ?? "none"}|${formsUpdatedAt ?? "none"}`;
       return new Response(JSON.stringify({ version, docsUpdatedAt, formsUpdatedAt }), {
         status: 200,
@@ -637,24 +638,43 @@ Deno.serve(async (req: Request) => {
     const month = (url.searchParams.get("month") ?? "").trim();
 
     let q = supabase
-      .from("guests")
-      .select("id, full_name, room_id, phone, id_number, created_at")
+      .from("contract_acceptances")
+      .select(
+        "id, accepted_at, contract_lang, token, guest_id, guests(id, full_name, room_id, phone, id_number, rooms(room_number))"
+      )
       .eq("organization_id", orgId)
-      .order("created_at", { ascending: false });
+      .order("accepted_at", { ascending: false });
 
     if (date) {
-      q = q.gte("created_at", `${date}T00:00:00.000Z`).lte("created_at", `${date}T23:59:59.999Z`);
+      q = q
+        .gte("accepted_at", `${date}T00:00:00.000Z`)
+        .lte("accepted_at", `${date}T23:59:59.999Z`);
     } else if (month) {
       const from = `${month}-01T00:00:00.000Z`;
       const toDate = new Date(`${month}-01T00:00:00.000Z`);
       toDate.setUTCMonth(toDate.getUTCMonth() + 1);
-      q = q.gte("created_at", from).lt("created_at", toDate.toISOString());
+      q = q.gte("accepted_at", from).lt("accepted_at", toDate.toISOString());
     }
 
     if (view === "latest-form") q = q.limit(1);
     else q = q.limit(500);
 
-    const { data } = await q;
+    const { data: rawRows } = await q;
+    const data = (rawRows ?? []).map((row: Record<string, unknown>) => {
+      const g = row.guests as Record<string, unknown> | null;
+      const rooms = g?.rooms as { room_number?: string } | null;
+      return {
+        id: row.id,
+        full_name: (g?.full_name as string) ?? null,
+        room_id: (g?.room_id as string) ?? null,
+        room_number: rooms?.room_number ?? null,
+        phone: (g?.phone as string) ?? null,
+        id_number: (g?.id_number as string) ?? null,
+        created_at: row.accepted_at,
+        contract_lang: row.contract_lang,
+        token: row.token,
+      };
+    });
     await supabase.from("maliye_audit_logs").insert({
       organization_id: orgId,
       token_id: auth.row.id,

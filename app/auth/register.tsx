@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { safeRouterReplace } from '@/lib/safeRouter';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
@@ -50,7 +51,7 @@ export default function AuthRegisterScreen() {
       });
       if (error) throw error;
       await useAuthStore.getState().loadSession();
-      router.replace('/');
+      safeRouterReplace(router, '/');
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string };
       if (e?.code === 'ERR_REQUEST_CANCELED') return;
@@ -97,7 +98,7 @@ export default function AuthRegisterScreen() {
       });
       if (error) throw error;
       await useAuthStore.getState().loadSession();
-      router.replace('/');
+      safeRouterReplace(router, '/');
     } catch (err: unknown) {
       log.warn('AuthRegister', 'Google sign-up', err);
       Alert.alert(t('googleSignUp'), (err as Error)?.message ?? t('signUpFailed'));

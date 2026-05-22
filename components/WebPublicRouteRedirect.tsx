@@ -1,32 +1,44 @@
 import { Platform } from 'react-native';
 import { Redirect, usePathname } from 'expo-router';
+import { MaliyeWebPortalRedirect } from '@/components/MaliyeWebPortalRedirect';
 import { resolvePublicWebRoute } from '@/lib/publicWebRoute';
 
 /**
  * Web QR yolları (/menü, /sözleşme, /maliye, /guest/sign-one).
  * Redirect render aşamasında çalışır — Root Layout mount olmadan router.replace hatası önlenir.
  */
+const EXPO_GUEST_CONTRACT_PATHS = ['/guest/sign-one', '/guest/success', '/guest/contract', '/guest/form'];
+
 export function WebPublicRouteRedirect() {
   const pathname = usePathname();
 
   if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
 
-  const route = resolvePublicWebRoute(
-    window.location.pathname || '',
-    window.location.search || ''
-  );
-  if (!route) return null;
+  const winPath = window.location.pathname || '';
+  const winSearch = window.location.search || '';
+  const winRoute = resolvePublicWebRoute(winPath, winSearch);
 
-  const normalized = (pathname || '').replace(/\/$/, '') || '/';
+  // Maliye: adres çubuğu /maliye ise doğrudan canlı Edge portalı (iframe/Expo rota gerekmez)
+  if (winRoute?.kind === 'maliye') {
+    return <MaliyeWebPortalRedirect token={winRoute.token} />;
+  }
 
-  // Alias / hedef rotalar (çift yönlendirme önlenir)
+  const expoPath = (pathname || '').replace(/\/$/, '') || '/';
+
+  if (EXPO_GUEST_CONTRACT_PATHS.some((p) => expoPath === p || expoPath.startsWith(`${p}/`))) {
+    return null;
+  }
+
+  const route = resolvePublicWebRoute(winPath, winSearch);
+  if (!route || route.kind === 'maliye') return null;
+
   if (
-    normalized === '/sözleşme' ||
-    normalized === '/sozlesme' ||
-    normalized === '/maliye' ||
-    normalized.startsWith('/menü/') ||
-    normalized.startsWith('/menu/') ||
-    normalized.startsWith('/maliye/')
+    expoPath === '/sözleşme' ||
+    expoPath === '/sozlesme' ||
+    expoPath === '/maliye' ||
+    expoPath.startsWith('/menü/') ||
+    expoPath.startsWith('/menu/') ||
+    expoPath.startsWith('/maliye/')
   ) {
     return null;
   }
@@ -44,18 +56,6 @@ export function WebPublicRouteRedirect() {
         href={{
           pathname: '/guest/sign-one',
           params: { t: route.token ?? '', l: route.lang ?? 'tr' },
-        }}
-      />
-    );
-  }
-
-  if (route.kind === 'maliye') {
-    if (pathname === '/maliye' || pathname.startsWith('/maliye/')) return null;
-    return (
-      <Redirect
-        href={{
-          pathname: '/maliye',
-          params: route.token ? { token: route.token } : {},
         }}
       />
     );

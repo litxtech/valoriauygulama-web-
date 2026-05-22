@@ -43,12 +43,25 @@ export default function AdminMaliyeDocuments() {
     setRows((prev) => prev.map((r) => (r.id === item.id ? { ...r, is_maliye_visible: next } : r)));
   };
 
-  const assignSection = async (item: Row) => {
-    if (!sections.length) return Alert.alert('Bilgi', 'Önce maliye section oluşturulmalı.');
-    const section = sections[0];
-    const { error } = await supabase.from('documents').update({ maliye_section_id: section.id }).eq('id', item.id);
-    if (error) return Alert.alert('Hata', error.message);
-    setRows((prev) => prev.map((r) => (r.id === item.id ? { ...r, maliye_section_id: section.id } : r)));
+  const assignSection = (item: Row) => {
+    if (!sections.length) return Alert.alert('Bilgi', 'Önce maliye çekmecesi oluşturun.');
+    const buttons = [
+      ...sections.map((s) => ({
+        text: s.name,
+        onPress: async () => {
+          const { error } = await supabase
+            .from('documents')
+            .update({ maliye_section_id: s.id })
+            .eq('id', item.id);
+          if (error) return Alert.alert('Hata', error.message);
+          setRows((prev) =>
+            prev.map((r) => (r.id === item.id ? { ...r, maliye_section_id: s.id } : r))
+          );
+        },
+      })),
+      { text: 'İptal', style: 'cancel' as const },
+    ];
+    Alert.alert('Çekmece seçin', item.title, buttons);
   };
 
   const createSection = async () => {

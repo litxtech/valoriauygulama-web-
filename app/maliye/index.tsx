@@ -1,21 +1,31 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { WebView } from 'react-native-webview';
-import { supabaseUrl } from '@/lib/supabase';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
+import { buildPublicMaliyePortalUrl, isMaliyePortalUrl } from '@/lib/maliyePortalUrl';
 
-/** valoria.tr/maliye — denetim portalı (Supabase Edge HTML) */
+function resolveMaliyeToken(params: { token?: string; t?: string }): string {
+  const raw =
+    (typeof params.token === 'string' && params.token.trim()) ||
+    (typeof params.t === 'string' && params.t.trim()) ||
+    '';
+  return raw || FIXED_MALIYE_QR_TOKEN;
+}
+
+/** valoria.tr/maliye — canlı denetim portalı (Supabase Edge public-maliye) */
 export default function PublicMaliyeScreen() {
-  const params = useLocalSearchParams<{ token?: string }>();
-  const token =
-    (typeof params.token === 'string' && params.token.trim()) || FIXED_MALIYE_QR_TOKEN;
+  const params = useLocalSearchParams<{ token?: string; t?: string }>();
+  const token = resolveMaliyeToken(params);
 
-  const portalUri = useMemo(() => {
-    const base = (supabaseUrl ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '');
-    if (!base) return '';
-    return `${base}/functions/v1/public-maliye?token=${encodeURIComponent(token)}`;
-  }, [token]);
+  const portalUri = useMemo(() => buildPublicMaliyePortalUrl(token), [token]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !portalUri) return;
+    if (!isMaliyePortalUrl(window.location.href)) {
+      window.location.replace(portalUri);
+    }
+  }, [portalUri]);
 
   if (!portalUri) {
     return (
@@ -27,18 +37,9 @@ export default function PublicMaliyeScreen() {
 
   if (Platform.OS === 'web') {
     return (
-      <iframe
-        title="Valoria Maliye"
-        src={portalUri}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          border: 'none',
-          background: '#0b1220',
-        }}
-      />
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#93c5fd" />
+      </View>
     );
   }
 

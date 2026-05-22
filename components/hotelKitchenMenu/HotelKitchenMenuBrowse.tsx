@@ -22,17 +22,20 @@ import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/Hot
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
 import {
-  distinctCategoryTitles,
   fetchGuestFavoriteItemIds,
   fetchHotelKitchenMenuForGuest,
   fetchHotelKitchenMenuItems,
   getHotelKitchenMenuCache,
-  isBreakfastCategory,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import {
+  buildCategoryChips,
+  buildNameTagChips,
+  buildProductChips,
+  filterMenuItems,
+  type MenuSectionFilter,
+} from '@/lib/hotelKitchenMenuFilters';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
-
-type SectionFilter = 'all' | 'breakfast';
 
 type MenuSection = { title: string; data: HotelKitchenMenuItemWithImages[] };
 
@@ -65,8 +68,10 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [section, setSection] = useState<SectionFilter>('all');
+  const [section, setSection] = useState<MenuSectionFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [productFilter, setProductFilter] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
 
@@ -140,34 +145,45 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
     setRefreshing(false);
   };
 
-  const categories = useMemo(() => distinctCategoryTitles(items), [items]);
+  const categoryChips = useMemo(() => buildCategoryChips(items, section), [items, section]);
+  const productChips = useMemo(
+    () => buildProductChips(items, section, categoryFilter),
+    [items, section, categoryFilter]
+  );
+  const nameTagChips = useMemo(
+    () =>
+      productChips.length >= 2
+        ? []
+        : buildNameTagChips(items, section, categoryFilter, productFilter),
+    [items, section, categoryFilter, productFilter, productChips.length]
+  );
 
-  const filtered = useMemo(() => {
-    let list = items;
-    if (section === 'breakfast') {
-      list = list.filter((i) => isBreakfastCategory(i.category_title));
-    }
-    if (categoryFilter) {
-      list = list.filter((i) => i.category_title.trim().toLowerCase() === categoryFilter.toLowerCase());
-    }
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (i) =>
-          i.name.toLowerCase().includes(q) ||
-          i.category_title.toLowerCase().includes(q) ||
-          (i.description ?? '').toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [items, section, categoryFilter, search]);
+  const filtered = useMemo(
+    () =>
+      filterMenuItems({
+        items,
+        section,
+        categoryFilter,
+        productFilter,
+        tagFilter,
+        search,
+      }),
+    [items, section, categoryFilter, productFilter, tagFilter, search]
+  );
+
+  const hasActiveFilters = !!(categoryFilter || productFilter || tagFilter || search.trim());
 
   const sections = useMemo(() => {
     if (filtered.length === 0) return [{ title: '', data: [] as HotelKitchenMenuItemWithImages[] }];
-    const q = search.trim();
-    if (q || categoryFilter) return [{ title: '', data: filtered }];
+    if (hasActiveFilters) return [{ title: '', data: filtered }];
     return groupByCategory(filtered);
-  }, [filtered, search, categoryFilter]);
+  }, [filtered, hasActiveFilters]);
+
+  const pickCategory = useCallback((title: string | null) => {
+    setCategoryFilter(title);
+    setProductFilter(null);
+    setTagFilter(null);
+  }, []);
 
   const itemCount = filtered.length;
 
@@ -259,32 +275,92 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
         </TouchableOpacity>
       </View>
 
-      {categories.length > 0 ? (
+      {categoryChips.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.catScrollContent}>
           <TouchableOpacity
             style={[styles.catChip, !categoryFilter && styles.catChipOn]}
-            onPress={() => setCategoryFilter(null)}
+            onPress={() => pickCategory(null)}
           >
             <Text style={[styles.catChipText, !categoryFilter && styles.catChipTextOn]}>
               {t('hotelKitchenMenuAllCategories')}
             </Text>
           </TouchableOpacity>
-          {categories.map((c) => (
+          {categoryChips.map((c) => (
             <TouchableOpacity
-              key={c}
-              style={[styles.catChip, categoryFilter === c && styles.catChipOn]}
-              onPress={() => setCategoryFilter(categoryFilter === c ? null : c)}
+              key={c.title}
+              style={[styles.catChip, categoryFilter === c.title && styles.catChipOn]}
+              onPress={() => pickCategory(categoryFilter === c.title ? null : c.title)}
             >
-              <Text style={[styles.catChipText, categoryFilter === c && styles.catChipTextOn]}>{c}</Text>
+              <Text style={[styles.catChipText, categoryFilter === c.title && styles.catChipTextOn]}>
+                {c.title} ({c.count})
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       ) : null}
 
-      {itemCount > 0 ? (
-        <Text style={styles.resultCount}>
-          {t('hotelKitchenMenuResultCount', { count: itemCount })}
-        </Text>
+      {productChips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.catScrollContent, { marginTop: 10 }]}
+        >
+          {productChips.map((p) => (
+            <TouchableOpacity
+              key={p.name}
+              style={[styles.catChip, productFilter === p.name && styles.catChipOn]}
+              onPress={() => {
+                setProductFilter(productFilter === p.name ? null : p.name);
+                setTagFilter(null);
+              }}
+            >
+              <Text style={[styles.catChipText, productFilter === p.name && styles.catChipTextOn]}>{p.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
+
+      {nameTagChips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.catScrollContent, { marginTop: 10 }]}
+        >
+          {nameTagChips.map((tag) => (
+            <TouchableOpacity
+              key={tag.tag}
+              style={[styles.catChip, tagFilter === tag.tag && styles.catChipOn]}
+              onPress={() => {
+                setTagFilter(tagFilter === tag.tag ? null : tag.tag);
+                setProductFilter(null);
+              }}
+            >
+              <Text style={[styles.catChipText, tagFilter === tag.tag && styles.catChipTextOn]}>
+                {tag.label} ({tag.count})
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
+
+      {itemCount > 0 || hasActiveFilters ? (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+          <Text style={styles.resultCount}>
+            {itemCount > 0 ? t('hotelKitchenMenuResultCount', { count: itemCount }) : ' '}
+          </Text>
+          {hasActiveFilters ? (
+            <TouchableOpacity
+              onPress={() => {
+                pickCategory(null);
+                setSearch('');
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: menuUi.accent }}>
+                {t('hotelKitchenMenuClearFilters')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );

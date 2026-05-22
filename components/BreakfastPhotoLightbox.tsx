@@ -25,16 +25,41 @@ type Props = {
   accentColor?: string;
 };
 
-/**
- * iOS: ScrollView max/minZoom (pinch) — extra native modül gerekmez.
- * Android: RN ScrollView’da zoom yok; yatay sayfa + tam ekran resim. (Gesture handler eklentisi dev client yeniden build istiyordu.)
- */
-function LightboxImagePage({ uri, pageW, pageH, iosZoom }: { uri: string; pageW: number; pageH: number; iosZoom: boolean }) {
+function LightboxImagePage({
+  uri,
+  pageW,
+  pageH,
+  iosZoom,
+}: {
+  uri: string;
+  pageW: number;
+  pageH: number;
+  iosZoom: boolean;
+}) {
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.webPage, { width: pageW, height: pageH }]}>
+        <CachedImage
+          uri={uri}
+          style={styles.webImage}
+          contentFit="contain"
+          priority="high"
+          recyclingKey={uri}
+        />
+      </View>
+    );
+  }
+
   if (iosZoom) {
     return (
       <ScrollView
         style={{ width: pageW, height: pageH }}
-        contentContainerStyle={{ width: pageW, minHeight: pageH, justifyContent: 'center', alignItems: 'center' }}
+        contentContainerStyle={{
+          width: pageW,
+          minHeight: pageH,
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
         maximumZoomScale={4}
         minimumZoomScale={1}
         centerContent
@@ -43,13 +68,26 @@ function LightboxImagePage({ uri, pageW, pageH, iosZoom }: { uri: string; pageW:
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
-        <CachedImage uri={uri} style={{ width: pageW, height: pageH }} contentFit="contain" priority="high" recyclingKey={uri} />
+        <CachedImage
+          uri={uri}
+          style={{ width: pageW, height: pageH }}
+          contentFit="contain"
+          priority="high"
+          recyclingKey={uri}
+        />
       </ScrollView>
     );
   }
+
   return (
     <View style={{ width: pageW, height: pageH, justifyContent: 'center', alignItems: 'center' }}>
-      <CachedImage uri={uri} style={{ width: pageW, height: pageH }} contentFit="contain" priority="high" recyclingKey={uri} />
+      <CachedImage
+        uri={uri}
+        style={{ width: pageW, height: pageH }}
+        contentFit="contain"
+        priority="high"
+        recyclingKey={uri}
+      />
     </View>
   );
 }
@@ -66,7 +104,11 @@ export function BreakfastPhotoLightbox({
   const list = urls.filter(Boolean);
   const [page, setPage] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
-  const imgH = Math.min(height * 0.9, height - insets.top - insets.bottom - 20);
+  const isWeb = Platform.OS === 'web';
+  const pageW = isWeb ? width : width;
+  const pageH = isWeb
+    ? Math.max(320, height - insets.top - insets.bottom - 24)
+    : Math.min(height * 0.9, height - insets.top - insets.bottom - 20);
   const iosZoom = Platform.OS === 'ios';
 
   useEffect(() => {
@@ -75,17 +117,17 @@ export function BreakfastPhotoLightbox({
     const i = Math.min(Math.max(0, initialIndex), Math.max(0, list.length - 1));
     setPage(i);
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ x: i * width, animated: false });
+      scrollRef.current?.scrollTo({ x: i * pageW, animated: false });
     });
-  }, [visible, initialIndex, list, width]);
+  }, [visible, initialIndex, list, pageW]);
 
   const onMomentumEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const x = e.nativeEvent.contentOffset.x;
-      const next = Math.round(x / Math.max(1, width));
+      const next = Math.round(x / Math.max(1, pageW));
       setPage(Math.min(Math.max(0, next), Math.max(0, list.length - 1)));
     },
-    [list.length, width]
+    [list.length, pageW]
   );
 
   if (!list.length) return null;
@@ -93,7 +135,12 @@ export function BreakfastPhotoLightbox({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.backdropRoot}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Kapat" />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Kapat"
+        />
 
         <View pointerEvents="box-none" style={styles.centerColumn}>
           <ScrollView
@@ -103,22 +150,23 @@ export function BreakfastPhotoLightbox({
             showsHorizontalScrollIndicator={false}
             onMomentumScrollEnd={onMomentumEnd}
             keyboardShouldPersistTaps="handled"
-            style={{ width, height: imgH }}
+            style={{ width: pageW, height: pageH }}
+            contentContainerStyle={{ alignItems: 'center' }}
             nestedScrollEnabled
           >
             {list.map((uri, index) => (
               <View
                 key={`${uri}-${index}`}
-                style={{ width, height: imgH, justifyContent: 'center', alignItems: 'center' }}
+                style={{ width: pageW, height: pageH, justifyContent: 'center', alignItems: 'center' }}
               >
-                <LightboxImagePage uri={uri} pageW={width} pageH={imgH} iosZoom={iosZoom} />
+                <LightboxImagePage uri={uri} pageW={pageW} pageH={pageH} iosZoom={iosZoom} />
               </View>
             ))}
           </ScrollView>
         </View>
 
         <View pointerEvents="box-none" style={styles.topBar}>
-          <View style={[styles.topBarRow, { top: insets.top + 6 }]}>
+          <View style={[styles.topBarRow, { top: insets.top + 8 }]}>
             {list.length > 1 ? (
               <View style={styles.counterPill} accessibilityLiveRegion="polite" pointerEvents="auto">
                 <Text style={styles.counterText}>
@@ -128,12 +176,14 @@ export function BreakfastPhotoLightbox({
             ) : null}
           </View>
           <TouchableOpacity
-            style={[styles.closeBtn, { top: insets.top + 8, right: 12 }]}
+            style={[styles.closeBtn, { top: insets.top + 10, right: isWeb ? 20 : 12 }]}
             onPress={onClose}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             activeOpacity={0.85}
           >
-            <Ionicons name="close" size={32} color={accentColor} />
+            <View style={styles.closeBtnBg}>
+              <Ionicons name="close" size={28} color={accentColor} />
+            </View>
           </TouchableOpacity>
         </View>
       </View>
@@ -142,21 +192,39 @@ export function BreakfastPhotoLightbox({
 }
 
 const styles = StyleSheet.create({
-  backdropRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' },
+  backdropRoot: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.94)' },
   centerColumn: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
+    alignItems: 'center',
     zIndex: 1,
   },
+  webPage: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  webImage: {
+    width: '92%',
+    height: '92%',
+    maxWidth: 1100,
+    maxHeight: 900,
+  },
   topBar: { ...StyleSheet.absoluteFillObject, zIndex: 2 },
-  topBarRow: { position: 'absolute', left: 0, right: 0, paddingLeft: 16 },
+  topBarRow: { position: 'absolute', left: 0, right: 0, paddingLeft: 20 },
   counterPill: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
   counterText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  closeBtn: { position: 'absolute', zIndex: 20, padding: 4 },
+  closeBtn: { position: 'absolute', zIndex: 20 },
+  closeBtnBg: {
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 24,
+    padding: 6,
+  },
 });

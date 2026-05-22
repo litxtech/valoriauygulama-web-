@@ -117,5 +117,8 @@ export function applyPublicWebRoute(
 }
 
 export function isPublicWebPath(pathname: string): boolean {
+  const p = (pathname || '').replace(/\/$/, '') || '/';
+  if (p.includes('/guest/sign-one') || p.includes('/guest/success')) return true;
+  if (p === '/maliye' || p.startsWith('/maliye/')) return true;
   return resolvePublicWebRoute(pathname) != null;
 }

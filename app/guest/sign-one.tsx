@@ -234,6 +234,17 @@ export default function GuestSignOneScreen() {
     }
   }, [token, setQR]);
 
+  // Web: adres çubuğunu /guest/sign-one ile hizala (aksi halde /sozlesme kalır, kök layout tekrar redirect eder)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !token) return;
+    const path = window.location.pathname || '';
+    if (path.includes('/guest/sign-one')) return;
+    const q = new URLSearchParams();
+    q.set('t', token);
+    if (contractLang) q.set('l', contractLang);
+    window.history.replaceState(null, '', `/guest/sign-one?${q.toString()}`);
+  }, [token, contractLang]);
+
   const formStrings = FORM_STRINGS[(contractLang as ContractFormLang) in FORM_STRINGS ? (contractLang as ContractFormLang) : 'tr'] ?? FORM_STRINGS.tr;
   const idTypeLabels = { tc: formStrings.idTypeTC, passport: formStrings.idTypePassport, other: formStrings.idTypeOther };
   const genderLabels = { male: formStrings.male, female: formStrings.female };
@@ -295,7 +306,7 @@ export default function GuestSignOneScreen() {
         .maybeSingle();
 
       const guestPayload = {
-        full_name: formFieldsConfig.full_name ? fullName.trim() : null,
+        full_name: (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir',
         id_number: formFieldsConfig.id_number ? idNumber.trim() || null : null,
         id_type: formFieldsConfig.id_type ? idType : 'tc',
         phone: formFieldsConfig.phone ? fullPhone || null : null,
@@ -345,32 +356,42 @@ export default function GuestSignOneScreen() {
         }
       }
 
-      if (token) {
-        const { error: accErr } = await supabase.from('contract_acceptances').insert({
-          token,
-          room_id: roomId || null,
-          contract_lang: contractLang,
-          contract_version: 2,
-          contract_template_id: template?.id ?? null,
-          source: Platform.OS === 'web' ? 'web' : 'app',
-          guest_id: guest?.id ?? null,
-        });
-        if (!accErr) {
-          const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir';
-          void notifyAdmins({
-            title: 'Yeni sözleşme onayı',
-            body: `${signer} sözleşmeyi onayladı. Sözleşme onayları ekranından kontrol edin.`,
-            data: {
-              url: '/admin/contracts/acceptances',
-              notificationType: ADMIN_TYPES.contract_acceptance_new,
-            },
-          }).catch(() => {});
-        }
+      if (!token?.trim()) {
+        throw new Error('QR bağlantısı geçersiz (token eksik). Lütfen resepsiyondaki QR kodu tekrar okutun.');
       }
+
+      const allowedLangs = ['tr', 'en', 'ar', 'de', 'fr', 'ru', 'es'] as const;
+      const langForDb = allowedLangs.includes(contractLang as (typeof allowedLangs)[number])
+        ? contractLang
+        : 'tr';
+
+      const { error: accErr } = await supabase.from('contract_acceptances').insert({
+        token: token.trim(),
+        room_id: roomId || null,
+        contract_lang: langForDb,
+        contract_version: 2,
+        contract_template_id: template?.id ?? null,
+        source: Platform.OS === 'web' ? 'web' : 'app',
+        guest_id: guest?.id ?? null,
+      });
+      if (accErr) throw accErr;
+
+      const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir';
+      void notifyAdmins({
+        title: 'Yeni sözleşme onayı',
+        body: `${signer} sözleşmeyi onayladı. Sözleşme onayları ekranından kontrol edin.`,
+        data: {
+          url: '/admin/contracts/acceptances',
+          notificationType: ADMIN_TYPES.contract_acceptance_new,
+        },
+      }).catch(() => {});
 
       setStoreContractLang(contractLang);
       setSignedFormLines(signerSummary as string[]);
       setStep('done');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState(null, '', '/guest/success');
+      }
       router.replace('/guest/success');
     } catch (e: unknown) {
       Alert.alert(t('error'), (e as Error)?.message ?? 'Kayıt oluşturulamadı.');
@@ -715,9 +736,12 @@ export default function GuestSignOneScreen() {
 
         <TouchableOpacity
           style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-          onPress={submit}
+          onPress={() => {
+            void submit();
+          }}
           disabled={saving}
           activeOpacity={0.85}
+          accessibilityRole="button"
         >
           {saving ? (
             <ActivityIndicator color="#fff" size="small" />

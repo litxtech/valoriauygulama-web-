@@ -14,7 +14,8 @@ import {
   KeyboardAvoidingView,
   Animated,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useRootNavigationState } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import NetInfo from '@react-native-community/netinfo';
@@ -29,6 +30,8 @@ import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { hasPolicyConsent } from '@/lib/policyConsent';
 import { isPublicWebPath } from '@/lib/publicWebRoute';
+import { publicContractHref, publicMaliyeHref, publicMenuHref } from '@/lib/publicPortalNav';
+import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
@@ -149,6 +152,8 @@ function OfflineWelcome({ onRetry }: { onRetry: () => void }) {
 export default function HomeScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const rootNavigation = useRootNavigationState();
+  const navigationReady = rootNavigation?.key != null;
   const params = useLocalSearchParams<{ t?: string; l?: string }>();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -279,6 +284,7 @@ export default function HomeScreen() {
   // Giriş yapmış kullanıcıyı ilgili panele yönlendir. İlk girişte gizlilik onayı yoksa önce /policies.
   // QR ile sözleşme sayfası açıldıysa yönlendirme yapma – misafir sözleşme ekranında kalsın.
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading) return;
     if (!user) return;
     if (!staffCheckComplete) return;
@@ -286,7 +292,14 @@ export default function HomeScreen() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
       if (isPublicWebPath(pathname)) return;
-      if (pathname.includes('/guest/sign-one')) return;
+      if (
+        pathname.includes('/guest/sign-one') ||
+        pathname.includes('/guest/success') ||
+        pathname === '/maliye' ||
+        pathname.startsWith('/maliye/')
+      ) {
+        return;
+      }
     }
     const path = staff ? '/staff' : '/customer';
     const nextParam = staff ? 'staff' : 'customer';
@@ -294,18 +307,18 @@ export default function HomeScreen() {
     hasPolicyConsent(user?.id ?? null).then((accepted) => {
       if (cancelled) return;
       if (accepted) {
-        router.replace(path);
+        safeRouterReplace(router, path);
       } else {
-        router.replace({ pathname: '/policies', params: { next: nextParam } });
+        safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
       }
     }).catch(() => {
       if (cancelled) return;
-      router.replace(path);
+      safeRouterReplace(router, path);
     });
     return () => {
       cancelled = true;
     };
-  }, [loading, user, staff, staffCheckComplete, staffCheckUnavailable]);
+  }, [navigationReady, loading, user, staff, staffCheckComplete, staffCheckUnavailable, router]);
 
   const signInWithPassword = async () => {
     const e = email.trim().toLowerCase();
@@ -334,9 +347,9 @@ export default function HomeScreen() {
         const path = staff ? '/staff' : '/customer';
         const nextParam = staff ? 'staff' : 'customer';
         if (accepted) {
-          router.replace(path);
+          safeRouterReplace(router, path);
         } else {
-          router.replace({ pathname: '/policies', params: { next: nextParam } });
+          safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
         }
       }
     } catch (err: unknown) {
@@ -375,9 +388,9 @@ export default function HomeScreen() {
       const path = staff ? '/staff' : '/customer';
       const nextParam = staff ? 'staff' : 'customer';
       if (accepted) {
-        router.replace(path);
+        safeRouterReplace(router, path);
       } else {
-        router.replace({ pathname: '/policies', params: { next: nextParam } });
+        safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
       }
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string };
@@ -437,9 +450,9 @@ export default function HomeScreen() {
       const path = staff ? '/staff' : '/customer';
       const nextParam = staff ? 'staff' : 'customer';
       if (accepted) {
-        router.replace(path);
+        safeRouterReplace(router, path);
       } else {
-        router.replace({ pathname: '/policies', params: { next: nextParam } });
+        safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
       }
     } catch (err: unknown) {
       log.error('HomeScreen', 'Google sign-in', err);
@@ -478,9 +491,9 @@ export default function HomeScreen() {
       }
       const accepted = await hasPolicyConsent(anonUser.id);
       if (accepted) {
-        router.replace('/customer');
+        safeRouterReplace(router, '/customer');
       } else {
-        router.replace({ pathname: '/policies', params: { next: 'customer' } });
+        safeRouterReplace(router, { pathname: '/policies', params: { next: 'customer' } });
       }
     } catch (err: unknown) {
       log.error('HomeScreen', 'signInAsGuest', err);
@@ -571,6 +584,42 @@ export default function HomeScreen() {
         <View style={[styles.lobbyHeroDark, { paddingTop: 32 + insets.top * 0.5, paddingBottom: 48 }]}>
           <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
           <Text style={styles.lobbyTaglineWhite}>{t('tagline')}</Text>
+        </View>
+
+        <View style={[styles.portalPanel, { marginHorizontal: paddingH, width: cardWidth }]}>
+          <Text style={styles.portalPanelLabel}>{t('homePortalServices')}</Text>
+          <View style={styles.portalRow}>
+            <TouchableOpacity
+              style={styles.portalTile}
+              onPress={() => safeRouterPush(router, publicMenuHref())}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.portalIcon, styles.portalIconMenu]}>
+                <Ionicons name="restaurant-outline" size={22} color="#b8860b" />
+              </View>
+              <Text style={styles.portalTileTitle}>{t('homePortalMenu')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.portalTile}
+              onPress={() => safeRouterPush(router, publicContractHref())}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.portalIcon, styles.portalIconContract]}>
+                <Ionicons name="document-text-outline" size={22} color="#1a365d" />
+              </View>
+              <Text style={styles.portalTileTitle}>{t('homePortalContract')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.portalTile}
+              onPress={() => safeRouterPush(router, publicMaliyeHref())}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.portalIcon, styles.portalIconMaliye]}>
+                <Ionicons name="shield-checkmark-outline" size={22} color="#0d9488" />
+              </View>
+              <Text style={styles.portalTileTitle}>{t('homePortalMaliye')}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Check-in prompt kartı — bir kere sorulur, sonra gösterilmez */}
@@ -874,11 +923,57 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
   },
+  portalPanel: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 20,
+    padding: 16,
+    marginTop: -20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  portalPanelLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  portalRow: { flexDirection: 'row', gap: 10 },
+  portalTile: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  portalIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  portalIconMenu: { backgroundColor: 'rgba(184, 134, 11, 0.15)' },
+  portalIconContract: { backgroundColor: 'rgba(26, 54, 93, 0.1)' },
+  portalIconMaliye: { backgroundColor: 'rgba(13, 148, 136, 0.12)' },
+  portalTileTitle: { fontSize: 12, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
   checkinPromptCard: {
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 20,
     padding: 20,
-    marginTop: -24,
+    marginTop: 0,
     marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },

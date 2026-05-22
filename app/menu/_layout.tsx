@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 
-const MENU_BG = '#faf8f5';
+const MENU_BG = '#f7f5f2';
 
 export default function PublicMenuLayout() {
   useEffect(() => {

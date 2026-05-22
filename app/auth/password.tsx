@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { safeRouterReplace } from '@/lib/safeRouter';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -50,7 +51,7 @@ export default function AuthPasswordScreen() {
         Alert.alert(
           t('signUpSuccess'),
           t('signUpSuccessMessage'),
-          [{ text: t('ok'), onPress: () => router.replace('/auth') }]
+          [{ text: t('ok'), onPress: () => safeRouterReplace(router, '/auth') }]
         );
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: e, password });
@@ -60,13 +61,13 @@ export default function AuthPasswordScreen() {
           const { user, staff } = useAuthStore.getState();
           const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
           if (staff) {
-            router.replace('/');
+            safeRouterReplace(router, '/');
           } else {
             if (pendingRoom && user?.email) {
               await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
               clearPendingRoom();
             }
-            router.replace('/');
+            safeRouterReplace(router, '/');
           }
         }
       }

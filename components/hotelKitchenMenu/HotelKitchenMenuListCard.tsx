@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(184,134,11,0.12)',
+    borderColor: menuUi.border,
   },
   browseAccent: { width: 3, alignSelf: 'stretch' },
   browseThumbWrap: { marginLeft: 10, marginVertical: 10, position: 'relative' },
