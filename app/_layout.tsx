@@ -13,7 +13,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
-import { applyPublicWebRoute } from '@/lib/publicWebRoute';
+import { WebPublicRouteRedirect } from '@/components/WebPublicRouteRedirect';
 import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
@@ -776,12 +776,10 @@ function RootLayoutInner() {
       }
     };
 
-    // Web: QR — valoria.tr/menü, /sözleşme, /maliye (+ eski /menu, /guest/sign-one)
+    // Web: /guest/sign-one derin link (menü/sözleşme/maliye → WebPublicRouteRedirect)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const href = window.location.href;
       const path = window.location.pathname || '';
-      const search = window.location.search || '';
-      if (applyPublicWebRoute(router, path, search)) return;
       if (path.includes('/guest/sign-one') || href.includes('/guest/sign-one')) {
         handleUrl(href);
       }
@@ -796,6 +794,7 @@ function RootLayoutInner() {
 
   return (
     <React.Fragment>
+      <WebPublicRouteRedirect />
       <StatusBar style="auto" />
       <LastRouteTracker />
       <AppIconBadgeSync />
@@ -826,7 +825,9 @@ function RootLayoutInner() {
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="guest" options={{ headerShown: false }} />
         <Stack.Screen name="menu" options={{ headerShown: false }} />
+        <Stack.Screen name="menü" options={{ headerShown: false }} />
         <Stack.Screen name="sozlesme" options={{ headerShown: false }} />
+        <Stack.Screen name="sözleşme" options={{ headerShown: false }} />
         <Stack.Screen name="maliye" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
         <Stack.Screen

@@ -1,10 +1,10 @@
 import { Redirect, useLocalSearchParams } from 'expo-router';
 
-/** /sozlesme → misafir sözleşme onayı (Türkçe segment: /sözleşme) */
-export default function SozlesmePublicAliasScreen() {
+/** Eski QR: /sözleşme → /sozlesme (ASCII) */
+export default function SozlesmeTrPublicAliasScreen() {
   const params = useLocalSearchParams<{ t?: string; token?: string; l?: string; lang?: string }>();
   const t = (typeof params.t === 'string' ? params.t : params.token) ?? '';
   const l =
     (typeof params.l === 'string' ? params.l : typeof params.lang === 'string' ? params.lang : '') || 'tr';
-  return <Redirect href={{ pathname: '/guest/sign-one', params: { t, l } }} />;
+  return <Redirect href={{ pathname: '/sozlesme', params: { t, l } }} />;
 }

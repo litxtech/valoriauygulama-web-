@@ -20,7 +20,12 @@ import {
 } from '@/lib/appPublicUrl';
 import { DEFAULT_PUBLIC_APP_ORIGIN, APP_PUBLIC_BASE_URL_SETTING_KEY } from '@/constants/appOrigin';
 import { resolvePublicAppOrigin } from '@/lib/appPublicUrl';
-import { PUBLIC_CONTRACT_PATH, PUBLIC_MALIYE_PATH } from '@/constants/publicWebPaths';
+import {
+  PUBLIC_CONTRACT_PATH,
+  PUBLIC_MENU_PATH,
+  PUBLIC_MALIYE_PATH,
+  normalizePublicContractBaseUrl,
+} from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
 import { createMaliyeToken, createOrRotateFixedMaliyeToken } from '@/lib/maliyeAccess';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
@@ -77,7 +82,9 @@ export default function QrHubPage() {
     (data ?? []).forEach((r: { key: string; value: unknown }) => {
       if (r.value != null && String(r.value).trim()) map[r.key] = String(r.value).trim();
     });
-    setContractBase(map.contract_qr_base_url || defaultContractBase(origin));
+    setContractBase(
+      normalizePublicContractBaseUrl(map.contract_qr_base_url || defaultContractBase(origin))
+    );
     setCheckinBase(map.checkin_qr_base_url || defaultCheckinBase(origin));
     setMaliyeBase(
       map.maliye_qr_base_url?.replace(/\/functions\/v1\/public-maliye\/?$/i, `/${PUBLIC_MALIYE_PATH}`) ||
@@ -177,7 +184,7 @@ export default function QrHubPage() {
       <View style={styles.siteCard}>
         <Text style={styles.siteCardTitle}>Canlı site adresi</Text>
         <Text style={styles.siteCardHint}>
-          Menü QR: {publicBaseUrl || '…'}/menü/{'{işletme-slug}'}
+          Menü QR: {publicBaseUrl || '…'}/{PUBLIC_MENU_PATH}/{'{işletme-slug}'} (eski /menü/ de çalışır)
         </Text>
         <TextInput
           style={styles.input}
@@ -245,7 +252,13 @@ export default function QrHubPage() {
         urlLabel="Sözleşme QR (sabit tam URL)"
         urlEditable
         onUrlChange={setContractBase}
-        onSaveUrl={() => saveSetting('contract_qr_base_url', contractBase, 'Sözleşme base URL')}
+        onSaveUrl={() =>
+          saveSetting(
+            'contract_qr_base_url',
+            normalizePublicContractBaseUrl(contractBase),
+            'Sözleşme base URL'
+          )
+        }
         savingUrl={saving === 'contract_qr_base_url'}
       >
         <Text style={styles.fieldLabel}>Base URL (kayıt)</Text>

@@ -1,7 +1,9 @@
 import type { Router } from 'expo-router';
 import {
   LEGACY_CONTRACT_PATH,
+  LEGACY_CONTRACT_PATH_TR,
   LEGACY_MENU_PATH,
+  LEGACY_MENU_PATH_TR,
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
@@ -51,7 +53,11 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
   const parts = path.split('/').filter(Boolean);
   const head = parts[0] ? foldTrPathSegment(parts[0]) : '';
 
-  if (head === foldTrPathSegment(PUBLIC_MENU_PATH) || head === LEGACY_MENU_PATH) {
+  if (
+    head === foldTrPathSegment(PUBLIC_MENU_PATH) ||
+    head === foldTrPathSegment(LEGACY_MENU_PATH_TR) ||
+    head === LEGACY_MENU_PATH
+  ) {
     const slug = parts[1]?.trim();
     if (slug) return { kind: 'menu', slug: decodeURIComponent(slug) };
     return null;
@@ -59,6 +65,7 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
 
   if (
     head === foldTrPathSegment(PUBLIC_CONTRACT_PATH) ||
+    head === foldTrPathSegment(LEGACY_CONTRACT_PATH_TR) ||
     head === 'sozlesme' ||
     path === LEGACY_CONTRACT_PATH ||
     path.startsWith(`${LEGACY_CONTRACT_PATH}/`)

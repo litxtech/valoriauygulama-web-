@@ -28,7 +28,7 @@ import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { hasPolicyConsent } from '@/lib/policyConsent';
-import { applyPublicWebRoute, isPublicWebPath } from '@/lib/publicWebRoute';
+import { isPublicWebPath } from '@/lib/publicWebRoute';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
@@ -203,12 +203,6 @@ export default function HomeScreen() {
       cancelled = true;
     };
   }, []);
-
-  // QR ile açılan web: valoria.tr/menü, /sözleşme, /maliye
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    applyPublicWebRoute(router, window.location.pathname || '', window.location.search || '');
-  }, [router]);
 
   useEffect(() => {
     const sub = NetInfo.addEventListener((state) => setIsOffline(!state.isConnected));
