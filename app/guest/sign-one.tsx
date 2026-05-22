@@ -87,19 +87,7 @@ export default function GuestSignOneScreen() {
 
   const token = (params.token ?? params.t ?? qrToken ?? '').trim();
   const lang = (params.lang ?? params.l ?? i18n.language ?? 'tr').toLowerCase();
-
-  if (Platform.OS === 'web' && (!supabaseUrl || !supabaseAnonKey)) {
-    return (
-      <View style={[styles.envContainer, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
-        <Text style={styles.envTitle}>Yapılandırma eksik</Text>
-        <Text style={styles.envText}>
-          Sözleşme sayfası için Vercel ortam değişkenleri tanımlanmalı.{'\n\n'}
-          EXPO_PUBLIC_SUPABASE_URL ve EXPO_PUBLIC_SUPABASE_ANON_KEY ekleyin.{'\n\n'}
-          Detay: docs/VERCEL_ENV.md
-        </Text>
-      </View>
-    );
-  }
+  const missingWebEnv = Platform.OS === 'web' && (!supabaseUrl || !supabaseAnonKey);
 
   const [contractContent, setContractContent] = useState('');
   const [contractLang, setContractLang] = useState(lang);
@@ -435,6 +423,20 @@ export default function GuestSignOneScreen() {
   );
 
   const headerH = 56 + insets.top;
+
+  if (missingWebEnv) {
+    return (
+      <View style={[styles.envContainer, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
+        <Text style={styles.envTitle}>Yapılandırma eksik</Text>
+        <Text style={styles.envText}>
+          Sözleşme sayfası için Vercel ortam değişkenleri tanımlanmalı.{'\n\n'}
+          EXPO_PUBLIC_SUPABASE_URL ve EXPO_PUBLIC_SUPABASE_ANON_KEY ekleyin.{'\n\n'}
+          Detay: docs/VERCEL_ENV.md
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}

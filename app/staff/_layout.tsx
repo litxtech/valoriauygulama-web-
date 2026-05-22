@@ -139,7 +139,34 @@ export default function StaffLayout() {
     };
   }, [staff?.id]);
 
-  // null döndürmek Stack'te arkadaki lobiyi gösteriyordu; aynı arka planla dolu ekran göster
+  const handleStaffSubScreenBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(resolveStaffBackFallback(pathname) as never);
+  }, [navigation, router, pathname]);
+
+  const renderStaffSubScreenBack = useCallback(
+    () => <StaffStackBackButton accessibilityLabel={t('back')} />,
+    [t]
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const p = pathname ?? '';
+    if (p.startsWith('/staff/(tabs)') || p === '/staff') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleStaffSubScreenBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [pathname, handleStaffSubScreenBack]);
+
+  const renderStaffDocumentDetailBack = () => (
+    <StaffStackBackButton accessibilityLabel={t('back')} fallback="/staff/documents/all" />
+  );
+
   if (loading || !staffCheckComplete || !staff) {
     return null;
   }
@@ -160,34 +187,6 @@ export default function StaffLayout() {
       </View>
     );
   }
-
-  const handleStaffSubScreenBack = useCallback(() => {
-    if (navigation.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace(resolveStaffBackFallback(pathname) as never);
-  }, [navigation, router, pathname]);
-
-  const renderStaffSubScreenBack = useCallback(
-    () => <StaffStackBackButton accessibilityLabel={t('back')} />,
-    [t]
-  );
-
-  const renderStaffDocumentDetailBack = () => (
-    <StaffStackBackButton accessibilityLabel={t('back')} fallback="/staff/documents/all" />
-  );
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const p = pathname ?? '';
-    if (p.startsWith('/staff/(tabs)') || p === '/staff') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleStaffSubScreenBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [pathname, handleStaffSubScreenBack]);
 
   if (isBanned) {
     const until = staff.banned_until ? new Date(staff.banned_until).toLocaleString() : '';
