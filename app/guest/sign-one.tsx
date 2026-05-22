@@ -28,6 +28,7 @@ import { LANGUAGES } from '@/i18n';
 import { FORM_STRINGS, DEFAULT_FORM_FIELDS, type ContractFormLang } from '@/lib/contractFormStrings';
 import { notifyAdmins } from '@/lib/notificationService';
 import { ADMIN_TYPES } from '@/lib/notifications';
+import { safeRouterReplace } from '@/lib/safeRouter';
 
 const CONTRACT_LANGS = LANGUAGES;
 
@@ -109,6 +110,7 @@ export default function GuestSignOneScreen() {
   const [showNationalityPicker, setShowNationalityPicker] = useState(false);
   const [formFieldsConfig, setFormFieldsConfig] = useState<Record<string, boolean>>(DEFAULT_FORM_FIELDS);
   const translatedCache = useRef<Record<string, string>>({});
+  const submittedRef = useRef(false);
 
   const [fullName, setFullName] = useState('');
   const [idType, setIdType] = useState<'tc' | 'passport' | 'other'>('tc');
@@ -234,11 +236,12 @@ export default function GuestSignOneScreen() {
     }
   }, [token, setQR]);
 
-  // Web: adres çubuğunu /guest/sign-one ile hizala (aksi halde /sozlesme kalır, kök layout tekrar redirect eder)
+  // Web: /sozlesme → /guest/sign-one (onay sonrası /guest/success adresine dokunma)
   useEffect(() => {
+    if (submittedRef.current) return;
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !token) return;
     const path = window.location.pathname || '';
-    if (path.includes('/guest/sign-one')) return;
+    if (path.includes('/guest/sign-one') || path.includes('/guest/success')) return;
     const q = new URLSearchParams();
     q.set('t', token);
     if (contractLang) q.set('l', contractLang);
@@ -386,13 +389,17 @@ export default function GuestSignOneScreen() {
         },
       }).catch(() => {});
 
+      submittedRef.current = true;
       setStoreContractLang(contractLang);
       setSignedFormLines(signerSummary as string[]);
       setStep('done');
+      safeRouterReplace(router, '/guest/success');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState(null, '', '/guest/success');
+        requestAnimationFrame(() => {
+          if (window.location.pathname.includes('/guest/success')) return;
+          window.history.replaceState(null, '', '/guest/success');
+        });
       }
-      router.replace('/guest/success');
     } catch (e: unknown) {
       Alert.alert(t('error'), (e as Error)?.message ?? 'Kayıt oluşturulamadı.');
     } finally {

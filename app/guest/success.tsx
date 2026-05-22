@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { safeRouterReplace } from '@/lib/safeRouter';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
@@ -130,6 +131,15 @@ export default function SuccessScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const path = window.location.pathname || '';
+      if (!path.includes('/guest/success')) {
+        window.history.replaceState(null, '', '/guest/success');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     (async () => {
       const { data } = await supabase
         .from('app_settings')
@@ -153,7 +163,7 @@ export default function SuccessScreen() {
 
   const done = () => {
     reset();
-    router.replace('/');
+    safeRouterReplace(router, '/');
   };
 
   return (

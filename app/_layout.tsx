@@ -784,7 +784,10 @@ function RootLayoutInner() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const href = window.location.href;
       const path = window.location.pathname || '';
-      if (path.includes('/guest/sign-one') || href.includes('/guest/sign-one')) {
+      if (
+        (path.includes('/guest/sign-one') || href.includes('/guest/sign-one')) &&
+        !path.includes('/guest/success')
+      ) {
         handleUrl(href);
       }
     }

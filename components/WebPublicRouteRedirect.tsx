@@ -16,6 +16,11 @@ export function WebPublicRouteRedirect() {
 
   const winPath = window.location.pathname || '';
   const winSearch = window.location.search || '';
+
+  if (winPath.includes('/guest/success')) {
+    return null;
+  }
+
   const winRoute = resolvePublicWebRoute(winPath, winSearch);
 
   // Maliye: adres çubuğu /maliye ise doğrudan canlı Edge portalı (iframe/Expo rota gerekmez)
