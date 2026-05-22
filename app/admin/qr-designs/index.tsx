@@ -20,16 +20,16 @@ import {
 } from '@/lib/appPublicUrl';
 import { DEFAULT_PUBLIC_APP_ORIGIN, APP_PUBLIC_BASE_URL_SETTING_KEY } from '@/constants/appOrigin';
 import { resolvePublicAppOrigin } from '@/lib/appPublicUrl';
+import { PUBLIC_CONTRACT_PATH, PUBLIC_MALIYE_PATH } from '@/constants/publicWebPaths';
+import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
+import { createMaliyeToken, createOrRotateFixedMaliyeToken } from '@/lib/maliyeAccess';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 function safePublicOrigin(origin?: string | null): string {
   const o = (origin ?? '').trim();
   if (o) return o.replace(/\/$/, '');
   return resolvePublicAppOrigin(null);
 }
-import { PUBLIC_CONTRACT_PATH, PUBLIC_MALIYE_PATH } from '@/constants/publicWebPaths';
-import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
-import { createMaliyeToken, createOrRotateFixedMaliyeToken } from '@/lib/maliyeAccess';
-import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
 function defaultContractBase(publicOrigin?: string | null): string {
   const base = safePublicOrigin(publicOrigin);

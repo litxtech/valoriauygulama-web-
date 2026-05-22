@@ -5,12 +5,13 @@ import {
   invalidateHotelKitchenMenuCache,
   setHotelKitchenMenuCache,
 } from '@/lib/hotelKitchenMenuCache';
-
-export type {
+import type {
   HotelKitchenMenuItemRow,
   HotelKitchenMenuImageRow,
   HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenuTypes';
+
+export type { HotelKitchenMenuItemRow, HotelKitchenMenuImageRow, HotelKitchenMenuItemWithImages };
 
 export { invalidateHotelKitchenMenuCache, getHotelKitchenMenuCache } from '@/lib/hotelKitchenMenuCache';
 

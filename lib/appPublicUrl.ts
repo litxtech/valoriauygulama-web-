@@ -89,3 +89,6 @@ export function buildPublicMaliyeUrl(
 export function buildPublicKitchenMenuUrl(orgSlug: string, baseOverride?: string | null): string {
   return buildPublicMenuUrl(orgSlug, baseOverride);
 }
+
+/** Tüm sözleşme QR kodları — modül sonunda (constants/contractQr döngüsü yok). */
+export const FIXED_CONTRACT_QR_URL = buildPublicContractUrl();

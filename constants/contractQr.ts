@@ -1,7 +1,5 @@
-import { buildPublicContractUrl } from '@/lib/appPublicUrl';
-
 /**
- * Tüm sözleşme QR kodları bu tek URL'ye gider.
- * Admin tek QR, oda QR'ları, müşteri anahtar sayfası – hepsi aynı link.
+ * Tüm sözleşme QR kodları tek URL'ye gider.
+ * URL: `FIXED_CONTRACT_QR_URL` veya `buildPublicContractUrl()` — @/lib/appPublicUrl
  */
-export const FIXED_CONTRACT_QR_URL = buildPublicContractUrl();
+export { FIXED_CONTRACT_QR_URL, buildPublicContractUrl } from '@/lib/appPublicUrl';
