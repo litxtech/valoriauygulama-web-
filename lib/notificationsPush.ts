@@ -48,7 +48,7 @@ function normalizeRpcError(error: unknown): {
 export const isExpoGo = Constants.appOwnership === 'expo';
 
 function getNotifications(): typeof ExpoNotifications | null {
-  if (isExpoGo) return null;
+  if (Platform.OS === 'web' || isExpoGo) return null;
   return ExpoNotifications;
 }
 
@@ -77,7 +77,7 @@ async function shouldMuteByStaffFeaturePreference(notificationType: string): Pro
 
 /** Root veya modül yükünde bir kez çağrılmalı; gecikmeli import ile handler bazen geç kalıyordu. */
 export async function initPushNotificationsPresentation(): Promise<void> {
-  if (isExpoGo || pushPresentationInitialized) return;
+  if (Platform.OS === 'web' || isExpoGo || pushPresentationInitialized) return;
   try {
     const ExpoN = ExpoNotifications;
     const Notifications = ExpoN;
@@ -533,10 +533,13 @@ export async function getLastNotificationResponseAsync(): Promise<{
 export function addNotificationResponseListener(
   handler: (response: { notification: { request: { content: { data?: Record<string, unknown> } } } }) => void
 ): () => void {
-  if (isExpoGo) return () => {};
+  if (Platform.OS === 'web' || isExpoGo) return () => {};
   const noop = (): void => {};
   const cleanup = { remove: noop };
-  const Notifications = ExpoNotifications;
+  const Notifications = getNotifications();
+  if (!Notifications || typeof Notifications.addNotificationResponseReceivedListener !== 'function') {
+    return () => {};
+  }
   const sub = Notifications.addNotificationResponseReceivedListener(
     handler as (r: import('expo-notifications').NotificationResponse) => void
   );
@@ -548,10 +551,13 @@ export function addNotificationResponseListener(
 export function addNotificationReceivedListener(
   handler: (notification: import('expo-notifications').Notification) => void
 ): () => void {
-  if (isExpoGo) return () => {};
+  if (Platform.OS === 'web' || isExpoGo) return () => {};
   const noop = (): void => {};
   const cleanup = { remove: noop };
-  const Notifications = ExpoNotifications;
+  const Notifications = getNotifications();
+  if (!Notifications || typeof Notifications.addNotificationReceivedListener !== 'function') {
+    return () => {};
+  }
   const sub = Notifications.addNotificationReceivedListener(
     handler as (n: import('expo-notifications').Notification) => void
   );

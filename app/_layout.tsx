@@ -540,6 +540,7 @@ function RootLayoutInner() {
   // Uygulama bildirime tıklanarak açıldıysa (kapalıyken tıklandı) ilgili sayfaya git
   const coldStartHandled = useRef(false);
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
     const t = setTimeout(() => {
@@ -558,6 +559,7 @@ function RootLayoutInner() {
   }, [router]);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const remove = addNotificationResponseListener((response) => {
       void applyBadgeFromExpoNotificationPayload(response.notification as import('expo-notifications').Notification);
       const data = response.notification.request.content.data as Record<string, unknown> | undefined;
@@ -568,6 +570,7 @@ function RootLayoutInner() {
 
   // Uygulama öndeyken bildirim gelince badge güncellensin (mesaj push'u yalnızca sohbet sayacını artırır).
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const remove = addNotificationReceivedListener((notification) => {
       void applyBadgeFromExpoNotificationPayload(notification);
       const payload =
