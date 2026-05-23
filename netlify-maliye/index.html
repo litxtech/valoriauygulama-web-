@@ -38,7 +38,7 @@
     button.secondary{background:var(--secondary)}
     .status{padding:8px 10px;border-radius:999px;font-size:12px;background:#e2e8f0;color:#1f2937;font-weight:700}
     .muted{color:var(--muted);font-size:12px}
-    .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
     .stat{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:10px}
     .stat b{display:block;font-size:18px;color:#0f172a}
     .stat span{font-size:12px;color:#64748b}
@@ -68,6 +68,13 @@
     #msg.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
     #msg.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
     .status.open{background:#dcfce7;color:#166534;border-color:#86efac}
+    .formDayChips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+    .dayChip{padding:6px 10px;border-radius:999px;border:1px solid #cbd5e1;background:#f8fafc;font-size:12px;font-weight:700;cursor:pointer}
+    .dayChip.on{background:#dbeafe;border-color:#93c5fd;color:#1e3a8a}
+    .formGroupHead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:14px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+    .formGroupTitle{font-weight:900;color:#0f172a;font-size:14px}
+    .btnPrintHmb{padding:8px 12px;font-size:12px;background:#0f766e;color:#fff;border:none;border-radius:10px;font-weight:800;cursor:pointer}
+    .formMeta{font-size:12px;color:var(--muted);line-height:1.45;margin-top:4px}
     .cfgWarn{margin:12px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:13px;line-height:1.45;display:none}
     .cfgWarn.show{display:block}
     @media (max-width: 900px){
@@ -106,27 +113,29 @@
           </div>
         </div>
         <div id="msg" role="status" aria-live="polite"></div>
-        <div class="muted">Portal acikken her 30 saniyede sunucu sorgulanir; yeni evrak veya musteri formu algilaninca liste yenilenir.</div>
+        <div class="muted">Portal acikken her 30 saniyede sunucu sorgulanir; yeni misafir (sozlesme + oda atamasi) algilaninca formlar yenilenir.</div>
         <div class="stats">
           <div class="stat"><b id="statSections">0</b><span>Cekmece</span></div>
           <div class="stat"><b id="statDocs">0</b><span>Toplam Evrak</span></div>
+          <div class="stat"><b id="statForms">0</b><span>Secili Gun Form</span></div>
           <div class="stat"><b id="statRefresh">Kapali</b><span>Canli Yenileme</span></div>
         </div>
       </div>
       <div class="card">
-        <h3 class="panelTitle">Gunluk Musteri Formlari</h3>
-        <div class="row">
+        <h3 class="panelTitle">Gunluk Musteri Formlari (HMB / VUK 240)</h3>
+        <div class="formMeta">Sozlesme onayi + personel oda/fiyat atamasindan sonra otomatik dolar. A4 matbu listeye yazdirilabilir.</div>
+        <div class="row" style="margin-top:10px">
           <input id="dayFilter" type="date" />
           <input id="monthFilter" type="month" />
-          <button type="button" id="btnLoadForms" class="secondary">Gunluk Formlari Cek</button>
-          <button type="button" id="btnLoadLatest" class="secondary">Son Form</button>
+          <button type="button" id="btnLoadForms" class="secondary">Formlari Goster</button>
+          <button type="button" id="btnPrintHmb" class="btnPrintHmb">A4 Listeyi Yazdir</button>
         </div>
-        <div class="muted" style="margin-top:8px">Gun veya ay bazinda form listesi alinabilir. Son form hizli kontrol icindir.</div>
+        <div id="formDayChips" class="formDayChips"></div>
       </div>
     </div>
 
     <div id="docs" class="card" style="margin-top:12px"><div class="empty">Portal kilitli. PIN ile aciniz.</div></div>
-    <div id="forms" class="card"></div>
+    <div id="forms" class="card" style="display:none"></div>
   </div>
 
   <script>
@@ -166,6 +175,10 @@
 
       function escAttr(v) {
         return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      }
+
+      function escHtml(v) {
+        return escAttr(v);
       }
 
       function jsonFetch(fullUrl) {
@@ -302,6 +315,12 @@
           }, 30000);
           document.getElementById("statRefresh").textContent = "Acik";
           setMsg("ok", "Giris basarili. Evraklar yuklendi.");
+          setDayFilter(todayYmd());
+          try {
+            await loadForms();
+          } catch (formErr) {
+            setMsg("err", (formErr && formErr.message) || "Formlar yuklenemedi");
+          }
         } catch (e) {
           authEl.textContent = "Hatali PIN";
           authEl.classList.remove("open");
@@ -350,47 +369,174 @@
         } catch (_) {}
       }
 
+      function todayYmd() {
+        var d = new Date();
+        return d.toISOString().slice(0, 10);
+      }
+
+      function fmtTrDateTime(iso) {
+        if (!iso) return "—";
+        try {
+          return new Date(iso).toLocaleString("tr-TR");
+        } catch (_) {
+          return iso;
+        }
+      }
+
+      function fmtMoneyTr(n) {
+        if (n == null || isNaN(n)) return "—";
+        return new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+      }
+
+      function setDayFilter(ymd) {
+        var el = document.getElementById("dayFilter");
+        if (el) el.value = ymd || "";
+      }
+
+      function renderFormItem(f) {
+        return (
+          '<div class="doc"><div><div class="docTitle">' +
+          escHtml(f.full_name || "Isimsiz") +
+          '</div><div class="muted">Oda ' +
+          escAttr(f.room_number || f.room_id || "-") +
+          " · Giriş: " +
+          fmtTrDateTime(f.check_in_at) +
+          (f.check_out_at ? " · Çıkış: " + fmtTrDateTime(f.check_out_at) : "") +
+          (f.contract_accepted_at ? " · Sözleşme: " + fmtTrDateTime(f.contract_accepted_at) : "") +
+          (f.daily_rate_gross != null ? " · Günlük: " + fmtMoneyTr(f.daily_rate_gross) + " TL" : "") +
+          (f.nationality ? " · " + escHtml(f.nationality) : "") +
+          "</div></div></div>"
+        );
+      }
+
+      async function printHmbForm(dateYmd) {
+        if (!pin) return alert("Once PIN ile portali acin.");
+        var day = dateYmd || document.getElementById("dayFilter").value || todayYmd();
+        setMsg("wait", "A4 form hazirlaniyor...");
+        try {
+          var res = await api({ view: "hmb-form-html", date: day });
+          var w = window.open("", "_blank", "noopener");
+          if (!w) throw new Error("Yazdirma penceresi acilamadi");
+          w.document.open();
+          w.document.write(res.html || "");
+          w.document.close();
+          setTimeout(function () {
+            try {
+              w.print();
+            } catch (_) {}
+          }, 800);
+          setMsg("ok", (res.guestCount || 0) + " misafirlik A4 form acildi.");
+        } catch (e) {
+          setMsg("err", (e && e.message) || "Form olusturulamadi");
+        }
+      }
+
+      async function loadFormDayChips() {
+        var monthEl = document.getElementById("monthFilter");
+        var chipRoot = document.getElementById("formDayChips");
+        if (!chipRoot || !pin) return;
+        var month = (monthEl && monthEl.value) || todayYmd().slice(0, 7);
+        try {
+          var res = await api({ view: "form-days", month: month });
+          var days = res.days || [];
+          if (!days.length) {
+            chipRoot.innerHTML = '<span class="muted">Bu ayda kayitli konaklama gunu yok.</span>';
+            return;
+          }
+          var selected = document.getElementById("dayFilter").value;
+          chipRoot.innerHTML = days
+            .map(function (d) {
+              return (
+                '<button type="button" class="dayChip' +
+                (selected === d.date ? " on" : "") +
+                '" data-form-day="' +
+                escAttr(d.date) +
+                '">' +
+                d.date +
+                " (" +
+                d.count +
+                ")</button>"
+              );
+            })
+            .join("");
+        } catch (_) {
+          chipRoot.innerHTML = "";
+        }
+      }
+
       async function loadForms() {
         if (!pin) return alert("Once PIN ile portali acin.");
         if (!anon) return alert("Anon key eksik.");
         var day = document.getElementById("dayFilter").value;
         var month = document.getElementById("monthFilter").value;
+        if (!day && !month) {
+          day = todayYmd();
+          setDayFilter(day);
+        }
+        setMsg("wait", "Gunluk formlar yukleniyor...");
         var res = await api({ view: "daily-forms", date: day || "", month: month || "" });
         var box = document.getElementById("forms");
         box.style.display = "block";
-        box.innerHTML =
-          "<h3 style='margin:0 0 8px'>Gunluk Musteri Formlari</h3>" +
-          (res.items || [])
-            .map(function (f) {
-              return (
-                '<div class="doc"><div class="docTitle">' +
-                (f.full_name || "Isimsiz") +
-                '</div><div class="muted">' +
-                (f.created_at || "-") +
-                " / Oda: " +
-                (f.room_id || "-") +
-                "</div></div>"
-              );
-            })
-            .join("");
+        var items = res.items || [];
+        var groups = res.groups || [];
+        document.getElementById("statForms").textContent = String(items.length);
+        var html = '<h3 style="margin:0 0 8px">Gunluk Musteri Formlari — otomatik (oda + sozlesme)</h3>';
+        html +=
+          '<div class="formMeta">Toplam <strong>' +
+          (res.total || items.length) +
+          "</strong> kayit" +
+          (day ? " · secili gun: " + escAttr(day) : month ? " · ay: " + escAttr(month) : "") +
+          "</div>";
+        if (!items.length) {
+          html += '<div class="empty">Bu filtrede konaklayan misafir yok. Personel oda atamasini tamamladiktan sonra burada gorunur.</div>';
+        } else if (groups.length > 1 && !day) {
+          groups.forEach(function (g) {
+            html +=
+              '<div class="formGroupHead"><div class="formGroupTitle">' +
+              escAttr(g.date) +
+              " · " +
+              g.count +
+              " misafir</div>" +
+              '<button type="button" class="btnPrintHmb" data-print-day="' +
+              escAttr(g.date) +
+              '">A4 Yazdir</button></div>';
+            html += (g.items || []).map(renderFormItem).join("");
+          });
+        } else {
+          html +=
+            '<div class="formGroupHead"><div class="formGroupTitle">Liste</div>' +
+            '<button type="button" class="btnPrintHmb" data-print-day="' +
+            escAttr(day || (groups[0] && groups[0].date) || todayYmd()) +
+            '">A4 Yazdir</button></div>';
+          html += items.map(renderFormItem).join("");
+        }
+        box.innerHTML = html;
+        await loadFormDayChips();
+        clearMsg();
       }
 
-      async function loadLatest() {
-        if (!pin) return alert("Once PIN ile portali acin.");
-        if (!anon) return alert("Anon key eksik.");
-        var res = await api({ view: "latest-form" });
-        var f = res.item;
+      function bindFormsDelegation() {
         var box = document.getElementById("forms");
-        box.style.display = "block";
-        box.innerHTML =
-          "<h3 style='margin:0 0 8px'>Son Musteri Formu</h3>" +
-          (f
-            ? '<div class="doc"><div class="docTitle">' +
-              (f.full_name || "Isimsiz") +
-              '</div><div class="muted">' +
-              (f.created_at || "-") +
-              "</div></div>"
-            : "<p>Kayit yok.</p>");
+        var chips = document.getElementById("formDayChips");
+        if (box && box.dataset.bound !== "1") {
+          box.dataset.bound = "1";
+          box.addEventListener("click", function (ev) {
+            var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-print-day]") : null;
+            if (btn) void printHmbForm(btn.getAttribute("data-print-day") || "");
+          });
+        }
+        if (chips && chips.dataset.bound !== "1") {
+          chips.dataset.bound = "1";
+          chips.addEventListener("click", function (ev) {
+            var chip = ev.target && ev.target.closest ? ev.target.closest("button[data-form-day]") : null;
+            if (!chip) return;
+            var day = chip.getAttribute("data-form-day") || "";
+            setDayFilter(day);
+            void loadForms().catch(function (e) {
+              alert((e && e.message) || "Formlar alinamadi");
+            });
+          });
+        }
       }
 
       function bindDocsDelegation() {
@@ -418,11 +564,16 @@
 
       function initUi() {
         bindDocsDelegation();
+        bindFormsDelegation();
+        var dayEl = document.getElementById("dayFilter");
+        var monthEl = document.getElementById("monthFilter");
+        if (dayEl && !dayEl.value) dayEl.value = todayYmd();
+        if (monthEl && !monthEl.value) monthEl.value = todayYmd().slice(0, 7);
         var pinEl = document.getElementById("pin");
         var unlockBtn = document.getElementById("btnUnlock");
         var refreshBtn = document.getElementById("btnRefresh");
         var formsBtn = document.getElementById("btnLoadForms");
-        var latestBtn = document.getElementById("btnLoadLatest");
+        var printBtn = document.getElementById("btnPrintHmb");
         if (pinEl) {
           pinEl.addEventListener("keydown", function (ev) {
             if (ev.key === "Enter") {
@@ -444,11 +595,17 @@
               alert((e && e.message) || "Formlar alinamadi");
             });
           });
-        if (latestBtn)
-          latestBtn.addEventListener("click", function () {
-            void loadLatest().catch(function (e) {
-              alert((e && e.message) || "Form alinamadi");
-            });
+        if (printBtn)
+          printBtn.addEventListener("click", function () {
+            void printHmbForm(document.getElementById("dayFilter").value || todayYmd());
+          });
+        if (dayEl)
+          dayEl.addEventListener("change", function () {
+            if (pin) void loadForms().catch(function () {});
+          });
+        if (monthEl)
+          monthEl.addEventListener("change", function () {
+            if (pin) void loadFormDayChips().catch(function () {});
           });
       }
 

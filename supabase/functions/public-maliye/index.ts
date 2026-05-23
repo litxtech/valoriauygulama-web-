@@ -1,4 +1,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildHmbDailyListHtml,
+  fetchDailyFormItems,
+  fetchFormDaysInMonth,
+  fetchHmbDataForDay,
+  loadHmbBranding,
+} from "../_shared/maliyeHmbDaily.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -556,10 +563,19 @@ Deno.serve(async (req: Request) => {
         .limit(1)
         .maybeSingle();
 
+      const { data: latestGuest } = await supabase
+        .from("guests")
+        .select("updated_at")
+        .not("room_id", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
       const docsUpdatedAt = latestDocument?.updated_at ?? null;
       const formsUpdatedAt = latestAcceptance?.accepted_at ?? null;
-      const version = `${docsUpdatedAt ?? "none"}|${formsUpdatedAt ?? "none"}`;
-      return new Response(JSON.stringify({ version, docsUpdatedAt, formsUpdatedAt }), {
+      const guestsUpdatedAt = (latestGuest as { updated_at?: string } | null)?.updated_at ?? null;
+      const version = `${docsUpdatedAt ?? "none"}|${formsUpdatedAt ?? "none"}|${guestsUpdatedAt ?? "none"}`;
+      return new Response(JSON.stringify({ version, docsUpdatedAt, formsUpdatedAt, guestsUpdatedAt }), {
         status: 200,
         headers: JSON_HEADERS,
       });
@@ -633,60 +649,83 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ sections: Array.from(sectionMap.values()) }), { status: 200, headers: JSON_HEADERS });
   }
 
+  if (view === "form-days") {
+    const month = (url.searchParams.get("month") ?? "").trim() || new Date().toISOString().slice(0, 7);
+    const days = await fetchFormDaysInMonth(supabase, orgId, month);
+    await supabase.from("maliye_audit_logs").insert({
+      organization_id: orgId,
+      token_id: auth.row.id,
+      event_type: "forms.calendar",
+      success: true,
+      ip_address: ip,
+      user_agent: ua,
+      metadata: { month },
+    });
+    return new Response(JSON.stringify({ month, days }), { status: 200, headers: JSON_HEADERS });
+  }
+
+  if (view === "hmb-form-html") {
+    const date = (url.searchParams.get("date") ?? "").trim() || new Date().toISOString().slice(0, 10);
+    const branding = await loadHmbBranding(supabase);
+    const data = await fetchHmbDataForDay(supabase, orgId, date);
+    const html = buildHmbDailyListHtml(data, branding, date);
+    await supabase.from("maliye_audit_logs").insert({
+      organization_id: orgId,
+      token_id: auth.row.id,
+      event_type: "forms.hmb_print",
+      success: true,
+      ip_address: ip,
+      user_agent: ua,
+      metadata: { date, guestCount: data.totalGuests },
+    });
+    return new Response(JSON.stringify({ html, date, guestCount: data.totalGuests, reportNumber: data.reportNumber }), {
+      status: 200,
+      headers: JSON_HEADERS,
+    });
+  }
+
   if (view === "daily-forms" || view === "latest-form") {
     const date = (url.searchParams.get("date") ?? "").trim();
     const month = (url.searchParams.get("month") ?? "").trim();
 
-    let q = supabase
-      .from("contract_acceptances")
-      .select(
-        "id, accepted_at, contract_lang, token, guest_id, guests(id, full_name, room_id, phone, id_number, rooms(room_number))"
-      )
-      .eq("organization_id", orgId)
-      .order("accepted_at", { ascending: false });
-
-    if (date) {
-      q = q
-        .gte("accepted_at", `${date}T00:00:00.000Z`)
-        .lte("accepted_at", `${date}T23:59:59.999Z`);
-    } else if (month) {
-      const from = `${month}-01T00:00:00.000Z`;
-      const toDate = new Date(`${month}-01T00:00:00.000Z`);
-      toDate.setUTCMonth(toDate.getUTCMonth() + 1);
-      q = q.gte("accepted_at", from).lt("accepted_at", toDate.toISOString());
+    if (view === "latest-form") {
+      const items = await fetchDailyFormItems(supabase, orgId, {});
+      const item = items[0] ?? null;
+      await supabase.from("maliye_audit_logs").insert({
+        organization_id: orgId,
+        token_id: auth.row.id,
+        event_type: "forms.latest",
+        success: true,
+        ip_address: ip,
+        user_agent: ua,
+      });
+      return new Response(JSON.stringify({ item }), { status: 200, headers: JSON_HEADERS });
     }
 
-    if (view === "latest-form") q = q.limit(1);
-    else q = q.limit(500);
+    const items = await fetchDailyFormItems(supabase, orgId, { date: date || undefined, month: month || undefined });
+    const grouped: Record<string, typeof items> = {};
+    for (const item of items) {
+      const day = item.check_in_at ? item.check_in_at.slice(0, 10) : "unknown";
+      if (!grouped[day]) grouped[day] = [];
+      grouped[day].push(item);
+    }
+    const groups = Object.keys(grouped)
+      .sort((a, b) => b.localeCompare(a))
+      .map((day) => ({ date: day, count: grouped[day].length, items: grouped[day] }));
 
-    const { data: rawRows } = await q;
-    const data = (rawRows ?? []).map((row: Record<string, unknown>) => {
-      const g = row.guests as Record<string, unknown> | null;
-      const rooms = g?.rooms as { room_number?: string } | null;
-      return {
-        id: row.id,
-        full_name: (g?.full_name as string) ?? null,
-        room_id: (g?.room_id as string) ?? null,
-        room_number: rooms?.room_number ?? null,
-        phone: (g?.phone as string) ?? null,
-        id_number: (g?.id_number as string) ?? null,
-        created_at: row.accepted_at,
-        contract_lang: row.contract_lang,
-        token: row.token,
-      };
-    });
     await supabase.from("maliye_audit_logs").insert({
       organization_id: orgId,
       token_id: auth.row.id,
-      event_type: view === "latest-form" ? "forms.latest" : "forms.list",
+      event_type: "forms.list",
       success: true,
       ip_address: ip,
       user_agent: ua,
-      metadata: { date, month },
+      metadata: { date, month, total: items.length },
     });
-
-    if (view === "latest-form") return new Response(JSON.stringify({ item: data?.[0] ?? null }), { status: 200, headers: JSON_HEADERS });
-    return new Response(JSON.stringify({ items: data ?? [] }), { status: 200, headers: JSON_HEADERS });
+    return new Response(
+      JSON.stringify({ items, groups, total: items.length, date: date || null, month: month || null }),
+      { status: 200, headers: JSON_HEADERS }
+    );
   }
 
   if (view === "print") {

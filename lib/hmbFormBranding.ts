@@ -63,4 +63,13 @@ export async function loadHmbFormBranding(): Promise<HmbFormBranding> {
 
 export async function saveHmbFormBranding(b: HmbFormBranding): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(b));
+  try {
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.from('app_settings').upsert(
+      { key: 'hmb_form_branding', value: b as unknown as Record<string, unknown>, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
+  } catch {
+    /* Maliye portal varsayılanları kullanır */
+  }
 }
