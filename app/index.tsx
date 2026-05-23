@@ -30,7 +30,8 @@ import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { hasPolicyConsent } from '@/lib/policyConsent';
 import { isPublicWebPath } from '@/lib/publicWebRoute';
-import { publicContractHref, publicMaliyeHref, publicMenuHref } from '@/lib/publicPortalNav';
+import { publicContractHref, publicMenuHref } from '@/lib/publicPortalNav';
+import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 
@@ -611,7 +612,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.portalTile}
-              onPress={() => safeRouterPush(router, publicMaliyeHref())}
+              onPress={() => openPublicMaliyePortal()}
               activeOpacity={0.85}
             >
               <View style={[styles.portalIcon, styles.portalIconMaliye]}>

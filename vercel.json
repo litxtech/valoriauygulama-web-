@@ -6,8 +6,36 @@
   "installCommand": "npm install",
   "rewrites": [
     {
+      "source": "/maliye",
+      "destination": "/maliye/index.html"
+    },
+    {
+      "source": "/maliye/",
+      "destination": "/maliye/index.html"
+    },
+    {
       "source": "/:path*",
       "destination": "/"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/maliye/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/maliye-config.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
     }
   ]
 }

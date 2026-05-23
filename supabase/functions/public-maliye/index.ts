@@ -100,7 +100,7 @@ async function validateAccess(
   return { ok: true, row: tokenRow };
 }
 
-function renderPage(token: string) {
+function renderPage(token: string, apiBase: string) {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   return `<!doctype html>
 <html lang="tr">
@@ -231,6 +231,7 @@ function renderPage(token: string) {
 
   <script>
     const token = ${JSON.stringify(token)};
+    const apiBase = ${JSON.stringify(apiBase)};
     const anon = ${JSON.stringify(anonKey)};
     let pin = "";
     let autoRefreshTimer = null;
@@ -496,9 +497,8 @@ Deno.serve(async (req: Request) => {
   const pin = (url.searchParams.get("pin") ?? "").trim();
 
   if (req.method === "GET" && url.searchParams.get("format") !== "json") {
-    // Dogrudan tam portal HTML'i dondur (eski iki-asamali loader kaldirildi: ikinci fetch
-    // icin istemcide anon/apikey gerekirdi; bos kalinca "Yuklenemedi" olusuyordu).
-    return new Response(renderPage(token), { status: 200, headers: HTML_HEADERS });
+    const apiBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/public-maliye`;
+    return new Response(renderPage(token, apiBase), { status: 200, headers: HTML_HEADERS });
   }
 
   const auth = await validateAccess(supabase, token, pin);

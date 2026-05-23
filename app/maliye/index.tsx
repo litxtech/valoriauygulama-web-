@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { WebView } from 'react-native-webview';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
-import { buildPublicMaliyePortalUrl, isMaliyePortalUrl } from '@/lib/maliyePortalUrl';
+import { buildPublicMaliyeWebUrl } from '@/lib/maliyePortalUrl';
+import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 
 function resolveMaliyeToken(params: { token?: string; t?: string }): string {
   const raw =
@@ -13,40 +13,38 @@ function resolveMaliyeToken(params: { token?: string; t?: string }): string {
   return raw || FIXED_MALIYE_QR_TOKEN;
 }
 
-/** valoria.tr/maliye — canlı denetim portalı (Supabase Edge public-maliye) */
+/** valoria.tr/maliye — statik denetim portalı (Vercel); native’de sistem tarayıcısı */
 export default function PublicMaliyeScreen() {
   const params = useLocalSearchParams<{ token?: string; t?: string }>();
   const token = resolveMaliyeToken(params);
-
-  const portalUri = useMemo(() => buildPublicMaliyePortalUrl(token), [token]);
+  const portalUrl = buildPublicMaliyeWebUrl(token);
 
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !portalUri) return;
-    if (!isMaliyePortalUrl(window.location.href)) {
-      window.location.replace(portalUri);
+    if (!portalUrl) return;
+    if (Platform.OS === 'web') {
+      openPublicMaliyePortal(token);
+      return;
     }
-  }, [portalUri]);
+    void Linking.openURL(portalUrl);
+  }, [portalUrl, token]);
 
-  if (!portalUri) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#1d4ed8" />
-      </View>
-    );
-  }
-
-  if (Platform.OS === 'web') {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#93c5fd" />
-      </View>
-    );
-  }
-
-  return <WebView source={{ uri: portalUri }} style={styles.webview} startInLoadingState />;
+  return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" color="#93c5fd" />
+      {Platform.OS !== 'web' ? (
+        <Text style={styles.hint}>Maliye portalı tarayıcıda açılıyor…</Text>
+      ) : null}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0b1220' },
-  webview: { flex: 1, backgroundColor: '#0b1220' },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0b1220',
+    padding: 24,
+  },
+  hint: { marginTop: 16, color: 'rgba(255,255,255,0.75)', fontSize: 14, textAlign: 'center' },
 });

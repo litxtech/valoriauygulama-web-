@@ -1,16 +1,20 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
-import { buildPublicMaliyePortalUrl, isMaliyePortalUrl } from '@/lib/maliyePortalUrl';
+import { buildPublicMaliyeWebUrl } from '@/lib/maliyePortalUrl';
 
-/** Web: valoria.tr/maliye → doğrudan canlı Edge HTML (Expo unmatched önlenir). */
+function isStaticMaliyePortalLoaded(): boolean {
+  if (typeof document === 'undefined') return false;
+  return !!document.querySelector('script[src*="maliye-config"]');
+}
+
+/** Web: /maliye → statik portal HTML (Expo SPA / ham kaynak metni önlenir). */
 export function MaliyeWebPortalRedirect({ token }: { token?: string }) {
-  const portalUrl = buildPublicMaliyePortalUrl(token);
+  const portalUrl = buildPublicMaliyeWebUrl(token);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !portalUrl) return;
-    if (!isMaliyePortalUrl(window.location.href)) {
-      window.location.replace(portalUrl);
-    }
+    if (isStaticMaliyePortalLoaded()) return;
+    window.location.replace(portalUrl);
   }, [portalUrl]);
 
   return (
