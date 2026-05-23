@@ -257,7 +257,7 @@ function renderPage(token: string, apiBase: string) {
 
     async function api(params){
       const q = qs({ token, pin, ...params });
-      const r = await jsonFetch(q);
+      const r = await jsonFetch(apiBase + q);
       let j = null;
       try {
         j = await r.json();

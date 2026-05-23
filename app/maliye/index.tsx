@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
+import { MaliyePortalWebView } from '@/components/MaliyePortalWebView';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
-import { buildPublicMaliyeWebUrl } from '@/lib/maliyePortalUrl';
+import { buildPublicMaliyeDocumentUrl } from '@/lib/maliyePortalUrl';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 
 function resolveMaliyeToken(params: { token?: string; t?: string }): string {
@@ -13,29 +14,33 @@ function resolveMaliyeToken(params: { token?: string; t?: string }): string {
   return raw || FIXED_MALIYE_QR_TOKEN;
 }
 
-/** valoria.tr/maliye — statik denetim portalı (Vercel); native’de sistem tarayıcısı */
+/** valoria.tr/maliye/index.html — statik portal; native’de WebView */
 export default function PublicMaliyeScreen() {
   const params = useLocalSearchParams<{ token?: string; t?: string }>();
   const token = resolveMaliyeToken(params);
-  const portalUrl = buildPublicMaliyeWebUrl(token);
+  const portalUrl = buildPublicMaliyeDocumentUrl(token);
 
   useEffect(() => {
-    if (!portalUrl) return;
-    if (Platform.OS === 'web') {
-      openPublicMaliyePortal(token);
-      return;
-    }
-    void Linking.openURL(portalUrl);
-  }, [portalUrl, token]);
+    if (Platform.OS === 'web') openPublicMaliyePortal(token);
+  }, [token]);
 
-  return (
-    <View style={styles.centered}>
-      <ActivityIndicator size="large" color="#93c5fd" />
-      {Platform.OS !== 'web' ? (
-        <Text style={styles.hint}>Maliye portalı tarayıcıda açılıyor…</Text>
-      ) : null}
-    </View>
-  );
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#93c5fd" />
+      </View>
+    );
+  }
+
+  if (!portalUrl) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#93c5fd" />
+      </View>
+    );
+  }
+
+  return <MaliyePortalWebView uri={portalUrl} />;
 }
 
 const styles = StyleSheet.create({
@@ -44,7 +49,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#0b1220',
-    padding: 24,
   },
-  hint: { marginTop: 16, color: 'rgba(255,255,255,0.75)', fontSize: 14, textAlign: 'center' },
 });

@@ -6,6 +6,10 @@
   "installCommand": "npm install",
   "rewrites": [
     {
+      "source": "/maliye/index.html",
+      "destination": "/maliye/index.html"
+    },
+    {
       "source": "/maliye",
       "destination": "/maliye/index.html"
     },

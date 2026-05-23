@@ -1,19 +1,17 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
-import { buildPublicMaliyeWebUrl } from '@/lib/maliyePortalUrl';
+import {
+  buildPublicMaliyeDocumentUrl,
+  isStaticMaliyeDocumentLoaded,
+} from '@/lib/maliyePortalUrl';
 
-function isStaticMaliyePortalLoaded(): boolean {
-  if (typeof document === 'undefined') return false;
-  return !!document.querySelector('script[src*="maliye-config"]');
-}
-
-/** Web: /maliye → statik portal HTML (Expo SPA / ham kaynak metni önlenir). */
+/** Web: Expo /maliye rotası → statik belge (dist/maliye/index.html) */
 export function MaliyeWebPortalRedirect({ token }: { token?: string }) {
-  const portalUrl = buildPublicMaliyeWebUrl(token);
+  const portalUrl = buildPublicMaliyeDocumentUrl(token, { bustCache: true });
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !portalUrl) return;
-    if (isStaticMaliyePortalLoaded()) return;
+    if (isStaticMaliyeDocumentLoaded()) return;
     window.location.replace(portalUrl);
   }, [portalUrl]);
 

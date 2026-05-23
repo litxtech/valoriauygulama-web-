@@ -11,6 +11,20 @@ function resolveMaliyeToken(token?: string): string {
   return (token?.trim() || FIXED_MALIYE_QR_TOKEN).trim();
 }
 
+function isProductionPublicHost(hostname: string): boolean {
+  const h = (hostname || '').toLowerCase();
+  return h === 'valoria.tr' || h === 'www.valoria.tr' || h.endsWith('.vercel.app');
+}
+
+/** Canlı web kökü — yerel Metro’da valoria.tr kullanılır */
+export function resolveMaliyePortalOrigin(): string {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const origin = window.location.origin.replace(/\/$/, '');
+    if (isProductionPublicHost(window.location.hostname || '')) return origin;
+  }
+  return PUBLIC_WEB_ORIGIN;
+}
+
 /** Supabase Edge public-maliye (JSON API + doğrudan HTML yedek) */
 export function buildPublicMaliyeEdgeUrl(token?: string): string {
   const base = (supabaseUrl ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '');
@@ -22,24 +36,37 @@ export function buildPublicMaliyeEdgeUrl(token?: string): string {
 /** @deprecated use buildPublicMaliyeEdgeUrl */
 export const buildPublicMaliyePortalUrl = buildPublicMaliyeEdgeUrl;
 
-/** valoria.tr/maliye — statik portal (Vercel dist/maliye, maliye-config.js ile API) */
+/** Kısa yol: /maliye?token=… */
 export function buildPublicMaliyeWebUrl(token?: string): string {
   const t = resolveMaliyeToken(token);
-  const origin =
-    Platform.OS === 'web' && typeof window !== 'undefined'
-      ? window.location.origin.replace(/\/$/, '')
-      : PUBLIC_WEB_ORIGIN;
-  return `${origin}/${PUBLIC_MALIYE_PATH}?token=${encodeURIComponent(t)}`;
+  return `${resolveMaliyePortalOrigin()}/${PUBLIC_MALIYE_PATH}?token=${encodeURIComponent(t)}`;
+}
+
+/**
+ * Statik HTML belgesi — Expo SPA’yı atlar, Vercel dist/maliye/index.html yüklenir.
+ * Web’de tam sayfa yenileme için cache-bust eklenir.
+ */
+export function buildPublicMaliyeDocumentUrl(token?: string, opts?: { bustCache?: boolean }): string {
+  const t = resolveMaliyeToken(token);
+  const origin = resolveMaliyePortalOrigin();
+  const params = new URLSearchParams();
+  params.set('token', t);
+  if (opts?.bustCache) params.set('_doc', String(Date.now()));
+  return `${origin}/${PUBLIC_MALIYE_PATH}/index.html?${params.toString()}`;
 }
 
 /** Platforma göre tercih edilen portal adresi */
 export function buildMaliyePortalUrlForPlatform(token?: string): string {
-  return buildPublicMaliyeWebUrl(token);
+  return buildPublicMaliyeDocumentUrl(token);
 }
 
 export function isMaliyeWebPortalPath(pathname: string): boolean {
   const p = (pathname || '').replace(/\/$/, '') || '/';
-  return p === `/${PUBLIC_MALIYE_PATH}` || p.startsWith(`/${PUBLIC_MALIYE_PATH}/`);
+  return (
+    p === `/${PUBLIC_MALIYE_PATH}` ||
+    p === `/${PUBLIC_MALIYE_PATH}/index.html` ||
+    p.startsWith(`/${PUBLIC_MALIYE_PATH}/`)
+  );
 }
 
 export function isMaliyePortalUrl(href: string): boolean {
@@ -50,4 +77,9 @@ export function isMaliyePortalUrl(href: string): boolean {
     /* ignore */
   }
   return href.includes('/functions/v1/public-maliye');
+}
+
+export function isStaticMaliyeDocumentLoaded(): boolean {
+  if (typeof document === 'undefined') return false;
+  return !!document.querySelector('script[src*="maliye-config"]');
 }
