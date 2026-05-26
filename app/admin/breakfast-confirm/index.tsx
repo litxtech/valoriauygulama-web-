@@ -38,20 +38,43 @@ type Row = {
 };
 
 type StaffOption = { id: string; name: string; department: string | null; count: number };
+type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
-function formatTrDateTime(value: string): string {
+function formatTrDate(value: string): string {
   try {
     return new Intl.DateTimeFormat('tr-TR', {
       timeZone: 'Europe/Istanbul',
+      day: 'numeric',
+      month: 'long',
       year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
     }).format(new Date(value));
   } catch {
     return value;
   }
+}
+
+function formatTrTime(value: string): string {
+  try {
+    return new Intl.DateTimeFormat('tr-TR', {
+      timeZone: 'Europe/Istanbul',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(value));
+  } catch {
+    return '';
+  }
+}
+
+function getRelativeDay(dateStr: string): string | null {
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+  if (dateStr === todayStr) return 'Bugün';
+  if (dateStr === yesterdayStr) return 'Dün';
+  return null;
 }
 
 export default function AdminBreakfastConfirmListScreen() {
@@ -64,6 +87,7 @@ export default function AdminBreakfastConfirmListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<Row | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -185,22 +209,33 @@ export default function AdminBreakfastConfirmListScreen() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   }, [rows]);
 
-  const filteredRows = useMemo(
-    () => (selectedStaffId ? rows.filter((r) => r.staff_id === selectedStaffId) : rows),
-    [rows, selectedStaffId]
-  );
+  const stats = useMemo(() => {
+    const pending = rows.filter((r) => !r.approved_at && !r.rejected_at).length;
+    const approved = rows.filter((r) => !!r.approved_at).length;
+    const rejected = rows.filter((r) => !!r.rejected_at).length;
+    return { pending, approved, rejected, total: rows.length };
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    let result = rows;
+    if (selectedStaffId) result = result.filter((r) => r.staff_id === selectedStaffId);
+    if (statusFilter === 'pending') result = result.filter((r) => !r.approved_at && !r.rejected_at);
+    else if (statusFilter === 'approved') result = result.filter((r) => !!r.approved_at);
+    else if (statusFilter === 'rejected') result = result.filter((r) => !!r.rejected_at);
+    return result;
+  }, [rows, selectedStaffId, statusFilter]);
 
   const selectedStaffName = useMemo(
     () => staffOptions.find((s) => s.id === selectedStaffId)?.name ?? null,
     [staffOptions, selectedStaffId]
   );
 
-  const thumbSize = Math.min(Math.floor((width - 32 - 14 - 10) / 2), 180);
+  const thumbSize = Math.min(Math.floor((width - 32 - 14 - 10) / 2), 160);
 
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={adminTheme.colors.primary} />
+        <ActivityIndicator size="large" color={adminTheme.colors.accent} />
       </View>
     );
   }
@@ -214,149 +249,257 @@ export default function AdminBreakfastConfirmListScreen() {
         onClose={() => setLightbox(null)}
       />
 
-      {/* Toolbar */}
-      <View style={styles.toolbar}>
-        <TouchableOpacity
-          style={[styles.filterChip, selectedStaffId && styles.filterChipActive]}
-          onPress={() => setDrawerOpen(true)}
-          activeOpacity={0.82}
-        >
-          <Ionicons
-            name={selectedStaffId ? 'person' : 'people-outline'}
-            size={18}
-            color={selectedStaffId ? '#fff' : adminTheme.colors.primary}
-          />
-          <Text style={[styles.filterChipText, selectedStaffId && styles.filterChipTextActive]}>
-            {selectedStaffName ?? 'Tüm personel'}
-          </Text>
-          <Ionicons
-            name="chevron-down"
-            size={16}
-            color={selectedStaffId ? '#fff' : adminTheme.colors.textSecondary}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.toolBtn}
-          onPress={() => router.push('/admin/breakfast-confirm/settings')}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="settings-outline" size={20} color={adminTheme.colors.primary} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Main scrollable content */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
-        showsVerticalScrollIndicator={true}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
       >
+        {/* Summary Stats */}
+        <View style={styles.statsRow}>
+          <TouchableOpacity
+            style={[styles.statCard, statusFilter === 'pending' && styles.statCardActive]}
+            onPress={() => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
+              <Ionicons name="time" size={18} color="#D97706" />
+            </View>
+            <Text style={styles.statNumber}>{stats.pending}</Text>
+            <Text style={styles.statLabel}>Bekleyen</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.statCard, statusFilter === 'approved' && styles.statCardActive]}
+            onPress={() => setStatusFilter(statusFilter === 'approved' ? 'all' : 'approved')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
+              <Ionicons name="checkmark-circle" size={18} color="#047857" />
+            </View>
+            <Text style={styles.statNumber}>{stats.approved}</Text>
+            <Text style={styles.statLabel}>Onaylı</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.statCard, statusFilter === 'rejected' && styles.statCardActive]}
+            onPress={() => setStatusFilter(statusFilter === 'rejected' ? 'all' : 'rejected')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIcon, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="close-circle" size={18} color="#DC2626" />
+            </View>
+            <Text style={styles.statNumber}>{stats.rejected}</Text>
+            <Text style={styles.statLabel}>Reddedilen</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Filter row */}
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={[styles.filterChip, selectedStaffId && styles.filterChipActive]}
+            onPress={() => setDrawerOpen(true)}
+            activeOpacity={0.82}
+          >
+            <Ionicons
+              name={selectedStaffId ? 'person' : 'people-outline'}
+              size={16}
+              color={selectedStaffId ? '#fff' : adminTheme.colors.textSecondary}
+            />
+            <Text style={[styles.filterChipText, selectedStaffId && styles.filterChipTextActive]} numberOfLines={1}>
+              {selectedStaffName ?? 'Tüm personel'}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={selectedStaffId ? '#fff' : adminTheme.colors.textMuted}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsBtn}
+            onPress={() => router.push('/admin/breakfast-confirm/settings')}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="settings-outline" size={18} color={adminTheme.colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Status filter info */}
+        {statusFilter !== 'all' && (
+          <View style={styles.activeFilterBanner}>
+            <Ionicons
+              name={statusFilter === 'pending' ? 'time' : statusFilter === 'approved' ? 'checkmark-circle' : 'close-circle'}
+              size={16}
+              color={statusFilter === 'pending' ? '#D97706' : statusFilter === 'approved' ? '#047857' : '#DC2626'}
+            />
+            <Text style={styles.activeFilterText}>
+              {statusFilter === 'pending' ? 'Bekleyen kayıtlar' : statusFilter === 'approved' ? 'Onaylı kayıtlar' : 'Reddedilen kayıtlar'}
+              {' '}({filteredRows.length})
+            </Text>
+            <TouchableOpacity onPress={() => setStatusFilter('all')} hitSlop={8}>
+              <Ionicons name="close" size={18} color={adminTheme.colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Content */}
         {filteredRows.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <Ionicons name="cafe-outline" size={48} color={adminTheme.colors.textMuted} />
-            <Text style={styles.empty}>
-              {selectedStaffId ? 'Bu personele ait kayıt yok.' : 'Kayıt yok.'}
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="cafe-outline" size={40} color={adminTheme.colors.textMuted} />
+            </View>
+            <Text style={styles.emptyTitle}>Kayıt bulunamadı</Text>
+            <Text style={styles.emptySub}>
+              {selectedStaffId ? 'Bu personele ait kayıt yok.' : 'Henüz kayıt eklenmemiş.'}
             </Text>
           </View>
         ) : (
-          filteredRows.map((item) => (
-            <View key={item.id} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.date}>{item.record_date}</Text>
-                  {item.staff?.full_name ? (
-                    <Text style={styles.name}>{item.staff.full_name}</Text>
-                  ) : null}
+          filteredRows.map((item) => {
+            const isPending = !item.approved_at && !item.rejected_at;
+            const isApproved = !!item.approved_at;
+            const relDay = getRelativeDay(item.record_date);
+
+            return (
+              <View key={item.id} style={[styles.card, isPending && styles.cardPending]}>
+                {/* Card top accent line */}
+                {isPending && <View style={styles.cardAccentLine} />}
+
+                <View style={styles.cardHeader}>
+                  <View style={styles.cardHeaderLeft}>
+                    <View style={styles.dateRow}>
+                      {relDay && <Text style={styles.relDay}>{relDay}</Text>}
+                      <Text style={styles.date}>{formatTrDate(item.record_date)}</Text>
+                    </View>
+                    {item.staff?.full_name ? (
+                      <View style={styles.staffRow}>
+                        <View style={styles.staffAvatar}>
+                          <Text style={styles.staffAvatarText}>
+                            {(item.staff.full_name[0] ?? '?').toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.staffName}>{item.staff.full_name}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {isApproved ? (
+                    <View style={styles.badgeApproved}>
+                      <Ionicons name="checkmark-circle" size={14} color="#047857" />
+                      <Text style={styles.badgeApprovedText}>Onaylı</Text>
+                    </View>
+                  ) : item.rejected_at ? (
+                    <View style={styles.badgeRejected}>
+                      <Ionicons name="close-circle" size={14} color="#DC2626" />
+                      <Text style={styles.badgeRejectedText}>Red</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.badgePending}>
+                      <Ionicons name="hourglass-outline" size={14} color="#D97706" />
+                      <Text style={styles.badgePendingText}>Bekliyor</Text>
+                    </View>
+                  )}
                 </View>
-                {item.approved_at ? (
-                  <View style={styles.badgePillOk}>
-                    <Ionicons name="checkmark-circle" size={14} color="#047857" />
-                    <Text style={styles.badgeOkText}>Onaylı</Text>
+
+                {/* Meta info */}
+                <View style={styles.metaRow}>
+                  <View style={styles.metaChip}>
+                    <Ionicons name="people" size={13} color={adminTheme.colors.accent} />
+                    <Text style={styles.metaText}>{item.guest_count} misafir</Text>
                   </View>
-                ) : item.rejected_at ? (
-                  <View style={styles.badgePillReject}>
-                    <Ionicons name="close-circle" size={14} color="#dc2626" />
-                    <Text style={styles.badgeRejectText}>Uygun Değil</Text>
+                  <View style={styles.metaChip}>
+                    <Ionicons name="time-outline" size={13} color={adminTheme.colors.textMuted} />
+                    <Text style={styles.metaText}>{formatTrTime(item.submitted_at)}</Text>
                   </View>
-                ) : (
-                  <View style={styles.badgePillWait}>
-                    <Ionicons name="time-outline" size={14} color="#b45309" />
-                    <Text style={styles.badgeWaitText}>Bekliyor</Text>
+                  {(item.photo_urls ?? []).length > 0 && (
+                    <View style={styles.metaChip}>
+                      <Ionicons name="images" size={13} color={adminTheme.colors.textMuted} />
+                      <Text style={styles.metaText}>{(item.photo_urls ?? []).length} fotoğraf</Text>
+                    </View>
+                  )}
+                </View>
+
+                {item.note ? (
+                  <View style={styles.noteBox}>
+                    <Ionicons name="chatbubble-outline" size={14} color={adminTheme.colors.textMuted} style={{ marginTop: 2 }} />
+                    <Text style={styles.noteText}>{item.note}</Text>
+                  </View>
+                ) : null}
+
+                {/* Photos */}
+                {(item.photo_urls ?? []).length > 0 && (
+                  <View style={styles.thumbRow}>
+                    {(item.photo_urls ?? []).map((u, idx) => (
+                      <TouchableOpacity
+                        key={`${item.id}-${idx}`}
+                        activeOpacity={0.88}
+                        onPress={() => setLightbox({ urls: item.photo_urls ?? [], index: idx })}
+                      >
+                        <Image
+                          source={{ uri: u }}
+                          style={[styles.thumb, { width: thumbSize, height: thumbSize * 0.75 }]}
+                        />
+                        {idx === 0 && (item.photo_urls ?? []).length > 2 && (
+                          <View style={styles.photoCount}>
+                            <Text style={styles.photoCountText}>+{(item.photo_urls ?? []).length - 1}</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 )}
+
+                {/* Rejection info */}
+                {item.rejected_at && item.rejection_reason ? (
+                  <View style={styles.rejectionBox}>
+                    <Ionicons name="warning" size={16} color="#DC2626" />
+                    <View style={styles.rejectionContent}>
+                      <Text style={styles.rejectionLabel}>Red sebebi</Text>
+                      <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {/* Actions */}
+                {isPending ? (
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item)} activeOpacity={0.85}>
+                      <Ionicons name="checkmark" size={18} color="#fff" />
+                      <Text style={styles.approveBtnText}>Onayla</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.rejectBtn}
+                      onPress={() => { setRejectTarget(item); setRejectReason(''); }}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="close" size={18} color="#DC2626" />
+                      <Text style={styles.rejectBtnText}>Reddet</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
               </View>
-
-              <View style={styles.metaRow}>
-                <View style={styles.metaItem}>
-                  <Ionicons name="calendar-outline" size={14} color={adminTheme.colors.textSecondary} />
-                  <Text style={styles.meta}>{formatTrDateTime(item.submitted_at)}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <Ionicons name="people-outline" size={14} color={adminTheme.colors.textSecondary} />
-                  <Text style={styles.meta}>{item.guest_count} kişi</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <Ionicons name="camera-outline" size={14} color={adminTheme.colors.textSecondary} />
-                  <Text style={styles.meta}>{(item.photo_urls ?? []).length} foto</Text>
-                </View>
-              </View>
-
-              {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
-
-              <View style={styles.thumbRow}>
-                {(item.photo_urls ?? []).map((u, idx) => (
-                  <TouchableOpacity
-                    key={`${item.id}-${idx}`}
-                    activeOpacity={0.88}
-                    onPress={() => setLightbox({ urls: item.photo_urls ?? [], index: idx })}
-                  >
-                    <Image
-                      source={{ uri: u }}
-                      style={[styles.thumb, { width: thumbSize, height: thumbSize }]}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {item.rejected_at && item.rejection_reason ? (
-                <View style={styles.rejectionBox}>
-                  <Ionicons name="alert-circle" size={16} color="#dc2626" />
-                  <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
-                </View>
-              ) : null}
-
-              {!item.approved_at && !item.rejected_at ? (
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item)} activeOpacity={0.85}>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-                    <Text style={styles.approveBtnText}>Onayla</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.rejectBtn}
-                    onPress={() => { setRejectTarget(item); setRejectReason(''); }}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="close-circle-outline" size={20} color="#fff" />
-                    <Text style={styles.rejectBtnText}>Uygun Değil</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-            </View>
-          ))
+            );
+          })
         )}
       </ScrollView>
 
       {/* Rejection modal */}
       <Modal visible={rejectTarget !== null} transparent animationType="fade" onRequestClose={() => setRejectTarget(null)}>
-        <View style={styles.rejectOverlay}>
-          <View style={styles.rejectSheet}>
-            <Text style={styles.rejectSheetTitle}>Kahvaltı Uygun Değil</Text>
-            <Text style={styles.rejectSheetSub}>
-              {rejectTarget?.staff?.full_name ?? '—'} · {rejectTarget?.record_date}
-            </Text>
-            <Text style={styles.rejectSheetLabel}>Red nedeni (zorunlu)</Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalIconWrap}>
+                <Ionicons name="warning" size={24} color="#DC2626" />
+              </View>
+              <Text style={styles.modalTitle}>Kahvaltı Reddi</Text>
+              <Text style={styles.modalSub}>
+                {rejectTarget?.staff?.full_name ?? '—'} · {rejectTarget?.record_date ? formatTrDate(rejectTarget.record_date) : ''}
+              </Text>
+            </View>
+
+            <Text style={styles.modalLabel}>Red nedeni</Text>
             <TextInput
-              style={styles.rejectInput}
+              style={styles.modalInput}
               value={rejectReason}
               onChangeText={setRejectReason}
               placeholder="Neden uygun görülmedi?"
@@ -364,19 +507,24 @@ export default function AdminBreakfastConfirmListScreen() {
               multiline
               autoFocus
             />
-            <Text style={styles.rejectScoreNote}>
-              Bu işlem mutfak puanını -5 puan etkileyecektir.
-            </Text>
-            <View style={styles.rejectActions}>
+
+            <View style={styles.modalWarning}>
+              <Ionicons name="information-circle" size={16} color="#D97706" />
+              <Text style={styles.modalWarningText}>
+                Bu işlem mutfak puanını -5 puan etkileyecektir.
+              </Text>
+            </View>
+
+            <View style={styles.modalActions}>
               <TouchableOpacity
-                style={styles.rejectCancelBtn}
+                style={styles.modalCancelBtn}
                 onPress={() => setRejectTarget(null)}
                 activeOpacity={0.85}
               >
-                <Text style={styles.rejectCancelText}>Vazgeç</Text>
+                <Text style={styles.modalCancelText}>Vazgeç</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.rejectConfirmBtn}
+                style={styles.modalConfirmBtn}
                 onPress={reject}
                 disabled={rejecting}
                 activeOpacity={0.85}
@@ -384,7 +532,10 @@ export default function AdminBreakfastConfirmListScreen() {
                 {rejecting ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.rejectConfirmText}>Reddet</Text>
+                  <>
+                    <Ionicons name="close-circle" size={16} color="#fff" />
+                    <Text style={styles.modalConfirmText}>Reddet</Text>
+                  </>
                 )}
               </TouchableOpacity>
             </View>
@@ -392,15 +543,15 @@ export default function AdminBreakfastConfirmListScreen() {
         </View>
       </Modal>
 
-      {/* Staff drawer (bottom sheet modal) */}
+      {/* Staff drawer */}
       <Modal visible={drawerOpen} transparent animationType="slide" onRequestClose={() => setDrawerOpen(false)}>
         <View style={styles.drawerOverlay}>
           <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)} />
           <View style={[styles.drawerSheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={styles.drawerHandle} />
-            <Text style={styles.drawerTitle}>Personel seçin</Text>
+            <Text style={styles.drawerTitle}>Personel Filtresi</Text>
+            <Text style={styles.drawerSubtitle}>Raporları kişiye göre filtreleyin</Text>
 
-            {/* "Tümü" seçeneği */}
             <TouchableOpacity
               style={[styles.drawerItem, !selectedStaffId && styles.drawerItemActive]}
               onPress={() => { setSelectedStaffId(null); setDrawerOpen(false); }}
@@ -408,7 +559,7 @@ export default function AdminBreakfastConfirmListScreen() {
             >
               <View style={styles.drawerItemLeft}>
                 <View style={[styles.drawerAvatar, !selectedStaffId && styles.drawerAvatarActive]}>
-                  <Ionicons name="people" size={20} color={!selectedStaffId ? '#fff' : adminTheme.colors.primary} />
+                  <Ionicons name="people" size={18} color={!selectedStaffId ? '#fff' : adminTheme.colors.accent} />
                 </View>
                 <View>
                   <Text style={[styles.drawerItemName, !selectedStaffId && styles.drawerItemNameActive]}>
@@ -417,9 +568,7 @@ export default function AdminBreakfastConfirmListScreen() {
                   <Text style={styles.drawerItemMeta}>{rows.length} kayıt</Text>
                 </View>
               </View>
-              {!selectedStaffId ? (
-                <Ionicons name="checkmark-circle" size={22} color={adminTheme.colors.primary} />
-              ) : null}
+              {!selectedStaffId && <Ionicons name="checkmark-circle" size={20} color={adminTheme.colors.accent} />}
             </TouchableOpacity>
 
             <ScrollView style={styles.drawerScroll} showsVerticalScrollIndicator={false}>
@@ -447,9 +596,7 @@ export default function AdminBreakfastConfirmListScreen() {
                         </Text>
                       </View>
                     </View>
-                    {active ? (
-                      <Ionicons name="checkmark-circle" size={22} color={adminTheme.colors.primary} />
-                    ) : null}
+                    {active && <Ionicons name="checkmark-circle" size={20} color={adminTheme.colors.accent} />}
                   </TouchableOpacity>
                 );
               })}
@@ -462,15 +609,65 @@ export default function AdminBreakfastConfirmListScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
+  scrollView: { flex: 1 },
+  scrollContent: { paddingTop: 16 },
 
-  toolbar: {
+  /* Stats */
+  statsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    gap: 10,
+    marginBottom: 16,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#F1F5F9',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  statCardActive: {
+    borderColor: adminTheme.colors.accent,
+    backgroundColor: '#FFFBF5',
+  },
+  statIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  statNumber: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: adminTheme.colors.text,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: adminTheme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  /* Filter */
+  filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    marginBottom: 12,
+    gap: 10,
   },
   filterChip: {
     flex: 1,
@@ -482,8 +679,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: adminTheme.colors.borderLight,
-    marginRight: 10,
+    borderColor: '#E2E8F0',
   },
   filterChipActive: {
     backgroundColor: adminTheme.colors.primary,
@@ -491,93 +687,237 @@ const styles = StyleSheet.create({
   },
   filterChipText: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: adminTheme.colors.text,
   },
-  filterChipTextActive: {
-    color: '#fff',
-  },
-  toolBtn: {
-    width: 44,
-    height: 44,
+  filterChipTextActive: { color: '#fff' },
+  settingsBtn: {
+    width: 42,
+    height: 42,
     borderRadius: 12,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: adminTheme.colors.borderLight,
+    borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  scrollView: { flex: 1 },
-  scrollContent: { paddingTop: 4 },
+  /* Active filter banner */
+  activeFilterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: '#FFF7ED',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  activeFilterText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
+  },
 
-  emptyWrap: { alignItems: 'center', marginTop: 60, gap: 12 },
-  empty: { textAlign: 'center', color: adminTheme.colors.textMuted, fontSize: 15 },
+  /* Empty */
+  emptyWrap: { alignItems: 'center', marginTop: 80, paddingHorizontal: 40 },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: adminTheme.colors.text,
+    marginBottom: 6,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: adminTheme.colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
 
+  /* Cards */
   card: {
     marginHorizontal: 16,
-    marginBottom: 14,
+    marginBottom: 12,
     padding: 16,
     backgroundColor: '#fff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: adminTheme.colors.borderLight,
-    shadowColor: '#000',
+    borderColor: '#F1F5F9',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
     elevation: 2,
+    overflow: 'hidden',
+  },
+  cardPending: {
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+  },
+  cardAccentLine: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#F59E0B',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   cardHeaderLeft: { flex: 1, marginRight: 10 },
-  date: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
-  name: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary, marginTop: 2 },
-  badgePillOk: {
+  dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  relDay: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#D97706',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  date: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
+  staffRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ecfdf5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    gap: 8,
+    marginTop: 8,
   },
-  badgeOkText: { fontSize: 12, fontWeight: '700', color: '#047857' },
-  badgePillWait: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#fffbeb',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  badgeWaitText: { fontSize: 12, fontWeight: '700', color: '#b45309' },
-
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 6 },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  meta: { fontSize: 13, color: adminTheme.colors.textSecondary },
-  note: {
-    fontSize: 14,
-    color: adminTheme.colors.text,
-    marginTop: 6,
-    backgroundColor: '#f8fafc',
-    padding: 10,
-    borderRadius: 10,
-    lineHeight: 20,
-  },
-
-  thumbRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
-  thumb: {
+  staffAvatar: {
+    width: 28,
+    height: 28,
     borderRadius: 14,
-    backgroundColor: adminTheme.colors.borderLight,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  staffAvatarText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#4F46E5',
+  },
+  staffName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: adminTheme.colors.textSecondary,
   },
 
+  /* Badges */
+  badgeApproved: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  badgeApprovedText: { fontSize: 12, fontWeight: '700', color: '#047857' },
+  badgePending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  badgePendingText: { fontSize: 12, fontWeight: '700', color: '#D97706' },
+  badgeRejected: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  badgeRejectedText: { fontSize: 12, fontWeight: '700', color: '#DC2626' },
+
+  /* Meta */
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  metaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  metaText: { fontSize: 12, fontWeight: '500', color: adminTheme.colors.textSecondary },
+
+  /* Note */
+  noteBox: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#E2E8F0',
+  },
+  noteText: {
+    flex: 1,
+    fontSize: 13,
+    color: adminTheme.colors.text,
+    lineHeight: 19,
+  },
+
+  /* Photos */
+  thumbRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 4 },
+  thumb: {
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  photoCount: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  photoCountText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+
+  /* Rejection box */
+  rejectionBox: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  rejectionContent: { flex: 1 },
+  rejectionLabel: { fontSize: 11, fontWeight: '700', color: '#991B1B', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+  rejectionText: { fontSize: 13, color: '#7F1D1D', lineHeight: 18 },
+
+  /* Actions */
   actionRow: {
     flexDirection: 'row',
     gap: 10,
@@ -588,98 +928,104 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: adminTheme.colors.primary,
+    gap: 6,
+    backgroundColor: '#047857',
     paddingVertical: 12,
     borderRadius: 12,
+    shadowColor: '#047857',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   rejectBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#dc2626',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
     paddingVertical: 12,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
-  rejectBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  rejectBtnText: { color: '#DC2626', fontWeight: '700', fontSize: 14 },
 
-  badgePillReject: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#fef2f2',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  badgeRejectText: { fontSize: 12, fontWeight: '700', color: '#dc2626' },
-
-  rejectionBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: '#fef2f2',
-    padding: 12,
-    borderRadius: 10,
-    marginTop: 10,
-  },
-  rejectionText: { flex: 1, fontSize: 13, color: '#991b1b', lineHeight: 18 },
-
-  rejectOverlay: {
+  /* Modal */
+  modalOverlay: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     padding: 24,
   },
-  rejectSheet: {
+  modalSheet: {
     width: '100%',
     maxWidth: 400,
     backgroundColor: '#fff',
-    borderRadius: 20,
+    borderRadius: 24,
     padding: 24,
   },
-  rejectSheetTitle: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 4 },
-  rejectSheetSub: { fontSize: 14, color: adminTheme.colors.textSecondary, marginBottom: 16 },
-  rejectSheetLabel: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.text, marginBottom: 8 },
-  rejectInput: {
-    backgroundColor: '#f8fafc',
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FEF2F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 4 },
+  modalSub: { fontSize: 14, color: adminTheme.colors.textSecondary },
+  modalLabel: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.3 },
+  modalInput: {
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: adminTheme.colors.borderLight,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
     color: adminTheme.colors.text,
-    minHeight: 80,
+    minHeight: 90,
     textAlignVertical: 'top',
   },
-  rejectScoreNote: {
-    fontSize: 13,
-    color: '#dc2626',
-    marginTop: 10,
-    fontWeight: '500',
+  modalWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
   },
-  rejectActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  rejectCancelBtn: {
+  modalWarningText: { fontSize: 13, color: '#92400E', fontWeight: '500', flex: 1 },
+  modalActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  modalCancelBtn: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#F1F5F9',
   },
-  rejectCancelText: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
-  rejectConfirmBtn: {
+  modalCancelText: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
+  modalConfirmBtn: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: '#dc2626',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: '#DC2626',
   },
-  rejectConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  modalConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
   /* Drawer */
   drawerOverlay: { flex: 1, justifyContent: 'flex-end' },
@@ -696,18 +1042,24 @@ const styles = StyleSheet.create({
   },
   drawerHandle: {
     width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#cbd5e1',
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#CBD5E1',
     alignSelf: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
   },
   drawerTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: adminTheme.colors.text,
     paddingHorizontal: 20,
-    marginBottom: 14,
+    marginBottom: 4,
+  },
+  drawerSubtitle: {
+    fontSize: 13,
+    color: adminTheme.colors.textMuted,
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
   drawerScroll: { paddingHorizontal: 12 },
   drawerItem: {
@@ -718,41 +1070,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     marginBottom: 4,
+    marginHorizontal: 8,
   },
   drawerItemActive: {
-    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+    backgroundColor: '#FFF7ED',
   },
   drawerItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   drawerAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#f1f5f9',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   drawerAvatarActive: {
-    backgroundColor: adminTheme.colors.primary,
+    backgroundColor: adminTheme.colors.accent,
   },
   drawerAvatarText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
-    color: adminTheme.colors.primary,
+    color: adminTheme.colors.accent,
   },
-  drawerAvatarTextActive: {
-    color: '#fff',
-  },
+  drawerAvatarTextActive: { color: '#fff' },
   drawerItemName: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
     color: adminTheme.colors.text,
   },
   drawerItemNameActive: {
-    color: adminTheme.colors.primary,
+    color: adminTheme.colors.accent,
+    fontWeight: '700',
   },
   drawerItemMeta: {
     fontSize: 12,
-    color: adminTheme.colors.textSecondary,
+    color: adminTheme.colors.textMuted,
     marginTop: 1,
   },
 });

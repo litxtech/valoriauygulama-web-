@@ -24,6 +24,36 @@ export type GuestForPdf = {
   nights_count?: number | null;
   vat_amount?: number | null;
   accommodation_tax_amount?: number | null;
+  payment_method?: string | null;
+  reservation_channel?: string | null;
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Nakit',
+  credit_card: 'Kredi Kartı',
+  debit_card: 'Banka Kartı',
+  transfer: 'Havale / EFT',
+  online: 'Online Ödeme',
+};
+
+const RESERVATION_CHANNEL_LABELS: Record<string, string> = {
+  walk_in: 'Walk-in',
+  phone: 'Telefon',
+  whatsapp: 'WhatsApp',
+  web: 'Web sitesi',
+  booking_com: 'Booking.com',
+  trivago: 'Trivago',
+  airbnb: 'Airbnb',
+  hotels_com: 'Hotels.com',
+  expedia: 'Expedia',
+  agoda: 'Agoda',
+  tatilbudur: 'Tatilbudur',
+  jolly: 'Jolly',
+  etstur: 'ETS Tur',
+  agency: 'Acente',
+  corporate: 'Kurumsal / Firma',
+  social_media: 'Sosyal Medya',
+  other: 'Diğer',
 };
 
 function escapeHtml(s: string): string {
@@ -193,6 +223,12 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
     totalNet != null && totalNet >= 0
       ? `<p><strong>Toplam konaklama bedeli (net):</strong> ${fmtMoney(totalNet)} ₺</p>`
       : '';
+  const paymentLine = guest.payment_method
+    ? `<p><strong>Ödeme Şekli:</strong> ${escapeHtml(PAYMENT_METHOD_LABELS[guest.payment_method] ?? guest.payment_method)}</p>`
+    : '';
+  const channelLine = guest.reservation_channel
+    ? `<p><strong>Rezervasyon Kanalı:</strong> ${escapeHtml(RESERVATION_CHANNEL_LABELS[guest.reservation_channel] ?? guest.reservation_channel)}</p>`
+    : '';
 
   return `
 <!DOCTYPE html>
@@ -213,6 +249,8 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
     <p><strong>Onay Tarihi:</strong> ${date}</p>
     ${nightsLine}
     ${priceLine}
+    ${paymentLine}
+    ${channelLine}
   </div>
   <div class="contract">${content}</div>
   <div class="signature">
@@ -252,7 +290,7 @@ export async function loadGuestForPdf(client: SupabaseClient, guestId: string): 
   const { data: guest, error } = await client
     .from('guests')
     .select(
-      'full_name, phone, email, id_number, verified_at, created_at, signature_data, rooms(room_number), contract_templates(title, content), total_amount_net, nights_count, vat_amount, accommodation_tax_amount'
+      'full_name, phone, email, id_number, verified_at, created_at, signature_data, rooms(room_number), contract_templates(title, content), total_amount_net, nights_count, vat_amount, accommodation_tax_amount, payment_method, reservation_channel'
     )
     .eq('id', guestId)
     .single();
