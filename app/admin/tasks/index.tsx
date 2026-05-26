@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Modal,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +25,7 @@ import {
 } from '@/lib/staffAssignments';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { awardStaffPoints } from '@/lib/staffPoints';
 
 type AssignmentRow = {
   id: string;
@@ -58,6 +60,10 @@ export default function AdminTasksIndexScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('open');
   const [query, setQuery] = useState('');
+  const [scoreTarget, setScoreTarget] = useState<AssignmentRow | null>(null);
+  const [scoreValue, setScoreValue] = useState('5');
+  const [scoreNote, setScoreNote] = useState('');
+  const [scoring, setScoring] = useState(false);
 
   const load = useCallback(async () => {
     const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
@@ -160,6 +166,37 @@ export default function AdminTasksIndexScreen() {
         },
       },
     ]);
+  };
+
+  const submitTaskScore = async () => {
+    if (!authStaff?.id || !scoreTarget) return;
+    const orgId = authStaff.organization_id;
+    if (!orgId) return;
+    const pts = parseInt(scoreValue, 10);
+    if (isNaN(pts) || pts === 0) {
+      setScoreTarget(null);
+      return;
+    }
+    setScoring(true);
+    try {
+      const result = await awardStaffPoints({
+        organizationId: orgId,
+        staffId: scoreTarget.assigned_staff_id,
+        points: pts,
+        category: 'task',
+        reason: scoreNote.trim() || `Görev tamamlandı: ${scoreTarget.title}`,
+        referenceType: 'staff_assignment',
+        referenceId: scoreTarget.id,
+        createdByStaffId: authStaff.id,
+      });
+      if (!result.success) throw new Error(result.error);
+      Alert.alert('Başarılı', `${pts > 0 ? '+' : ''}${pts} puan verildi.`);
+      setScoreTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Puanlama başarısız');
+    } finally {
+      setScoring(false);
+    }
   };
 
   const formatDateTime = (iso: string) => {
@@ -381,11 +418,87 @@ export default function AdminTasksIndexScreen() {
                   <Text style={styles.cancelBtnText}>Görevi iptal et</Text>
                 </TouchableOpacity>
               ) : null}
+              {isAdmin && r.status === 'completed' ? (
+                <TouchableOpacity
+                  style={styles.scoreBtn}
+                  onPress={() => { setScoreTarget(r); setScoreValue('5'); setScoreNote(''); }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="star" size={16} color="#047857" />
+                  <Text style={styles.scoreBtnText}>Puanla</Text>
+                </TouchableOpacity>
+              ) : null}
             </AdminCard>
           );
         })
       )}
       <View style={{ height: 32 }} />
+
+      {/* Task scoring modal */}
+      <Modal visible={scoreTarget !== null} transparent animationType="fade" onRequestClose={() => setScoreTarget(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="star" size={28} color="#047857" />
+              <Text style={styles.modalTitle}>Görev Puanla</Text>
+              <Text style={styles.modalSub}>
+                {scoreTarget ? staffMap[scoreTarget.assigned_staff_id]?.full_name ?? 'Personel' : ''} — {scoreTarget?.title ?? ''}
+              </Text>
+            </View>
+
+            <Text style={styles.modalLabel}>Puan</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {[3, 5, 10, 15].map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  onPress={() => setScoreValue(String(v))}
+                  style={[
+                    styles.scoreChip,
+                    scoreValue === String(v) && styles.scoreChipActive,
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.scoreChipText, scoreValue === String(v) && styles.scoreChipTextActive]}>+{v}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={styles.modalInput}
+              value={scoreValue}
+              onChangeText={setScoreValue}
+              placeholder="Özel puan"
+              placeholderTextColor={adminTheme.colors.textMuted}
+              keyboardType="number-pad"
+            />
+
+            <Text style={[styles.modalLabel, { marginTop: 8 }]}>Not (opsiyonel)</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 60 }]}
+              value={scoreNote}
+              onChangeText={setScoreNote}
+              placeholder="Neden puan veriliyor?"
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setScoreTarget(null)} activeOpacity={0.85}>
+                <Text style={styles.modalCancelText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirmBtn} onPress={submitTaskScore} disabled={scoring} activeOpacity={0.85}>
+                {scoring ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="star" size={16} color="#fff" />
+                    <Text style={styles.modalConfirmText}>Puanla</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -484,4 +597,79 @@ const styles = StyleSheet.create({
   rowBody: { fontSize: 14, lineHeight: 21, color: adminTheme.colors.textSecondary, marginBottom: 8 },
   cancelBtn: { marginTop: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 12 },
   cancelBtnText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.error },
+  scoreBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  scoreBtnText: { fontSize: 13, fontWeight: '700', color: '#047857' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalSheet: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalHeader: { alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, marginTop: 8 },
+  modalSub: { fontSize: 13, color: adminTheme.colors.textSecondary, marginTop: 4, textAlign: 'center' },
+  modalLabel: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text, marginBottom: 8 },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: adminTheme.colors.text,
+    backgroundColor: '#F9FAFB',
+    marginBottom: 8,
+  },
+  modalActions: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.textSecondary },
+  modalConfirmBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#047857',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  modalConfirmText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  scoreChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  scoreChipActive: { borderColor: '#047857', backgroundColor: '#ECFDF5' },
+  scoreChipText: { fontSize: 16, fontWeight: '800', color: '#6B7280' },
+  scoreChipTextActive: { color: '#047857' },
 });

@@ -190,7 +190,7 @@ function htmlPage(opts: {
         <div class="content">${toEnt(bodyHtml)}</div>
         <div class="footer">
           <div class="sub">
-            ${toEnt("Bu onay kayıt altına alınır. Sorunuz olursa resepsiyon ile iletişime geçebilirsiniz.")}
+            ${toEnt("Bu sözleşme Valoria Hotel tarafından geliştirilen sistem tarafından dijital olarak onaylanmıştır. Sorunuz olursa resepsiyon ile iletişime geçebilirsiniz.")}
             <span class="kiosk"> (Token: ${token.slice(0, 6)}…)</span>
           </div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">

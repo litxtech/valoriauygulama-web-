@@ -45,6 +45,7 @@ import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
 import { ProfileCover } from '@/components/ProfileCover';
 import { formatLocaleDateShort } from '@/lib/date';
+import { getDepartmentLabel } from '@/lib/departmentLabels';
 
 const COVER_HEIGHT = 260;
 const AVATAR_SIZE = 116;
@@ -414,7 +415,7 @@ export default function StaffProfileViewScreen() {
           {!profileRestricted ? (
           <View style={styles.headerMetaRow}>
             <View style={styles.jobBadge}>
-              <Text style={styles.jobBadgeText}>{profile.position || profile.department || '—'}</Text>
+              <Text style={styles.jobBadgeText}>{getDepartmentLabel(profile.position || profile.department)}</Text>
             </View>
             {!!profile.organization?.name && (
               <View style={styles.orgBadge}>
@@ -511,8 +512,8 @@ export default function StaffProfileViewScreen() {
         {!profileRestricted ? (
         <View>
         <View style={styles.quickStats}>
-          {profile.department ? <StatPill label="Departman" value={profile.department} /> : null}
-          {profile.position ? <StatPill label="Pozisyon" value={profile.position} /> : null}
+          {profile.department ? <StatPill label="Departman" value={getDepartmentLabel(profile.department)} /> : null}
+          {profile.position ? <StatPill label="Pozisyon" value={getDepartmentLabel(profile.position)} /> : null}
           {yearsExperience != null ? <StatPill label="Deneyim" value={`${yearsExperience}+ yil`} /> : null}
           {profile.hire_date ? (
             <StatPill
@@ -544,14 +545,6 @@ export default function StaffProfileViewScreen() {
               <Text style={styles.postsSeeAllText}>Tumunu gor</Text>
             </TouchableOpacity>
           </View>
-          <StaffProfileFeedGrid
-            staffId={profile.id}
-            linkVariant="staff"
-            maxPreview={6}
-            showEmptyHint={false}
-            allowOwnPostDelete={isMe}
-            viewerStaffId={me?.id ?? null}
-          />
         </View>
 
         <View style={styles.sectionSpacer} />
@@ -601,6 +594,22 @@ export default function StaffProfileViewScreen() {
           </View>
         )}
       </View>
+
+      {!profileRestricted && (
+        <View style={styles.igGridSection}>
+          <View style={styles.igGridTabBar}>
+            <Ionicons name="grid-outline" size={22} color={theme.colors.text} />
+          </View>
+          <StaffProfileFeedGrid
+            staffId={profile.id}
+            linkVariant="staff"
+            showEmptyHint={false}
+            allowOwnPostDelete={isMe}
+            viewerStaffId={me?.id ?? null}
+            edgeToEdge
+          />
+        </View>
+      )}
 
       <Modal
         visible={profileMenuVisible}
@@ -813,7 +822,7 @@ function getTenureCopy(lang: string, days: number) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.surface },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 32, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
+  scrollContent: { paddingBottom: 0, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
   privacyBanner: {
     width: '100%',
     paddingHorizontal: 16,
@@ -1084,6 +1093,20 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary + '18',
   },
   postsSeeAllText: { color: theme.colors.primary, fontWeight: '700', fontSize: 12 },
+  igGridSection: {
+    marginTop: 16,
+    backgroundColor: 'transparent',
+  },
+  igGridTabBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderLight,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.borderLight,
+  },
   reviewCard: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.borderLight },
   reviewStars: { color: theme.colors.primary, marginBottom: 4 },
   reviewComment: { fontSize: 13, color: theme.colors.text },

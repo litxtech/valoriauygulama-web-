@@ -593,7 +593,9 @@ export default function EditStaffScreen() {
   const menuCatalogBySection = useMemo(() => {
     const grouped: Record<StaffMenuCatalogSection, typeof STAFF_MENU_CATALOG> = {
       nav: [],
-      tools: [],
+      staff: [],
+      hotel: [],
+      ops: [],
       admin: [],
     };
     for (const entry of STAFF_MENU_CATALOG) {
@@ -1443,7 +1445,7 @@ export default function EditStaffScreen() {
             />
           </TouchableOpacity>
           {menuRestrictionsExpanded && supportsHiddenMenuColumn
-            ? (['nav', 'tools', 'admin'] as StaffMenuCatalogSection[]).map((sectionId) => (
+            ? (['nav', 'staff', 'hotel', 'ops', 'admin'] as StaffMenuCatalogSection[]).map((sectionId) => (
                 <View key={sectionId} style={{ marginTop: 10 }}>
                   <Text style={styles.menuSectionHeading}>{STAFF_MENU_SECTION_LABELS_TR[sectionId]}</Text>
                   {menuCatalogBySection[sectionId].map((entry) => {

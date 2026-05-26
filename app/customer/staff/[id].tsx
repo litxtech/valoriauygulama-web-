@@ -42,6 +42,7 @@ import { StaffProfileFeedGrid } from '@/components/StaffProfileFeedGrid';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
 import { ProfileCover } from '@/components/ProfileCover';
+import { getDepartmentLabel } from '@/lib/departmentLabels';
 
 const COVER_HEIGHT = 260;
 const AVATAR_SIZE = 116;
@@ -538,7 +539,7 @@ export default function StaffProfileScreen() {
           {!profileVisitRestricted ? (
           <View style={styles.headerMetaRow}>
             <View style={styles.jobBadge}>
-              <Text style={styles.jobBadgeText}>{staff.position || staff.department || '—'}</Text>
+              <Text style={styles.jobBadgeText}>{getDepartmentLabel(staff.position || staff.department)}</Text>
             </View>
             {!!staff.organization?.name && (
               <View style={styles.orgBadge}>
@@ -656,15 +657,14 @@ export default function StaffProfileScreen() {
               <Text style={styles.postsSeeAllText}>Tumunu gor</Text>
             </TouchableOpacity>
           </View>
-          <StaffProfileFeedGrid staffId={staff.id} linkVariant="customer" maxPreview={6} showEmptyHint={false} />
         </View>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📋 {t('staffProfileBasicInfo')}</Text>
         <View style={styles.quickStats}>
-          {staff.department ? <StatPill label="Departman" value={staff.department} /> : null}
-          {staff.position ? <StatPill label="Pozisyon" value={staff.position} /> : null}
+          {staff.department ? <StatPill label="Departman" value={getDepartmentLabel(staff.department)} /> : null}
+          {staff.position ? <StatPill label="Pozisyon" value={getDepartmentLabel(staff.position)} /> : null}
           {yearsExperience != null ? <StatPill label="Deneyim" value={`${yearsExperience}+ yil`} /> : null}
           {staff.hire_date ? (
             <StatPill
@@ -741,7 +741,12 @@ export default function StaffProfileScreen() {
       </View>
       </>
       ) : null}
-      <View style={styles.bottomPad} />
+      <View style={styles.igGridSection}>
+        <View style={styles.igGridTabBar}>
+          <Ionicons name="grid-outline" size={22} color={theme.colors.text} />
+        </View>
+        <StaffProfileFeedGrid staffId={staff.id} linkVariant="customer" showEmptyHint={false} edgeToEdge />
+      </View>
 
       <ImagePreviewModal
         visible={coverModalVisible}
@@ -994,7 +999,7 @@ function buildTenureTimeline(isoDate: string, anchorMs: number) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 32, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
+  scrollContent: { paddingBottom: 0, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
   privacyBanner: {
     width: '100%',
     paddingHorizontal: 16,
@@ -1283,6 +1288,20 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary + '18',
   },
   postsSeeAllText: { color: theme.colors.primary, fontWeight: '700', fontSize: 12 },
+  igGridSection: {
+    marginTop: 16,
+    backgroundColor: 'transparent',
+  },
+  igGridTabBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderLight,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.borderLight,
+  },
   bullet: { fontSize: 14, color: theme.colors.text, marginBottom: 4 },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   infoChip: {

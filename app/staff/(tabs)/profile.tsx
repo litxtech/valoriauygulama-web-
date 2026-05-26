@@ -46,6 +46,7 @@ import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { ProfileCover } from '@/components/ProfileCover';
 import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
+import { getDepartmentLabel } from '@/lib/departmentLabels';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STAFF_HERO_HEIGHT = P.hero.height;
 
@@ -589,7 +590,7 @@ export default function StaffProfileScreen() {
             </Text>
           ) : null}
           <Text style={styles.heroSubtitle} numberOfLines={2}>
-            {[profile.position?.trim(), profile.department?.trim()].filter(Boolean).join(' · ') || t('unspecified')}
+            {[profile.position?.trim() ? getDepartmentLabel(profile.position.trim()) : null, profile.department?.trim() ? getDepartmentLabel(profile.department.trim()) : null].filter(Boolean).join(' · ') || t('unspecified')}
           </Text>
           {daysWithUs != null ? (
             <TouchableOpacity activeOpacity={0.9} style={styles.tenureButtonWrap} onPress={() => setTenureModalVisible(true)}>
@@ -732,7 +733,7 @@ export default function StaffProfileScreen() {
           <View style={styles.jobInfoCard}>
             <View style={styles.jobInfoLine}>
               <Ionicons name="business-outline" size={18} color={P.subtext} />
-              <Text style={styles.jobInfoLineText}>{profile.department?.trim() || t('unspecified')}</Text>
+              <Text style={styles.jobInfoLineText}>{profile.department?.trim() ? getDepartmentLabel(profile.department.trim()) : t('unspecified')}</Text>
             </View>
             <View style={styles.jobInfoLine}>
               <Ionicons name="calendar-outline" size={18} color={P.subtext} />

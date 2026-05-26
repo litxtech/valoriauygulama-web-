@@ -368,12 +368,12 @@ export default function StaffMealMenuScreen() {
 
         <View style={styles.linkRow}>
           <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/staff/meal-menu-history')} activeOpacity={0.88}>
-            <Ionicons name="time-outline" size={18} color={theme.colors.primary} />
+            <Ionicons name="time-outline" size={14} color={theme.colors.primary} />
             <Text style={styles.linkBtnText}>{t('staffMealHistoryTitle')}</Text>
           </TouchableOpacity>
           {canManage ? (
             <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/staff/meal-menu-edit')} activeOpacity={0.88}>
-              <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+              <Ionicons name="create-outline" size={14} color={theme.colors.primary} />
               <Text style={styles.linkBtnText}>{t('staffMealMenuManageCta')}</Text>
             </TouchableOpacity>
           ) : null}
@@ -388,9 +388,9 @@ export default function StaffMealMenuScreen() {
                 {pdfLoading ? (
                   <ActivityIndicator size="small" color={theme.colors.primary} />
                 ) : (
-                  <Ionicons name="print-outline" size={18} color={theme.colors.primary} />
+                  <Ionicons name="print-outline" size={14} color={theme.colors.primary} />
                 )}
-                <Text style={styles.linkBtnText}>PDF / Yazdır</Text>
+                <Text style={styles.linkBtnText}>PDF</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.linkBtn}
@@ -401,9 +401,9 @@ export default function StaffMealMenuScreen() {
                 {printerMailLoading ? (
                   <ActivityIndicator size="small" color={theme.colors.primary} />
                 ) : (
-                  <Ionicons name="mail-outline" size={18} color={theme.colors.primary} />
+                  <Ionicons name="mail-outline" size={14} color={theme.colors.primary} />
                 )}
-                <Text style={styles.linkBtnText}>Yazıcı Mail</Text>
+                <Text style={styles.linkBtnText}>Yazıcı</Text>
               </TouchableOpacity>
             </>
           ) : null}
@@ -568,20 +568,20 @@ const styles = StyleSheet.create({
   listContent: { paddingHorizontal: 16, paddingTop: 4 },
   listHeader: {},
   pickerBlock: { marginBottom: 2 },
-  linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
   loader: { marginTop: 28, marginBottom: 16 },
   linkBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     backgroundColor: '#fff',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
   },
-  linkBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
+  linkBtnText: { fontSize: 11, fontWeight: '600', color: theme.colors.text },
   confirmedBanner: {
     flexDirection: 'row',
     alignItems: 'center',

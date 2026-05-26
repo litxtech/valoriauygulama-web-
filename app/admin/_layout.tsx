@@ -395,6 +395,7 @@ export default function AdminLayout() {
       <Stack.Screen name="debts/new" options={{ title: 'Yeni borç kaydı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="debts/[id]" options={{ title: 'Borç detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="meal-menu/index" options={{ title: 'Aylık yemek listesi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="points/index" options={{ title: 'Puan Yönetimi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: 'Kahvaltı Teyit Kayıtları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/settings" options={{ title: 'Kahvaltı Teyit Ayarları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="transfer-tour/index" options={{ title: t('transferTourAdminMenu'), headerRight: renderHeaderRight }} />

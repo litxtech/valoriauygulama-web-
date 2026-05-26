@@ -1,7 +1,8 @@
 /**
  * Tüm sözleşmeler ekranı – Admin ve Staff (tum_sozlesmeler yetkisi) tarafından kullanılır.
+ * Günlük/Haftalık/Aylık/Senelik filtre, takvim doluluk noktaları, liste & tek misafir yazdırma.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,7 +14,6 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
-  TextInput,
   Platform,
   Linking,
 } from 'react-native';
@@ -27,6 +27,8 @@ import {
   openContractPrintWindow,
   type GuestForPdf,
 } from '@/lib/contractPdf';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 type Row = {
   id: string;
@@ -43,6 +45,14 @@ type Row = {
   signer_phone?: string | null;
 };
 
+type PeriodKey = 'daily' | 'weekly' | 'monthly' | 'yearly';
+const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
+  { key: 'daily', label: 'Günlük' },
+  { key: 'weekly', label: 'Haftalık' },
+  { key: 'monthly', label: 'Aylık' },
+  { key: 'yearly', label: 'Senelik' },
+];
+
 function toWhatsAppPhone(phone: string | null | undefined): string | null {
   if (!phone) return null;
   const cleaned = phone.replace(/\D/g, '');
@@ -51,12 +61,115 @@ function toWhatsAppPhone(phone: string | null | undefined): string | null {
   return withCountry;
 }
 
+function localDateToYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getDateRange(period: PeriodKey, referenceDate: Date): { from: string; to: string } {
+  const d = new Date(referenceDate);
+  if (isNaN(d.getTime())) {
+    const fallback = localDateToYMD(new Date());
+    return { from: fallback, to: fallback };
+  }
+  d.setHours(12, 0, 0, 0);
+  switch (period) {
+    case 'daily':
+      return { from: localDateToYMD(d), to: localDateToYMD(d) };
+    case 'weekly': {
+      const day = d.getDay();
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - ((day + 6) % 7));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      return { from: localDateToYMD(monday), to: localDateToYMD(sunday) };
+    }
+    case 'monthly': {
+      const first = new Date(d.getFullYear(), d.getMonth(), 1);
+      const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      return { from: localDateToYMD(first), to: localDateToYMD(last) };
+    }
+    case 'yearly': {
+      return { from: `${d.getFullYear()}-01-01`, to: `${d.getFullYear()}-12-31` };
+    }
+  }
+}
+
+function getMonthDays(year: number, month: number): Date[] {
+  const days: Date[] = [];
+  const d = new Date(year, month, 1);
+  while (d.getMonth() === month) {
+    days.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
+}
+
+function buildListPrintHtml(rows: Row[], periodLabel: string, dateRange: string): string {
+  const tableRows = rows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${r.signer_name ?? '—'}</td>
+      <td>${r.room_number ?? '—'}</td>
+      <td>${new Date(r.accepted_at).toLocaleString('tr-TR')}</td>
+      <td>${r.signer_phone ?? '—'}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; padding: 20px; color: #1a202c; }
+  h1 { font-size: 18px; margin: 0 0 4px 0; color: #1a365d; }
+  .sub { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f1f5f9; padding: 10px 8px; text-align: left; font-weight: 700; border-bottom: 2px solid #e2e8f0; }
+  td { padding: 9px 8px; border-bottom: 1px solid #e2e8f0; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .footer { margin-top: 20px; font-size: 11px; color: #94a3b8; text-align: center; }
+  @media print {
+    body { padding: 0; }
+    @page { size: A4 landscape; margin: 10mm; }
+  }
+</style></head><body>
+  <h1>Valoria Hotel – Sözleşme Listesi (${periodLabel})</h1>
+  <div class="sub">${dateRange} · Toplam: ${rows.length} kayıt · Yazdırma: ${new Date().toLocaleString('tr-TR')}</div>
+  <table>
+    <thead><tr><th>#</th><th>Misafir</th><th>Oda</th><th>Onay Tarihi</th><th>Telefon</th></tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+  <div class="footer">Bu liste Valoria Hotel dijital yönetim sistemi tarafından oluşturulmuştur.</div>
+</body></html>`;
+}
+
+function buildSingleGuestPrintHtml(row: Row): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; padding: 24px; color: #1a202c; }
+  h1 { font-size: 18px; margin: 0 0 16px 0; color: #1a365d; }
+  .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; max-width: 500px; }
+  .row { margin-bottom: 8px; font-size: 14px; }
+  .label { font-weight: 700; color: #475569; }
+  .footer { margin-top: 24px; font-size: 11px; color: #94a3b8; }
+  @media print { body { padding: 0; } @page { size: A4; margin: 15mm; } }
+</style></head><body>
+  <h1>Valoria Hotel – Misafir Sözleşme Bilgisi</h1>
+  <div class="card">
+    <div class="row"><span class="label">Misafir:</span> ${row.signer_name ?? '—'}</div>
+    <div class="row"><span class="label">Oda:</span> ${row.room_number ?? '—'}</div>
+    <div class="row"><span class="label">Onay Tarihi:</span> ${new Date(row.accepted_at).toLocaleString('tr-TR')}</div>
+    <div class="row"><span class="label">Telefon:</span> ${row.signer_phone ?? '—'}</div>
+    <div class="row"><span class="label">Dil:</span> ${row.contract_lang.toUpperCase()}</div>
+    <div class="row"><span class="label">Yetkili:</span> ${row.assigned_staff_name ?? '—'}</div>
+  </div>
+  <div class="footer">Valoria Hotel dijital yönetim sistemi · ${new Date().toLocaleString('tr-TR')}</div>
+</body></html>`;
+}
+
 export function AllContractsScreen() {
   const today = new Date();
-  const defaultFrom = new Date(today);
-  defaultFrom.setDate(defaultFrom.getDate() - 30);
-  const [dateFrom, setDateFrom] = useState(defaultFrom.toISOString().slice(0, 10));
-  const [dateTo, setDateTo] = useState(today.toISOString().slice(0, 10));
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('daily');
+  const [referenceDate, setReferenceDate] = useState(today);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -67,12 +180,30 @@ export function AllContractsScreen() {
   const [detailGuest, setDetailGuest] = useState<GuestForPdf | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(today.getMonth());
+  const [calendarYear, setCalendarYear] = useState(today.getFullYear());
+  const [occupancyDates, setOccupancyDates] = useState<Set<string>>(new Set());
+  const [listPrinting, setListPrinting] = useState(false);
+
+  const { dateFrom, dateTo } = useMemo(
+    () => getDateRange(selectedPeriod, referenceDate),
+    [selectedPeriod, referenceDate]
+  );
+
+  const periodLabel = useMemo(() => {
+    const opt = PERIOD_OPTIONS.find((p) => p.key === selectedPeriod);
+    return opt?.label ?? '';
+  }, [selectedPeriod]);
+
+  const dateRangeDisplay = useMemo(() => {
+    if (dateFrom === dateTo) return new Date(dateFrom + 'T00:00:00').toLocaleDateString('tr-TR');
+    return `${new Date(dateFrom + 'T00:00:00').toLocaleDateString('tr-TR')} – ${new Date(dateTo + 'T00:00:00').toLocaleDateString('tr-TR')}`;
+  }, [dateFrom, dateTo]);
 
   const load = useCallback(async () => {
     const fromIso = `${dateFrom}T00:00:00.000Z`;
-    const toEnd = new Date(dateTo);
-    toEnd.setHours(23, 59, 59, 999);
-    const toIso = toEnd.toISOString();
+    const toIso = `${dateTo}T23:59:59.999Z`;
 
     const { data: list, error } = await supabase
       .from('contract_acceptances')
@@ -133,11 +264,61 @@ export function AllContractsScreen() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  const loadOccupancyForMonth = useCallback(async (year: number, month: number) => {
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    const fromIso = `${localDateToYMD(first)}T00:00:00.000Z`;
+    const toIso = `${localDateToYMD(last)}T23:59:59.999Z`;
+    const { data } = await supabase
+      .from('contract_acceptances')
+      .select('accepted_at')
+      .gte('accepted_at', fromIso)
+      .lte('accepted_at', toIso);
+    const dates = new Set<string>();
+    (data ?? []).forEach((r) => {
+      dates.add(r.accepted_at.slice(0, 10));
+    });
+    setOccupancyDates(dates);
+  }, []);
+
+  useEffect(() => {
+    loadOccupancyForMonth(calendarYear, calendarMonth);
+  }, [calendarYear, calendarMonth, loadOccupancyForMonth]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
   }, [load]);
+
+  const selectPeriod = (key: PeriodKey) => {
+    setSelectedPeriod(key);
+    setReferenceDate(new Date());
+  };
+
+  const navigatePeriod = (direction: -1 | 1) => {
+    const d = new Date(referenceDate);
+    switch (selectedPeriod) {
+      case 'daily':
+        d.setDate(d.getDate() + direction);
+        break;
+      case 'weekly':
+        d.setDate(d.getDate() + direction * 7);
+        break;
+      case 'monthly':
+        d.setMonth(d.getMonth() + direction);
+        break;
+      case 'yearly':
+        d.setFullYear(d.getFullYear() + direction);
+        break;
+    }
+    setReferenceDate(d);
+  };
+
+  const selectCalendarDay = (day: Date) => {
+    setReferenceDate(day);
+    setCalendarVisible(false);
+  };
 
   const loadGuestForPdf = async (guestId: string): Promise<GuestForPdf | null> => {
     const { data: guest, error } = await supabase
@@ -167,6 +348,63 @@ export function AllContractsScreen() {
       Alert.alert('Hata', (e as Error)?.message ?? 'PDF oluşturulamadı.');
     } finally {
       setPdfLoadingId(null);
+    }
+  };
+
+  const printList = async () => {
+    if (rows.length === 0) {
+      Alert.alert('Bilgi', 'Yazdırılacak kayıt yok.');
+      return;
+    }
+    setListPrinting(true);
+    try {
+      const html = buildListPrintHtml(rows, periodLabel, dateRangeDisplay);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const w = window.open('', '_blank', 'noopener');
+        if (w) {
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          setTimeout(() => w.print(), 300);
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html, width: 842, height: 595 });
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Liste Yazdır' });
+        } else {
+          await Print.printAsync({ uri });
+        }
+      }
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Liste yazdırılamadı.');
+    } finally {
+      setListPrinting(false);
+    }
+  };
+
+  const printSingleGuest = async (item: Row) => {
+    try {
+      const html = buildSingleGuestPrintHtml(item);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const w = window.open('', '_blank', 'noopener');
+        if (w) {
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          setTimeout(() => w.print(), 300);
+        }
+      } else {
+        const { uri } = await Print.printToFileAsync({ html, width: 595, height: 842 });
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Misafir Yazdır' });
+        } else {
+          await Print.printAsync({ uri });
+        }
+      }
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Yazdırılamadı.');
     }
   };
 
@@ -214,18 +452,16 @@ export function AllContractsScreen() {
       return;
     }
     const tel = phone.replace(/\D/g, '');
-    const url = `tel:${tel}`;
-    Linking.openURL(url).catch(() => Alert.alert('Hata', 'Arama açılamadı.'));
+    Linking.openURL(`tel:${tel}`).catch(() => Alert.alert('Hata', 'Arama açılamadı.'));
   };
 
   const openWhatsApp = (phone: string | null | undefined) => {
     const waPhone = toWhatsAppPhone(phone);
     if (!waPhone) {
-      Alert.alert('Bilgi', 'Geçerli telefon numarası kayıtlı değil. WhatsApp için 0 ile başlayan veya 90 ile başlayan numara gerekir.');
+      Alert.alert('Bilgi', 'Geçerli telefon numarası kayıtlı değil.');
       return;
     }
-    const url = `https://wa.me/${waPhone}`;
-    Linking.openURL(url).catch(() => Alert.alert('Hata', 'WhatsApp açılamadı.'));
+    Linking.openURL(`https://wa.me/${waPhone}`).catch(() => Alert.alert('Hata', 'WhatsApp açılamadı.'));
   };
 
   const sharePdfToWhatsApp = async (item: Row) => {
@@ -245,6 +481,15 @@ export function AllContractsScreen() {
     }
   };
 
+  const calendarDays = useMemo(() => getMonthDays(calendarYear, calendarMonth), [calendarYear, calendarMonth]);
+  const firstDayOffset = useMemo(() => {
+    const d = new Date(calendarYear, calendarMonth, 1).getDay();
+    return (d + 6) % 7; // Monday = 0
+  }, [calendarYear, calendarMonth]);
+
+  const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+  const DAY_LABELS = ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz'];
+
   return (
     <View style={styles.container}>
       {loadError ? (
@@ -252,34 +497,53 @@ export function AllContractsScreen() {
           <Text style={styles.errorBannerText}>Liste yüklenemedi: {loadError}</Text>
         </View>
       ) : null}
-      <View style={styles.filterRow}>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterLabel}>Başlangıç</Text>
-          <TextInput
-            style={styles.dateInput}
-            value={dateFrom}
-            onChangeText={setDateFrom}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterLabel}>Bitiş</Text>
-          <TextInput
-            style={styles.dateInput}
-            value={dateTo}
-            onChangeText={setDateTo}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
-        <TouchableOpacity style={styles.filterBtn} onPress={() => load()}>
-          <Ionicons name="search" size={20} color="#fff" />
+
+      {/* Period filter chips */}
+      <View style={styles.periodRow}>
+        {PERIOD_OPTIONS.map((opt) => (
+          <TouchableOpacity
+            key={opt.key}
+            style={[styles.periodChip, selectedPeriod === opt.key && styles.periodChipActive]}
+            onPress={() => selectPeriod(opt.key)}
+          >
+            <Text style={[styles.periodChipText, selectedPeriod === opt.key && styles.periodChipTextActive]}>{opt.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Navigation & date display */}
+      <View style={styles.navRow}>
+        <TouchableOpacity style={styles.navBtn} onPress={() => navigatePeriod(-1)}>
+          <Ionicons name="chevron-back" size={20} color="#475569" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.dateDisplay} onPress={() => setCalendarVisible(true)}>
+          <Ionicons name="calendar-outline" size={16} color="#0369a1" />
+          <Text style={styles.dateDisplayText}>{dateRangeDisplay}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.navBtn} onPress={() => navigatePeriod(1)}>
+          <Ionicons name="chevron-forward" size={20} color="#475569" />
         </TouchableOpacity>
       </View>
-      <Text style={styles.hint}>
-        Tarih aralığına göre sözleşme onayları. Kartlara tıklayarak detay ve onaylanan sözleşmeyi görüntüleyin. Telefon ve WhatsApp ile iletişim kurun.
-      </Text>
+
+      {/* Actions row */}
+      <View style={styles.actionsRow}>
+        <Text style={styles.resultCount}>{rows.length} kayıt</Text>
+        <TouchableOpacity
+          style={[styles.printListBtn, listPrinting && { opacity: 0.6 }]}
+          onPress={printList}
+          disabled={listPrinting}
+        >
+          {listPrinting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="print-outline" size={16} color="#fff" />
+              <Text style={styles.printListBtnText}>Listeyi Yazdır</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={rows}
         keyExtractor={(r) => r.id}
@@ -321,6 +585,13 @@ export function AllContractsScreen() {
                 <Text style={[styles.contactBtnText, styles.whatsappText]}>WhatsApp</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                style={[styles.contactBtn, styles.printSingleBtn]}
+                onPress={(e) => { e.stopPropagation(); printSingleGuest(item); }}
+              >
+                <Ionicons name="print-outline" size={18} color="#7c3aed" />
+                <Text style={[styles.contactBtnText, { color: '#7c3aed' }]}>Yazdır</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={[styles.contactBtn, (pdfLoadingId === item.id || !item.guest_id) && styles.contactBtnDisabled]}
                 onPress={(e) => { e.stopPropagation(); sharePdfToWhatsApp(item); }}
                 disabled={pdfLoadingId !== null}
@@ -330,7 +601,7 @@ export function AllContractsScreen() {
                 ) : (
                   <>
                     <Ionicons name="document-outline" size={18} color="#0369a1" />
-                    <Text style={[styles.contactBtnText, { color: '#0369a1' }]}>PDF Gönder</Text>
+                    <Text style={[styles.contactBtnText, { color: '#0369a1' }]}>PDF</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -339,6 +610,7 @@ export function AllContractsScreen() {
         )}
       />
 
+      {/* Detail modal */}
       <Modal visible={detailModalVisible} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setDetailModalVisible(false)}>
           <View style={[styles.modalContent, styles.detailModalContent]} onStartShouldSetResponder={() => true}>
@@ -393,10 +665,72 @@ export function AllContractsScreen() {
                       )}
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity style={styles.printDetailBtn} onPress={() => printSingleGuest(detailTarget)}>
+                    <Ionicons name="print-outline" size={16} color="#fff" />
+                    <Text style={styles.printDetailBtnText}>Bu misafiri yazdır</Text>
+                  </TouchableOpacity>
                 </View>
               </ScrollView>
             )}
             <TouchableOpacity style={styles.modalClose} onPress={() => setDetailModalVisible(false)}>
+              <Text style={styles.modalCloseText}>Kapat</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Calendar modal */}
+      <Modal visible={calendarVisible} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setCalendarVisible(false)}>
+          <View style={styles.calendarModal} onStartShouldSetResponder={() => true}>
+            <View style={styles.calendarHeader}>
+              <TouchableOpacity onPress={() => {
+                if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(calendarYear - 1); }
+                else setCalendarMonth(calendarMonth - 1);
+              }}>
+                <Ionicons name="chevron-back" size={22} color="#475569" />
+              </TouchableOpacity>
+              <Text style={styles.calendarTitle}>{MONTH_NAMES[calendarMonth]} {calendarYear}</Text>
+              <TouchableOpacity onPress={() => {
+                if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(calendarYear + 1); }
+                else setCalendarMonth(calendarMonth + 1);
+              }}>
+                <Ionicons name="chevron-forward" size={22} color="#475569" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.calendarDayLabels}>
+              {DAY_LABELS.map((l) => (
+                <Text key={l} style={styles.calendarDayLabel}>{l}</Text>
+              ))}
+            </View>
+            <View style={styles.calendarGrid}>
+              {Array.from({ length: firstDayOffset }).map((_, i) => (
+                <View key={`blank-${i}`} style={styles.calendarCell} />
+              ))}
+              {calendarDays.map((day) => {
+                const iso = localDateToYMD(day);
+                const hasOccupancy = occupancyDates.has(iso);
+                const isToday = iso === localDateToYMD(today);
+                const isSelected = iso === localDateToYMD(referenceDate);
+                return (
+                  <TouchableOpacity
+                    key={iso}
+                    style={[styles.calendarCell, isSelected && styles.calendarCellSelected, isToday && styles.calendarCellToday]}
+                    onPress={() => selectCalendarDay(day)}
+                  >
+                    <Text style={[styles.calendarCellText, isSelected && styles.calendarCellTextSelected]}>{day.getDate()}</Text>
+                    {hasOccupancy && <View style={styles.occupancyDot} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.calendarLegend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.occupancyDot, { position: 'relative', marginRight: 6 }]} />
+                <Text style={styles.legendText}>Sözleşme var</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setCalendarVisible(false)}>
               <Text style={styles.modalCloseText}>Kapat</Text>
             </TouchableOpacity>
           </View>
@@ -408,43 +742,37 @@ export function AllContractsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7fafc' },
-  filterRow: { flexDirection: 'row', padding: 12, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', alignItems: 'flex-end' },
-  filterGroup: { flex: 1 },
-  filterLabel: { fontSize: 11, color: '#64748b', marginBottom: 4 },
-  dateInput: { backgroundColor: '#f1f5f9', borderRadius: 8, padding: 10, fontSize: 14, color: '#1e293b' },
-  filterBtn: { backgroundColor: adminTheme.colors.primary, padding: 12, borderRadius: 8, justifyContent: 'center' },
-  hint: { padding: 12, paddingHorizontal: 16, fontSize: 12, color: '#64748b', backgroundColor: '#f0f9ff' },
+  periodRow: { flexDirection: 'row', padding: 12, paddingBottom: 6, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  periodChip: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
+  periodChipActive: { backgroundColor: '#0369a1', borderColor: '#0369a1' },
+  periodChipText: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  periodChipTextActive: { color: '#fff' },
+  navRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fff', gap: 12 },
+  navBtn: { padding: 8, borderRadius: 8, backgroundColor: '#f1f5f9' },
+  dateDisplay: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' },
+  dateDisplayText: { fontSize: 14, fontWeight: '600', color: '#0369a1' },
+  actionsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#f0f9ff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
+  resultCount: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  printListBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#7c3aed' },
+  printListBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
   list: { padding: 16, paddingBottom: 32 },
   listLoading: { flexGrow: 1 },
-  listLoadingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 28,
-    marginBottom: 8,
-  },
+  listLoadingBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 28, marginBottom: 8 },
   listLoadingText: { fontSize: 14, color: '#64748b' },
   emptyText: { padding: 24, textAlign: 'center', color: '#64748b', fontSize: 14 },
-  card: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
+  card: { backgroundColor: '#fff', padding: 14, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  name: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
+  name: { fontSize: 16, fontWeight: '700', color: '#1e293b', flex: 1 },
   date: { fontSize: 12, color: '#64748b' },
   cardMeta: { marginBottom: 10 },
   meta: { fontSize: 12, color: '#64748b' },
-  contactRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  contactBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#f0fdf4', borderRadius: 8 },
+  contactRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  contactBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 10, backgroundColor: '#f0fdf4', borderRadius: 8 },
   contactBtnDisabled: { opacity: 0.6 },
-  contactBtnText: { fontSize: 13, fontWeight: '600', color: '#0f766e' },
+  contactBtnText: { fontSize: 12, fontWeight: '600', color: '#0f766e' },
   whatsappBtn: { backgroundColor: '#dcfce7' },
   whatsappText: { color: '#25D366' },
+  printSingleBtn: { backgroundColor: '#f5f3ff' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   modalContent: { backgroundColor: '#fff', borderRadius: 16, maxHeight: '80%', padding: 16 },
   detailModalContent: { maxHeight: '90%' },
@@ -463,9 +791,27 @@ const styles = StyleSheet.create({
   pdfBtn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, backgroundColor: '#2d3748', minWidth: 56 },
   pdfBtnDisabled: { opacity: 0.6 },
   pdfBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  printDetailBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, backgroundColor: '#7c3aed' },
+  printDetailBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b', marginBottom: 12 },
   modalClose: { marginTop: 12, paddingVertical: 12, alignItems: 'center' },
   modalCloseText: { fontSize: 15, fontWeight: '600', color: '#64748b' },
   errorBanner: { backgroundColor: '#fef2f2', padding: 12, marginHorizontal: 16, marginTop: 12, borderRadius: 8, borderWidth: 1, borderColor: '#fecaca' },
   errorBannerText: { fontSize: 14, color: '#b91c1c', fontWeight: '600' },
+  // Calendar
+  calendarModal: { backgroundColor: '#fff', borderRadius: 16, padding: 16 },
+  calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  calendarTitle: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
+  calendarDayLabels: { flexDirection: 'row', marginBottom: 8 },
+  calendarDayLabel: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#64748b' },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calendarCell: { width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  calendarCellSelected: { backgroundColor: '#0369a1', borderRadius: 20 },
+  calendarCellToday: { borderWidth: 2, borderColor: '#0369a1', borderRadius: 20 },
+  calendarCellText: { fontSize: 14, color: '#1e293b', fontWeight: '500' },
+  calendarCellTextSelected: { color: '#fff', fontWeight: '700' },
+  occupancyDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22c55e', position: 'absolute', bottom: 4 },
+  calendarLegend: { flexDirection: 'row', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', gap: 16 },
+  legendItem: { flexDirection: 'row', alignItems: 'center' },
+  legendText: { fontSize: 12, color: '#64748b' },
 });

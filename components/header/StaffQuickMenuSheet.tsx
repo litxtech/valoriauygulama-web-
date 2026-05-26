@@ -26,6 +26,7 @@ import type {
   StaffHamburgerMenuItem,
   StaffHamburgerMenuLayout,
   StaffHamburgerMenuSection,
+  StaffHamburgerMenuSectionId,
 } from '@/lib/staffHamburgerMenu';
 
 export type StaffQuickMenuItem = StaffHamburgerMenuItem;
@@ -54,6 +55,14 @@ const DRAWER_RADIUS = 26;
 const H_PAD = 16;
 const SEARCH_MIN_ITEMS = 9;
 const IS_ANDROID = Platform.OS === 'android';
+
+const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  nav: { color: '#6366f1', icon: 'compass-outline' },
+  staff: { color: '#ea580c', icon: 'person-outline' },
+  hotel: { color: '#0d9488', icon: 'bed-outline' },
+  ops: { color: '#2563eb', icon: 'construct-outline' },
+  admin: { color: '#7c3aed', icon: 'shield-checkmark-outline' },
+};
 
 /** Android: her satırda LinearGradient yerine düz renk (admin panel ile aynı yaklaşım). */
 function accentTintBg(accent: string, alpha = '28') {
@@ -440,24 +449,28 @@ export function StaffQuickMenuSheet({
               </View>
             ) : null}
 
-            {filteredSections.map((section) => (
-              <View key={section.id} style={styles.menuSection}>
-                <View style={styles.sectionLabelRow}>
-                  <View style={styles.sectionLabelDot} />
-                  <Text style={styles.sectionLabel}>{section.title}</Text>
+            {filteredSections.map((section) => {
+              const theme = SECTION_THEME[section.id as StaffHamburgerMenuSectionId] ?? SECTION_THEME.ops;
+              return (
+                <View key={section.id} style={styles.menuSection}>
+                  <View style={styles.sectionLabelRow}>
+                    <View style={[styles.sectionLabelDot, { backgroundColor: theme.color }]} />
+                    <Ionicons name={theme.icon} size={14} color={theme.color} style={{ marginRight: 5 }} />
+                    <Text style={[styles.sectionLabel, { color: theme.color }]}>{section.title}</Text>
+                  </View>
+                  <View style={[styles.listCard, IS_ANDROID && styles.listCardAndroid, { borderTopColor: `${theme.color}20`, borderTopWidth: 2 }]}>
+                    {section.items.map((item, idx) => (
+                      <MenuListRow
+                        key={item.id}
+                        item={item}
+                        isLast={idx === section.items.length - 1}
+                        onPress={() => go(onSelect, item.href)}
+                      />
+                    ))}
+                  </View>
                 </View>
-                <View style={[styles.listCard, IS_ANDROID && styles.listCardAndroid]}>
-                  {section.items.map((item, idx) => (
-                    <MenuListRow
-                      key={item.id}
-                      item={item}
-                      isLast={idx === section.items.length - 1}
-                      onPress={() => go(onSelect, item.href)}
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
+              );
+            })}
 
             {searchQuery.trim() && filteredSections.length === 0 ? (
               <Text style={styles.emptySearch}>{t('staffMenuSearchEmpty')}</Text>

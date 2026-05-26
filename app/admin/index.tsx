@@ -81,6 +81,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/checkin', icon: 'calendar-outline', label: 'Check-in / Check-out' },
       { href: '/admin/housekeeping', icon: 'leaf-outline', label: 'Housekeeping' },
       { href: '/admin/tasks', icon: 'clipboard-outline', label: 'Personel görevleri' },
+      { href: '/admin/points', icon: 'star-outline', label: 'Puan yönetimi' },
       { href: '/admin/attendance', icon: 'time-outline', label: 'Personel mesai takibi' },
       { href: '/admin/guests', icon: 'people-outline', label: 'Misafirler' },
       { href: '/admin/report', icon: 'document-text-outline', label: 'Günlük rapor' },

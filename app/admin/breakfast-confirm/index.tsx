@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  FlatList,
   ScrollView,
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   Alert,
   Modal,
   Pressable,
@@ -21,7 +21,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
+import { CachedImage } from '@/components/CachedImage';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
+import { awardStaffPoints } from '@/lib/staffPoints';
 
 type Row = {
   id: string;
@@ -77,6 +79,134 @@ function getRelativeDay(dateStr: string): string | null {
   return null;
 }
 
+type BreakfastCardProps = {
+  item: Row;
+  thumbSize: number;
+  onLightbox: (v: { urls: string[]; index: number }) => void;
+  onApprove: (item: Row) => void;
+  onReject: (item: Row) => void;
+};
+
+const BreakfastCard = memo(function BreakfastCard({ item, thumbSize, onLightbox, onApprove, onReject }: BreakfastCardProps) {
+  const isPending = !item.approved_at && !item.rejected_at;
+  const isApproved = !!item.approved_at;
+  const relDay = getRelativeDay(item.record_date);
+  const urls = item.photo_urls ?? [];
+
+  return (
+    <View style={[styles.card, isPending && styles.cardPending]}>
+      {isPending && <View style={styles.cardAccentLine} />}
+
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderLeft}>
+          <View style={styles.dateRow}>
+            {relDay && <Text style={styles.relDay}>{relDay}</Text>}
+            <Text style={styles.date}>{formatTrDate(item.record_date)}</Text>
+          </View>
+          {item.staff?.full_name ? (
+            <View style={styles.staffRow}>
+              <View style={styles.staffAvatar}>
+                <Text style={styles.staffAvatarText}>
+                  {(item.staff.full_name[0] ?? '?').toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.staffName}>{item.staff.full_name}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {isApproved ? (
+          <View style={styles.badgeApproved}>
+            <Ionicons name="checkmark-circle" size={14} color="#047857" />
+            <Text style={styles.badgeApprovedText}>Onaylı</Text>
+          </View>
+        ) : item.rejected_at ? (
+          <View style={styles.badgeRejected}>
+            <Ionicons name="close-circle" size={14} color="#DC2626" />
+            <Text style={styles.badgeRejectedText}>Red</Text>
+          </View>
+        ) : (
+          <View style={styles.badgePending}>
+            <Ionicons name="hourglass-outline" size={14} color="#D97706" />
+            <Text style={styles.badgePendingText}>Bekliyor</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.metaRow}>
+        <View style={styles.metaChip}>
+          <Ionicons name="people" size={13} color={adminTheme.colors.accent} />
+          <Text style={styles.metaText}>{item.guest_count} misafir</Text>
+        </View>
+        <View style={styles.metaChip}>
+          <Ionicons name="time-outline" size={13} color={adminTheme.colors.textMuted} />
+          <Text style={styles.metaText}>{formatTrTime(item.submitted_at)}</Text>
+        </View>
+        {urls.length > 0 && (
+          <View style={styles.metaChip}>
+            <Ionicons name="images" size={13} color={adminTheme.colors.textMuted} />
+            <Text style={styles.metaText}>{urls.length} fotoğraf</Text>
+          </View>
+        )}
+      </View>
+
+      {item.note ? (
+        <View style={styles.noteBox}>
+          <Ionicons name="chatbubble-outline" size={14} color={adminTheme.colors.textMuted} style={{ marginTop: 2 }} />
+          <Text style={styles.noteText}>{item.note}</Text>
+        </View>
+      ) : null}
+
+      {urls.length > 0 && (
+        <View style={styles.thumbRow}>
+          {urls.map((u, idx) => (
+            <TouchableOpacity
+              key={`${item.id}-${idx}`}
+              activeOpacity={0.88}
+              onPress={() => onLightbox({ urls, index: idx })}
+            >
+              <CachedImage
+                uri={u}
+                style={[styles.thumb, { width: thumbSize, height: thumbSize * 0.75 }]}
+                contentFit="cover"
+                recyclingKey={`bf-${item.id}-${idx}`}
+              />
+              {idx === 0 && urls.length > 2 && (
+                <View style={styles.photoCount}>
+                  <Text style={styles.photoCountText}>+{urls.length - 1}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {item.rejected_at && item.rejection_reason ? (
+        <View style={styles.rejectionBox}>
+          <Ionicons name="warning" size={16} color="#DC2626" />
+          <View style={styles.rejectionContent}>
+            <Text style={styles.rejectionLabel}>Red sebebi</Text>
+            <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {isPending ? (
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.approveBtn} onPress={() => onApprove(item)} activeOpacity={0.85}>
+            <Ionicons name="checkmark" size={18} color="#fff" />
+            <Text style={styles.approveBtnText}>Onayla</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.rejectBtn} onPress={() => onReject(item)} activeOpacity={0.85}>
+            <Ionicons name="close" size={18} color="#DC2626" />
+            <Text style={styles.rejectBtnText}>Reddet</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
 export default function AdminBreakfastConfirmListScreen() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
@@ -92,6 +222,10 @@ export default function AdminBreakfastConfirmListScreen() {
   const [rejectTarget, setRejectTarget] = useState<Row | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  const [scoreTarget, setScoreTarget] = useState<Row | null>(null);
+  const [scoreValue, setScoreValue] = useState('5');
+  const [scoreNote, setScoreNote] = useState('');
+  const [scoring, setScoring] = useState(false);
 
   const load = useCallback(async () => {
     if (!staff?.organization_id) return;
@@ -138,8 +272,49 @@ export default function AdminBreakfastConfirmListScreen() {
         recordDate: item.record_date,
         kitchenStaffId: item.staff_id,
       }).catch(() => {});
+
+      setScoreTarget(item);
+      setScoreValue('5');
+      setScoreNote('');
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Onaylanamadı');
+    }
+  };
+
+  const submitBreakfastScore = async () => {
+    if (!staff?.id || !staff.organization_id || !scoreTarget) return;
+    const pts = parseInt(scoreValue, 10);
+    if (isNaN(pts) || pts === 0) {
+      setScoreTarget(null);
+      return;
+    }
+    setScoring(true);
+    try {
+      await supabase.from('kitchen_scores').insert({
+        organization_id: staff.organization_id,
+        record_date: scoreTarget.record_date,
+        breakfast_confirmation_id: scoreTarget.id,
+        score_delta: pts,
+        reason: scoreNote.trim() || (pts > 0 ? 'Kahvaltı onaylandı — bonus puan' : 'Puan düşürme'),
+        created_by_staff_id: staff.id,
+      });
+
+      await awardStaffPoints({
+        organizationId: staff.organization_id,
+        staffId: scoreTarget.staff_id,
+        points: pts,
+        category: 'breakfast',
+        reason: scoreNote.trim() || (pts > 0 ? 'Kahvaltı onayı — bonus puan' : 'Kahvaltı puan düşürme'),
+        referenceType: 'breakfast_confirmation',
+        referenceId: scoreTarget.id,
+        createdByStaffId: staff.id,
+      });
+
+      setScoreTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Puanlama başarısız');
+    } finally {
+      setScoring(false);
     }
   };
 
@@ -232,29 +407,22 @@ export default function AdminBreakfastConfirmListScreen() {
 
   const thumbSize = Math.min(Math.floor((width - 32 - 14 - 10) / 2), 160);
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={adminTheme.colors.accent} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <BreakfastPhotoLightbox
-        visible={lightbox !== null}
-        urls={lightbox?.urls ?? []}
-        initialIndex={lightbox?.index ?? 0}
-        onClose={() => setLightbox(null)}
+  const renderCard = useCallback(
+    ({ item }: { item: Row }) => (
+      <BreakfastCard
+        item={item}
+        thumbSize={thumbSize}
+        onLightbox={setLightbox}
+        onApprove={approve}
+        onReject={(r) => { setRejectTarget(r); setRejectReason(''); }}
       />
+    ),
+    [thumbSize, approve]
+  );
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
-      >
+  const listHeader = useMemo(
+    () => (
+      <>
         {/* Summary Stats */}
         <View style={styles.statsRow}>
           <TouchableOpacity
@@ -268,7 +436,6 @@ export default function AdminBreakfastConfirmListScreen() {
             <Text style={styles.statNumber}>{stats.pending}</Text>
             <Text style={styles.statLabel}>Bekleyen</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.statCard, statusFilter === 'approved' && styles.statCardActive]}
             onPress={() => setStatusFilter(statusFilter === 'approved' ? 'all' : 'approved')}
@@ -280,7 +447,6 @@ export default function AdminBreakfastConfirmListScreen() {
             <Text style={styles.statNumber}>{stats.approved}</Text>
             <Text style={styles.statLabel}>Onaylı</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.statCard, statusFilter === 'rejected' && styles.statCardActive]}
             onPress={() => setStatusFilter(statusFilter === 'rejected' ? 'all' : 'rejected')}
@@ -315,7 +481,6 @@ export default function AdminBreakfastConfirmListScreen() {
               color={selectedStaffId ? '#fff' : adminTheme.colors.textMuted}
             />
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.settingsBtn}
             onPress={() => router.push('/admin/breakfast-confirm/settings')}
@@ -342,146 +507,58 @@ export default function AdminBreakfastConfirmListScreen() {
             </TouchableOpacity>
           </View>
         )}
+      </>
+    ),
+    [statusFilter, stats, selectedStaffId, selectedStaffName, filteredRows.length, router]
+  );
 
-        {/* Content */}
-        {filteredRows.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <View style={styles.emptyIconWrap}>
-              <Ionicons name="cafe-outline" size={40} color={adminTheme.colors.textMuted} />
-            </View>
-            <Text style={styles.emptyTitle}>Kayıt bulunamadı</Text>
-            <Text style={styles.emptySub}>
-              {selectedStaffId ? 'Bu personele ait kayıt yok.' : 'Henüz kayıt eklenmemiş.'}
-            </Text>
-          </View>
-        ) : (
-          filteredRows.map((item) => {
-            const isPending = !item.approved_at && !item.rejected_at;
-            const isApproved = !!item.approved_at;
-            const relDay = getRelativeDay(item.record_date);
+  const listEmpty = useMemo(
+    () => (
+      <View style={styles.emptyWrap}>
+        <View style={styles.emptyIconWrap}>
+          <Ionicons name="cafe-outline" size={40} color={adminTheme.colors.textMuted} />
+        </View>
+        <Text style={styles.emptyTitle}>Kayıt bulunamadı</Text>
+        <Text style={styles.emptySub}>
+          {selectedStaffId ? 'Bu personele ait kayıt yok.' : 'Henüz kayıt eklenmemiş.'}
+        </Text>
+      </View>
+    ),
+    [selectedStaffId]
+  );
 
-            return (
-              <View key={item.id} style={[styles.card, isPending && styles.cardPending]}>
-                {/* Card top accent line */}
-                {isPending && <View style={styles.cardAccentLine} />}
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={adminTheme.colors.accent} />
+      </View>
+    );
+  }
 
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <View style={styles.dateRow}>
-                      {relDay && <Text style={styles.relDay}>{relDay}</Text>}
-                      <Text style={styles.date}>{formatTrDate(item.record_date)}</Text>
-                    </View>
-                    {item.staff?.full_name ? (
-                      <View style={styles.staffRow}>
-                        <View style={styles.staffAvatar}>
-                          <Text style={styles.staffAvatarText}>
-                            {(item.staff.full_name[0] ?? '?').toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={styles.staffName}>{item.staff.full_name}</Text>
-                      </View>
-                    ) : null}
-                  </View>
+  return (
+    <View style={styles.container}>
+      <BreakfastPhotoLightbox
+        visible={lightbox !== null}
+        urls={lightbox?.urls ?? []}
+        initialIndex={lightbox?.index ?? 0}
+        onClose={() => setLightbox(null)}
+      />
 
-                  {isApproved ? (
-                    <View style={styles.badgeApproved}>
-                      <Ionicons name="checkmark-circle" size={14} color="#047857" />
-                      <Text style={styles.badgeApprovedText}>Onaylı</Text>
-                    </View>
-                  ) : item.rejected_at ? (
-                    <View style={styles.badgeRejected}>
-                      <Ionicons name="close-circle" size={14} color="#DC2626" />
-                      <Text style={styles.badgeRejectedText}>Red</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.badgePending}>
-                      <Ionicons name="hourglass-outline" size={14} color="#D97706" />
-                      <Text style={styles.badgePendingText}>Bekliyor</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Meta info */}
-                <View style={styles.metaRow}>
-                  <View style={styles.metaChip}>
-                    <Ionicons name="people" size={13} color={adminTheme.colors.accent} />
-                    <Text style={styles.metaText}>{item.guest_count} misafir</Text>
-                  </View>
-                  <View style={styles.metaChip}>
-                    <Ionicons name="time-outline" size={13} color={adminTheme.colors.textMuted} />
-                    <Text style={styles.metaText}>{formatTrTime(item.submitted_at)}</Text>
-                  </View>
-                  {(item.photo_urls ?? []).length > 0 && (
-                    <View style={styles.metaChip}>
-                      <Ionicons name="images" size={13} color={adminTheme.colors.textMuted} />
-                      <Text style={styles.metaText}>{(item.photo_urls ?? []).length} fotoğraf</Text>
-                    </View>
-                  )}
-                </View>
-
-                {item.note ? (
-                  <View style={styles.noteBox}>
-                    <Ionicons name="chatbubble-outline" size={14} color={adminTheme.colors.textMuted} style={{ marginTop: 2 }} />
-                    <Text style={styles.noteText}>{item.note}</Text>
-                  </View>
-                ) : null}
-
-                {/* Photos */}
-                {(item.photo_urls ?? []).length > 0 && (
-                  <View style={styles.thumbRow}>
-                    {(item.photo_urls ?? []).map((u, idx) => (
-                      <TouchableOpacity
-                        key={`${item.id}-${idx}`}
-                        activeOpacity={0.88}
-                        onPress={() => setLightbox({ urls: item.photo_urls ?? [], index: idx })}
-                      >
-                        <Image
-                          source={{ uri: u }}
-                          style={[styles.thumb, { width: thumbSize, height: thumbSize * 0.75 }]}
-                        />
-                        {idx === 0 && (item.photo_urls ?? []).length > 2 && (
-                          <View style={styles.photoCount}>
-                            <Text style={styles.photoCountText}>+{(item.photo_urls ?? []).length - 1}</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-
-                {/* Rejection info */}
-                {item.rejected_at && item.rejection_reason ? (
-                  <View style={styles.rejectionBox}>
-                    <Ionicons name="warning" size={16} color="#DC2626" />
-                    <View style={styles.rejectionContent}>
-                      <Text style={styles.rejectionLabel}>Red sebebi</Text>
-                      <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
-                    </View>
-                  </View>
-                ) : null}
-
-                {/* Actions */}
-                {isPending ? (
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item)} activeOpacity={0.85}>
-                      <Ionicons name="checkmark" size={18} color="#fff" />
-                      <Text style={styles.approveBtnText}>Onayla</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.rejectBtn}
-                      onPress={() => { setRejectTarget(item); setRejectReason(''); }}
-                      activeOpacity={0.85}
-                    >
-                      <Ionicons name="close" size={18} color="#DC2626" />
-                      <Text style={styles.rejectBtnText}>Reddet</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+      <FlatList
+        data={filteredRows}
+        keyExtractor={(item) => item.id}
+        renderItem={renderCard}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+        initialNumToRender={6}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+        getItemLayout={undefined}
+      />
 
       {/* Rejection modal */}
       <Modal visible={rejectTarget !== null} transparent animationType="fade" onRequestClose={() => setRejectTarget(null)}>
@@ -535,6 +612,88 @@ export default function AdminBreakfastConfirmListScreen() {
                   <>
                     <Ionicons name="close-circle" size={16} color="#fff" />
                     <Text style={styles.modalConfirmText}>Reddet</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Score modal — after approve */}
+      <Modal visible={scoreTarget !== null} transparent animationType="fade" onRequestClose={() => setScoreTarget(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIconWrap, { backgroundColor: '#ECFDF5' }]}>
+                <Ionicons name="star" size={24} color="#047857" />
+              </View>
+              <Text style={styles.modalTitle}>Kahvaltı Puanla</Text>
+              <Text style={styles.modalSub}>
+                {scoreTarget?.staff?.full_name ?? '—'} · {scoreTarget?.record_date ? formatTrDate(scoreTarget.record_date) : ''}
+              </Text>
+            </View>
+
+            <Text style={styles.modalLabel}>Puan (pozitif = ödül, negatif = ceza)</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {[3, 5, 10].map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  onPress={() => setScoreValue(String(v))}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    borderWidth: 2,
+                    borderColor: scoreValue === String(v) ? '#047857' : '#E5E7EB',
+                    backgroundColor: scoreValue === String(v) ? '#ECFDF5' : '#fff',
+                    alignItems: 'center',
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#047857' }}>+{v}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={[styles.modalInput, { height: 44 }]}
+              value={scoreValue}
+              onChangeText={setScoreValue}
+              placeholder="Özel puan giriniz"
+              placeholderTextColor={adminTheme.colors.textMuted}
+              keyboardType="number-pad"
+            />
+
+            <Text style={[styles.modalLabel, { marginTop: 8 }]}>Not (opsiyonel)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={scoreNote}
+              onChangeText={setScoreNote}
+              placeholder="Neden puan veriliyor?"
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setScoreTarget(null)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.modalCancelText}>Atla</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: '#047857' }]}
+                onPress={submitBreakfastScore}
+                disabled={scoring}
+                activeOpacity={0.85}
+              >
+                {scoring ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="star" size={16} color="#fff" />
+                    <Text style={styles.modalConfirmText}>Puanla</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -611,7 +770,7 @@ export default function AdminBreakfastConfirmListScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
-  scrollView: { flex: 1 },
+  flatList: { flex: 1 },
   scrollContent: { paddingTop: 16 },
 
   /* Stats */

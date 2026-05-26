@@ -31,6 +31,8 @@ type Props = {
   showEmptyHint?: boolean;
   allowOwnPostDelete?: boolean;
   viewerStaffId?: string | null;
+  /** Instagram-style edge-to-edge: no border-radius, uses full screen width */
+  edgeToEdge?: boolean;
 };
 
 export function StaffProfileFeedGrid({
@@ -41,6 +43,7 @@ export function StaffProfileFeedGrid({
   showEmptyHint = true,
   allowOwnPostDelete = false,
   viewerStaffId = null,
+  edgeToEdge = false,
 }: Props) {
   const { width: winW } = useWindowDimensions();
   const router = useRouter();
@@ -50,8 +53,8 @@ export function StaffProfileFeedGrid({
   const [err, setErr] = useState<string | null>(null);
   const [gridW, setGridW] = useState(0);
 
-  const numColumns = winW >= 400 ? 3 : 2;
-  const w = gridW > 0 ? gridW : Math.max(0, winW - 32);
+  const numColumns = 3;
+  const w = edgeToEdge ? winW : (gridW > 0 ? gridW : Math.max(0, winW - 32));
   const cell = numColumns > 0 ? (w - GAP * (numColumns - 1)) / numColumns : 0;
 
   const onGridLayout = useCallback((e: LayoutChangeEvent) => {

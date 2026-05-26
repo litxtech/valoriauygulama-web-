@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   Alert,
   Modal,
   Pressable,
@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
+import { CachedImage } from '@/components/CachedImage';
 import { canBreakfastApproveUi, canBreakfastDepartmentViewUi } from '@/lib/breakfastConfirm';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
@@ -39,6 +40,100 @@ type Row = {
 };
 
 type StaffOption = { id: string; name: string; department: string | null; count: number };
+
+type StaffCardProps = {
+  item: Row;
+  thumbSize: number;
+  canApprove: boolean;
+  onLightbox: (v: { urls: string[]; index: number }) => void;
+  onApprove: (item: Row) => void;
+  onReject: (item: Row) => void;
+  t: (k: string) => string;
+};
+
+const StaffBreakfastCard = memo(function StaffBreakfastCard({
+  item, thumbSize, canApprove: canAp, onLightbox, onApprove, onReject, t,
+}: StaffCardProps) {
+  const urls = item.photo_urls ?? [];
+  const isPending = !item.approved_at && !item.rejected_at;
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderLeft}>
+          <Text style={styles.date}>{item.record_date}</Text>
+          {item.staff?.full_name ? (
+            <Text style={styles.name}>{item.staff.full_name}</Text>
+          ) : null}
+        </View>
+        {item.approved_at ? (
+          <View style={styles.badgePillOk}>
+            <Ionicons name="checkmark-circle" size={14} color="#047857" />
+            <Text style={styles.badgeOkText}>{t('approved')}</Text>
+          </View>
+        ) : item.rejected_at ? (
+          <View style={styles.badgePillReject}>
+            <Ionicons name="close-circle" size={14} color="#dc2626" />
+            <Text style={styles.badgeRejectText}>Uygun Değil</Text>
+          </View>
+        ) : (
+          <View style={styles.badgePillWait}>
+            <Ionicons name="time-outline" size={14} color="#b45309" />
+            <Text style={styles.badgeWaitText}>{t('pendingApproval')}</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.metaRow}>
+        <View style={styles.metaItem}>
+          <Ionicons name="people-outline" size={14} color={theme.colors.textSecondary} />
+          <Text style={styles.meta}>{`${t('breakfastGuestCount')}: ${item.guest_count}`}</Text>
+        </View>
+      </View>
+
+      {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
+
+      {urls.length > 0 && (
+        <View style={styles.thumbRow}>
+          {urls.map((u, idx) => (
+            <TouchableOpacity
+              key={`${item.id}-${idx}`}
+              activeOpacity={0.88}
+              onPress={() => onLightbox({ urls, index: idx })}
+            >
+              <CachedImage
+                uri={u}
+                style={[styles.thumb, { width: thumbSize, height: thumbSize }]}
+                contentFit="cover"
+                recyclingKey={`sbf-${item.id}-${idx}`}
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {item.rejected_at && item.rejection_reason ? (
+        <View style={styles.rejectionBox}>
+          <Ionicons name="alert-circle" size={16} color="#dc2626" />
+          <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+        </View>
+      ) : null}
+
+      {canAp && isPending ? (
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.approveBtn} onPress={() => onApprove(item)} activeOpacity={0.85}>
+            <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+            <Text style={styles.approveBtnText}>{t('approve')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.rejectBtn} onPress={() => onReject(item)} activeOpacity={0.85}>
+            <Ionicons name="close-circle-outline" size={20} color="#fff" />
+            <Text style={styles.rejectBtnText}>Uygun Değil</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 export default function BreakfastConfirmListScreen() {
   const router = useRouter();
@@ -237,97 +332,35 @@ export default function BreakfastConfirmListScreen() {
         </Text>
       )}
 
-      {/* Main scrollable content */}
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
-        showsVerticalScrollIndicator={true}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {filteredRows.length === 0 ? (
+      {/* Main list */}
+      <FlatList
+        data={filteredRows}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <StaffBreakfastCard
+            item={item}
+            thumbSize={thumbSize}
+            canApprove={canApprove}
+            onLightbox={setLightbox}
+            onApprove={approve}
+            onReject={(r) => { setRejectTarget(r); setRejectReason(''); }}
+            t={t}
+          />
+        )}
+        ListEmptyComponent={
           <View style={styles.emptyWrap}>
             <Ionicons name="cafe-outline" size={48} color={theme.colors.textMuted} />
             <Text style={styles.empty}>{t('emptyNoRecords')}</Text>
           </View>
-        ) : (
-          filteredRows.map((item) => (
-            <View key={item.id} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.date}>{item.record_date}</Text>
-                  {item.staff?.full_name ? (
-                    <Text style={styles.name}>{item.staff.full_name}</Text>
-                  ) : null}
-                </View>
-                {item.approved_at ? (
-                  <View style={styles.badgePillOk}>
-                    <Ionicons name="checkmark-circle" size={14} color="#047857" />
-                    <Text style={styles.badgeOkText}>{t('approved')}</Text>
-                  </View>
-                ) : item.rejected_at ? (
-                  <View style={styles.badgePillReject}>
-                    <Ionicons name="close-circle" size={14} color="#dc2626" />
-                    <Text style={styles.badgeRejectText}>Uygun Değil</Text>
-                  </View>
-                ) : (
-                  <View style={styles.badgePillWait}>
-                    <Ionicons name="time-outline" size={14} color="#b45309" />
-                    <Text style={styles.badgeWaitText}>{t('pendingApproval')}</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.metaRow}>
-                <View style={styles.metaItem}>
-                  <Ionicons name="people-outline" size={14} color={theme.colors.textSecondary} />
-                  <Text style={styles.meta}>{`${t('breakfastGuestCount')}: ${item.guest_count}`}</Text>
-                </View>
-              </View>
-
-              {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
-
-              <View style={styles.thumbRow}>
-                {(item.photo_urls ?? []).map((u, idx) => (
-                  <TouchableOpacity
-                    key={`${item.id}-${idx}`}
-                    activeOpacity={0.88}
-                    onPress={() => setLightbox({ urls: item.photo_urls ?? [], index: idx })}
-                  >
-                    <Image
-                      source={{ uri: u }}
-                      style={[styles.thumb, { width: thumbSize, height: thumbSize }]}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {item.rejected_at && item.rejection_reason ? (
-                <View style={styles.rejectionBox}>
-                  <Ionicons name="alert-circle" size={16} color="#dc2626" />
-                  <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
-                </View>
-              ) : null}
-
-              {canApprove && !item.approved_at && !item.rejected_at ? (
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item)} activeOpacity={0.85}>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-                    <Text style={styles.approveBtnText}>{t('approve')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.rejectBtn}
-                    onPress={() => { setRejectTarget(item); setRejectReason(''); }}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="close-circle-outline" size={20} color="#fff" />
-                    <Text style={styles.rejectBtnText}>Uygun Değil</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-            </View>
-          ))
-        )}
-      </ScrollView>
+        }
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
+        showsVerticalScrollIndicator
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        initialNumToRender={6}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+      />
 
       <TouchableOpacity
         style={[styles.fabBack, { paddingBottom: insets.bottom + 12 }]}
@@ -490,7 +523,6 @@ const styles = StyleSheet.create({
   },
   hint: { padding: 16, fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20 },
 
-  scrollView: { flex: 1 },
   scrollContent: { paddingTop: 4 },
 
   emptyWrap: { alignItems: 'center', marginTop: 60, gap: 12 },

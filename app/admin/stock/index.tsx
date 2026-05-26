@@ -300,8 +300,46 @@ export default function StockManagement() {
 
   const headerPaddingTop = Platform.OS === 'ios' ? insets.top : insets.top + 8;
 
+  const renderHero = () => (
+    <LinearGradient colors={stockTheme.headerGrad} style={[styles.hero, { paddingTop: headerPaddingTop }]}>
+      <View style={styles.heroRow}>
+        <TouchableOpacity
+          style={styles.heroBtn}
+          onPress={() => navigateAdminBack(router, navigation, pathname, ADMIN_TABS_FALLBACK)}
+          accessibilityLabel="Geri"
+        >
+          <Ionicons name="arrow-back" size={22} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.heroCenter}>
+          <Text style={styles.heroTitle}>Stok yönetimi</Text>
+          <Text style={styles.heroSub}>Hangi üründen ne kadar kaldığını tek bakışta görün</Text>
+        </View>
+        <TouchableOpacity style={styles.heroBtn} onPress={() => router.push('/admin/stock/all')}>
+          <Ionicons name="grid-outline" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={20} color="rgba(255,255,255,0.65)" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Ürün adı veya barkod..."
+          placeholderTextColor="rgba(255,255,255,0.5)"
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search.length > 0 ? (
+          <TouchableOpacity onPress={() => setSearch('')} hitSlop={10}>
+            <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </LinearGradient>
+  );
+
   const renderListHeader = () => (
     <View style={styles.listHeader}>
+      <View style={{ marginHorizontal: -16 }}>{renderHero()}</View>
+
       {canUseAllOrganizations ? (
         <View style={styles.orgWrap}>
           <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={me?.organization_id} />
@@ -432,53 +470,25 @@ export default function StockManagement() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={stockTheme.headerGrad} style={[styles.hero, { paddingTop: headerPaddingTop }]}>
-        <View style={styles.heroRow}>
-          <TouchableOpacity
-            style={styles.heroBtn}
-            onPress={() => navigateAdminBack(router, navigation, pathname, ADMIN_TABS_FALLBACK)}
-            accessibilityLabel="Geri"
-          >
-            <Ionicons name="arrow-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={styles.heroCenter}>
-            <Text style={styles.heroTitle}>Stok yönetimi</Text>
-            <Text style={styles.heroSub}>Hangi üründen ne kadar kaldığını tek bakışta görün</Text>
-          </View>
-          <TouchableOpacity style={styles.heroBtn} onPress={() => router.push('/admin/stock/all')}>
-            <Ionicons name="grid-outline" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={20} color="rgba(255,255,255,0.65)" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Ürün adı veya barkod..."
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            value={search}
-            onChangeText={setSearch}
-          />
-          {search.length > 0 ? (
-            <TouchableOpacity onPress={() => setSearch('')} hitSlop={10}>
-              <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </LinearGradient>
-
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={adminTheme.colors.accent} />
-          <Text style={styles.centerTxt}>Stoklar yükleniyor…</Text>
+        <View style={{ flex: 1 }}>
+          {renderHero()}
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={adminTheme.colors.accent} />
+            <Text style={styles.centerTxt}>Stoklar yükleniyor…</Text>
+          </View>
         </View>
       ) : loadError ? (
-        <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={48} color={adminTheme.colors.error} />
-          <Text style={styles.centerTitle}>Yüklenemedi</Text>
-          <Text style={styles.centerSub}>{loadError}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); loadData(); }}>
-            <Text style={styles.retryTxt}>Tekrar dene</Text>
-          </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          {renderHero()}
+          <View style={styles.center}>
+            <Ionicons name="cloud-offline-outline" size={48} color={adminTheme.colors.error} />
+            <Text style={styles.centerTitle}>Yüklenemedi</Text>
+            <Text style={styles.centerSub}>{loadError}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); loadData(); }}>
+              <Text style={styles.retryTxt}>Tekrar dene</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
         <FlatList
@@ -596,8 +606,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.15)',
   },
   searchInput: { flex: 1, paddingVertical: 12, fontSize: 15, color: '#fff', fontWeight: '500' },
-  listHeader: { paddingTop: 16 },
-  orgWrap: { marginBottom: 4 },
+  listHeader: {},
+  orgWrap: { marginBottom: 4, marginTop: 16 },
   alertBox: {
     marginHorizontal: 16,
     marginBottom: 12,

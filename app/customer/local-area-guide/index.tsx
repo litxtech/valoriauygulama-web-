@@ -8,6 +8,7 @@ import {
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useSegments } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -93,21 +94,23 @@ export default function LocalAreaGuideListScreen() {
     setRefreshing(false);
   };
 
-  const listPad = 16;
-  const cardW = width - listPad * 2;
-  /** Tıklanmadan da fotoğraf önizlemesi net ve ortadan kırpılsın */
-  const THUMB = 120;
+  const PAD = 16;
+  const GAP = 14;
+  const numCols = width > 600 ? 2 : 1;
+  const cardW = numCols === 2 ? (width - PAD * 2 - GAP) / 2 : width - PAD * 2;
+  const CARD_IMG_H = numCols === 2 ? 180 : 210;
 
   const renderItem = useCallback(
     ({ item, index }: { item: LocalAreaGuideListRow; index: number }) => {
       const cover = item.image_urls?.[0] ?? null;
+      const photoCount = item.image_urls?.length ?? 0;
       return (
         <TouchableOpacity
-          style={[styles.card, { width: cardW, minHeight: THUMB + 8 }]}
+          style={[styles.card, { width: cardW }]}
           onPress={() => router.push(`${basePath}/${item.id}` as never)}
-          activeOpacity={0.9}
+          activeOpacity={0.92}
         >
-          <View style={[styles.thumbBox, { width: THUMB, height: THUMB, borderRadius: 16 }]}>
+          <View style={[styles.imgWrap, { height: CARD_IMG_H }]}>
             {cover ? (
               <CachedImage
                 uri={cover}
@@ -118,43 +121,69 @@ export default function LocalAreaGuideListScreen() {
                 recyclingKey={cover}
               />
             ) : (
-              <View style={styles.thumbPh}>
-                <Ionicons name="trail-sign-outline" size={40} color={theme.colors.primary} />
+              <View style={styles.imgPlaceholder}>
+                <Ionicons name="map-outline" size={48} color={theme.colors.primaryLight} />
               </View>
             )}
-          </View>
-          <View style={styles.cardBody}>
-            <Text style={styles.cardTitle} numberOfLines={2}>
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.65)']}
+              style={styles.gradient}
+            />
+            {photoCount > 1 && (
+              <View style={styles.photoBadge}>
+                <Ionicons name="images-outline" size={13} color="#fff" />
+                <Text style={styles.photoBadgeText}>{photoCount}</Text>
+              </View>
+            )}
+            <Text style={styles.cardTitleOverlay} numberOfLines={2}>
               {item.title}
             </Text>
-            <Text style={styles.cardDate}>
-              {new Date(item.updated_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
-            </Text>
           </View>
-          <View style={styles.chevronCol}>
-            <Ionicons name="chevron-forward" size={22} color={theme.colors.textMuted} />
+          <View style={styles.cardFooter}>
+            <Text style={styles.cardDate}>
+              {new Date(item.updated_at).toLocaleDateString(undefined, {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })}
+            </Text>
+            <Ionicons name="arrow-forward-circle" size={22} color={theme.colors.primary} />
           </View>
         </TouchableOpacity>
       );
     },
-    [THUMB, basePath, cardW, router]
+    [CARD_IMG_H, basePath, cardW, router]
   );
 
   return (
-    <View style={[styles.root, { paddingTop: 8 }]}>
-      <Text style={[styles.intro, { paddingHorizontal: listPad, width }]}>{t('localAreaGuideListIntro')}</Text>
+    <View style={styles.root}>
       <FlatList
         data={rows}
         keyExtractor={(r) => r.id}
         renderItem={renderItem}
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 24, paddingTop: 4, paddingHorizontal: listPad }]}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        numColumns={numCols}
+        key={numCols}
+        columnWrapperStyle={numCols === 2 ? { gap: GAP } : undefined}
+        contentContainerStyle={[
+          styles.list,
+          { paddingBottom: insets.bottom + 24, paddingHorizontal: PAD },
+        ]}
+        ItemSeparatorComponent={() => <View style={{ height: GAP }} />}
+        ListHeaderComponent={
+          <Text style={styles.intro}>{t('localAreaGuideListIntro')}</Text>
+        }
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           loading ? (
-            <Text style={styles.empty}>{t('loading')}</Text>
+            <View style={styles.emptyWrap}>
+              <View style={[styles.skelCard, { width: cardW, height: CARD_IMG_H + 50 }]} />
+              <View style={[styles.skelCard, { width: cardW, height: CARD_IMG_H + 50 }]} />
+            </View>
           ) : (
-            <Text style={styles.empty}>{t('localAreaGuideListEmpty')}</Text>
+            <View style={styles.emptyWrap}>
+              <Ionicons name="compass-outline" size={56} color={theme.colors.borderLight} />
+              <Text style={styles.emptyText}>{t('localAreaGuideListEmpty')}</Text>
+            </View>
           )
         }
       />
@@ -164,31 +193,79 @@ export default function LocalAreaGuideListScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  intro: { fontSize: 14, color: theme.colors.textSecondary, marginBottom: 12, lineHeight: 20 },
-  list: { paddingHorizontal: 0 },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: theme.colors.surface,
-    borderRadius: 18,
-    paddingVertical: 16,
-    paddingLeft: 16,
-    paddingRight: 12,
-    gap: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.borderLight,
-    ...theme.shadows.sm,
+  intro: {
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    marginBottom: 16,
+    marginTop: 8,
+    lineHeight: 20,
   },
-  /** Sabit kutu + absoluteFill: decode sırasında hizalama zıplamasını azaltır */
-  thumbBox: {
+  list: { paddingTop: 8 },
+  card: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 20,
+    overflow: 'hidden',
+    ...theme.shadows.md,
+  },
+  imgWrap: {
+    width: '100%',
     overflow: 'hidden',
     backgroundColor: theme.colors.borderLight,
+    position: 'relative',
+    justifyContent: 'flex-end',
   },
-  thumbPh: { flex: 1, width: '100%', height: '100%', backgroundColor: theme.colors.borderLight, justifyContent: 'center', alignItems: 'center' },
-  cardBody: { flex: 1, minWidth: 0, justifyContent: 'center', paddingRight: 4 },
-  cardTitle: { fontSize: 17, fontWeight: '700', color: theme.colors.text, lineHeight: 22 },
-  cardDate: { fontSize: 12, color: theme.colors.textMuted, marginTop: 6 },
-  chevronCol: { justifyContent: 'center', alignItems: 'center', alignSelf: 'stretch', width: 28, opacity: 0.9 },
-  empty: { textAlign: 'center', color: theme.colors.textMuted, marginTop: 48, fontSize: 15 },
+  imgPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.borderLight,
+  },
+  gradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '60%',
+  },
+  photoBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  photoBadgeText: { fontSize: 12, color: '#fff', fontWeight: '600' },
+  cardTitleOverlay: {
+    position: 'absolute',
+    bottom: 12,
+    left: 14,
+    right: 14,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+    lineHeight: 23,
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  cardDate: { fontSize: 12, color: theme.colors.textMuted },
+  emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 16 },
+  emptyText: { fontSize: 15, color: theme.colors.textMuted, textAlign: 'center' },
+  skelCard: {
+    backgroundColor: theme.colors.borderLight,
+    borderRadius: 20,
+    opacity: 0.7,
+  },
 });

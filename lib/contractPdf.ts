@@ -158,6 +158,24 @@ function contractPrintMediaCss(): string {
       width: auto !important;
       height: auto !important;
     }
+    .approval-section {
+      margin-top: 14pt !important;
+      page-break-inside: avoid;
+      page-break-before: auto;
+    }
+    .approval-notice {
+      background: #f0fdf4 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .approval-parties { display: flex; gap: 14pt; }
+    .approval-party { flex: 1; }
+    .digital-seal {
+      background: #dcfce7 !important;
+      color: #166534 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
   }
   @media screen {
     body { max-width: 210mm; margin: 0 auto; box-sizing: border-box; }
@@ -185,6 +203,15 @@ function pdfAppearanceCss(a: ContractPdfAppearance): string {
     .contract { white-space: normal; margin: ${a.compact ? '6px' : '10px'} 0; font-size: ${scale.contract}px; line-height: ${contractLh}; word-wrap: break-word; overflow-wrap: break-word; }
     .signature { margin-top: ${a.compact ? 10 : 18}px; }
     .signature img { max-width: ${a.compact ? 200 : 260}px; height: auto; }
+    .approval-section { margin-top: ${a.compact ? 16 : 24}px; border-top: 2px solid #e2e8f0; padding-top: ${a.compact ? 12 : 18}px; }
+    .approval-notice { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: ${a.compact ? '10px 12px' : '14px 16px'}; margin-bottom: ${a.compact ? 12 : 18}px; }
+    .approval-notice p { margin: 3px 0; font-size: ${scale.contract}px; color: #166534; }
+    .approval-parties { display: flex; gap: 20px; }
+    .approval-party { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: ${a.compact ? '10px' : '14px'}; text-align: center; }
+    .approval-role { font-size: 11px; font-weight: 600; color: #64748b; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+    .approval-name { font-size: ${scale.body}px; font-weight: 700; color: #0f172a; margin: 0 0 8px 0; }
+    .digital-seal { display: inline-block; background: #dcfce7; color: #166534; font-weight: 700; font-size: 11px; padding: 4px 12px; border-radius: 4px; border: 1px solid #86efac; letter-spacing: 0.3px; }
+    .approval-party img { max-width: 160px; height: auto; margin-top: 8px; }
   `;
 }
 
@@ -204,15 +231,18 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
   const title = guest.contract_templates?.title
     ? escapeHtml(guest.contract_templates.title)
     : 'Konaklama Sözleşmesi';
-  const content = guest.contract_templates?.content
-    ? escapeHtml(guest.contract_templates.content).replace(/\n/g, '<br/>')
-    : '';
+  const rawContent = guest.contract_templates?.content ?? '';
+  const filteredContent = rawContent
+    .split('\n')
+    .filter(line => !/T\.?C\.?\s*Hazine\s*(ve|&)\s*Maliye\s*Bakanl/i.test(line) && !/kayıt altına alınmıştır/i.test(line))
+    .join('\n');
+  const content = filteredContent ? escapeHtml(filteredContent).replace(/\n/g, '<br/>') : '';
   const sigSrc = guest.signature_data?.trim()
     ? guest.signature_data!.trim().replace(/"/g, '&quot;')
     : '';
   const sigImg = sigSrc
-    ? `<img src="${sigSrc}" alt="İmza" style="max-width:280px;height:auto;margin-top:16px;" />`
-    : '<p style="color:#64748b;font-style:italic;">Onay web veya uygulama üzerinden alındı; dijital imza görseli kayıtlı değil.</p>';
+    ? `<img src="${sigSrc}" alt="İmza" style="max-width:280px;height:auto;margin-top:12px;" />`
+    : '';
 
   const nightsLine =
     guest.nights_count != null && guest.nights_count > 0
@@ -253,9 +283,24 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
     ${channelLine}
   </div>
   <div class="contract">${content}</div>
-  <div class="signature">
-    <p><strong>Dijital imza:</strong></p>
-    ${sigImg}
+  <div class="approval-section">
+    <div class="approval-notice">
+      <p>Bu sözleşme <strong>Valoria Hotel</strong> tarafından geliştirilen sistem tarafından dijital olarak onaylanmıştır.</p>
+      <p><strong>Onay tarihi:</strong> ${date}</p>
+    </div>
+    <div class="approval-parties">
+      <div class="approval-party">
+        <p class="approval-role">Otel Sorumlusu</p>
+        <p class="approval-name">Soner Toprak</p>
+        <div class="digital-seal">Dijital İmza</div>
+      </div>
+      <div class="approval-party">
+        <p class="approval-role">Müşteri</p>
+        <p class="approval-name">${name}</p>
+        <div class="digital-seal">Dijital İmza</div>
+        ${sigImg}
+      </div>
+    </div>
   </div>
 </body>
 </html>`;

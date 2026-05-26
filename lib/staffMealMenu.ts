@@ -182,13 +182,12 @@ export async function fetchStaffMealMenuBrowse(
 }
 
 export async function fetchPastMealMenuMonths(organizationId: string, limit = 24): Promise<MealMenuMonthMeta[]> {
-  const today = toLocalYmd(new Date());
   const currentMonth = periodMonthFromDate(new Date());
   const { data, error } = await supabase
     .from('staff_meal_menus')
     .select('id, period_month, title, notify_daily, pdf_approver_name, pdf_footer_note')
     .eq('organization_id', organizationId)
-    .lt('period_month', currentMonth)
+    .lte('period_month', currentMonth)
     .order('period_month', { ascending: false })
     .limit(limit);
 

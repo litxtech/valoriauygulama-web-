@@ -152,7 +152,7 @@ function StatPill({
 }) {
   return (
     <View style={[statsStyles.pill, { backgroundColor: palette.surfaceSecondary }]}>
-      <Ionicons name={icon} size={16} color={color} />
+      <Ionicons name={icon} size={13} color={color} />
       <Text style={[statsStyles.pillLabel, { color: palette.textMuted }]}>{label}</Text>
       <Text style={[statsStyles.pillValue, { color: palette.text }]}>
         {value}
@@ -638,15 +638,15 @@ const navStyles = StyleSheet.create({
 const statsStyles = StyleSheet.create({
   wrap: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-    padding: 10,
-    borderRadius: 14,
+    gap: 6,
+    marginBottom: 8,
+    padding: 6,
+    borderRadius: 10,
     borderWidth: 1,
   },
-  pill: { flex: 1, alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderRadius: 10, gap: 4 },
-  pillLabel: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3 },
-  pillValue: { fontSize: 15, fontWeight: '700' },
+  pill: { flex: 1, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 2, borderRadius: 8, gap: 2 },
+  pillLabel: { fontSize: 9, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3 },
+  pillValue: { fontSize: 13, fontWeight: '700' },
 });
 
 const heroStyles = StyleSheet.create({
