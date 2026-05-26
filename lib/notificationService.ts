@@ -478,6 +478,148 @@ export async function notifyAdmins(params: {
   }
 }
 
+/** Kahvaltı teyidi yüklendiğinde onay yetkili personele push bildirim gönder */
+export async function notifyBreakfastUploaded(params: {
+  organizationId: string;
+  uploaderName: string;
+  recordDate: string;
+  createdByStaffId: string;
+}): Promise<void> {
+  const { organizationId, uploaderName, recordDate, createdByStaffId } = params;
+  const title = 'Kahvaltı Teyidi Yüklendi';
+  const body = `${uploaderName} ${recordDate} tarihli kahvaltı teyidini yükledi. Onay bekliyor.`;
+
+  let query = supabase
+    .from('staff')
+    .select('id, app_permissions')
+    .eq('organization_id', organizationId)
+    .eq('is_active', true)
+    .is('deleted_at', null);
+  const { data: staffList } = await query;
+  if (!staffList?.length) return;
+
+  const approverIds = staffList
+    .filter((s: { id: string; app_permissions: Record<string, unknown> | null }) => {
+      if (s.id === createdByStaffId) return false;
+      const perms = s.app_permissions as Record<string, unknown> | null;
+      if (!perms) return false;
+      const val = perms['kahvalti_teyit_onayla'];
+      return val === true || val === 'true' || val === 1 || val === '1' || val === 'yes';
+    })
+    .map((s: { id: string }) => s.id);
+
+  if (approverIds.length === 0) return;
+
+  const filteredIds = await filterStaffRecipientsByPreference(approverIds, 'breakfast_confirmation_uploaded');
+  if (filteredIds.length === 0) return;
+
+  const rows = filteredIds.map((staffId) => ({
+    guest_id: null,
+    staff_id: staffId,
+    title,
+    body,
+    category: 'staff',
+    notification_type: 'breakfast_confirmation_uploaded',
+    data: { screen: '/staff/breakfast-confirm/list', url: '/staff/breakfast-confirm/list' },
+    created_by: createdByStaffId,
+    sent_via: 'both',
+    sent_at: new Date().toISOString(),
+  }));
+
+  await postNotificationsReturnMinimal(rows).catch(() => {});
+  sendExpoPushToRecipients({
+    staffIds: filteredIds,
+    title,
+    body,
+    data: {
+      screen: '/staff/breakfast-confirm/list',
+      url: '/staff/breakfast-confirm/list',
+      notificationType: 'breakfast_confirmation_uploaded',
+    },
+  }).catch(() => {});
+}
+
+/** Kahvaltı teyidi onaylandığında mutfak personeline push bildirim gönder */
+export async function notifyBreakfastApproved(params: {
+  organizationId: string;
+  approverName: string;
+  recordDate: string;
+  kitchenStaffId: string;
+}): Promise<void> {
+  const { organizationId, approverName, recordDate, kitchenStaffId } = params;
+  const title = 'Kahvaltı Teyidi Onaylandı';
+  const body = `${recordDate} tarihli kahvaltı teyidiniz ${approverName} tarafından onaylandı.`;
+
+  const filteredIds = await filterStaffRecipientsByPreference([kitchenStaffId], 'breakfast_confirmation_approved');
+  if (filteredIds.length === 0) return;
+
+  const rows = filteredIds.map((staffId) => ({
+    guest_id: null,
+    staff_id: staffId,
+    title,
+    body,
+    category: 'staff',
+    notification_type: 'breakfast_confirmation_approved',
+    data: { screen: '/staff/breakfast-confirm', url: '/staff/breakfast-confirm' },
+    created_by: null,
+    sent_via: 'both',
+    sent_at: new Date().toISOString(),
+  }));
+
+  await postNotificationsReturnMinimal(rows).catch(() => {});
+  sendExpoPushToRecipients({
+    staffIds: filteredIds,
+    title,
+    body,
+    data: {
+      screen: '/staff/breakfast-confirm',
+      url: '/staff/breakfast-confirm',
+      notificationType: 'breakfast_confirmation_approved',
+    },
+  }).catch(() => {});
+}
+
+/** Kahvaltı teyidi reddedildiğinde mutfak personeline push bildirim gönder */
+export async function notifyBreakfastRejected(params: {
+  organizationId: string;
+  rejectorName: string;
+  recordDate: string;
+  kitchenStaffId: string;
+  reason: string;
+}): Promise<void> {
+  const { organizationId, rejectorName, recordDate, kitchenStaffId, reason } = params;
+  const title = 'Kahvaltı Uygun Görülmedi';
+  const body = `${recordDate} tarihli kahvaltı teyidiniz reddedildi. Neden: ${reason.slice(0, 100)}`;
+
+  const filteredIds = await filterStaffRecipientsByPreference([kitchenStaffId], 'breakfast_confirmation_rejected');
+  if (filteredIds.length === 0) return;
+
+  const rows = filteredIds.map((staffId) => ({
+    guest_id: null,
+    staff_id: staffId,
+    title,
+    body,
+    category: 'staff',
+    notification_type: 'breakfast_confirmation_rejected',
+    data: { screen: '/staff/breakfast-confirm', url: '/staff/breakfast-confirm' },
+    created_by: null,
+    sent_via: 'both',
+    sent_at: new Date().toISOString(),
+  }));
+
+  await postNotificationsReturnMinimal(rows).catch(() => {});
+  sendExpoPushToRecipients({
+    staffIds: filteredIds,
+    title,
+    body,
+    data: {
+      screen: '/staff/breakfast-confirm',
+      url: '/staff/breakfast-confirm',
+      notificationType: 'breakfast_confirmation_rejected',
+    },
+  }).catch(() => {});
+}
+
 /** Acil durum: tüm checked_in misafirlere gönder */
 export async function sendEmergencyToAllGuests(params: {
   notificationType: string;

@@ -26,6 +26,7 @@ import {
   type BreakfastConfirmationSettings,
   type BreakfastConfirmationRow,
 } from '@/lib/breakfastConfirm';
+import { notifyBreakfastUploaded } from '@/lib/notificationService';
 
 const BUCKET = 'breakfast-confirm';
 
@@ -195,6 +196,13 @@ export default function StaffBreakfastConfirmScreen() {
         }
       }
       Alert.alert('Kaydedildi', 'Kahvaltı teyidi kaydedildi.', [{ text: 'Tamam', onPress: () => load() }]);
+
+      notifyBreakfastUploaded({
+        organizationId: staff.organization_id,
+        uploaderName: staff.full_name ?? 'Personel',
+        recordDate: today,
+        createdByStaffId: staff.id,
+      }).catch(() => {});
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kaydedilemedi.');
     } finally {

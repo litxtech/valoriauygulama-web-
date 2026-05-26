@@ -148,6 +148,34 @@ const ROOM_STATUS_LABELS: Record<string, string> = {
   out_of_order: 'Kullanılmıyor',
 };
 
+const PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: 'cash', label: 'Nakit' },
+  { value: 'credit_card', label: 'Kredi Kartı' },
+  { value: 'debit_card', label: 'Banka Kartı' },
+  { value: 'transfer', label: 'Havale / EFT' },
+  { value: 'online', label: 'Online Ödeme' },
+];
+
+const RESERVATION_CHANNELS: { value: string; label: string }[] = [
+  { value: 'walk_in', label: 'Walk-in' },
+  { value: 'phone', label: 'Telefon' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'web', label: 'Web sitesi' },
+  { value: 'booking_com', label: 'Booking.com' },
+  { value: 'trivago', label: 'Trivago' },
+  { value: 'airbnb', label: 'Airbnb' },
+  { value: 'hotels_com', label: 'Hotels.com' },
+  { value: 'expedia', label: 'Expedia' },
+  { value: 'agoda', label: 'Agoda' },
+  { value: 'tatilbudur', label: 'Tatilbudur' },
+  { value: 'jolly', label: 'Jolly' },
+  { value: 'etstur', label: 'ETS Tur' },
+  { value: 'agency', label: 'Acente' },
+  { value: 'corporate', label: 'Kurumsal / Firma' },
+  { value: 'social_media', label: 'Sosyal Medya' },
+  { value: 'other', label: 'Diğer' },
+];
+
 type Movement = {
   id: string;
   product_id: string;
@@ -239,6 +267,8 @@ export default function AdminApprovalsHubScreen() {
   const [contractSelectedRoomId, setContractSelectedRoomId] = useState<string | null>(null);
   const [contractPriceInput, setContractPriceInput] = useState('');
   const [contractNightsInput, setContractNightsInput] = useState('');
+  const [contractPaymentMethod, setContractPaymentMethod] = useState<string | null>(null);
+  const [contractReservationChannel, setContractReservationChannel] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<Kind | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [stockDetailPhotos, setStockDetailPhotos] = useState<{
@@ -765,9 +795,7 @@ export default function AdminApprovalsHubScreen() {
         .eq('id', row.id);
       if (caErr) throw caErr;
 
-      const { error: gErr } = await supabase
-        .from('guests')
-        .update({
+      const guestUpdate: Record<string, unknown> = {
           room_id: roomId,
           status: 'checked_in',
           check_in_at: new Date().toISOString(),
@@ -775,7 +803,13 @@ export default function AdminApprovalsHubScreen() {
           vat_amount: vatAmount,
           accommodation_tax_amount: accommodationTaxAmount,
           nights_count: nights,
-        })
+      };
+      if (contractPaymentMethod) guestUpdate.payment_method = contractPaymentMethod;
+      if (contractReservationChannel) guestUpdate.reservation_channel = contractReservationChannel;
+
+      const { error: gErr } = await supabase
+        .from('guests')
+        .update(guestUpdate)
         .eq('id', row.guest_id);
       if (gErr) throw gErr;
 
@@ -1009,6 +1043,49 @@ export default function AdminApprovalsHubScreen() {
                         />
                       </View>
                     </View>
+
+                    {/* Ödeme Şekli */}
+                    <View style={styles.contractFieldSection}>
+                      <Text style={styles.inputLabel}>Ödeme Şekli</Text>
+                      <View style={styles.chipRow}>
+                        {PAYMENT_METHODS.map((pm) => {
+                          const active = contractPaymentMethod === pm.value;
+                          return (
+                            <TouchableOpacity
+                              key={pm.value}
+                              style={[styles.chip, active && styles.chipActive]}
+                              onPress={() => setContractPaymentMethod(active ? null : pm.value)}
+                              disabled={acting}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[styles.chipText, active && styles.chipTextActive]}>{pm.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    {/* Rezervasyon Kanalı */}
+                    <View style={styles.contractFieldSection}>
+                      <Text style={styles.inputLabel}>Rezervasyon Kanalı</Text>
+                      <View style={styles.chipRow}>
+                        {RESERVATION_CHANNELS.map((ch) => {
+                          const active = contractReservationChannel === ch.value;
+                          return (
+                            <TouchableOpacity
+                              key={ch.value}
+                              style={[styles.chip, active && styles.chipActive]}
+                              onPress={() => setContractReservationChannel(active ? null : ch.value)}
+                              disabled={acting}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[styles.chipText, active && styles.chipTextActive]}>{ch.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+
                     {contractPriceInput && contractNightsInput ? (
                       <View style={styles.contractPriceSummary}>
                         <Text style={styles.contractPriceSummaryText}>
@@ -1939,6 +2016,36 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   contractPriceBlock: { marginTop: 12, gap: 8 },
+  contractFieldSection: {
+    marginTop: 14,
+    gap: 8,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: adminTheme.colors.borderLight,
+    backgroundColor: '#fff',
+  },
+  chipActive: {
+    borderColor: '#7c3aed',
+    backgroundColor: '#f5f3ff',
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: adminTheme.colors.textSecondary,
+  },
+  chipTextActive: {
+    color: '#7c3aed',
+    fontWeight: '700',
+  },
   inputLabel: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textSecondary },
   textInput: {
     borderWidth: 1,

@@ -11,6 +11,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  TextInput,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -20,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
+import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
 
 type Row = {
   id: string;
@@ -29,6 +31,8 @@ type Row = {
   note: string | null;
   photo_urls: string[];
   approved_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
   staff_id: string;
   staff?: { full_name: string | null; department: string | null } | null;
 };
@@ -61,12 +65,15 @@ export default function AdminBreakfastConfirmListScreen() {
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<Row | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
 
   const load = useCallback(async () => {
     if (!staff?.organization_id) return;
     const { data, error } = await supabase
       .from('breakfast_confirmations')
-      .select('id, record_date, submitted_at, guest_count, note, photo_urls, approved_at, staff_id, staff!staff_id(full_name, department)')
+      .select('id, record_date, submitted_at, guest_count, note, photo_urls, approved_at, rejected_at, rejection_reason, staff_id, staff!staff_id(full_name, department)')
       .eq('organization_id', staff.organization_id)
       .order('submitted_at', { ascending: false })
       .limit(200);
@@ -88,8 +95,8 @@ export default function AdminBreakfastConfirmListScreen() {
     setRefreshing(false);
   };
 
-  const approve = async (id: string) => {
-    if (!staff?.id) return;
+  const approve = async (item: Row) => {
+    if (!staff?.id || !staff.organization_id) return;
     try {
       const { error } = await supabase
         .from('breakfast_confirmations')
@@ -97,11 +104,65 @@ export default function AdminBreakfastConfirmListScreen() {
           approved_at: new Date().toISOString(),
           approved_by_staff_id: staff.id,
         })
-        .eq('id', id);
+        .eq('id', item.id);
       if (error) throw new Error(error.message);
       await load();
+
+      notifyBreakfastApproved({
+        organizationId: staff.organization_id,
+        approverName: staff.full_name ?? 'Yönetici',
+        recordDate: item.record_date,
+        kitchenStaffId: item.staff_id,
+      }).catch(() => {});
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Onaylanamadı');
+    }
+  };
+
+  const reject = async () => {
+    if (!staff?.id || !staff.organization_id || !rejectTarget) return;
+    if (!rejectReason.trim()) {
+      Alert.alert('Eksik', 'Lütfen red nedenini yazın.');
+      return;
+    }
+    setRejecting(true);
+    try {
+      const scoreImpact = -5;
+      const { error } = await supabase
+        .from('breakfast_confirmations')
+        .update({
+          rejected_at: new Date().toISOString(),
+          rejected_by_staff_id: staff.id,
+          rejection_reason: rejectReason.trim(),
+          rejection_score_impact: scoreImpact,
+        })
+        .eq('id', rejectTarget.id);
+      if (error) throw new Error(error.message);
+
+      await supabase.from('kitchen_scores').insert({
+        organization_id: staff.organization_id,
+        record_date: rejectTarget.record_date,
+        breakfast_confirmation_id: rejectTarget.id,
+        score_delta: scoreImpact,
+        reason: rejectReason.trim(),
+        created_by_staff_id: staff.id,
+      });
+
+      notifyBreakfastRejected({
+        organizationId: staff.organization_id,
+        rejectorName: staff.full_name ?? 'Yönetici',
+        recordDate: rejectTarget.record_date,
+        kitchenStaffId: rejectTarget.staff_id,
+        reason: rejectReason.trim(),
+      }).catch(() => {});
+
+      setRejectTarget(null);
+      setRejectReason('');
+      await load();
+    } catch (e: unknown) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Reddedilemedi');
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -212,6 +273,11 @@ export default function AdminBreakfastConfirmListScreen() {
                     <Ionicons name="checkmark-circle" size={14} color="#047857" />
                     <Text style={styles.badgeOkText}>Onaylı</Text>
                   </View>
+                ) : item.rejected_at ? (
+                  <View style={styles.badgePillReject}>
+                    <Ionicons name="close-circle" size={14} color="#dc2626" />
+                    <Text style={styles.badgeRejectText}>Uygun Değil</Text>
+                  </View>
                 ) : (
                   <View style={styles.badgePillWait}>
                     <Ionicons name="time-outline" size={14} color="#b45309" />
@@ -252,16 +318,79 @@ export default function AdminBreakfastConfirmListScreen() {
                 ))}
               </View>
 
-              {!item.approved_at ? (
-                <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item.id)} activeOpacity={0.85}>
-                  <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-                  <Text style={styles.approveBtnText}>Onayla</Text>
-                </TouchableOpacity>
+              {item.rejected_at && item.rejection_reason ? (
+                <View style={styles.rejectionBox}>
+                  <Ionicons name="alert-circle" size={16} color="#dc2626" />
+                  <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+                </View>
+              ) : null}
+
+              {!item.approved_at && !item.rejected_at ? (
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={styles.approveBtn} onPress={() => approve(item)} activeOpacity={0.85}>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                    <Text style={styles.approveBtnText}>Onayla</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.rejectBtn}
+                    onPress={() => { setRejectTarget(item); setRejectReason(''); }}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="close-circle-outline" size={20} color="#fff" />
+                    <Text style={styles.rejectBtnText}>Uygun Değil</Text>
+                  </TouchableOpacity>
+                </View>
               ) : null}
             </View>
           ))
         )}
       </ScrollView>
+
+      {/* Rejection modal */}
+      <Modal visible={rejectTarget !== null} transparent animationType="fade" onRequestClose={() => setRejectTarget(null)}>
+        <View style={styles.rejectOverlay}>
+          <View style={styles.rejectSheet}>
+            <Text style={styles.rejectSheetTitle}>Kahvaltı Uygun Değil</Text>
+            <Text style={styles.rejectSheetSub}>
+              {rejectTarget?.staff?.full_name ?? '—'} · {rejectTarget?.record_date}
+            </Text>
+            <Text style={styles.rejectSheetLabel}>Red nedeni (zorunlu)</Text>
+            <TextInput
+              style={styles.rejectInput}
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              placeholder="Neden uygun görülmedi?"
+              placeholderTextColor={adminTheme.colors.textMuted}
+              multiline
+              autoFocus
+            />
+            <Text style={styles.rejectScoreNote}>
+              Bu işlem mutfak puanını -5 puan etkileyecektir.
+            </Text>
+            <View style={styles.rejectActions}>
+              <TouchableOpacity
+                style={styles.rejectCancelBtn}
+                onPress={() => setRejectTarget(null)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.rejectCancelText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.rejectConfirmBtn}
+                onPress={reject}
+                disabled={rejecting}
+                activeOpacity={0.85}
+              >
+                {rejecting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.rejectConfirmText}>Reddet</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Staff drawer (bottom sheet modal) */}
       <Modal visible={drawerOpen} transparent animationType="slide" onRequestClose={() => setDrawerOpen(false)}>
@@ -449,8 +578,13 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.borderLight,
   },
 
-  approveBtn: {
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
     marginTop: 14,
+  },
+  approveBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -460,6 +594,92 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  rejectBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#dc2626',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  rejectBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  badgePillReject: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  badgeRejectText: { fontSize: 12, fontWeight: '700', color: '#dc2626' },
+
+  rejectionBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fef2f2',
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  rejectionText: { flex: 1, fontSize: 13, color: '#991b1b', lineHeight: 18 },
+
+  rejectOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    padding: 24,
+  },
+  rejectSheet: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+  },
+  rejectSheetTitle: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 4 },
+  rejectSheetSub: { fontSize: 14, color: adminTheme.colors.textSecondary, marginBottom: 16 },
+  rejectSheetLabel: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.text, marginBottom: 8 },
+  rejectInput: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.borderLight,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: adminTheme.colors.text,
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  rejectScoreNote: {
+    fontSize: 13,
+    color: '#dc2626',
+    marginTop: 10,
+    fontWeight: '500',
+  },
+  rejectActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  rejectCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+  },
+  rejectCancelText: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
+  rejectConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#dc2626',
+  },
+  rejectConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
   /* Drawer */
   drawerOverlay: { flex: 1, justifyContent: 'flex-end' },
