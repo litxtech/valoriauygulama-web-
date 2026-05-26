@@ -417,27 +417,95 @@ function renderPage(token: string, apiBase: string) {
 
     async function loadForms(){
       if (!pin) return alert("Once PIN ile portali acin.");
-      const day = document.getElementById("dayFilter").value;
-      const month = document.getElementById("monthFilter").value;
-      const res = await api({ format: "json", view: "daily-forms", date: day || "", month: month || "" });
-      const box = document.getElementById("forms");
+      var box = document.getElementById("forms");
       box.style.display = "block";
-      box.innerHTML = "<h3 style='margin:0 0 8px'>Gunluk Musteri Formlari</h3>" + (res.items || []).map((f) =>
-        '<div class="doc"><div class="docTitle">' + (f.full_name || "Isimsiz") + '</div><div class="muted">' +
-        (f.created_at || "-") + ' / Oda: ' + (f.room_number || f.room_id || "-") +
-        (f.contract_lang ? ' / Dil: ' + f.contract_lang : '') +
-        '</div></div>'
-      ).join("");
+      box.innerHTML = '<div style="padding:18px;text-align:center;color:var(--muted)">Formlar yukleniyor…</div>';
+      box.scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        var day = document.getElementById("dayFilter").value;
+        var monthVal = document.getElementById("monthFilter").value;
+        var res = await api({ format: "json", view: "daily-forms", date: day || "", month: monthVal || "" });
+        var items = res.items || [];
+        if (!items.length) {
+          box.innerHTML = '<h3 class="panelTitle">Gunluk Musteri Formlari</h3><div class="empty">Secilen tarihte musteri kaydi bulunamadi.</div>';
+          return;
+        }
+        var groups = res.groups || [];
+        if (!groups.length) {
+          var gmap = {};
+          items.forEach(function(f) {
+            var d = (f.check_in_at || "").slice(0, 10) || "tarihsiz";
+            if (!gmap[d]) gmap[d] = [];
+            gmap[d].push(f);
+          });
+          groups = Object.keys(gmap).sort().reverse().map(function(d) {
+            return { date: d, count: gmap[d].length, items: gmap[d] };
+          });
+        }
+        var html = '<h3 class="panelTitle">Gunluk Musteri Formlari (' + items.length + ' kayit)</h3>';
+        groups.forEach(function(g) {
+          html += '<div style="margin-bottom:14px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff">';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:var(--soft);border-bottom:1px solid var(--line)">';
+          html += '<div><strong>' + escAttr(g.date) + '</strong> <span class="muted">(' + g.count + ' musteri)</span></div>';
+          html += '<button type="button" class="secondary" style="padding:8px 12px;font-size:12px" data-hmb-date="' + escAttr(g.date) + '">Resmi HMB Formu</button>';
+          html += '</div>';
+          (g.items || []).forEach(function(f, idx) {
+            html += '<div style="padding:10px 12px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;align-items:center">';
+            html += '<div style="width:28px;height:28px;border-radius:14px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#64748b;flex-shrink:0">' + (idx + 1) + '</div>';
+            html += '<div style="flex:1;min-width:0">';
+            html += '<div style="font-weight:700">' + escAttr(f.full_name || "Isimsiz") + '</div>';
+            html += '<div class="muted">Oda: ' + escAttr(f.room_number || "-") + ' · ' + escAttr(f.nationality || "-");
+            if (f.check_in_at) html += ' · Giris: ' + escAttr(f.check_in_at.slice(0, 10));
+            if (f.check_out_at) html += ' · Cikis: ' + escAttr(f.check_out_at.slice(0, 10));
+            if (f.daily_rate_gross) html += ' · Gunluk: ' + Number(f.daily_rate_gross).toFixed(2) + ' TL';
+            html += '</div></div></div>';
+          });
+          html += '</div>';
+        });
+        box.innerHTML = html;
+        box.querySelectorAll("button[data-hmb-date]").forEach(function(btn) {
+          btn.addEventListener("click", function() { void openHmbForm(btn.getAttribute("data-hmb-date")); });
+        });
+      } catch(e) {
+        box.innerHTML = '<h3 class="panelTitle">Gunluk Musteri Formlari</h3><div class="empty" style="color:#991b1b">' + escAttr((e && e.message) || "Formlar alinamadi") + '</div>';
+      }
     }
 
     async function loadLatest(){
       if (!pin) return alert("Once PIN ile portali acin.");
-      const res = await api({ format: "json", view: "latest-form" });
-      const f = res.item;
-      const box = document.getElementById("forms");
+      var box = document.getElementById("forms");
       box.style.display = "block";
-      box.innerHTML = "<h3 style='margin:0 0 8px'>Son Musteri Formu</h3>" + (f ? '<div class="doc"><div class="docTitle">' +
-        (f.full_name || "Isimsiz") + '</div><div class="muted">' + (f.created_at || "-") + "</div></div>" : "<p>Kayit yok.</p>");
+      box.innerHTML = '<div style="padding:18px;text-align:center;color:var(--muted)">Yukleniyor…</div>';
+      box.scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        var res = await api({ format: "json", view: "latest-form" });
+        var f = res.item;
+        if (!f) {
+          box.innerHTML = '<h3 class="panelTitle">Son Musteri Formu</h3><div class="empty">Kayit bulunamadi.</div>';
+          return;
+        }
+        box.innerHTML = '<h3 class="panelTitle">Son Musteri Formu</h3>' +
+          '<div class="doc"><div class="docTitle">' + escAttr(f.full_name || "Isimsiz") + '</div><div class="muted">' +
+          'Oda: ' + escAttr(f.room_number || "-") + ' · ' + escAttr(f.nationality || "-") +
+          (f.check_in_at ? ' · Giris: ' + escAttr(f.check_in_at.slice(0, 10)) : '') +
+          (f.check_out_at ? ' · Cikis: ' + escAttr(f.check_out_at.slice(0, 10)) : '') +
+          '</div></div>';
+      } catch(e) {
+        box.innerHTML = '<h3 class="panelTitle">Son Musteri Formu</h3><div class="empty" style="color:#991b1b">' + escAttr((e && e.message) || "Form alinamadi") + '</div>';
+      }
+    }
+
+    async function openHmbForm(date){
+      if (!pin || !date) return;
+      try {
+        var res = await api({ format: "json", view: "hmb-form-html", date: date });
+        if (!res.html) { alert("Form HTML olusturulamadi"); return; }
+        var w = window.open("", "_blank");
+        if (!w) { alert("Pop-up engellendi. Lutfen izin verin."); return; }
+        w.document.open();
+        w.document.write(res.html);
+        w.document.close();
+      } catch(e) { alert((e && e.message) || "HMB formu alinamadi"); }
     }
 
     function bindDocsDelegation(){

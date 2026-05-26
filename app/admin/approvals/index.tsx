@@ -929,6 +929,7 @@ export default function AdminApprovalsHubScreen() {
                 ) : contractRooms.length === 0 ? (
                   <Text style={styles.contractEmptyStaff}>Tanımlı oda yok.</Text>
                 ) : (
+                  <ScrollView style={styles.roomGridScroll} nestedScrollEnabled showsVerticalScrollIndicator>
                   <View style={styles.roomGrid}>
                     {contractRooms.map((r) => {
                       const isSelected = contractSelectedRoomId === r.id;
@@ -974,6 +975,7 @@ export default function AdminApprovalsHubScreen() {
                       );
                     })}
                   </View>
+                  </ScrollView>
                 )}
                 {contractSelectedRoomId ? (
                   <View style={styles.contractPriceCard}>
@@ -1037,7 +1039,12 @@ export default function AdminApprovalsHubScreen() {
                 Bu onayda misafir kaydı yok; oda ataması yapılamaz. İsterseniz süreci bir personele devredebilirsiniz.
               </Text>
             )}
-            <Text style={[styles.contractAssignHint, { marginTop: 14 }]}>Personele devret (personel uygulamasında oda atar):</Text>
+            <View style={styles.contractDivider} />
+            <View style={styles.contractSectionHeader}>
+              <Ionicons name="people-outline" size={16} color={adminTheme.colors.textMuted} />
+              <Text style={styles.contractSectionTitle}>Personele Devret</Text>
+            </View>
+            <Text style={styles.contractAssignHint}>Personel uygulamasında oda atamasını tamamlar:</Text>
             {contractStaffLoading ? (
               <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
             ) : contractStaffList.length === 0 ? (
@@ -1707,6 +1714,22 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
   },
   secondaryBtnText: { color: adminTheme.colors.primary, fontWeight: '700', fontSize: 15 },
+  contractDivider: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 16,
+  },
+  contractSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  contractSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#334155',
+  },
   contractHintCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -1749,12 +1772,14 @@ const styles = StyleSheet.create({
   staffPickTextCol: { flex: 1, minWidth: 0 },
   staffPickName: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
   staffPickDept: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
+  roomGridScroll: {
+    maxHeight: 280,
+    marginTop: 8,
+  },
   roomGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginTop: 8,
-    maxHeight: 320,
   },
   roomCard: {
     width: '47%' as unknown as number,

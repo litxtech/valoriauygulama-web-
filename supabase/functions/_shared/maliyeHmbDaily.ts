@@ -335,23 +335,23 @@ export function buildHmbDailyListHtml(
     room: string;
     name: string;
     nationality: string;
-    dailyRate: number;
-    totalGuestShare: number;
+    checkIn: string;
+    checkOut: string;
+    amount: number;
   }[] = [];
 
   for (const s of data.stays) {
-    const nights = Math.max(1, s.nights);
     const guestCount = Math.max(1, s.guests.length);
     const totalGross = s.total_net + s.vat + s.accommodation_tax;
-    const dailyGross = totalGross / nights;
     const share = totalGross / guestCount;
     for (const g of s.guests) {
       flat.push({
         room: s.room_number,
         name: g.full_name,
         nationality: guestNationalityLabel(g.nationality, g.id_type),
-        dailyRate: dailyGross,
-        totalGuestShare: share,
+        checkIn: fmtTrDate(s.check_in_at),
+        checkOut: s.check_out_at ? fmtTrDate(s.check_out_at) : "—",
+        amount: share,
       });
     }
   }
@@ -366,17 +366,19 @@ export function buildHmbDailyListHtml(
     seq += 1;
     rowsHtml.push(`<tr>
       <td style="text-align:center">${seq}</td>
-      <td style="text-align:center">${escapeHtml(r.room)}</td>
       <td>${escapeHtml(r.name)}</td>
       <td style="text-align:center">${escapeHtml(r.nationality)}</td>
-      <td style="text-align:right">${fmtMoney(r.dailyRate)}</td>
-      <td style="text-align:right">${fmtMoney(r.totalGuestShare)}</td>
+      <td style="text-align:center">${escapeHtml(r.room)}</td>
+      <td style="text-align:center">${escapeHtml(r.checkIn)}</td>
+      <td style="text-align:center">${escapeHtml(r.checkOut)}</td>
+      <td style="text-align:right">${fmtMoney(r.amount)}</td>
+      <td style="text-align:center">—</td>
     </tr>`);
   }
   const pad = Math.max(0, ROW_MIN - flat.length);
   for (let i = 0; i < pad; i++) {
     rowsHtml.push(
-      "<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>"
+      "<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>"
     );
   }
 
@@ -384,29 +386,24 @@ export function buildHmbDailyListHtml(
   const seri = formMeta?.seri ?? branding.defaultSeri;
   const sira = formMeta?.sira ?? "……";
   const block = formMeta?.block ?? "…………………………………………";
-  const arrival = data.stays.length
-    ? fmtTrDate(data.stays.reduce((a, s) => (a < s.check_in_at ? a : s.check_in_at), data.stays[0].check_in_at))
-    : listDate;
-  const departDates = data.stays.map((s) => s.check_out_at).filter(Boolean) as string[];
-  const departure = departDates.length
-    ? fmtTrDate(departDates.sort().reverse()[0])
-    : "…/…/……";
 
   const leftBlock = `
-    <div style="font-size:8.5pt;line-height:1.25;">
+    <div style="font-size:8.5pt;line-height:1.35;">
       ${branding.logoDataUrl ? `<div style="margin-bottom:4px;"><img src="${escapeAttr(branding.logoDataUrl)}" style="max-height:52px;max-width:120px;" alt="" /></div>` : ""}
-      <div style="font-weight:700;font-size:9.5pt;">${escapeHtml(branding.legalCompanyName)}</div>
+      <div style="font-weight:700;font-size:10pt;">${escapeHtml(branding.legalCompanyName)}</div>
       ${branding.businessActivities ? `<div style="font-size:8pt;margin-top:2px;">${escapeHtml(branding.businessActivities)}</div>` : ""}
       <div style="margin-top:6px;font-size:8.5pt;">${escapeHtml(branding.address)}</div>
       <div style="margin-top:4px;font-size:8.5pt;">Tel: ${escapeHtml(branding.phone)}${branding.fax ? ` · Faks: ${escapeHtml(branding.fax)}` : ""}</div>
     </div>`;
 
   const rightBlock = `
-    <div style="font-size:8.5pt;line-height:1.55;text-align:right;">
-      <div><strong>Tarih</strong> ${escapeHtml(listDate)}</div>
-      <div><strong>SERİ</strong> ${escapeHtml(seri)} &nbsp; <strong>SIRA</strong> ${escapeHtml(sira)}</div>
-      <div style="margin-top:6px;"><strong>Giriş Tarihi</strong> ${escapeHtml(arrival)}</div>
-      <div><strong>Çıkış Tarihi</strong> ${escapeHtml(departure)}</div>
+    <div style="font-size:8.5pt;line-height:1.55;">
+      <div style="font-size:10pt;font-weight:700;margin-bottom:8px;">GÜNLÜK MÜŞTERİ LİSTESİ</div>
+      <div><strong>İşletmenin</strong></div>
+      <div style="margin-top:3px;">Adresi: ${escapeHtml(branding.address)}</div>
+      <div>Tel No: ${escapeHtml(branding.phone)}${branding.fax ? ` / Faks: ${escapeHtml(branding.fax)}` : ""}</div>
+      <div style="margin-top:8px;">Tarih: ${escapeHtml(listDate)}</div>
+      <div><strong>SERİ</strong> ${escapeHtml(seri)} &nbsp; <strong>SIRA No</strong> ${escapeHtml(sira)}</div>
     </div>`;
 
   const footerSmall = branding.footerPrinterLine
@@ -422,39 +419,53 @@ export function buildHmbDailyListHtml(
   <style>
     @page { size: A4 portrait; margin: 10mm 12mm; }
     body { font-family: 'Times New Roman', Times, serif; color: #000; font-size: 9pt; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .sheet { max-width: 180mm; margin: 0 auto; }
-    .head-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    .sheet { max-width: 190mm; margin: 0 auto; padding: 8mm; }
+    .head-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
     .head-table td { vertical-align: top; padding: 2px 4px; }
     .seal-wrap { text-align: center; }
     .seal-wrap img { width: 92px; height: auto; display: inline-block; }
-    .title { text-align: center; font-size: 14pt; font-weight: 700; letter-spacing: 0.5px; margin: 10px 0 6px 0; }
+    .title { text-align: center; font-size: 14pt; font-weight: 700; letter-spacing: 0.5px; margin: 10px 0 6px 0; border-top: 2px solid #000; border-bottom: 1px solid #000; padding: 6px 0; }
     .block-line { font-size: 9pt; margin-bottom: 8px; }
     .data-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .data-table th, .data-table td { border: 1px solid #000; padding: 3px 4px; vertical-align: middle; word-wrap: break-word; }
-    .data-table th { font-size: 8pt; font-weight: 700; text-align: center; background: #fff; }
+    .data-table th { font-size: 7.5pt; font-weight: 700; text-align: center; background: #fefce8; }
+    .data-table td { font-size: 8pt; height: 18px; }
     .foot-sig { margin-top: 14px; font-size: 8.5pt; }
+    @media print {
+      body { margin: 0; }
+      .no-print { display: none !important; }
+    }
+    .print-bar { background: #f1f5f9; padding: 10px 16px; text-align: center; border-bottom: 1px solid #e2e8f0; }
+    .print-bar button { padding: 10px 24px; font-size: 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
+    .print-bar .btn-print { background: #1d4ed8; color: #fff; }
+    .print-bar .btn-close { background: #e2e8f0; color: #334155; }
   </style>
 </head>
 <body>
+  <div class="no-print print-bar">
+    <button class="btn-print" onclick="window.print()">Yazdir</button>
+    <button class="btn-close" onclick="window.close()">Kapat</button>
+  </div>
   <div class="sheet">
     <table class="head-table">
       <tr>
-        <td style="width:34%;">${leftBlock}</td>
-        <td style="width:32%;" class="seal-wrap"><img src="${escapeAttr(sealSrc)}" alt=""/></td>
-        <td style="width:34%;">${rightBlock}</td>
+        <td style="width:38%;">${leftBlock}</td>
+        <td style="width:24%;" class="seal-wrap"><img src="${escapeAttr(sealSrc)}" alt=""/></td>
+        <td style="width:38%;">${rightBlock}</td>
       </tr>
     </table>
-    <div class="title">GÜNLÜK MÜŞTERİ LİSTESİ</div>
     <div class="block-line"><strong>BLOK</strong> (${escapeHtml(block)})</div>
     <table class="data-table">
       <thead>
         <tr>
-          <th style="width:6%">Sıra</th>
-          <th style="width:9%">Oda No.</th>
-          <th style="width:34%">Müşterinin Adı, Soyadı</th>
-          <th style="width:14%">Uyruğu</th>
-          <th style="width:18%">Günlük Ücreti</th>
-          <th style="width:19%">Toplam Ücret</th>
+          <th style="width:5%">Müşteri<br/>Sıra No</th>
+          <th style="width:24%">Müşterinin Adı Soyadı<br/>ve Ünvanı</th>
+          <th style="width:10%">Uyruğu</th>
+          <th style="width:7%">Oda<br/>No</th>
+          <th style="width:12%">Giriş<br/>Tarihi</th>
+          <th style="width:12%">Çıkış<br/>Tarihi</th>
+          <th style="width:14%">Ücret</th>
+          <th style="width:16%">Ödeme<br/>Şekli</th>
         </tr>
       </thead>
       <tbody>${rowsHtml.join("")}</tbody>
@@ -462,7 +473,10 @@ export function buildHmbDailyListHtml(
     <div class="foot-sig">
       <div>Liste tarihi: ${escapeHtml(listDate)} · Rapor no: ${escapeHtml(data.reportNumber)} · ${data.totalGuests} müşteri / ${data.totalStays} oda</div>
       <div style="margin-top:6px;">Düzenleyen: ${escapeHtml(branding.authorizedName)} · Üretim: ${escapeHtml(fmtTrDate(data.generatedAt))}</div>
-      <div style="margin-top:14px;border-bottom:1px solid #000;width:220px;padding-top:20px;">İmza / Kaşe</div>
+      <div style="display:flex;gap:40px;margin-top:20px;">
+        <div style="flex:1;border-bottom:1px solid #000;padding-top:24px;">İmza / Kaşe</div>
+        <div style="flex:1;border-bottom:1px solid #000;padding-top:24px;">Tarih</div>
+      </div>
     </div>
     ${footerSmall}
   </div>

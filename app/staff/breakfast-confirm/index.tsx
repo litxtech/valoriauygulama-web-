@@ -342,7 +342,7 @@ const styles = StyleSheet.create({
   secondaryBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.primary },
   thumbRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   thumbWrap: { position: 'relative' },
-  thumb: { width: 96, height: 96, borderRadius: 10, backgroundColor: theme.colors.borderLight },
+  thumb: { width: 140, height: 140, borderRadius: 14, backgroundColor: theme.colors.borderLight },
   thumbRemove: { position: 'absolute', top: 4, right: 4 },
   primaryBtn: {
     marginTop: 24,

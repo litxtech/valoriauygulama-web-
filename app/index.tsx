@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useRootNavigationState } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import NetInfo from '@react-native-community/netinfo';
@@ -593,32 +594,56 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={styles.portalTile}
               onPress={() => safeRouterPush(router, publicMenuHref())}
-              activeOpacity={0.85}
+              activeOpacity={0.82}
             >
-              <View style={[styles.portalIcon, styles.portalIconMenu]}>
-                <Ionicons name="restaurant-outline" size={22} color="#b8860b" />
-              </View>
-              <Text style={styles.portalTileTitle}>{t('homePortalMenu')}</Text>
+              <LinearGradient
+                colors={['#fef9c3', '#fde68a', '#fbbf24']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.portalTileGradient}
+              >
+                <View style={styles.portalIconCircle}>
+                  <Ionicons name="restaurant" size={26} color="#b45309" />
+                </View>
+                <Text style={[styles.portalTileTitle, { color: '#78350f' }]}>{t('homePortalMenu')}</Text>
+                <Text style={[styles.portalTileHint, { color: '#92400e' }]}>{t('homePortalMenuHint')}</Text>
+              </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.portalTile}
               onPress={() => safeRouterPush(router, publicContractHref())}
-              activeOpacity={0.85}
+              activeOpacity={0.82}
             >
-              <View style={[styles.portalIcon, styles.portalIconContract]}>
-                <Ionicons name="document-text-outline" size={22} color="#1a365d" />
-              </View>
-              <Text style={styles.portalTileTitle}>{t('homePortalContract')}</Text>
+              <LinearGradient
+                colors={['#dbeafe', '#bfdbfe', '#93c5fd']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.portalTileGradient}
+              >
+                <View style={styles.portalIconCircle}>
+                  <Ionicons name="document-text" size={26} color="#1e40af" />
+                </View>
+                <Text style={[styles.portalTileTitle, { color: '#1e3a5f' }]}>{t('homePortalContract')}</Text>
+                <Text style={[styles.portalTileHint, { color: '#1e40af' }]}>{t('homePortalContractHint')}</Text>
+              </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.portalTile}
               onPress={() => openPublicMaliyePortal()}
-              activeOpacity={0.85}
+              activeOpacity={0.82}
             >
-              <View style={[styles.portalIcon, styles.portalIconMaliye]}>
-                <Ionicons name="shield-checkmark-outline" size={22} color="#0d9488" />
-              </View>
-              <Text style={styles.portalTileTitle}>{t('homePortalMaliye')}</Text>
+              <LinearGradient
+                colors={['#ccfbf1', '#99f6e4', '#5eead4']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.portalTileGradient}
+              >
+                <View style={styles.portalIconCircle}>
+                  <Ionicons name="shield-checkmark" size={26} color="#0f766e" />
+                </View>
+                <Text style={[styles.portalTileTitle, { color: '#134e4a' }]}>{t('homePortalMaliye')}</Text>
+                <Text style={[styles.portalTileHint, { color: '#0f766e' }]}>{t('homePortalMaliyeHint')}</Text>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
         </View>
@@ -925,51 +950,61 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   portalPanel: {
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 20,
-    padding: 16,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderRadius: 24,
+    padding: 18,
     marginTop: -20,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.4)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    elevation: 8,
   },
   portalPanelLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
+    color: '#475569',
+    letterSpacing: 1,
     textTransform: 'uppercase',
-    marginBottom: 12,
+    marginBottom: 14,
     textAlign: 'center',
   },
   portalRow: { flexDirection: 'row', gap: 10 },
   portalTile: {
     flex: 1,
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 6,
-    borderRadius: 14,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
   },
-  portalIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+  portalTileGradient: {
+    alignItems: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 8,
+    borderRadius: 18,
+  },
+  portalIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255,255,255,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  portalIconMenu: { backgroundColor: 'rgba(184, 134, 11, 0.15)' },
-  portalIconContract: { backgroundColor: 'rgba(26, 54, 93, 0.1)' },
-  portalIconMaliye: { backgroundColor: 'rgba(13, 148, 136, 0.12)' },
-  portalTileTitle: { fontSize: 12, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
+  portalTileTitle: { fontSize: 13, fontWeight: '800', textAlign: 'center', marginBottom: 3 },
+  portalTileHint: { fontSize: 10, fontWeight: '600', textAlign: 'center', opacity: 0.8 },
   checkinPromptCard: {
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 20,

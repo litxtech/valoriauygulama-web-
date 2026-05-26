@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -101,9 +101,10 @@ export function BreakfastPhotoLightbox({
 }: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const list = urls.filter(Boolean);
+  const list = useMemo(() => urls.filter(Boolean), [urls]);
   const [page, setPage] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+  const didInitialScroll = useRef(false);
   const isWeb = Platform.OS === 'web';
   const pageW = isWeb ? width : width;
   const pageH = isWeb
@@ -112,8 +113,13 @@ export function BreakfastPhotoLightbox({
   const iosZoom = Platform.OS === 'ios';
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      didInitialScroll.current = false;
+      return;
+    }
     void prefetchImageUrls(list, 8);
+    if (didInitialScroll.current) return;
+    didInitialScroll.current = true;
     const i = Math.min(Math.max(0, initialIndex), Math.max(0, list.length - 1));
     setPage(i);
     requestAnimationFrame(() => {
