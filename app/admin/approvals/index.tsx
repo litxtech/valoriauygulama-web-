@@ -948,74 +948,138 @@ export default function AdminApprovalsHubScreen() {
       case 'contract': {
         const row = detail.raw as ContractApprovalRow;
         const hasGuest = Boolean(row.guest_id);
+        const g0 = Array.isArray(row.guests) ? row.guests[0] : row.guests;
+        const guestName = g0?.full_name?.trim() || null;
         return (
           <View style={styles.rowBtns}>
             {hasGuest ? (
               <>
-                <View style={styles.contractHintCard}>
-                  <Ionicons name="information-circle-outline" size={18} color="#2563eb" />
-                  <Text style={styles.contractHintText}>
-                    Aşağıdan oda seçin, ardından gece fiyatı ve gece sayısını girerek check-in tamamlayın.
-                  </Text>
+                {/* Guest info banner */}
+                <View style={styles.contractGuestBanner}>
+                  <View style={styles.contractGuestAvatar}>
+                    <Ionicons name="person" size={20} color="#7c3aed" />
+                  </View>
+                  <View style={styles.contractGuestInfo}>
+                    <Text style={styles.contractGuestName}>{guestName ?? 'Misafir'}</Text>
+                    <Text style={styles.contractGuestMeta}>
+                      Sözleşme dili: {row.contract_lang?.toUpperCase() ?? '—'}
+                    </Text>
+                  </View>
+                  <View style={styles.contractGuestBadge}>
+                    <Ionicons name="document-text" size={12} color="#7c3aed" />
+                    <Text style={styles.contractGuestBadgeText}>Onaylı</Text>
+                  </View>
                 </View>
-                {contractRoomsLoading ? (
-                  <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
-                ) : contractRooms.length === 0 ? (
-                  <Text style={styles.contractEmptyStaff}>Tanımlı oda yok.</Text>
-                ) : (
-                  <ScrollView style={styles.roomGridScroll} nestedScrollEnabled showsVerticalScrollIndicator>
-                  <View style={styles.roomGrid}>
-                    {contractRooms.map((r) => {
-                      const isSelected = contractSelectedRoomId === r.id;
-                      const isAvailable = r.status === 'available';
-                      const statusColor = isAvailable ? '#16a34a' : r.status === 'occupied' ? '#dc2626' : r.status === 'cleaning' ? '#ca8a04' : '#64748b';
-                      const statusBg = isAvailable ? '#dcfce7' : r.status === 'occupied' ? '#fee2e2' : r.status === 'cleaning' ? '#fef9c3' : '#f1f5f9';
-                      return (
-                        <TouchableOpacity
-                          key={r.id}
-                          style={[
-                            styles.roomCard,
-                            isSelected && styles.roomCardSelected,
-                            !isAvailable && !isSelected && styles.roomCardUnavailable,
-                            acting && styles.staffPickRowDisabled,
-                          ]}
-                          onPress={() => setContractSelectedRoomId(r.id)}
-                          disabled={acting}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.roomCardTop}>
-                            <View style={[styles.roomCardNumber, isSelected && styles.roomCardNumberSelected]}>
-                              <Text style={[styles.roomCardNumberText, isSelected && styles.roomCardNumberTextSelected]}>{r.room_number}</Text>
+
+                {/* Step indicator */}
+                <View style={styles.contractSteps}>
+                  <View style={[styles.contractStep, contractSelectedRoomId ? styles.contractStepDone : styles.contractStepActive]}>
+                    <View style={[styles.contractStepDot, contractSelectedRoomId ? styles.contractStepDotDone : styles.contractStepDotActive]}>
+                      {contractSelectedRoomId ? (
+                        <Ionicons name="checkmark" size={10} color="#fff" />
+                      ) : (
+                        <Text style={styles.contractStepNum}>1</Text>
+                      )}
+                    </View>
+                    <Text style={[styles.contractStepLabel, contractSelectedRoomId && styles.contractStepLabelDone]}>Oda seç</Text>
+                  </View>
+                  <View style={[styles.contractStepLine, contractSelectedRoomId && styles.contractStepLineDone]} />
+                  <View style={[styles.contractStep, contractPriceInput && contractNightsInput ? styles.contractStepDone : contractSelectedRoomId ? styles.contractStepActive : null]}>
+                    <View style={[styles.contractStepDot, contractPriceInput && contractNightsInput ? styles.contractStepDotDone : contractSelectedRoomId ? styles.contractStepDotActive : null]}>
+                      {contractPriceInput && contractNightsInput ? (
+                        <Ionicons name="checkmark" size={10} color="#fff" />
+                      ) : (
+                        <Text style={styles.contractStepNum}>2</Text>
+                      )}
+                    </View>
+                    <Text style={[styles.contractStepLabel, contractPriceInput && contractNightsInput && styles.contractStepLabelDone]}>Detaylar</Text>
+                  </View>
+                  <View style={[styles.contractStepLine, contractPriceInput && contractNightsInput ? styles.contractStepLineDone : null]} />
+                  <View style={styles.contractStep}>
+                    <View style={styles.contractStepDot}>
+                      <Text style={styles.contractStepNum}>3</Text>
+                    </View>
+                    <Text style={styles.contractStepLabel}>Check-in</Text>
+                  </View>
+                </View>
+
+                {/* Room grid */}
+                <View style={styles.contractSectionCard}>
+                  <View style={styles.contractSectionCardHeader}>
+                    <View style={styles.contractSectionIcon}>
+                      <Ionicons name="bed-outline" size={16} color="#7c3aed" />
+                    </View>
+                    <Text style={styles.contractSectionCardTitle}>Oda Seçimi</Text>
+                    {contractSelectedRoomId ? (
+                      <View style={styles.contractSectionDoneBadge}>
+                        <Ionicons name="checkmark-circle" size={14} color="#16a34a" />
+                      </View>
+                    ) : null}
+                  </View>
+                  {contractRoomsLoading ? (
+                    <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
+                  ) : contractRooms.length === 0 ? (
+                    <Text style={styles.contractEmptyStaff}>Tanımlı oda yok.</Text>
+                  ) : (
+                    <View style={styles.roomList}>
+                      {contractRooms.map((r) => {
+                        const isSelected = contractSelectedRoomId === r.id;
+                        const isAvailable = r.status === 'available';
+                        const statusColor = isAvailable ? '#16a34a' : r.status === 'occupied' ? '#dc2626' : r.status === 'cleaning' ? '#ca8a04' : '#64748b';
+                        const statusBg = isAvailable ? '#dcfce7' : r.status === 'occupied' ? '#fee2e2' : r.status === 'cleaning' ? '#fef9c3' : '#f1f5f9';
+                        return (
+                          <TouchableOpacity
+                            key={r.id}
+                            style={[
+                              styles.roomListItem,
+                              isSelected && styles.roomListItemSelected,
+                              !isAvailable && !isSelected && styles.roomCardUnavailable,
+                              acting && styles.staffPickRowDisabled,
+                            ]}
+                            onPress={() => setContractSelectedRoomId(r.id)}
+                            disabled={acting}
+                            activeOpacity={0.8}
+                          >
+                            <View style={[styles.roomListNumber, isSelected && styles.roomListNumberSelected]}>
+                              <Text style={[styles.roomListNumberText, isSelected && styles.roomListNumberTextSelected]}>{r.room_number}</Text>
+                            </View>
+                            <View style={styles.roomListBody}>
+                              <Text style={[styles.roomListTitle, isSelected && styles.roomListTitleSelected]}>
+                                Oda {r.room_number}
+                              </Text>
+                              <View style={styles.roomListMeta}>
+                                {r.floor != null ? <Text style={styles.roomListFloor}>Kat {r.floor}</Text> : null}
+                                {r.price_per_night != null && r.price_per_night > 0 ? (
+                                  <Text style={styles.roomListPrice}>{fmtMoney(r.price_per_night)}/gece</Text>
+                                ) : null}
+                              </View>
+                            </View>
+                            <View style={[styles.roomListStatus, { backgroundColor: statusBg }]}>
+                              <View style={[styles.roomCardStatusDot, { backgroundColor: statusColor }]} />
+                              <Text style={[styles.roomCardStatusText, { color: statusColor }]}>
+                                {ROOM_STATUS_LABELS[r.status ?? ''] ?? r.status}
+                              </Text>
                             </View>
                             {isSelected ? (
-                              <View style={styles.roomCardCheck}>
-                                <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
-                              </View>
-                            ) : null}
-                          </View>
-                          <View style={styles.roomCardInfo}>
-                            {r.floor != null ? <Text style={styles.roomCardFloor}>Kat {r.floor}</Text> : null}
-                            {r.price_per_night != null && r.price_per_night > 0 ? (
-                              <Text style={styles.roomCardPrice}>{fmtMoney(r.price_per_night)}/gece</Text>
-                            ) : null}
-                          </View>
-                          <View style={[styles.roomCardStatus, { backgroundColor: statusBg }]}>
-                            <View style={[styles.roomCardStatusDot, { backgroundColor: statusColor }]} />
-                            <Text style={[styles.roomCardStatusText, { color: statusColor }]}>
-                              {ROOM_STATUS_LABELS[r.status ?? ''] ?? r.status}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  </ScrollView>
-                )}
+                              <Ionicons name="checkmark-circle" size={22} color="#16a34a" />
+                            ) : (
+                              <View style={styles.roomListRadio} />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+
+                {/* Pricing & details section */}
                 {contractSelectedRoomId ? (
-                  <View style={styles.contractPriceCard}>
-                    <View style={styles.contractPriceHeader}>
-                      <Ionicons name="card-outline" size={18} color="#0f766e" />
-                      <Text style={styles.contractPriceTitle}>Konaklama Bilgileri</Text>
+                  <View style={styles.contractSectionCard}>
+                    <View style={styles.contractSectionCardHeader}>
+                      <View style={styles.contractSectionIcon}>
+                        <Ionicons name="calculator-outline" size={16} color="#0f766e" />
+                      </View>
+                      <Text style={styles.contractSectionCardTitle}>Konaklama Detayları</Text>
                     </View>
                     <View style={styles.contractPriceRow}>
                       <View style={styles.contractPriceField}>
@@ -1044,7 +1108,30 @@ export default function AdminApprovalsHubScreen() {
                       </View>
                     </View>
 
-                    {/* Ödeme Şekli */}
+                    {contractPriceInput && contractNightsInput ? (
+                      <View style={styles.contractPriceSummary}>
+                        <View style={styles.contractPriceSummaryRow}>
+                          <Text style={styles.contractPriceSummaryLabel}>Toplam (net)</Text>
+                          <Text style={styles.contractPriceSummaryValue}>
+                            {fmtMoney(parseFloat(contractPriceInput.replace(',', '.') || '0') * parseInt(contractNightsInput || '0', 10))}
+                          </Text>
+                        </View>
+                        <Text style={styles.contractPriceSummaryNote}>+ KDV + konaklama vergisi</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {/* Payment & channel section */}
+                {contractSelectedRoomId ? (
+                  <View style={styles.contractSectionCard}>
+                    <View style={styles.contractSectionCardHeader}>
+                      <View style={styles.contractSectionIcon}>
+                        <Ionicons name="wallet-outline" size={16} color="#b45309" />
+                      </View>
+                      <Text style={styles.contractSectionCardTitle}>Ödeme & Kaynak</Text>
+                    </View>
+
                     <View style={styles.contractFieldSection}>
                       <Text style={styles.inputLabel}>Ödeme Şekli</Text>
                       <View style={styles.chipRow}>
@@ -1065,7 +1152,6 @@ export default function AdminApprovalsHubScreen() {
                       </View>
                     </View>
 
-                    {/* Rezervasyon Kanalı */}
                     <View style={styles.contractFieldSection}>
                       <Text style={styles.inputLabel}>Rezervasyon Kanalı</Text>
                       <View style={styles.chipRow}>
@@ -1085,41 +1171,43 @@ export default function AdminApprovalsHubScreen() {
                         })}
                       </View>
                     </View>
+                  </View>
+                ) : null}
 
-                    {contractPriceInput && contractNightsInput ? (
-                      <View style={styles.contractPriceSummary}>
-                        <Text style={styles.contractPriceSummaryText}>
-                          Toplam: {fmtMoney(parseFloat(contractPriceInput.replace(',', '.') || '0') * parseInt(contractNightsInput || '0', 10))}
-                          {' '}(net) + KDV + konaklama vergisi
-                        </Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.contractPriceBtns}>
-                      <TouchableOpacity
-                        style={styles.contractPreviewBtn}
-                        onPress={() => linkContractRoomPreview(row)}
-                        disabled={acting}
-                      >
-                        <Ionicons name="eye-outline" size={16} color="#2563eb" />
-                        <Text style={styles.contractPreviewBtnText}>Önizleme</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.contractCheckinBtn} onPress={() => completeContractCheckIn(row)} disabled={acting}>
-                        <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                        <Text style={styles.contractCheckinBtnText}>Check-in Yap</Text>
-                      </TouchableOpacity>
-                    </View>
+                {/* Action buttons */}
+                {contractSelectedRoomId ? (
+                  <View style={styles.contractActionBar}>
+                    <TouchableOpacity
+                      style={styles.contractPreviewBtn}
+                      onPress={() => linkContractRoomPreview(row)}
+                      disabled={acting}
+                    >
+                      <Ionicons name="eye-outline" size={16} color="#2563eb" />
+                      <Text style={styles.contractPreviewBtnText}>Önizleme</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.contractCheckinBtn} onPress={() => completeContractCheckIn(row)} disabled={acting}>
+                      <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+                      <Text style={styles.contractCheckinBtnText}>Check-in Yap</Text>
+                    </TouchableOpacity>
                   </View>
                 ) : null}
               </>
             ) : (
-              <Text style={styles.contractAssignHint}>
-                Bu onayda misafir kaydı yok; oda ataması yapılamaz. İsterseniz süreci bir personele devredebilirsiniz.
-              </Text>
+              <View style={styles.contractNoGuestCard}>
+                <Ionicons name="alert-circle-outline" size={28} color="#64748b" />
+                <Text style={styles.contractNoGuestText}>
+                  Bu onayda misafir kaydı yok; oda ataması yapılamaz. Süreci bir personele devredebilirsiniz.
+                </Text>
+              </View>
             )}
+
+            {/* Delegate section */}
             <View style={styles.contractDivider} />
-            <View style={styles.contractSectionHeader}>
-              <Ionicons name="people-outline" size={16} color={adminTheme.colors.textMuted} />
-              <Text style={styles.contractSectionTitle}>Personele Devret</Text>
+            <View style={styles.contractSectionCardHeader}>
+              <View style={[styles.contractSectionIcon, { backgroundColor: '#ede9fe' }]}>
+                <Ionicons name="people-outline" size={16} color="#7c3aed" />
+              </View>
+              <Text style={styles.contractSectionCardTitle}>Personele Devret</Text>
             </View>
             <Text style={styles.contractAssignHint}>Personel uygulamasında oda atamasını tamamlar:</Text>
             {contractStaffLoading ? (
@@ -1141,24 +1229,32 @@ export default function AdminApprovalsHubScreen() {
                     disabled={acting}
                     activeOpacity={0.75}
                   >
-                    <Ionicons name="person-circle-outline" size={22} color={adminTheme.colors.primaryMuted} />
+                    <View style={styles.staffPickAvatar}>
+                      <Text style={styles.staffPickAvatarText}>
+                        {(s.full_name?.[0] ?? '?').toUpperCase()}
+                      </Text>
+                    </View>
                     <View style={styles.staffPickTextCol}>
                       <Text style={styles.staffPickName}>{s.full_name ?? s.id.slice(0, 8)}</Text>
-                      {s.department ? <Text style={styles.staffPickDept}>{s.department}</Text> : null}
+                      {s.department ? <Text style={styles.staffPickDept}>{DEPT_LABELS[s.department] ?? s.department}</Text> : null}
                     </View>
-                    <Ionicons name="chevron-forward" size={18} color={adminTheme.colors.textMuted} />
+                    <View style={styles.staffPickArrow}>
+                      <Ionicons name="arrow-forward" size={16} color="#7c3aed" />
+                    </View>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
             <TouchableOpacity
-              style={styles.secondaryBtn}
+              style={styles.contractFullListBtn}
               onPress={() => {
                 setDetail(null);
                 router.push('/admin/contracts/acceptances' as never);
               }}
             >
-              <Text style={styles.secondaryBtnText}>Sözleşme onayları — tam liste, PDF, detay</Text>
+              <Ionicons name="list-outline" size={16} color="#7c3aed" />
+              <Text style={styles.contractFullListBtnText}>Sözleşme onayları — tam liste</Text>
+              <Ionicons name="chevron-forward" size={14} color="#7c3aed" />
             </TouchableOpacity>
           </View>
         );
@@ -1420,7 +1516,7 @@ export default function AdminApprovalsHubScreen() {
                     <Ionicons name="close" size={22} color="#fff" />
                   </TouchableOpacity>
                 </LinearGradient>
-                <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
                   <Text style={styles.modalH1}>{detail.title}</Text>
                   {detail.orgLine ? (
                     <View style={styles.modalOrgRow}>
@@ -1691,7 +1787,8 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.surface,
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
-    maxHeight: '92%',
+    maxHeight: '95%',
+    flex: 1,
     overflow: 'hidden',
   },
   modalHandle: {
@@ -1729,7 +1826,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalScroll: { paddingHorizontal: 16, paddingTop: 16, maxHeight: '72%' },
+  modalScroll: { paddingHorizontal: 16, paddingTop: 16, flex: 1 },
+  modalScrollContent: { paddingBottom: 40 },
   modalH1: { fontSize: 22, fontWeight: '900', color: adminTheme.colors.text, marginBottom: 10, letterSpacing: -0.3 },
   modalOrgRow: {
     flexDirection: 'row',
@@ -1794,37 +1892,143 @@ const styles = StyleSheet.create({
   contractDivider: {
     height: 1,
     backgroundColor: '#e2e8f0',
-    marginVertical: 16,
+    marginVertical: 18,
   },
-  contractSectionHeader: {
+  contractGuestBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  contractSectionTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#334155',
-  },
-  contractHintCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+    gap: 12,
     padding: 14,
-    borderRadius: 12,
-    backgroundColor: '#eff6ff',
+    borderRadius: 14,
+    backgroundColor: '#faf5ff',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#e9d5ff',
+    marginBottom: 14,
+  },
+  contractGuestAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ede9fe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contractGuestInfo: { flex: 1 },
+  contractGuestName: { fontSize: 16, fontWeight: '800', color: '#1e1b4b' },
+  contractGuestMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  contractGuestBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#ede9fe',
+  },
+  contractGuestBadgeText: { fontSize: 11, fontWeight: '700', color: '#7c3aed' },
+  contractSteps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    marginBottom: 14,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+  },
+  contractStep: { alignItems: 'center', gap: 4 },
+  contractStepDone: {},
+  contractStepActive: {},
+  contractStepDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contractStepDotActive: {
+    backgroundColor: '#7c3aed',
+  },
+  contractStepDotDone: {
+    backgroundColor: '#16a34a',
+  },
+  contractStepNum: { fontSize: 10, fontWeight: '800', color: '#94a3b8' },
+  contractStepLabel: { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
+  contractStepLabelDone: { color: '#16a34a' },
+  contractStepLine: {
+    width: 32,
+    height: 2,
+    backgroundColor: '#e2e8f0',
+    marginHorizontal: 8,
+    borderRadius: 1,
+  },
+  contractStepLineDone: { backgroundColor: '#16a34a' },
+  contractSectionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     marginBottom: 12,
+    gap: 12,
+    ...((Platform.OS === 'ios' ? { shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8 } : { elevation: 1 }) as ViewStyle),
   },
-  contractHintText: {
+  contractSectionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 4,
+  },
+  contractSectionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contractSectionCardTitle: {
     flex: 1,
-    fontSize: 13,
-    color: '#1e40af',
-    lineHeight: 19,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
   },
+  contractSectionDoneBadge: { marginLeft: 'auto' },
+  contractNoGuestCard: {
+    alignItems: 'center',
+    gap: 10,
+    padding: 20,
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  contractNoGuestText: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  contractActionBar: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  contractFullListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#faf5ff',
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    marginTop: 12,
+  },
+  contractFullListBtnText: { fontSize: 14, fontWeight: '600', color: '#7c3aed' },
   contractAssignHint: {
     fontSize: 13,
     color: adminTheme.colors.textSecondary,
@@ -1832,101 +2036,122 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   contractEmptyStaff: { fontSize: 14, color: adminTheme.colors.textMuted, marginVertical: 12 },
-  staffPickScroll: { maxHeight: 280, marginTop: 4 },
+  staffPickScroll: { maxHeight: 400, marginTop: 4 },
   staffPickRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
     marginBottom: 8,
   },
   staffPickRowDisabled: { opacity: 0.55 },
+  staffPickAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#ede9fe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  staffPickAvatarText: { fontSize: 14, fontWeight: '800', color: '#7c3aed' },
   staffPickTextCol: { flex: 1, minWidth: 0 },
-  staffPickName: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
-  staffPickDept: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
-  roomGridScroll: {
-    maxHeight: 280,
+  staffPickName: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
+  staffPickDept: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  staffPickArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#faf5ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomList: {
+    gap: 8,
     marginTop: 8,
   },
-  roomGrid: {
+  roomListItem: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  roomCard: {
-    width: '47%' as unknown as number,
-    minWidth: 140,
-    backgroundColor: '#fff',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
     borderRadius: 14,
     borderWidth: 2,
     borderColor: '#e2e8f0',
-    padding: 12,
-    gap: 8,
+    backgroundColor: '#fff',
   },
-  roomCardSelected: {
+  roomListItemSelected: {
     borderColor: '#16a34a',
     backgroundColor: '#f0fdf4',
-    ...((Platform.OS === 'ios' ? { shadowColor: '#16a34a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6 } : { elevation: 4 }) as ViewStyle),
+    ...((Platform.OS === 'ios' ? { shadowColor: '#16a34a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6 } : { elevation: 3 }) as ViewStyle),
   },
   roomCardUnavailable: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
-  roomCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  roomCardNumber: {
-    width: 44,
-    height: 44,
+  roomListNumber: {
+    width: 46,
+    height: 46,
     borderRadius: 12,
     backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  roomCardNumberSelected: {
+  roomListNumberSelected: {
     backgroundColor: '#dcfce7',
   },
-  roomCardNumberText: {
+  roomListNumberText: {
     fontSize: 18,
     fontWeight: '900',
     color: '#1e293b',
   },
-  roomCardNumberTextSelected: {
+  roomListNumberTextSelected: {
     color: '#166534',
   },
-  roomCardCheck: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roomCardInfo: {
+  roomListBody: {
+    flex: 1,
     gap: 2,
   },
-  roomCardFloor: {
+  roomListTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  roomListTitleSelected: {
+    color: '#166534',
+  },
+  roomListMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  roomListFloor: {
     fontSize: 12,
     fontWeight: '600',
     color: '#64748b',
   },
-  roomCardPrice: {
+  roomListPrice: {
     fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
   },
-  roomCardStatus: {
+  roomListStatus: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+  },
+  roomListRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
   },
   roomCardStatusDot: {
     width: 6,
@@ -1936,26 +2161,6 @@ const styles = StyleSheet.create({
   roomCardStatusText: {
     fontSize: 11,
     fontWeight: '700',
-  },
-  contractPriceCard: {
-    marginTop: 14,
-    backgroundColor: '#f8fafc',
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    gap: 12,
-  },
-  contractPriceHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  contractPriceTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f766e',
   },
   contractPriceRow: {
     flexDirection: 'row',
@@ -1967,21 +2172,37 @@ const styles = StyleSheet.create({
   },
   contractPriceSummary: {
     backgroundColor: '#ecfdf5',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#86efac',
+    gap: 4,
+  },
+  contractPriceSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  contractPriceSummaryLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  contractPriceSummaryValue: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  contractPriceSummaryNote: {
+    fontSize: 11,
+    color: '#4ade80',
+    fontWeight: '500',
   },
   contractPriceSummaryText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#166534',
-  },
-  contractPriceBtns: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
   },
   contractPreviewBtn: {
     flex: 1,
@@ -1989,11 +2210,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 14,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#2563eb',
-    backgroundColor: '#fff',
+    backgroundColor: '#eff6ff',
   },
   contractPreviewBtnText: {
     fontSize: 14,
@@ -2005,17 +2226,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
     backgroundColor: '#0f766e',
+    ...((Platform.OS === 'ios' ? { shadowColor: '#0f766e', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 } : { elevation: 4 }) as ViewStyle),
   },
   contractCheckinBtnText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
     color: '#fff',
+    letterSpacing: 0.3,
   },
-  contractPriceBlock: { marginTop: 12, gap: 8 },
   contractFieldSection: {
     marginTop: 14,
     gap: 8,
