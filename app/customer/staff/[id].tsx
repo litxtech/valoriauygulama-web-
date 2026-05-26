@@ -414,6 +414,23 @@ export default function StaffProfileScreen() {
     ]);
   };
 
+  const joinDateIso = staff?.hire_date ?? staff?.created_at ?? null;
+  const daysWithUs = joinDateIso ? calculateDaysWithUs(joinDateIso, todayAnchor) : null;
+  const tenureCopy = useMemo(
+    () => ({
+      title: t('tenureTitle'),
+      badge: t('tenureBadge'),
+      headline: t('tenureHeadline', { days: daysWithUs ?? 0 }),
+      subtitle: t('tenureSubtitle'),
+      timelineTitle: t('tenureTimelineTitle'),
+      startLabel: t('tenureStartLabel'),
+      todayLabel: t('tenureTodayLabel'),
+      monthLabel: t('tenureMonthLabel'),
+      close: t('tenureClose'),
+    }),
+    [t, i18n.language, daysWithUs]
+  );
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -442,22 +459,6 @@ export default function StaffProfileScreen() {
   const yearsExperience = staff.hire_date
     ? Math.max(0, new Date().getFullYear() - new Date(staff.hire_date).getFullYear())
     : null;
-  const joinDateIso = staff.hire_date ?? staff.created_at;
-  const daysWithUs = joinDateIso ? calculateDaysWithUs(joinDateIso, todayAnchor) : null;
-  const tenureCopy = useMemo(
-    () => ({
-      title: t('tenureTitle'),
-      badge: t('tenureBadge'),
-      headline: t('tenureHeadline', { days: daysWithUs ?? 0 }),
-      subtitle: t('tenureSubtitle'),
-      timelineTitle: t('tenureTimelineTitle'),
-      startLabel: t('tenureStartLabel'),
-      todayLabel: t('tenureTodayLabel'),
-      monthLabel: t('tenureMonthLabel'),
-      close: t('tenureClose'),
-    }),
-    [t, i18n.language, daysWithUs]
-  );
   const tenureSubtitle = staff.tenure_note?.trim() || tenureCopy.subtitle;
   const tenureTimeline = joinDateIso ? buildTenureTimeline(joinDateIso, todayAnchor) : [];
   const statItems = [
