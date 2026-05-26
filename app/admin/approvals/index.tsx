@@ -918,79 +918,117 @@ export default function AdminApprovalsHubScreen() {
           <View style={styles.rowBtns}>
             {hasGuest ? (
               <>
-                <Text style={styles.contractAssignHint}>
-                  Odayı seçin; gece başı fiyat ve gece sayısını yönetici/yetkili elle girer (oda liste fiyatı otomatik
-                  doldurulmaz). İsterseniz önce önizleme bağlayın, ardından check-in tamamlayın.
-                </Text>
+                <View style={styles.contractHintCard}>
+                  <Ionicons name="information-circle-outline" size={18} color="#2563eb" />
+                  <Text style={styles.contractHintText}>
+                    Aşağıdan oda seçin, ardından gece fiyatı ve gece sayısını girerek check-in tamamlayın.
+                  </Text>
+                </View>
                 {contractRoomsLoading ? (
                   <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 12 }} />
                 ) : contractRooms.length === 0 ? (
                   <Text style={styles.contractEmptyStaff}>Tanımlı oda yok.</Text>
                 ) : (
-                  <ScrollView
-                    style={styles.roomPickScroll}
-                    nestedScrollEnabled
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator
-                  >
-                    {contractRooms.map((r) => (
-                      <TouchableOpacity
-                        key={r.id}
-                        style={[
-                          styles.roomPickRow,
-                          contractSelectedRoomId === r.id && styles.roomPickRowSelected,
-                          acting && styles.staffPickRowDisabled,
-                        ]}
-                        onPress={() => {
-                          setContractSelectedRoomId(r.id);
-                        }}
-                        disabled={acting}
-                        activeOpacity={0.75}
-                      >
-                        <Ionicons name="bed-outline" size={22} color={adminTheme.colors.primaryMuted} />
-                        <View style={styles.staffPickTextCol}>
-                          <Text style={styles.staffPickName}>Oda {r.room_number}</Text>
-                          {r.floor != null ? <Text style={styles.staffPickDept}>Kat {r.floor}</Text> : null}
-                        </View>
-                        <View style={[styles.roomStatusMini, { backgroundColor: r.status === 'available' ? adminTheme.colors.successLight : adminTheme.colors.surfaceTertiary }]}>
-                          <Text style={styles.roomStatusMiniText}>{ROOM_STATUS_LABELS[r.status] ?? r.status}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                  <View style={styles.roomGrid}>
+                    {contractRooms.map((r) => {
+                      const isSelected = contractSelectedRoomId === r.id;
+                      const isAvailable = r.status === 'available';
+                      const statusColor = isAvailable ? '#16a34a' : r.status === 'occupied' ? '#dc2626' : r.status === 'cleaning' ? '#ca8a04' : '#64748b';
+                      const statusBg = isAvailable ? '#dcfce7' : r.status === 'occupied' ? '#fee2e2' : r.status === 'cleaning' ? '#fef9c3' : '#f1f5f9';
+                      return (
+                        <TouchableOpacity
+                          key={r.id}
+                          style={[
+                            styles.roomCard,
+                            isSelected && styles.roomCardSelected,
+                            !isAvailable && !isSelected && styles.roomCardUnavailable,
+                            acting && styles.staffPickRowDisabled,
+                          ]}
+                          onPress={() => setContractSelectedRoomId(r.id)}
+                          disabled={acting}
+                          activeOpacity={0.8}
+                        >
+                          <View style={styles.roomCardTop}>
+                            <View style={[styles.roomCardNumber, isSelected && styles.roomCardNumberSelected]}>
+                              <Text style={[styles.roomCardNumberText, isSelected && styles.roomCardNumberTextSelected]}>{r.room_number}</Text>
+                            </View>
+                            {isSelected ? (
+                              <View style={styles.roomCardCheck}>
+                                <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
+                              </View>
+                            ) : null}
+                          </View>
+                          <View style={styles.roomCardInfo}>
+                            {r.floor != null ? <Text style={styles.roomCardFloor}>Kat {r.floor}</Text> : null}
+                            {r.price_per_night != null && r.price_per_night > 0 ? (
+                              <Text style={styles.roomCardPrice}>{fmtMoney(r.price_per_night)}/gece</Text>
+                            ) : null}
+                          </View>
+                          <View style={[styles.roomCardStatus, { backgroundColor: statusBg }]}>
+                            <View style={[styles.roomCardStatusDot, { backgroundColor: statusColor }]} />
+                            <Text style={[styles.roomCardStatusText, { color: statusColor }]}>
+                              {ROOM_STATUS_LABELS[r.status ?? ''] ?? r.status}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 )}
                 {contractSelectedRoomId ? (
-                  <View style={styles.contractPriceBlock}>
-                    <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      value={contractPriceInput}
-                      onChangeText={setContractPriceInput}
-                      keyboardType="decimal-pad"
-                      placeholder="Örn. 1500"
-                      placeholderTextColor={adminTheme.colors.textMuted}
-                      editable={!acting}
-                    />
-                    <Text style={styles.inputLabel}>Gece sayısı</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      value={contractNightsInput}
-                      onChangeText={setContractNightsInput}
-                      keyboardType="number-pad"
-                      placeholder="Örn. 3"
-                      placeholderTextColor={adminTheme.colors.textMuted}
-                      editable={!acting}
-                    />
-                    <TouchableOpacity
-                      style={[styles.secondaryBtn, { marginTop: 8 }]}
-                      onPress={() => linkContractRoomPreview(row)}
-                      disabled={acting}
-                    >
-                      <Text style={styles.secondaryBtnText}>Seçili odayı önizleme olarak bağla</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.primaryBtn} onPress={() => completeContractCheckIn(row)} disabled={acting}>
-                      <Text style={styles.primaryBtnText}>Check-in yap ve kaydı kapat</Text>
-                    </TouchableOpacity>
+                  <View style={styles.contractPriceCard}>
+                    <View style={styles.contractPriceHeader}>
+                      <Ionicons name="card-outline" size={18} color="#0f766e" />
+                      <Text style={styles.contractPriceTitle}>Konaklama Bilgileri</Text>
+                    </View>
+                    <View style={styles.contractPriceRow}>
+                      <View style={styles.contractPriceField}>
+                        <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
+                        <TextInput
+                          style={styles.textInput}
+                          value={contractPriceInput}
+                          onChangeText={setContractPriceInput}
+                          keyboardType="decimal-pad"
+                          placeholder="1500"
+                          placeholderTextColor={adminTheme.colors.textMuted}
+                          editable={!acting}
+                        />
+                      </View>
+                      <View style={styles.contractPriceField}>
+                        <Text style={styles.inputLabel}>Gece sayısı</Text>
+                        <TextInput
+                          style={styles.textInput}
+                          value={contractNightsInput}
+                          onChangeText={setContractNightsInput}
+                          keyboardType="number-pad"
+                          placeholder="3"
+                          placeholderTextColor={adminTheme.colors.textMuted}
+                          editable={!acting}
+                        />
+                      </View>
+                    </View>
+                    {contractPriceInput && contractNightsInput ? (
+                      <View style={styles.contractPriceSummary}>
+                        <Text style={styles.contractPriceSummaryText}>
+                          Toplam: {fmtMoney(parseFloat(contractPriceInput.replace(',', '.') || '0') * parseInt(contractNightsInput || '0', 10))}
+                          {' '}(net) + KDV + konaklama vergisi
+                        </Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.contractPriceBtns}>
+                      <TouchableOpacity
+                        style={styles.contractPreviewBtn}
+                        onPress={() => linkContractRoomPreview(row)}
+                        disabled={acting}
+                      >
+                        <Ionicons name="eye-outline" size={16} color="#2563eb" />
+                        <Text style={styles.contractPreviewBtnText}>Önizleme</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.contractCheckinBtn} onPress={() => completeContractCheckIn(row)} disabled={acting}>
+                        <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+                        <Text style={styles.contractCheckinBtnText}>Check-in Yap</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ) : null}
               </>
@@ -1669,6 +1707,24 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
   },
   secondaryBtnText: { color: adminTheme.colors.primary, fontWeight: '700', fontSize: 15 },
+  contractHintCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    marginBottom: 12,
+  },
+  contractHintText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1e40af',
+    lineHeight: 19,
+    fontWeight: '500',
+  },
   contractAssignHint: {
     fontSize: 13,
     color: adminTheme.colors.textSecondary,
@@ -1693,29 +1749,170 @@ const styles = StyleSheet.create({
   staffPickTextCol: { flex: 1, minWidth: 0 },
   staffPickName: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
   staffPickDept: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
-  roomPickScroll: { maxHeight: 200, marginTop: 4 },
-  roomPickRow: {
+  roomGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 8,
+    maxHeight: 320,
+  },
+  roomCard: {
+    width: '47%' as unknown as number,
+    minWidth: 140,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    gap: 8,
+  },
+  roomCardSelected: {
+    borderColor: '#16a34a',
+    backgroundColor: '#f0fdf4',
+    ...((Platform.OS === 'ios' ? { shadowColor: '#16a34a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6 } : { elevation: 4 }) as ViewStyle),
+  },
+  roomCardUnavailable: {
+    opacity: 0.6,
+  },
+  roomCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    backgroundColor: adminTheme.colors.surfaceSecondary,
-    marginBottom: 8,
+    justifyContent: 'space-between',
   },
-  roomPickRowSelected: {
-    borderColor: adminTheme.colors.accent,
-    backgroundColor: adminTheme.colors.warningLight,
+  roomCardNumber: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  roomStatusMini: {
+  roomCardNumberSelected: {
+    backgroundColor: '#dcfce7',
+  },
+  roomCardNumberText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1e293b',
+  },
+  roomCardNumberTextSelected: {
+    color: '#166534',
+  },
+  roomCardCheck: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomCardInfo: {
+    gap: 2,
+  },
+  roomCardFloor: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  roomCardPrice: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  roomCardStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
   },
-  roomStatusMiniText: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.text },
+  roomCardStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  roomCardStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  contractPriceCard: {
+    marginTop: 14,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 12,
+  },
+  contractPriceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  contractPriceTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f766e',
+  },
+  contractPriceRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  contractPriceField: {
+    flex: 1,
+    gap: 6,
+  },
+  contractPriceSummary: {
+    backgroundColor: '#ecfdf5',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  contractPriceSummaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  contractPriceBtns: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  contractPreviewBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    backgroundColor: '#fff',
+  },
+  contractPreviewBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  contractCheckinBtn: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#0f766e',
+  },
+  contractCheckinBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#fff',
+  },
   contractPriceBlock: { marginTop: 12, gap: 8 },
   inputLabel: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textSecondary },
   textInput: {
