@@ -34,6 +34,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { ProfileStatsCard } from '@/components/ProfileStatsCard';
 import { ProfileMenuRow } from '@/components/ProfileMenuRow';
+import { useAppFeatureVisible } from '@/hooks/useAppFeatureVisible';
 
 const AVATAR_SIZE = P.avatar.size;
 const COVER_BLOCK_HEIGHT = P.hero.height;
@@ -80,6 +81,10 @@ export default function CustomerProfile() {
   const { t, i18n } = useTranslation();
   const { user, signOut, loadSession, loading: authLoading } = useAuthStore();
   const isLoggedIn = !!user;
+  const showCarbon = useAppFeatureVisible('customer_profile_carbon', 'profile');
+  const showEmergency = useAppFeatureVisible('customer_profile_emergency', 'profile');
+  const showAreaGuide = useAppFeatureVisible('customer_profile_area_guide', 'profile');
+  const showMyPosts = useAppFeatureVisible('customer_profile_posts', 'profile');
 
   const coverUrl = (user?.user_metadata?.cover_url as string) || null;
   const avatarUrl = (user?.user_metadata?.avatar_url as string) || null;
@@ -370,6 +375,7 @@ export default function CustomerProfile() {
                 <Text style={styles.heroEditCtaTextCompact}>{t('editProfileInfo')}</Text>
               </LinearGradient>
             </TouchableOpacity>
+            {showMyPosts ? (
             <TouchableOpacity
               onPress={() => router.push('/customer/profile/my-posts')}
               activeOpacity={0.88}
@@ -387,6 +393,7 @@ export default function CustomerProfile() {
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
+            ) : null}
           </View>
         ) : (
           <TouchableOpacity onPress={() => router.push('/auth')} activeOpacity={0.88} style={styles.heroEditCtaOuter}>
@@ -412,6 +419,7 @@ export default function CustomerProfile() {
           subtitle={LANGUAGES.find((l) => l.code === (i18n.language || '').split('-')[0])?.label ?? t('selectLanguage')}
           onPress={() => setLanguageModalVisible(true)}
         />
+        {showCarbon ? (
         <ProfileMenuRow
           icon="leaf"
           variant="leaf"
@@ -419,6 +427,8 @@ export default function CustomerProfile() {
           subtitle={t('customerProfileCarbonSub')}
           onPress={() => router.push('/customer/carbon')}
         />
+        ) : null}
+        {showEmergency ? (
         <ProfileMenuRow
           icon="medkit"
           variant="danger"
@@ -428,6 +438,7 @@ export default function CustomerProfile() {
           chevronColor={P.accent.red}
           onPress={() => router.push('/customer/emergency')}
         />
+        ) : null}
       </View>
 
       {/* 2) Giriş yapmış kullanıcı — bildirim, paylaşımlar, gizlilik */}
@@ -473,6 +484,7 @@ export default function CustomerProfile() {
         </View>
       )}
 
+      {showAreaGuide ? (
       <View style={styles.section}>
         <Text style={styles.sectionTitleLively}>{t('localAreaGuideSectionTitle')}</Text>
         <ProfileMenuRow
@@ -483,6 +495,7 @@ export default function CustomerProfile() {
           onPress={() => router.push('/customer/local-area-guide')}
         />
       </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitleLively}>{t('legalAndContact')}</Text>

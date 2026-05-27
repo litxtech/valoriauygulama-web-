@@ -132,6 +132,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/cameras', icon: 'videocam-outline', label: 'Kamera yönetimi' },
       { href: '/admin/technical-assets', icon: 'layers-outline', label: 'Akıllı Tesis Envanteri' },
       { href: '/admin/permissions', icon: 'shield-checkmark-outline', label: 'İzinler' },
+      { href: '/admin/ui-features', icon: 'options-outline', label: 'Uygulama özellikleri (görünürlük)' },
       { href: '/admin/kbs-settings', icon: 'scan-outline', label: 'KBS Ayarları (Admin)' },
       { href: '/admin/kbs-permissions', icon: 'shield-outline', label: 'KBS Yetkileri (OPS)' },
     ],

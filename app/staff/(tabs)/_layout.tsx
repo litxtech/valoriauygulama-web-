@@ -26,6 +26,8 @@ import {
 import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
 import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
 import { buildStaffHamburgerMenuLayout } from '@/lib/staffHamburgerMenu';
+import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
+import { useStaffTabHref } from '@/hooks/useAppFeatureVisible';
 import { staffRoleLabel } from '@/lib/staffAssignments';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
 import { supabase } from '@/lib/supabase';
@@ -102,6 +104,16 @@ export default function StaffTabsLayout() {
   const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
+  const orgUiConfig = useOrganizationUiFeaturesStore((s) => s.config);
+  const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
+  const tabHrefFeed = useStaffTabHref('index');
+  const tabHrefTasks = useStaffTabHref('tasks');
+  const tabHrefStock = useStaffTabHref('stock');
+  const tabHrefMessages = useStaffTabHref('messages');
+  const tabHrefEmergency = useStaffTabHref('emergency');
+  const tabHrefAcceptances = useStaffTabHref('acceptances');
+  const tabHrefAdmin = useStaffTabHref('admin');
+  const tabHrefProfile = useStaffTabHref('profile');
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
   const refreshBoard = useStaffBoardStore((s) => s.refresh);
   const loadBoardList = useStaffBoardStore((s) => s.loadList);
@@ -124,6 +136,10 @@ export default function StaffTabsLayout() {
   const canCreateFeed = canStaffCreateFeed(staff);
   const canKbsMrz = canStaffUseMrzScan(staff);
   const showHeaderFabMenu = canCreateFeed || canKbsMrz;
+
+  useEffect(() => {
+    void loadOrgUi(staff?.organization_id);
+  }, [staff?.organization_id, loadOrgUi]);
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -214,7 +230,8 @@ export default function StaffTabsLayout() {
               kbs_access_enabled: staff.kbs_access_enabled,
               department: staff.department,
             }
-          : null
+          : null,
+        orgUiConfig
       ),
     [
       t,
@@ -223,6 +240,7 @@ export default function StaffTabsLayout() {
       staff?.hidden_menu_item_ids,
       staff?.kbs_access_enabled,
       staff?.department,
+      orgUiConfig,
     ]
   );
 
@@ -380,6 +398,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          href: tabHrefFeed,
           title: '',
           headerTitle: () => <StaffBoardHeaderEye />,
           headerTitleAlign: 'center',
@@ -405,6 +424,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="tasks"
         options={{
+          href: tabHrefTasks,
           title: t('tasks'),
           headerTitle: t('tasks'),
           tabBarActiveTintColor: pds.indigo,
@@ -423,6 +443,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="stock"
         options={{
+          href: tabHrefStock,
           title: t('stockTab'),
           headerTitle: t('stockManagement'),
           tabBarActiveTintColor: pds.indigo,
@@ -441,6 +462,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="messages"
         options={{
+          href: tabHrefMessages,
           title: t('messages'),
           headerTitle: t('teamChat'),
           tabBarActiveTintColor: pds.indigo,
@@ -466,7 +488,7 @@ export default function StaffTabsLayout() {
               />
             </TabBarScaledIcon>
           ),
-          href: staff?.role === 'admin' ? null : undefined,
+          href: staff?.role === 'admin' ? null : tabHrefEmergency,
         }}
       />
       <Tabs.Screen
@@ -488,6 +510,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="acceptances"
         options={{
+          href: tabHrefAcceptances,
           title: t('acceptances'),
           headerTitle: t('acceptancesHeader'),
           tabBarActiveTintColor: pds.indigo,
@@ -535,12 +558,13 @@ export default function StaffTabsLayout() {
               />
             </TabBarScaledIcon>
           ),
-          href: staff?.role === 'admin' ? undefined : null,
+          href: staff?.role === 'admin' ? tabHrefAdmin : null,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
+          href: tabHrefProfile,
           title: t('myProfile'),
           headerTitle: '',
           headerShown: true,

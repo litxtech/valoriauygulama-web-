@@ -103,3 +103,50 @@ export function canBreakfastDepartmentViewUi(staff: StaffPermissionSlice): boole
   if (staff.role === 'admin') return true;
   return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_departman');
 }
+
+/** Admin atadığı personel: tüm işletme kahvaltı kayıtlarını salt okunur görür (onay/puan yok). */
+export function canBreakfastReportViewUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_rapor');
+}
+
+/** Sadece rapor yetkisi (onay / departman düzenleme yok). */
+export function isBreakfastReportOnlyUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  return (
+    canBreakfastReportViewUi(staff) &&
+    !canBreakfastApproveUi(staff) &&
+    !canBreakfastDepartmentViewUi(staff)
+  );
+}
+
+/** Tüm kayıtları listeleyebilir (rapor, departman, onay). */
+export function canBreakfastViewAllRecordsUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  return (
+    staff.role === 'admin' ||
+    canBreakfastReportViewUi(staff) ||
+    canBreakfastDepartmentViewUi(staff) ||
+    canBreakfastApproveUi(staff)
+  );
+}
+
+/** Yalnızca kendi gönderdiği teyitlerin geçmişi (oluşturma yetkisi, geniş liste yok). */
+export function canBreakfastOwnHistoryUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canBreakfastViewAllRecordsUi(staff)) return false;
+  return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_olustur');
+}
+
+/** Listede onay/red veya departman düzenlemesi yapılabilir mi. */
+export function canBreakfastListMutateUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canBreakfastApproveUi(staff)) return true;
+  if (canBreakfastDepartmentViewUi(staff) && !isBreakfastReportOnlyUi(staff)) return true;
+  return false;
+}
+
+export function isBreakfastListReadOnlyUi(staff: StaffPermissionSlice): boolean {
+  return !canBreakfastListMutateUi(staff);
+}

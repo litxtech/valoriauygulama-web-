@@ -349,6 +349,7 @@ export default function AdminLayout() {
       <Stack.Screen name="access/staff-permissions" options={{ title: t('adminStaffPermissions'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="access/logs" options={{ title: t('adminAccessLogs'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="permissions" options={{ title: t('adminPermissions'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="ui-features/index" options={{ title: 'Uygulama özellikleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/index" options={{ title: t('adminNotifications'), headerRight: renderHeaderRight }} />

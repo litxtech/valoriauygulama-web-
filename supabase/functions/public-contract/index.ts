@@ -71,6 +71,205 @@ type ContractRow = {
   updated_at: string | null;
 };
 
+/** Ortak web sözleşme sayfası stilleri — açık tema, iOS input zoom yok (16px) */
+function contractPageBaseStyles(extra = ""): string {
+  return `
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+    :root{
+      --bg:#f5f3ef;
+      --surface:#ffffff;
+      --text:#1c1917;
+      --muted:#78716c;
+      --brand:#b8860b;
+      --brand-light:#f5ecd8;
+      --accent:#292524;
+      --line:#e7e5e4;
+      --focus:rgba(184,134,11,.28);
+      --radius:14px;
+      --shadow:0 1px 3px rgba(28,25,23,.06), 0 8px 28px rgba(28,25,23,.07);
+      --header-h:64px;
+    }
+    *,*::before,*::after{box-sizing:border-box;}
+    html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+    html,body{min-height:100%;}
+    body{
+      margin:0;
+      font-family:"DM Sans",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      line-height:1.5;
+      -webkit-font-smoothing:antialiased;
+    }
+    .pageHeader{
+      position:sticky;top:0;z-index:40;
+      background:rgba(255,255,255,.92);
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      border-bottom:1px solid var(--line);
+      box-shadow:0 1px 0 rgba(255,255,255,.8);
+    }
+    .pageHeaderInner{
+      max-width:720px;margin:0 auto;
+      padding:14px 16px;
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+    }
+    .brandBlock{display:flex;align-items:center;gap:12px;min-width:0;}
+    .brandMark{
+      width:40px;height:40px;border-radius:12px;flex-shrink:0;
+      background:linear-gradient(145deg,var(--brand),#e8c96a);
+      display:flex;align-items:center;justify-content:center;
+      font-weight:800;font-size:15px;color:#1c1300;
+      box-shadow:0 4px 12px rgba(184,134,11,.25);
+    }
+    .brandTitle{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:-.02em;}
+    .brandSub{font-size:12px;color:var(--muted);margin-top:2px;font-weight:500;}
+    .pill{
+      font-size:11px;font-weight:600;color:var(--muted);
+      background:var(--bg);border:1px solid var(--line);
+      padding:6px 10px;border-radius:999px;white-space:nowrap;flex-shrink:0;
+    }
+    .wrap{max-width:720px;margin:0 auto;padding:20px 16px 48px;}
+    .langBar{
+      display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+      margin-bottom:20px;padding:4px;
+      background:var(--surface);border:1px solid var(--line);
+      border-radius:12px;box-shadow:var(--shadow);
+    }
+    .langBarLabel{
+      font-size:11px;font-weight:600;color:var(--muted);
+      padding:6px 10px;width:100%;
+    }
+    @media(min-width:480px){.langBarLabel{width:auto;padding-right:4px;}}
+    .langBtn{
+      padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;
+      text-decoration:none;color:var(--muted);
+      background:transparent;border:1px solid transparent;
+      transition:background .15s,color .15s,border-color .15s;
+    }
+    .langBtn:hover,.langBtn:focus{color:var(--accent);background:var(--bg);}
+    .langBtn.active{
+      background:var(--brand-light);color:#7c5a0a;
+      border-color:rgba(184,134,11,.35);
+    }
+    .card{
+      background:var(--surface);color:var(--text);
+      border:1px solid var(--line);border-radius:var(--radius);
+      overflow:hidden;box-shadow:var(--shadow);
+      margin-bottom:16px;
+      animation:fadeUp .4s ease both;
+    }
+    @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    .cardHead{
+      padding:16px 18px;border-bottom:1px solid var(--line);
+      display:flex;gap:10px;align-items:center;justify-content:space-between;
+      background:linear-gradient(180deg,#fafaf9,var(--surface));
+    }
+    .cardHead h1,.cardHead h2{margin:0;font-size:16px;font-weight:700;color:var(--accent);letter-spacing:-.02em;}
+    .cardHead:has(.stepBadge){justify-content:flex-start;gap:10px;}
+    .stepBadge{
+      font-size:11px;font-weight:700;color:var(--brand);
+      background:var(--brand-light);padding:4px 8px;border-radius:6px;
+    }
+    .lang{font-size:12px;color:var(--muted);font-weight:500;}
+    .formBlock{padding:18px;}
+    .formBlock label{
+      display:block;font-size:12px;font-weight:600;color:var(--muted);
+      margin-bottom:6px;letter-spacing:.02em;
+    }
+    .formBlock input,.formBlock select,.formBlock textarea{
+      width:100%;padding:12px 14px;
+      border:1px solid var(--line);border-radius:10px;
+      font-size:16px;font-family:inherit;
+      margin-bottom:14px;background:#fafaf9;color:var(--text);
+      transition:border-color .15s,box-shadow .15s,background .15s;
+      -webkit-appearance:none;appearance:none;
+    }
+    .formBlock input:focus,.formBlock select:focus,.formBlock textarea:focus{
+      outline:none;border-color:var(--brand);
+      box-shadow:0 0 0 3px var(--focus);background:var(--surface);
+    }
+    .formBlock textarea{min-height:80px;resize:vertical;}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+    @media(max-width:480px){.row2{grid-template-columns:1fr;}}
+    .phoneRow{display:grid;grid-template-columns:108px 1fr;gap:10px;}
+    .chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+    .chip{
+      padding:10px 16px;border-radius:10px;
+      border:1px solid var(--line);background:#fafaf9;
+      cursor:pointer;font-size:14px;font-weight:600;color:var(--muted);
+      transition:all .15s;user-select:none;
+    }
+    .chip:hover{border-color:#d6d3d1;color:var(--accent);}
+    .chip.selected{
+      background:var(--accent);color:#fff;border-color:var(--accent);
+      box-shadow:0 4px 12px rgba(41,37,36,.2);
+    }
+    .signerBox{
+      background:var(--brand-light);border:1px solid rgba(184,134,11,.25);
+      border-radius:12px;padding:16px 18px;margin:0 18px 18px;
+      font-size:13px;line-height:1.55;color:#57534e;
+    }
+    .signerBox .line{margin-bottom:4px;}
+    .signerBox .line:last-child{margin-bottom:0;}
+    .contractContent{
+      padding:18px;max-height:50vh;overflow:auto;
+      line-height:1.6;border-top:1px solid var(--line);
+      background:#fafaf9;
+    }
+    .contractContent a{color:#b45309;text-decoration:none;font-weight:500;}
+    .contractContent a:hover{text-decoration:underline;}
+    .footer{
+      padding:16px 18px;border-top:1px solid var(--line);
+      display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+      background:var(--surface);
+    }
+    .btn{
+      appearance:none;border:0;cursor:pointer;
+      padding:14px 22px;border-radius:12px;font-weight:700;font-size:15px;
+      font-family:inherit;
+      background:linear-gradient(135deg,var(--brand),#ddb84a);
+      color:#1c1300;
+      box-shadow:0 4px 16px rgba(184,134,11,.3);
+      transition:transform .12s,box-shadow .12s;
+    }
+    .btn:hover{box-shadow:0 6px 20px rgba(184,134,11,.38);}
+    .btn:active{transform:translateY(1px);}
+    .btn:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+    .err{color:#dc2626;font-size:13px;font-weight:600;margin:0;}
+    .msg{font-size:13px;font-weight:700;color:#15803d;}
+    .sub{font-size:12px;color:var(--muted);line-height:1.5;max-width:520px;}
+    .kiosk{opacity:.6}
+    .content{padding:18px;max-height:62vh;overflow:auto;line-height:1.6}
+    .content a{color:#b45309;text-decoration:none;font-weight:500}
+    .content a:hover{text-decoration:underline}
+    .storeSection{margin-top:12px;padding-top:16px;border-top:1px solid var(--line);width:100%;}
+    .storeTitle{font-size:14px;font-weight:700;color:var(--accent);margin-bottom:10px;}
+    .storeBtn{
+      display:inline-block;margin:6px 8px 6px 0;padding:12px 18px;border-radius:10px;
+      font-weight:700;text-decoration:none;color:#fff;background:var(--accent);
+    }
+    .storeBtn.second{background:#15803d;}
+    .storeAuto{font-size:11px;color:var(--muted);margin-top:8px;}
+    ${extra}
+  `;
+}
+
+function pageHeaderHtml(subtitle: string, pillText?: string): string {
+  const pill = pillText ?? `${toEnt("QR ile açıldı")} &#8226; ${new Date().toLocaleDateString("tr-TR")}`;
+  return `
+    <header class="pageHeader">
+      <div class="pageHeaderInner">
+        <div class="brandBlock">
+          <div class="brandMark">V</div>
+          <div>
+            <div class="brandTitle">Valoria Hotel</div>
+            <div class="brandSub">${subtitle}</div>
+          </div>
+        </div>
+        <div class="pill">${pill}</div>
+      </div>
+    </header>`;
+}
+
 function htmlPage(opts: {
   title: string;
   bodyHtml: string;
@@ -89,13 +288,14 @@ function htmlPage(opts: {
   const fontSize = designFontSize === "small" ? "12px" : designFontSize === "large" ? "16px" : "14px";
   const compact = designCompact === "1";
   const contentPad = compact ? "8px 14px 14px" : "14px 18px 18px";
-  const headPad = compact ? "12px 14px" : "16px 18px";
   const safeTitle = toEnt(title.replaceAll("<", "&lt;").replaceAll(">", "&gt;"));
   const revPart = revision ? `&rev=${encodeURIComponent(revision)}` : "";
   const action = `?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(lang)}${revPart}`;
   const hasStore = (googlePlayUrl && googlePlayUrl.trim()) || (appStoreUrl && appStoreUrl.trim());
   const gp = (googlePlayUrl || "").trim();
   const as = (appStoreUrl || "").trim();
+
+  const msgColor = accepted ? "#15803d" : "#b45309";
 
   return `\uFEFF<!doctype html>
 <html lang="${lang}">
@@ -104,88 +304,20 @@ function htmlPage(opts: {
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>${safeTitle}</title>
     <style>
-      :root{
-        --bg:#0b1220;
-        --card:#ffffff;
-        --muted:#6b7280;
-        --text:#111827;
-        --brand:#b8860b;
-        --brand2:#1a365d;
-        --line:#e5e7eb;
-      }
-      html,body{height:100%;}
-      body{
-        margin:0;
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-        background: radial-gradient(1200px 600px at 20% -10%, rgba(184,134,11,0.35), transparent 60%),
-                    radial-gradient(900px 600px at 90% 0%, rgba(26,54,93,0.35), transparent 55%),
-                    var(--bg);
-        color:#fff;
-      }
-      .wrap{max-width:980px;margin:0 auto;padding:24px 16px 56px;}
-      .hero{display:flex;justify-content:space-between;gap:14px;align-items:flex-end;margin:8px 0 18px;}
-      .brand{font-weight:800;letter-spacing:.3px}
-      .brand small{display:block;color:rgba(255,255,255,.75);font-weight:600;margin-top:6px}
-      .pill{font-size:12px;color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.18);padding:6px 10px;border-radius:999px}
-      .card{
-        background:linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,.98));
-        color:var(--text);
-        border:1px solid rgba(255,255,255,.22);
-        border-radius:18px;
-        overflow:hidden;
-        box-shadow: 0 18px 60px rgba(0,0,0,.35);
-      }
-      .cardHead{padding:${headPad};border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;justify-content:space-between}
-      .cardHead h1{font-size:16px;margin:0;font-weight:800;color:var(--brand2)}
-      .lang{font-size:12px;color:var(--muted)}
-      .content{padding:${contentPad};max-height:62vh;overflow:auto;font-size:${fontSize};line-height:1.5}
-      .content a{color:#2563eb;text-decoration:none}
-      .content a:hover{text-decoration:underline}
-      .footer{padding:14px 18px;border-top:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
-      .msg{font-size:13px;color:${accepted ? "#065f46" : "#92400e"};font-weight:700}
-      .btn{
-        appearance:none;border:0;cursor:pointer;
-        padding:14px 16px;border-radius:14px;font-weight:800;
-        background:linear-gradient(135deg, var(--brand), #f2c14d);
-        color:#1b1300;
-        box-shadow: 0 10px 26px rgba(184,134,11,.35);
-      }
-      .btn:active{transform:translateY(1px)}
-      .sub{font-size:12px;color:var(--muted);line-height:1.4;max-width:520px}
-      .kiosk{opacity:.75}
-      .storeSection{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
-      .storeTitle{font-size:14px;font-weight:700;color:var(--brand2);margin-bottom:10px;}
-      .storeBtn{display:inline-block;margin:6px 8px 6px 0;padding:12px 18px;border-radius:12px;font-weight:700;text-decoration:none;color:#fff;background:var(--brand2);}
-      .storeBtn.second{background:#34a853;}
-      .storeBtn:active{opacity:0.9}
-      .storeAuto{font-size:11px;color:var(--muted);margin-top:8px;}
-      .langBar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,.08);border-radius:12px;border:1px solid rgba(255,255,255,.12);}
-      .langBarLabel{font-size:12px;font-weight:600;color:rgba(255,255,255,.7);margin-right:8px;}
-      .langBtn{padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;color:rgba(255,255,255,.9);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);}
-      .langBtn:hover,.langBtn:focus{background:rgba(255,255,255,.18);color:#fff;}
-      .langBtn.active{background:var(--brand);color:#1b1300;border-color:var(--brand);}
-      @media (prefers-color-scheme: dark){
-        .card{background:#0b1220;color:#e5e7eb}
-        .cardHead{border-bottom:1px solid rgba(255,255,255,.08)}
-        .footer{border-top:1px solid rgba(255,255,255,.08)}
-        .cardHead h1{color:#fff}
-        .lang,.sub{color:rgba(255,255,255,.7)}
-        .content a{color:#93c5fd}
-        .msg{color:${accepted ? "#86efac" : "#fde68a"}}
-      }
+      ${contractPageBaseStyles(`
+        .content{padding:${contentPad};max-height:62vh;overflow:auto;font-size:${fontSize};}
+        .msg{color:${msgColor};}
+      `)}
     </style>
   </head>
   <body>
+    ${pageHeaderHtml(toEnt("Sözleşme / Kurallar Onayı"))}
     <div class="wrap">
-      <div class="hero">
-        <div class="brand">Valoria Hotel<small>${toEnt("Sözleşme / Kurallar Onayı")}</small></div>
-        <div class="pill">${toEnt("QR ile açıldı")} &#8226; ${new Date().toLocaleDateString("tr-TR")}</div>
-      </div>
       ${langBar(token, lang, revision, true)}
       <div class="card">
         <div class="cardHead">
           <h1>${safeTitle}</h1>
-          <div class="lang">Dil: ${lang.toUpperCase()}</div>
+          <div class="lang">${lang.toUpperCase()}</div>
         </div>
         <div class="content">${toEnt(bodyHtml)}</div>
         <div class="footer">
@@ -325,53 +457,59 @@ function fullFormPage(opts: {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>${safeTitle} &#8211; ${toEnt("Misafir kayıt")}</title>
   <style>
-    :root{ --bg:#0b1220; --card:#fff; --muted:#6b7280; --text:#111827; --brand:#b8860b; --brand2:#1a365d; --line:#e5e7eb; }
-    *{box-sizing:border-box;}
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#fff;}
-    .wrap{max-width:720px;margin:0 auto;padding:20px 16px 40px;}
-    .hero{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;}
-    .brand{font-weight:800;} .brand small{display:block;color:rgba(255,255,255,.75);font-size:13px;margin-top:4px;}
-    .pill{font-size:12px;color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.2);padding:6px 12px;border-radius:999px;}
-    .card{background:var(--card);color:var(--text);border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.3);margin-bottom:16px;}
-    .cardHead{padding:14px 18px;border-bottom:1px solid var(--line);}
-    .cardHead h2{margin:0;font-size:15px;font-weight:800;color:var(--brand2);}
-    .formBlock{padding:14px 18px;}
-    .formBlock label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px;}
-    .formBlock input,.formBlock select,.formBlock textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:15px;margin-bottom:12px;}
-    .formBlock textarea{min-height:70px;resize:vertical;}
-    .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-    .phoneRow{display:grid;grid-template-columns:100px 1fr;gap:10px;}
-    .chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
-    .chip{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f9fafb;cursor:pointer;font-size:14px;}
-    .chip.selected{background:var(--brand2);color:#fff;border-color:var(--brand2);}
-    .signerBox{background:rgba(184,134,11,.12);border:1px solid rgba(184,134,11,.4);border-radius:12px;padding:14px;margin:14px 18px;font-size:13px;line-height:1.5;}
-    .signerBox .line{margin-bottom:4px;}
-    .contractContent{padding:14px 18px;max-height:50vh;overflow:auto;font-size:${fontSize};line-height:1.5;border-top:1px solid var(--line);}
-    .footer{padding:14px 18px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;}
-    .btn{appearance:none;border:0;cursor:pointer;padding:14px 20px;border-radius:12px;font-weight:800;background:linear-gradient(135deg,var(--brand),#f2c14d);color:#1b1300;}
-    .btn:disabled{opacity:0.6;cursor:not-allowed;}
-    .err{color:#dc2626;font-size:13px;margin-top:8px;}
-    .langBar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,.08);border-radius:12px;border:1px solid rgba(255,255,255,.12);}
-    .langBarLabel{font-size:12px;font-weight:600;color:rgba(255,255,255,.7);margin-right:8px;}
-    .langBtn{padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;color:rgba(255,255,255,.9);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);}
-    .langBtn:hover,.langBtn:focus{background:rgba(255,255,255,.18);color:#fff;}
-    .langBtn.active{background:var(--brand);color:#1b1300;border-color:var(--brand);}
+    ${contractPageBaseStyles(`
+      .contractContent{font-size:${fontSize};}
+      .photoActions{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px;}
+      .photoBtn{
+        display:inline-flex;align-items:center;justify-content:center;
+        padding:10px 14px;border:1px solid var(--line);border-radius:10px;
+        background:#fafaf9;color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;
+        transition:all .15s;
+      }
+      .photoBtn:hover{border-color:#d6d3d1;background:#fff;}
+      .photoBtn input{display:none;}
+      .photoPreviewWrap{
+        display:flex;align-items:center;gap:12px;
+        padding:10px;border:1px dashed #d6d3d1;border-radius:12px;background:#fafaf9;
+        margin-bottom:12px;
+      }
+      .photoPreview{width:68px;height:68px;border-radius:12px;object-fit:cover;border:1px solid var(--line);}
+      .photoRemoveBtn{
+        border:1px solid #e7e5e4;background:#fff;color:#7f1d1d;
+        border-radius:10px;padding:8px 10px;font-weight:600;cursor:pointer;
+      }
+    `)}
   </style>
 </head>
 <body>
+  ${pageHeaderHtml(toEnt("Sözleşme ve misafir bilgileri"), toEnt("QR ile açıldı"))}
   <div class="wrap">
-    <div class="hero">
-      <div class="brand">Valoria Hotel<small>${toEnt("Sözleşme ve misafir bilgileri")}</small></div>
-      <div class="pill">${toEnt("QR ile açıldı")}</div>
-    </div>
     ${langBar(token, lang, revision, false)}
 
-    <form id="f" method="POST" action="${action}">
+    <form id="f" method="POST" action="${action}" enctype="multipart/form-data">
       <div class="card">
-        <div class="cardHead"><h2>1. ${toEnt("Zorunlu bilgiler")}</h2></div>
+        <div class="cardHead">
+          <span class="stepBadge">1 / 2</span>
+          <h2>${toEnt("Misafir bilgileri")}</h2>
+        </div>
         <div class="formBlock">
           <label>${toEnt("Ad Soyad")} *</label>
           <input type="text" name="full_name" required placeholder="${toEnt("Ahmet Yılmaz")}" />
+          <label>${toEnt("Profil resmi")} (${toEnt("isteğe bağlı")})</label>
+          <div class="photoActions">
+            <label class="photoBtn">
+              ${toEnt("Kameradan çek")}
+              <input type="file" id="photoCameraInput" name="profile_photo_file" accept="image/*" capture="environment" />
+            </label>
+            <label class="photoBtn">
+              ${toEnt("Galeriden yükle")}
+              <input type="file" id="photoGalleryInput" name="profile_photo_file" accept="image/*" />
+            </label>
+          </div>
+          <div class="photoPreviewWrap" id="photoPreviewWrap" style="display:none">
+            <img id="photoPreview" class="photoPreview" alt="${toEnt("Profil resmi önizleme")}" />
+            <button type="button" class="photoRemoveBtn" id="photoRemoveBtn">${toEnt("Resmi kaldır")}</button>
+          </div>
           <label>${toEnt("Kimlik tipi")}</label>
           <div class="chipRow">
             <span class="chip selected" data-name="id_type" data-value="tc">TC Kimlik</span>
@@ -413,21 +551,65 @@ function fullFormPage(opts: {
         </div>
       </div>
 
-      <div class="card">
-        <div class="cardHead"><h2>2. ${toEnt("Sözleşme metni")}</h2></div>
+      <div class="card" style="animation-delay:.08s">
+        <div class="cardHead">
+          <span class="stepBadge">2 / 2</span>
+          <h2>${toEnt("Sözleşme metni")}</h2>
+        </div>
         <div class="contractContent">${toEnt(contractContent)}</div>
         <div class="signerBox" id="signerBox">
-          <div class="line">${toEnt("Formu doldurun; imzalayan bilgileri burada görünecek.")}</div>
+          <div class="line"><strong>${toEnt("Önizleme")}:</strong> ${toEnt("Formu doldurun; bilgileriniz burada görünecek.")}</div>
         </div>
         <div class="footer">
           <div id="formErr" class="err"></div>
-          <button type="submit" class="btn" id="submitBtn">${toEnt("Sözleşmeyi kabul ediyorum")}</button>
+          <button type="submit" class="btn" id="submitBtn">${toEnt("Okudum, kabul ediyorum")}</button>
         </div>
       </div>
     </form>
   </div>
   <script>
     var chips = document.querySelectorAll(".chip");
+    var photoCameraInput = document.getElementById("photoCameraInput");
+    var photoGalleryInput = document.getElementById("photoGalleryInput");
+    var photoPreviewWrap = document.getElementById("photoPreviewWrap");
+    var photoPreview = document.getElementById("photoPreview");
+    var photoRemoveBtn = document.getElementById("photoRemoveBtn");
+    var selectedPhotoFile = null;
+
+    function clearPhoto(){
+      selectedPhotoFile = null;
+      if(photoCameraInput) photoCameraInput.value = "";
+      if(photoGalleryInput) photoGalleryInput.value = "";
+      if(photoPreview) photoPreview.removeAttribute("src");
+      if(photoPreviewWrap) photoPreviewWrap.style.display = "none";
+      updateSigner();
+    }
+    function setPhoto(file, source){
+      if(!file || !file.type || file.type.indexOf("image/") !== 0) return;
+      selectedPhotoFile = file;
+      if(source === "camera" && photoGalleryInput) photoGalleryInput.value = "";
+      if(source === "gallery" && photoCameraInput) photoCameraInput.value = "";
+      if(photoPreview){
+        photoPreview.src = URL.createObjectURL(file);
+      }
+      if(photoPreviewWrap) photoPreviewWrap.style.display = "flex";
+      updateSigner();
+    }
+    if(photoCameraInput){
+      photoCameraInput.addEventListener("change", function(e){
+        var f = e.target && e.target.files && e.target.files[0];
+        if(f) setPhoto(f, "camera");
+      });
+    }
+    if(photoGalleryInput){
+      photoGalleryInput.addEventListener("change", function(e){
+        var f = e.target && e.target.files && e.target.files[0];
+        if(f) setPhoto(f, "gallery");
+      });
+    }
+    if(photoRemoveBtn){
+      photoRemoveBtn.addEventListener("click", clearPhoto);
+    }
     chips.forEach(function(el){
       el.addEventListener("click", function(){
         var name = this.getAttribute("data-name");
@@ -462,6 +644,9 @@ function fullFormPage(opts: {
       if(email) lines.push("E-posta: " + email);
       if(nat) lines.push("Uyruk: " + nat);
       if(dob) lines.push("Do\u011fum: " + dob);
+      if(selectedPhotoFile && photoPreview && photoPreview.src) {
+        lines.push("Profil resmi:<br/><img src='" + photoPreview.src + "' alt='Profil resmi' style='width:60px;height:60px;border-radius:10px;object-fit:cover;border:1px solid #d6d3d1' />");
+      }
       lines.push("Cinsiyet: " + gLabel);
       if(addr) lines.push("Adres: " + addr);
       if(ci) lines.push("Giri\u015f: " + ci);
@@ -573,10 +758,10 @@ Deno.serve(async (req: Request) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Y&#252;kl&#252;yor...</title>
   <style>
-    body{font-family:system-ui,sans-serif;background:#0b1220;color:#fff;margin:0;padding:2rem;text-align:center;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;}
-    .spinner{width:40px;height:40px;border:3px solid rgba(255,255,255,.2);border-top-color:#b8860b;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 1rem;}
+    body{font-family:system-ui,sans-serif;background:#f5f3ef;color:#1c1917;margin:0;padding:2rem;text-align:center;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+    .spinner{width:40px;height:40px;border:3px solid #e7e5e4;border-top-color:#b8860b;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 1rem;}
     @keyframes spin{to{transform:rotate(360deg);}}
-    .err{color:#fc8181;margin-top:1rem;}
+    .err{color:#dc2626;margin-top:1rem;font-size:14px;}
   </style>
 </head>
 <body>
@@ -726,12 +911,19 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
     const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? null;
 
     let formData: Record<string, string> = {};
+    let profilePhotoFile: File | null = null;
     if (contentType.includes("application/x-www-form-urlencoded")) {
       const body = await req.text();
       body.split("&").forEach((pair) => {
         const [k, v] = pair.split("=").map((s) => decodeURIComponent(s.replace(/\+/g, " ")));
         if (k) formData[k] = v ?? "";
       });
+    } else if (contentType.includes("multipart/form-data")) {
+      const fd = await req.formData();
+      for (const [k, v] of fd.entries()) {
+        if (typeof v === "string") formData[k] = v;
+        else if (k === "profile_photo_file" && v.size > 0) profilePhotoFile = v;
+      }
     }
 
     const fullName = (formData.full_name ?? "").trim();
@@ -756,6 +948,27 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
       const checkInIso = parseDDMMYYYY(formData.check_in_date ?? "");
       const checkOutIso = parseDDMMYYYY(formData.check_out_date ?? "");
       const dobIso = parseDDMMYYYY(formData.date_of_birth ?? "");
+      let photoUrl: string | null = null;
+
+      if (profilePhotoFile && profilePhotoFile.type.startsWith("image/")) {
+        const ext = profilePhotoFile.type.includes("png")
+          ? "png"
+          : profilePhotoFile.type.includes("webp")
+            ? "webp"
+            : profilePhotoFile.type.includes("heic")
+              ? "heic"
+              : "jpg";
+        const photoPath = `guest/web-contract/${crypto.randomUUID()}.${ext}`;
+        const bytes = new Uint8Array(await profilePhotoFile.arrayBuffer());
+        const { error: uploadErr } = await supabase.storage.from("profiles").upload(photoPath, bytes, {
+          contentType: profilePhotoFile.type || "image/jpeg",
+          upsert: true,
+        });
+        if (!uploadErr) {
+          const { data: pub } = supabase.storage.from("profiles").getPublicUrl(photoPath);
+          photoUrl = pub?.publicUrl ?? null;
+        }
+      }
 
       const guestPayload = {
         full_name: fullName,
@@ -776,6 +989,7 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
         room_type: (formData.room_type ?? "").trim() || null,
         adults: Math.max(0, parseInt(formData.adults ?? "1", 10) || 1),
         children: Math.max(0, parseInt(formData.children ?? "0", 10) || 0),
+        photo_url: photoUrl,
         status: "pending",
       };
 

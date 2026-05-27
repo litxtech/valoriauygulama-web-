@@ -20,6 +20,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { AdminOrganizationPicker } from '@/components/admin';
 import {
+  filterValidUuids,
+  resolveStaffOrganizationScope,
+} from '@/lib/organizationScope';
+import {
   shareContractPdf,
   buildContractHtml,
   fetchContractPdfAppearance,
@@ -81,11 +85,14 @@ export default function ContractAcceptances() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
-    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    const orgScoped = resolveStaffOrganizationScope({
+      canUseAll: canUseAllOrganizations,
+      selectedOrganizationId,
+      ownOrganizationId: staff?.organization_id,
+    });
     let listQuery = supabase
       .from('contract_acceptances')
-      .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id, guests(full_name)')
+      .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id')
       .order('accepted_at', { ascending: false })
       .limit(200);
     if (orgScoped) listQuery = listQuery.eq('organization_id', orgScoped);
@@ -100,11 +107,13 @@ export default function ContractAcceptances() {
     }
     setLoadError(null);
 
-    const roomIds = (list ?? []).map((r) => r.room_id).filter(Boolean) as string[];
-    const staffIds = (list ?? []).map((r) => r.assigned_staff_id).filter(Boolean) as string[];
+    const roomIds = filterValidUuids((list ?? []).map((r) => r.room_id));
+    const staffIds = filterValidUuids((list ?? []).map((r) => r.assigned_staff_id));
+    const guestIds = filterValidUuids((list ?? []).map((r) => r.guest_id));
 
     let roomNumbers: Record<string, string> = {};
     let staffNames: Record<string, string> = {};
+    let guestNames: Record<string, string | null> = {};
 
     if (roomIds.length > 0) {
       const { data: rooms } = await supabase.from('rooms').select('id, room_number').in('id', roomIds);
@@ -114,18 +123,18 @@ export default function ContractAcceptances() {
       const { data: staffData } = await supabase.from('staff').select('id, full_name').in('id', staffIds);
       staffNames = (staffData ?? []).reduce((acc, s) => ({ ...acc, [s.id]: s.full_name ?? '—' }), {} as Record<string, string>);
     }
+    if (guestIds.length > 0) {
+      const { data: guestsData } = await supabase.from('guests').select('id, full_name').in('id', guestIds);
+      guestNames = (guestsData ?? []).reduce((acc, g) => ({ ...acc, [g.id]: g.full_name }), {} as Record<string, string | null>);
+    }
 
     setRows(
-      (list ?? []).map((r) => {
-        const guests = r.guests as { full_name: string | null } | { full_name: string | null }[] | null;
-        const guestObj = Array.isArray(guests) ? guests[0] : guests;
-        return {
-          ...r,
-          room_number: r.room_id ? roomNumbers[r.room_id] ?? '—' : null,
-          assigned_staff_name: r.assigned_staff_id ? staffNames[r.assigned_staff_id] ?? '—' : null,
-          signer_name: guestObj?.full_name ?? null,
-        };
-      })
+      (list ?? []).map((r) => ({
+        ...r,
+        room_number: r.room_id ? roomNumbers[r.room_id] ?? '—' : null,
+        assigned_staff_name: r.assigned_staff_id ? staffNames[r.assigned_staff_id] ?? '—' : null,
+        signer_name: r.guest_id ? guestNames[r.guest_id] ?? null : null,
+      }))
     );
   }, [canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
@@ -140,8 +149,12 @@ export default function ContractAcceptances() {
         .select('id, full_name, department')
         .eq('is_active', true)
         .order('full_name');
-      const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
-      if (orgId && orgId !== 'all') staffQuery = staffQuery.eq('organization_id', orgId);
+      const orgScoped = resolveStaffOrganizationScope({
+        canUseAll: canUseAllOrganizations,
+        selectedOrganizationId,
+        ownOrganizationId: staff?.organization_id,
+      });
+      if (orgScoped) staffQuery = staffQuery.eq('organization_id', orgScoped);
       staffQuery.then(({ data }) => setStaffList(data ?? []));
     }
   }, [assignModalVisible, canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);

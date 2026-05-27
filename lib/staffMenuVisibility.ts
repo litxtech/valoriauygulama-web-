@@ -1,5 +1,6 @@
 import type { StaffHamburgerMenuItem, StaffHamburgerMenuSection } from '@/lib/staffHamburgerMenu';
 import { isStaffMenuItemHidden, normalizeHiddenMenuItemIds } from '@/lib/staffMenuCatalog';
+import { isFeatureVisibleInPlacement, type OrganizationUiFeaturesConfig } from '@/lib/organizationUiFeatures';
 
 export type StaffMenuVisibilitySlice = {
   hidden_menu_item_ids?: unknown;
@@ -30,4 +31,18 @@ export function filterStaffMenuItemsByHidden(
   const hidden = getStaffHiddenMenuIds(staff);
   if (hidden.length === 0) return items;
   return items.filter((item) => !isStaffMenuItemHidden(hidden, item.id));
+}
+
+/** İşletme özellik yapılandırmasına göre hamburger öğelerini filtreler */
+export function filterStaffMenuSectionsByOrgFeatures(
+  sections: StaffHamburgerMenuSection[],
+  config: OrganizationUiFeaturesConfig | null | undefined
+): StaffHamburgerMenuSection[] {
+  if (!config) return sections;
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => isFeatureVisibleInPlacement(config, item.id, 'hamburger')),
+    }))
+    .filter((s) => s.items.length > 0);
 }

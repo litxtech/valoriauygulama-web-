@@ -24,6 +24,8 @@ import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/co
 import { CachedImage } from '@/components/CachedImage';
 import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { complaintsText } from '@/lib/complaintsI18n';
+import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
+import { useAppFeatureVisible, useCustomerTabHref } from '@/hooks/useAppFeatureVisible';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -185,10 +187,25 @@ export default function CustomerTabsLayout() {
   const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
+  const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
+  const tabHrefHome = useCustomerTabHref('index');
+  const tabHrefMap = useCustomerTabHref('map');
+  const tabHrefTransfer = useCustomerTabHref('transfer-tour');
+  const tabHrefMessages = useCustomerTabHref('messages');
+  const tabHrefDining = useCustomerTabHref('dining-venues');
+  const tabHrefComplaints = useCustomerTabHref('complaints');
+  const tabHrefPersonel = useCustomerTabHref('personel');
+  const tabHrefProfile = useCustomerTabHref('profile');
+  const showFeedCreate = useAppFeatureVisible('customer_feed_create', 'header_left');
+  const showNotifBell = useAppFeatureVisible('customer_notifications_bell', 'header_right');
   const { appToken, setUnreadCount, loadStoredToken, unreadCount: guestMsgUnread } = useGuestMessagingStore();
   const refreshNotifications = useGuestNotificationStore((s) => s.refresh);
 
   // Misafir push token: appToken varsa kaydet (iOS beğeni/yorum bildirimi; sadece Bildirimler sekmesine bağlı kalmasın)
+  useEffect(() => {
+    void loadOrgUi(staff?.organization_id);
+  }, [staff?.organization_id, loadOrgUi]);
+
   useEffect(() => {
     loadStoredToken();
   }, [loadStoredToken]);
@@ -311,18 +328,19 @@ export default function CustomerTabsLayout() {
         headerRight: feedTab
           ? () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <NotificationBellHeaderButton />
+                {showNotifBell ? <NotificationBellHeaderButton /> : null}
                 <AdminPanelHeaderButton />
               </View>
             )
           : () => null,
-        headerLeft: feedTab ? () => <FeedCreateHeaderButton /> : () => null,
+        headerLeft: feedTab && showFeedCreate ? () => <FeedCreateHeaderButton /> : () => null,
       };
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
+          href: tabHrefHome,
           title: t('home'),
           headerTitle: '',
           headerShown: true,
@@ -350,6 +368,7 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="map"
         options={{
+          href: tabHrefMap,
           title: t('mapTab'),
           headerShown: false,
           tabBarActiveTintColor: appTabBarCustomer.map,
@@ -378,6 +397,7 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="transfer-tour"
         options={{
+          href: tabHrefTransfer,
           title: t('transferTourNavTitle'),
           headerTitle: t('transferTourNavTitle'),
           headerShown: true,
@@ -395,6 +415,7 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="messages"
         options={{
+          href: tabHrefMessages,
           title: t('messages'),
           headerTitle: t('messages'),
           headerShown: true,
@@ -414,6 +435,7 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="dining-venues"
         options={{
+          href: tabHrefDining,
           title: t('diningVenuesNavTitle'),
           headerTitle: t('diningVenuesNavTitle'),
           headerShown: true,
@@ -431,6 +453,7 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="complaints"
         options={{
+          href: tabHrefComplaints,
           title: complaintsText('complaintsTab'),
           headerTitle: complaintsText('complaintsSystem'),
           headerShown: true,
@@ -466,7 +489,7 @@ export default function CustomerTabsLayout() {
               color={vibrantIconColor('customer', 'personel', focused)}
             />
           ),
-          href: staff?.role === 'admin' ? undefined : null,
+          href: staff?.role === 'admin' ? tabHrefPersonel : null,
         }}
       />
       <Tabs.Screen
@@ -478,6 +501,7 @@ export default function CustomerTabsLayout() {
           );
           if (nested !== 'index') {
             return {
+              href: tabHrefProfile,
               title: t('profileTab'),
               headerTitle: t('profileTab'),
               headerShown: false,
@@ -487,6 +511,7 @@ export default function CustomerTabsLayout() {
             };
           }
           return {
+            href: tabHrefProfile,
             title: t('profileTab'),
             headerTitle: '',
             headerShown: true,

@@ -58,7 +58,7 @@ const STAFF_APP_PERMISSIONS = [
   { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturabilir', desc: 'Mutfak/restoran + bu yetki: günlük kahvaltı teyit kaydı (foto, kişi sayısı).' },
   { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitleri (mutfak) görüntüleme', desc: 'Aynı işletmede mutfak/restoran personelinin tüm kahvaltı kayıtlarını görür ve düzenler.' },
   { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyitlerini onaylama', desc: 'Kayıtları onaylar (onay zamanı ve onaylayan olarak saklanır).' },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı raporları', desc: 'İşletme kahvaltı kayıtlarını listeler (okuma).' },
+  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur)', desc: 'İşletmedeki tüm kahvaltı teyit geçmişini görür; onay, red veya puanlama yapamaz. Admin istediği personele verebilir.' },
   {
     key: 'yarin_oda_temizlik_listesi',
     label: 'Yarın temizlenecek odalar listesi',

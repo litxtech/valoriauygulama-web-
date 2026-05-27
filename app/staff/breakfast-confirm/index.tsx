@@ -23,6 +23,9 @@ import {
   fetchBreakfastSettings,
   canBreakfastSubmitUi,
   appPermissionTruthy,
+  canBreakfastReportViewUi,
+  isBreakfastReportOnlyUi,
+  canBreakfastOwnHistoryUi,
   type BreakfastConfirmationSettings,
   type BreakfastConfirmationRow,
 } from '@/lib/breakfastConfirm';
@@ -228,6 +231,24 @@ export default function StaffBreakfastConfirmScreen() {
     );
   }
 
+  const reportOnly = staff ? isBreakfastReportOnlyUi(staff) : false;
+  const canHistory = staff ? canBreakfastOwnHistoryUi(staff) : false;
+
+  if (reportOnly && staff) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="document-text-outline" size={48} color={theme.colors.primary} />
+        <Text style={styles.blockTitle}>Kahvaltı teyit raporları</Text>
+        <Text style={styles.blockSub}>
+          Yöneticinizin verdiği yetkiyle tüm teyit geçmişini görüntüleyebilirsiniz. Onay, red veya puanlama yapılamaz.
+        </Text>
+        <TouchableOpacity style={styles.primaryBtnWide} onPress={() => router.push('/staff/breakfast-confirm/list')} activeOpacity={0.85}>
+          <Text style={styles.primaryBtnTextLight}>Raporları aç</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const perms = staff?.app_permissions as Record<string, unknown> | undefined;
   const canListOnly =
     !!staff &&
@@ -241,9 +262,13 @@ export default function StaffBreakfastConfirmScreen() {
       <View style={styles.centered}>
         <Ionicons name="list-outline" size={48} color={theme.colors.primary} />
         <Text style={styles.blockTitle}>Kayıt oluşturma yetkisi yok</Text>
-        <Text style={styles.blockSub}>Bu hesap için sadece görüntüleme / onay yetkileri tanımlı. Kayıt listesine gidebilirsiniz.</Text>
+        <Text style={styles.blockSub}>
+          {canBreakfastReportViewUi(staff)
+            ? 'Kahvaltı teyit raporlarını salt okunur görüntüleyebilirsiniz.'
+            : 'Bu hesap için görüntüleme / onay yetkileri tanımlı. Kayıt listesine gidebilirsiniz.'}
+        </Text>
         <TouchableOpacity style={styles.primaryBtnWide} onPress={() => router.push('/staff/breakfast-confirm/list')} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnTextLight}>Kayıt listesi</Text>
+          <Text style={styles.primaryBtnTextLight}>{canBreakfastReportViewUi(staff) ? 'Raporlar' : 'Kayıt listesi'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -314,6 +339,17 @@ export default function StaffBreakfastConfirmScreen() {
       <TouchableOpacity style={styles.primaryBtn} onPress={save} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Kaydet</Text>}
       </TouchableOpacity>
+
+      {canHistory ? (
+        <TouchableOpacity
+          style={styles.historyBtn}
+          onPress={() => router.push('/staff/breakfast-confirm/list')}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="time-outline" size={20} color={theme.colors.primary} />
+          <Text style={styles.historyBtnText}>Teyit geçmişim</Text>
+        </TouchableOpacity>
+      ) : null}
     </ScrollView>
   );
 }
@@ -372,4 +408,17 @@ const styles = StyleSheet.create({
   primaryBtnTextLight: { color: '#fff', fontSize: 17, fontWeight: '700' },
   blockTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginTop: 12, textAlign: 'center' },
   blockSub: { fontSize: 15, color: theme.colors.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 22 },
+  historyBtn: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    backgroundColor: theme.colors.surface,
+  },
+  historyBtnText: { fontSize: 16, fontWeight: '600', color: theme.colors.primary },
 });

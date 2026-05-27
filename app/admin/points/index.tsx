@@ -29,6 +29,7 @@ import {
   type StaffPointEntry,
   type PointCategory,
 } from '@/lib/staffPoints';
+import { getDepartmentLabel } from '@/lib/departmentLabels';
 import {
   fetchKitchenScoreSummary,
   fetchKitchenScoreHistory,
@@ -72,7 +73,8 @@ export default function AdminPointsDashboard() {
         .from('staff')
         .select('id, full_name, department')
         .eq('organization_id', orgId)
-        .eq('active', true)
+        .eq('is_active', true)
+        .is('deleted_at', null)
         .order('full_name'),
     ]);
 
@@ -80,7 +82,12 @@ export default function AdminPointsDashboard() {
     setPointsHistory(historyData);
     setKitchenSummary(kitchenSum);
     setKitchenHistory(kitchenHist);
-    if (staffData.data) setStaffList(staffData.data as StaffMini[]);
+    if (staffData.error) {
+      setStaffList([]);
+      Alert.alert('Personel listesi', staffData.error.message);
+    } else {
+      setStaffList((staffData.data ?? []) as StaffMini[]);
+    }
   }, [staff?.organization_id]);
 
   useFocusEffect(
@@ -297,22 +304,30 @@ export default function AdminPointsDashboard() {
 
               <Text style={styles.modalLabel}>Personel seçin</Text>
               <ScrollView style={styles.staffPicker} nestedScrollEnabled>
-                {staffList.map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={[styles.staffPickerItem, awardStaffId === s.id && styles.staffPickerItemActive]}
-                    onPress={() => setAwardStaffId(s.id)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.staffPickerText, awardStaffId === s.id && styles.staffPickerTextActive]}>
-                      {s.full_name ?? '—'}
-                    </Text>
-                    {s.department && (
-                      <Text style={styles.staffPickerDept}>{s.department}</Text>
-                    )}
-                    {awardStaffId === s.id && <Ionicons name="checkmark-circle" size={18} color="#047857" />}
-                  </TouchableOpacity>
-                ))}
+                {staffList.length === 0 ? (
+                  <Text style={styles.staffPickerEmpty}>
+                    Aktif personel bulunamadı. Personel listesinden kayıtların aktif olduğundan emin olun.
+                  </Text>
+                ) : (
+                  staffList.map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.staffPickerItem, awardStaffId === s.id && styles.staffPickerItemActive]}
+                      onPress={() => setAwardStaffId(s.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.staffPickerText, awardStaffId === s.id && styles.staffPickerTextActive]}>
+                        {s.full_name ?? '—'}
+                      </Text>
+                      {s.department ? (
+                        <Text style={styles.staffPickerDept}>{getDepartmentLabel(s.department)}</Text>
+                      ) : null}
+                      {awardStaffId === s.id ? (
+                        <Ionicons name="checkmark-circle" size={18} color="#047857" />
+                      ) : null}
+                    </TouchableOpacity>
+                  ))
+                )}
               </ScrollView>
 
               <Text style={styles.modalLabel}>Puan</Text>
@@ -539,7 +554,14 @@ const styles = StyleSheet.create({
   },
   modalConfirmText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 
-  staffPicker: { maxHeight: 160, borderWidth: 1, borderColor: adminTheme.colors.border, borderRadius: 10, marginBottom: 8 },
+  staffPicker: { maxHeight: 200, borderWidth: 1, borderColor: adminTheme.colors.border, borderRadius: 10, marginBottom: 8 },
+  staffPickerEmpty: {
+    padding: 16,
+    fontSize: 13,
+    color: adminTheme.colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   staffPickerItem: {
     flexDirection: 'row',
     alignItems: 'center',

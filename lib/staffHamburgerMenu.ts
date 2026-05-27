@@ -15,7 +15,8 @@ import {
   isGorevAtaOnlyUser,
   type StaffPermissionSlice,
 } from '@/lib/staffPermissions';
-import { filterStaffMenuSectionsByHidden } from '@/lib/staffMenuVisibility';
+import { filterStaffMenuSectionsByHidden, filterStaffMenuSectionsByOrgFeatures } from '@/lib/staffMenuVisibility';
+import type { OrganizationUiFeaturesConfig } from '@/lib/organizationUiFeatures';
 
 export type StaffHamburgerStaff = StaffPermissionSlice & {
   kbs_access_enabled?: boolean;
@@ -117,7 +118,8 @@ function createBuilder(): { push: MenuBuilder['push']; sections: Record<StaffHam
  */
 export function buildStaffHamburgerMenuSections(
   t: (key: string) => string,
-  staff: StaffHamburgerStaff | null | undefined
+  staff: StaffHamburgerStaff | null | undefined,
+  orgUiFeatures?: OrganizationUiFeaturesConfig | null
 ): StaffHamburgerMenuSection[] {
   const { push, sections } = createBuilder();
   if (!staff) return [];
@@ -513,7 +515,8 @@ export function buildStaffHamburgerMenuSections(
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
 
-  return filterStaffMenuSectionsByHidden(built, staff);
+  const afterHidden = filterStaffMenuSectionsByHidden(built, staff);
+  return filterStaffMenuSectionsByOrgFeatures(afterHidden, orgUiFeatures);
 }
 
 /** Düz liste (geriye uyumluluk) */
@@ -531,9 +534,10 @@ export type StaffHamburgerMenuLayout = {
 /** Menü: acil üstte; kalan öğeler bölüm başlıklarıyla. */
 export function buildStaffHamburgerMenuLayout(
   t: (key: string) => string,
-  staff: StaffHamburgerStaff | null | undefined
+  staff: StaffHamburgerStaff | null | undefined,
+  orgUiFeatures?: OrganizationUiFeaturesConfig | null
 ): StaffHamburgerMenuLayout {
-  const rawSections = buildStaffHamburgerMenuSections(t, staff);
+  const rawSections = buildStaffHamburgerMenuSections(t, staff, orgUiFeatures);
   const all = flattenStaffHamburgerMenu(rawSections);
   const isAdmin = staff?.role === 'admin';
 

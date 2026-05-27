@@ -21,7 +21,14 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
-import { canBreakfastApproveUi, canBreakfastDepartmentViewUi } from '@/lib/breakfastConfirm';
+import {
+  canBreakfastApproveUi,
+  canBreakfastDepartmentViewUi,
+  canBreakfastReportViewUi,
+  canBreakfastViewAllRecordsUi,
+  canBreakfastOwnHistoryUi,
+  isBreakfastListReadOnlyUi,
+} from '@/lib/breakfastConfirm';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
 import { useTranslation } from 'react-i18next';
@@ -153,6 +160,10 @@ export default function BreakfastConfirmListScreen() {
 
   const canApprove = staff ? canBreakfastApproveUi(staff) : false;
   const isDeptView = staff ? canBreakfastDepartmentViewUi(staff) : false;
+  const isReportView = staff ? canBreakfastReportViewUi(staff) : false;
+  const viewAllRecords = staff ? canBreakfastViewAllRecordsUi(staff) : false;
+  const ownHistoryOnly = staff ? canBreakfastOwnHistoryUi(staff) : false;
+  const readOnly = staff ? isBreakfastListReadOnlyUi(staff) : true;
 
   const load = useCallback(async () => {
     if (!staff?.organization_id) return;
@@ -256,7 +267,7 @@ export default function BreakfastConfirmListScreen() {
 
   const staffOptions = useMemo<StaffOption[]>(() => {
     const map = new Map<string, StaffOption>();
-    for (const r of rows) {
+    for (const r of visibleRows) {
       const sid = r.staff_id ?? 'unknown';
       const existing = map.get(sid);
       if (existing) {
@@ -271,11 +282,18 @@ export default function BreakfastConfirmListScreen() {
       }
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-  }, [rows]);
+  }, [visibleRows]);
+
+  const visibleRows = useMemo(() => {
+    if (!staff?.id) return rows;
+    if (viewAllRecords) return rows;
+    if (ownHistoryOnly) return rows.filter((r) => r.staff_id === staff.id);
+    return rows;
+  }, [rows, staff?.id, viewAllRecords, ownHistoryOnly]);
 
   const filteredRows = useMemo(
-    () => (selectedStaffId ? rows.filter((r) => r.staff_id === selectedStaffId) : rows),
-    [rows, selectedStaffId]
+    () => (selectedStaffId ? visibleRows.filter((r) => r.staff_id === selectedStaffId) : visibleRows),
+    [visibleRows, selectedStaffId]
   );
 
   const selectedStaffName = useMemo(
@@ -283,7 +301,7 @@ export default function BreakfastConfirmListScreen() {
     [staffOptions, selectedStaffId]
   );
 
-  const showStaffFilter = isDeptView && staffOptions.length > 1;
+  const showStaffFilter = viewAllRecords && !ownHistoryOnly && staffOptions.length > 1;
   const thumbSize = Math.min(Math.floor((width - 32 - 16 - 10) / 2), 180);
 
   if (loading) {
@@ -328,7 +346,13 @@ export default function BreakfastConfirmListScreen() {
         </View>
       ) : (
         <Text style={styles.hint}>
-          {isDeptView ? t('breakfastListDeptHint') : t('breakfastListMineHint')}
+          {isReportView && readOnly
+            ? 'Tüm kahvaltı teyit geçmişi (salt okunur). Onay ve puanlama bu ekranda yapılmaz.'
+            : ownHistoryOnly
+              ? 'Paylaştığınız teyitlerin geçmişi. Onay veya düzenleme yapılamaz.'
+              : isDeptView
+                ? t('breakfastListDeptHint')
+                : t('breakfastListMineHint')}
         </Text>
       )}
 
@@ -340,7 +364,7 @@ export default function BreakfastConfirmListScreen() {
           <StaffBreakfastCard
             item={item}
             thumbSize={thumbSize}
-            canApprove={canApprove}
+            canApprove={canApprove && !readOnly}
             onLightbox={setLightbox}
             onApprove={approve}
             onReject={(r) => { setRejectTarget(r); setRejectReason(''); }}
@@ -438,7 +462,7 @@ export default function BreakfastConfirmListScreen() {
                     <Text style={[styles.drawerItemName, !selectedStaffId && styles.drawerItemNameActive]}>
                       {t('breakfastAllStaff') ?? 'Tüm personel'}
                     </Text>
-                    <Text style={styles.drawerItemMeta}>{rows.length} {t('breakfastRecordUnit') ?? 'kayıt'}</Text>
+                    <Text style={styles.drawerItemMeta}>{visibleRows.length} {t('breakfastRecordUnit') ?? 'kayıt'}</Text>
                   </View>
                 </View>
                 {!selectedStaffId ? (

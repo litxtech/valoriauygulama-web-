@@ -20,6 +20,14 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
+import { useAuthStore } from '@/stores/authStore';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminOrganizationPicker } from '@/components/admin';
+import {
+  filterValidUuids,
+  isValidUuid,
+  resolveStaffOrganizationScope,
+} from '@/lib/organizationScope';
 import {
   shareContractPdf,
   buildContractHtml,
@@ -167,6 +175,9 @@ function buildSingleGuestPrintHtml(row: Row): string {
 }
 
 export function AllContractsScreen() {
+  const { staff } = useAuthStore();
+  const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAllOrganizations = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
   const today = new Date();
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('daily');
   const [referenceDate, setReferenceDate] = useState(today);
@@ -204,14 +215,22 @@ export function AllContractsScreen() {
   const load = useCallback(async () => {
     const fromIso = `${dateFrom}T00:00:00.000Z`;
     const toIso = `${dateTo}T23:59:59.999Z`;
+    const orgScoped = resolveStaffOrganizationScope({
+      canUseAll: canUseAllOrganizations,
+      selectedOrganizationId,
+      ownOrganizationId: staff?.organization_id,
+    });
 
-    const { data: list, error } = await supabase
+    let listQuery = supabase
       .from('contract_acceptances')
-      .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id, guests(full_name, phone)')
+      .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id')
       .gte('accepted_at', fromIso)
       .lte('accepted_at', toIso)
       .order('accepted_at', { ascending: false })
       .limit(500);
+    if (orgScoped) listQuery = listQuery.eq('organization_id', orgScoped);
+
+    const { data: list, error } = await listQuery;
 
     if (error) {
       setRows([]);
@@ -222,19 +241,24 @@ export function AllContractsScreen() {
     }
     setLoadError(null);
 
-    const roomIds = [...new Set((list ?? []).map((r) => r.room_id).filter(Boolean))] as string[];
-    const staffIds = [...new Set((list ?? []).map((r) => r.assigned_staff_id).filter(Boolean))] as string[];
+    const roomIds = filterValidUuids([...new Set((list ?? []).map((r) => r.room_id))]);
+    const staffIds = filterValidUuids([...new Set((list ?? []).map((r) => r.assigned_staff_id))]);
+    const guestIds = filterValidUuids([...new Set((list ?? []).map((r) => r.guest_id))]);
 
     let roomNumbers: Record<string, string> = {};
     let staffNames: Record<string, string> = {};
+    let guestById: Record<string, { full_name: string | null; phone: string | null }> = {};
 
-    const [roomsResult, staffResult] = await Promise.all([
+    const [roomsResult, staffResult, guestsResult] = await Promise.all([
       roomIds.length > 0
         ? supabase.from('rooms').select('id, room_number').in('id', roomIds)
         : Promise.resolve({ data: [] as { id: string; room_number: string }[] }),
       staffIds.length > 0
         ? supabase.from('staff').select('id, full_name').in('id', staffIds)
         : Promise.resolve({ data: [] as { id: string; full_name: string | null }[] }),
+      guestIds.length > 0
+        ? supabase.from('guests').select('id, full_name, phone').in('id', guestIds)
+        : Promise.resolve({ data: [] as { id: string; full_name: string | null; phone: string | null }[] }),
     ]);
     roomNumbers = (roomsResult.data ?? []).reduce(
       (acc, r) => ({ ...acc, [r.id]: r.room_number }),
@@ -244,21 +268,27 @@ export function AllContractsScreen() {
       (acc, s) => ({ ...acc, [s.id]: s.full_name ?? '—' }),
       {} as Record<string, string>
     );
+    guestById = (guestsResult.data ?? []).reduce(
+      (acc, g) => ({ ...acc, [g.id]: { full_name: g.full_name, phone: g.phone } }),
+      {} as Record<string, { full_name: string | null; phone: string | null }>
+    );
 
     setRows(
       (list ?? []).map((r) => {
-        const guests = r.guests as { full_name: string | null; phone: string | null } | { full_name: string | null; phone: string | null }[] | null;
-        const guestObj = Array.isArray(guests) ? guests[0] : guests;
+        const guestObj = r.guest_id && isValidUuid(r.guest_id) ? guestById[r.guest_id] : undefined;
         return {
           ...r,
-          room_number: r.room_id ? roomNumbers[r.room_id] ?? '—' : null,
-          assigned_staff_name: r.assigned_staff_id ? staffNames[r.assigned_staff_id] ?? '—' : null,
+          room_number: r.room_id && isValidUuid(r.room_id) ? roomNumbers[r.room_id] ?? '—' : null,
+          assigned_staff_name:
+            r.assigned_staff_id && isValidUuid(r.assigned_staff_id)
+              ? staffNames[r.assigned_staff_id] ?? '—'
+              : null,
           signer_name: guestObj?.full_name ?? null,
           signer_phone: guestObj?.phone ?? null,
         };
       })
     );
-  }, [dateFrom, dateTo]);
+  }, [canUseAllOrganizations, dateFrom, dateTo, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -269,17 +299,24 @@ export function AllContractsScreen() {
     const last = new Date(year, month + 1, 0);
     const fromIso = `${localDateToYMD(first)}T00:00:00.000Z`;
     const toIso = `${localDateToYMD(last)}T23:59:59.999Z`;
-    const { data } = await supabase
+    const orgScoped = resolveStaffOrganizationScope({
+      canUseAll: canUseAllOrganizations,
+      selectedOrganizationId,
+      ownOrganizationId: staff?.organization_id,
+    });
+    let occupancyQuery = supabase
       .from('contract_acceptances')
       .select('accepted_at')
       .gte('accepted_at', fromIso)
       .lte('accepted_at', toIso);
+    if (orgScoped) occupancyQuery = occupancyQuery.eq('organization_id', orgScoped);
+    const { data } = await occupancyQuery;
     const dates = new Set<string>();
     (data ?? []).forEach((r) => {
       dates.add(r.accepted_at.slice(0, 10));
     });
     setOccupancyDates(dates);
-  }, []);
+  }, [canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
     loadOccupancyForMonth(calendarYear, calendarMonth);
@@ -492,6 +529,12 @@ export function AllContractsScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.orgPickerWrap}>
+        <AdminOrganizationPicker
+          canUseAll={canUseAllOrganizations}
+          ownOrganizationId={staff?.organization_id}
+        />
+      </View>
       {loadError ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>Liste yüklenemedi: {loadError}</Text>
@@ -742,6 +785,7 @@ export function AllContractsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7fafc' },
+  orgPickerWrap: { paddingHorizontal: 16, paddingTop: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
   periodRow: { flexDirection: 'row', padding: 12, paddingBottom: 6, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
   periodChip: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
   periodChipActive: { backgroundColor: '#0369a1', borderColor: '#0369a1' },

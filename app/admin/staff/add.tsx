@@ -85,7 +85,7 @@ const APP_PERMISSIONS = [
   { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturabilir' },
   { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitlerini (mutfak) görüntüleyebilir / düzenleyebilir' },
   { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyitlerini onaylayabilir' },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı raporlarını görebilir' },
+  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur, onay/puan yok)' },
   { key: 'transfer_tour_services', label: 'Transfer & Tur: hizmetleri yönet (ekle, düzenle, sil)' },
   { key: 'transfer_tour_requests', label: 'Transfer & Tur: talepleri yönet (onay, red, fiyat)' },
   { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },

@@ -19,6 +19,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { AdminOrganizationPicker } from '@/components/admin';
+import { resolveStaffOrganizationScope } from '@/lib/organizationScope';
 
 type Template = {
   id: string;
@@ -164,8 +165,11 @@ export default function ContractsHubScreen() {
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const fromIso = weekAgo.toISOString();
-    const orgId = canUseAllOrganizations ? selectedOrganizationId : staff?.organization_id;
-    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    const orgScoped = resolveStaffOrganizationScope({
+      canUseAll: canUseAllOrganizations,
+      selectedOrganizationId,
+      ownOrganizationId: staff?.organization_id,
+    });
 
     let unassignedQuery = supabase
       .from('contract_acceptances')
