@@ -1,6 +1,6 @@
 {
   "name": "valoria-hotel",
-  "version": "2.2.11",
+  "version": "2.2.12",
   "main": "index.js",
   "scripts": {
     "start": "node scripts/start-local-or-gateway.js",

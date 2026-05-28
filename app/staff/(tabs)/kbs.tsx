@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
-import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import { useTranslation } from 'react-i18next';
 import { useKbsMrzBatchStore } from '@/stores/kbsMrzBatchStore';
 import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
@@ -29,6 +29,7 @@ export default function StaffKbsTab() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const showMrz = canStaffUseMrzScan(staff);
+  const showIdCapture = canStaffUseIdCapture(staff);
   const batchKey = useKbsMrzBatchStore((s) => s.batchKey);
 
   useEffect(() => {
@@ -60,6 +61,22 @@ export default function StaffKbsTab() {
           subtitle={t('kbsGuestHubTileSub')}
           icon="scan-outline"
           onPress={() => router.push('/staff/kbs/guests' as never)}
+        />
+      ) : null}
+      {showIdCapture ? (
+        <Tile
+          title="Kimlik/Pasaport Çekim"
+          subtitle="Tam ekran çek, AI tarasın, oda ata, anlık bildir."
+          icon="camera-outline"
+          onPress={() => router.push('/staff/kbs/capture-id' as never)}
+        />
+      ) : null}
+      {showIdCapture ? (
+        <Tile
+          title="Canlı Kimlik Listesi"
+          subtitle="Günlük/haftalık/aylık filtre, önizleme, paylaş-yazdır."
+          icon="albums-outline"
+          onPress={() => router.push('/staff/kbs/capture-history' as never)}
         />
       ) : null}
       {showMrz ? (

@@ -34,6 +34,7 @@ import { isPublicWebPath } from '@/lib/publicWebRoute';
 import { publicContractHref, publicMenuHref } from '@/lib/publicPortalNav';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
+import { hasPendingNotificationData } from '@/lib/notificationNavigation';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
@@ -291,6 +292,7 @@ export default function HomeScreen() {
     if (!user) return;
     if (!staffCheckComplete) return;
     if (staffCheckUnavailable && !staff) return;
+    if (hasPendingNotificationData()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
       if (isPublicWebPath(pathname)) return;
@@ -588,66 +590,71 @@ export default function HomeScreen() {
           <Text style={styles.lobbyTaglineWhite}>{t('tagline')}</Text>
         </View>
 
-        <View style={[styles.portalPanel, { marginHorizontal: paddingH, width: cardWidth }]}>
-          <Text style={styles.portalPanelLabel}>{t('homePortalServices')}</Text>
-          <View style={styles.portalRow}>
-            <TouchableOpacity
-              style={styles.portalTile}
-              onPress={() => safeRouterPush(router, publicMenuHref())}
-              activeOpacity={0.82}
-            >
-              <LinearGradient
-                colors={['#fef9c3', '#fde68a', '#fbbf24']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.portalTileGradient}
+        {/* Web (valoria.tr): yalnızca halka açık menü / sözleşme / maliye — Play incelemesi native uygulamada */}
+        {Platform.OS === 'web' && (
+          <View style={[styles.portalPanel, { marginHorizontal: paddingH, width: cardWidth }]}>
+            <Text style={styles.portalPanelLabel}>{t('homePortalServices')}</Text>
+            <View style={styles.portalRow}>
+              <TouchableOpacity
+                style={styles.portalTile}
+                onPress={() => safeRouterPush(router, publicMenuHref())}
+                activeOpacity={0.82}
               >
-                <View style={styles.portalIconCircle}>
-                  <Ionicons name="restaurant" size={26} color="#b45309" />
-                </View>
-                <Text style={[styles.portalTileTitle, { color: '#78350f' }]}>{t('homePortalMenu')}</Text>
-                <Text style={[styles.portalTileHint, { color: '#92400e' }]}>{t('homePortalMenuHint')}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.portalTile}
-              onPress={() => safeRouterPush(router, publicContractHref())}
-              activeOpacity={0.82}
-            >
-              <LinearGradient
-                colors={['#dbeafe', '#bfdbfe', '#93c5fd']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.portalTileGradient}
+                <LinearGradient
+                  colors={['#fef9c3', '#fde68a', '#fbbf24']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.portalTileGradient}
+                >
+                  <View style={styles.portalIconCircle}>
+                    <Ionicons name="restaurant" size={26} color="#b45309" />
+                  </View>
+                  <Text style={[styles.portalTileTitle, { color: '#78350f' }]}>{t('homePortalMenu')}</Text>
+                  <Text style={[styles.portalTileHint, { color: '#92400e' }]}>{t('homePortalMenuHint')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.portalTile}
+                onPress={() => safeRouterPush(router, publicContractHref())}
+                activeOpacity={0.82}
               >
-                <View style={styles.portalIconCircle}>
-                  <Ionicons name="document-text" size={26} color="#1e40af" />
-                </View>
-                <Text style={[styles.portalTileTitle, { color: '#1e3a5f' }]}>{t('homePortalContract')}</Text>
-                <Text style={[styles.portalTileHint, { color: '#1e40af' }]}>{t('homePortalContractHint')}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.portalTile}
-              onPress={() => openPublicMaliyePortal()}
-              activeOpacity={0.82}
-            >
-              <LinearGradient
-                colors={['#ccfbf1', '#99f6e4', '#5eead4']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.portalTileGradient}
+                <LinearGradient
+                  colors={['#dbeafe', '#bfdbfe', '#93c5fd']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.portalTileGradient}
+                >
+                  <View style={styles.portalIconCircle}>
+                    <Ionicons name="document-text" size={26} color="#1e40af" />
+                  </View>
+                  <Text style={[styles.portalTileTitle, { color: '#1e3a5f' }]}>{t('homePortalContract')}</Text>
+                  <Text style={[styles.portalTileHint, { color: '#1e40af' }]}>{t('homePortalContractHint')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.portalTile}
+                onPress={() => openPublicMaliyePortal()}
+                activeOpacity={0.82}
               >
-                <View style={styles.portalIconCircle}>
-                  <Ionicons name="shield-checkmark" size={26} color="#0f766e" />
-                </View>
-                <Text style={[styles.portalTileTitle, { color: '#134e4a' }]}>{t('homePortalMaliye')}</Text>
-                <Text style={[styles.portalTileHint, { color: '#0f766e' }]}>{t('homePortalMaliyeHint')}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={['#ccfbf1', '#99f6e4', '#5eead4']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.portalTileGradient}
+                >
+                  <View style={styles.portalIconCircle}>
+                    <Ionicons name="shield-checkmark" size={26} color="#0f766e" />
+                  </View>
+                  <Text style={[styles.portalTileTitle, { color: '#134e4a' }]}>{t('homePortalMaliye')}</Text>
+                  <Text style={[styles.portalTileHint, { color: '#0f766e' }]}>{t('homePortalMaliyeHint')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        )}
 
+        {Platform.OS !== 'web' && (
+          <>
         {/* Check-in prompt kartı — bir kere sorulur, sonra gösterilmez */}
         {showCheckinPromptCard === true && (
           <View style={[styles.checkinPromptCard, { marginHorizontal: paddingH, width: cardWidth }]}>
@@ -870,6 +877,8 @@ export default function HomeScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+          </>
+        )}
       </ScrollView>
       {showScrollTop && (
         <View style={[styles.scrollTopWrap, { bottom: insets.bottom + 24 }]} pointerEvents="box-none">

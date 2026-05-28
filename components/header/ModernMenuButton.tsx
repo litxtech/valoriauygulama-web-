@@ -101,6 +101,7 @@ function AndroidMenuButton({
   return (
     <Pressable
       onPress={onPress}
+      unstable_pressDelay={0}
       android_ripple={{ color: `${color}33`, borderless: false }}
       style={[styles.hit, style]}
       accessibilityRole="button"

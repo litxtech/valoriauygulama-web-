@@ -37,6 +37,7 @@ export function FastPress({
       <Pressable
         onPress={onPress}
         disabled={disabled}
+        unstable_pressDelay={0}
         android_ripple={
           disabled ? undefined : { color: rippleColor, borderless: borderlessRipple }
         }

@@ -111,6 +111,9 @@ function MessageBubble({
   isOwn,
   onImagePress,
   onDelete,
+  onToggleSelect,
+  selected,
+  selectionMode,
   bubbleColor,
   videoUpload,
   videoUploads,
@@ -124,6 +127,9 @@ function MessageBubble({
   isOwn: boolean;
   onImagePress?: (uri: string) => void;
   onDelete?: (msg: Message) => void;
+  onToggleSelect?: (msg: Message) => void;
+  selected?: boolean;
+  selectionMode?: boolean;
   bubbleColor: string;
   videoUpload?: ChatVideoUploadState;
   videoUploads?: Record<string, ChatVideoUploadState>;
@@ -143,8 +149,13 @@ function MessageBubble({
   const textColor = getContrastTextColor(bubbleColor);
   return (
     <Pressable
-      style={[styles.bubbleWrap, isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther]}
+      style={[
+        styles.bubbleWrap,
+        isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther,
+        selected ? styles.bubbleWrapSelected : null,
+      ]}
       onLongPress={isOwn && onDelete ? () => onDelete(msg) : undefined}
+      onPress={selectionMode && isOwn ? () => onToggleSelect?.(msg) : undefined}
       delayLongPress={400}
     >
       {!isOwn && (msg.sender_name?.trim() || guestLabel) ? (
@@ -249,6 +260,8 @@ export default function CustomerChatScreen() {
   const [tokenTried, setTokenTried] = useState(false);
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const insets = useSafeAreaInsets();
   const [headerName, setHeaderName] = useState<string>(conversationName || t('chatConversationFallback'));
@@ -358,20 +371,52 @@ export default function CustomerChatScreen() {
       ),
       headerRight: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
-          <TouchableOpacity
-            onPress={() => setShowBubbleColorModal(true)}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={{ marginRight: 10 }}
-          >
-            <Ionicons name="color-palette-outline" size={24} color={MESSAGING_COLORS.primary} />
-          </TouchableOpacity>
-          <Text style={styles.headerOnline} numberOfLines={1}>
-            {t('chatHeaderOnline')}
-          </Text>
+          {selectionMode ? (
+            <>
+              <TouchableOpacity
+                onPress={() => {
+                  const ownIds = messages
+                    .filter((m) => m.sender_type === 'guest' && !m.is_deleted)
+                    .map((m) => m.id);
+                  setSelectedMessageIds((prev) => (prev.length === ownIds.length ? [] : ownIds));
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ marginRight: 10 }}
+              >
+                <Ionicons
+                  name={selectedMessageIds.length > 0 ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={MESSAGING_COLORS.primary}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectionMode(false);
+                  setSelectedMessageIds([]);
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <Ionicons name="close" size={24} color={MESSAGING_COLORS.textSecondary} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity
+                onPress={() => setShowBubbleColorModal(true)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ marginRight: 10 }}
+              >
+                <Ionicons name="color-palette-outline" size={24} color={MESSAGING_COLORS.primary} />
+              </TouchableOpacity>
+              <Text style={styles.headerOnline} numberOfLines={1}>
+                {t('chatHeaderOnline')}
+              </Text>
+            </>
+          )}
         </View>
       ),
     });
-  }, [navigation, headerName, headerAvatar, t, i18n.language, winWidth]);
+  }, [navigation, headerName, headerAvatar, t, i18n.language, winWidth, selectionMode, selectedMessageIds.length, messages]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -463,6 +508,12 @@ export default function CustomerChatScreen() {
       subscriptionRef.current?.unsubscribe?.();
     };
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    const ownIds = new Set(messages.filter((m) => m.sender_type === 'guest' && !m.is_deleted).map((m) => m.id));
+    setSelectedMessageIds((prev) => prev.filter((id) => ownIds.has(id)));
+  }, [messages, selectionMode]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -797,8 +848,55 @@ export default function CustomerChatScreen() {
     );
   };
 
+  const deleteSelectedMessages = async (ids: string[]) => {
+    const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+    if (!token || ids.length === 0) return;
+    const results = await Promise.all(ids.map((id) => guestDeleteMessage(token, id)));
+    const successIds = ids.filter((_, idx) => results[idx] === true);
+    const failed = ids.length - successIds.length;
+    if (successIds.length) {
+      setMessages((prev) => prev.filter((m) => !successIds.includes(m.id)));
+    }
+    if (failed > 0) Alert.alert(t('error'), `${failed} mesaj silinemedi.`);
+  };
+
+  const confirmDeleteSelected = () => {
+    if (selectedMessageIds.length === 0) return;
+    Alert.alert('Toplu mesaj sil', `${selectedMessageIds.length} mesaj silinsin mi?`, [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          await deleteSelectedMessages(selectedMessageIds);
+          setSelectionMode(false);
+          setSelectedMessageIds([]);
+        },
+      },
+    ]);
+  };
+
+  const toggleSelectedMessage = (msg: Message) => {
+    if (msg.sender_type !== 'guest') return;
+    setSelectedMessageIds((prev) =>
+      prev.includes(msg.id) ? prev.filter((id) => id !== msg.id) : [...prev, msg.id]
+    );
+  };
+
   const handleDeleteMessage = (msg: Message) => {
-    Alert.alert(t('deleteMessageTitle'), t('deleteMessageConfirm'), [
+    if (msg.sender_type !== 'guest') return;
+    if (selectionMode) {
+      toggleSelectedMessage(msg);
+      return;
+    }
+    Alert.alert('Mesaj işlemi', undefined, [
+      {
+        text: 'Çoklu seç',
+        onPress: () => {
+          setSelectionMode(true);
+          setSelectedMessageIds([msg.id]);
+        },
+      },
       { text: t('cancel'), style: 'cancel' },
       {
         text: t('delete'),
@@ -872,6 +970,9 @@ export default function CustomerChatScreen() {
               videoUploads={videoUploads}
               onImagePress={setFullscreenImageUri}
               onDelete={handleDeleteMessage}
+              onToggleSelect={toggleSelectedMessage}
+              selected={selectedMessageIds.includes(msg.id)}
+              selectionMode={selectionMode}
               bubbleColor={bubbleColor}
               videoUpload={resolveVideoUpload(msg)}
               onVideoRetry={
@@ -915,6 +1016,20 @@ export default function CustomerChatScreen() {
         </View>
       ) : null}
       <ChatVideoBatchBar states={videoUploads} />
+      {selectionMode ? (
+        <View style={styles.bulkBar}>
+          <Text style={styles.bulkBarText}>{selectedMessageIds.length} mesaj seçildi</Text>
+          <TouchableOpacity
+            style={[styles.bulkDeleteBtn, selectedMessageIds.length === 0 && styles.bulkDeleteBtnDisabled]}
+            disabled={selectedMessageIds.length === 0}
+            onPress={confirmDeleteSelected}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="trash-outline" size={16} color="#fff" />
+            <Text style={styles.bulkDeleteBtnText}>Toplu sil</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
         <ChatMentionComposer
           style={styles.input}
@@ -1021,6 +1136,7 @@ const styles = StyleSheet.create({
   typingChipLetter: { fontSize: 11, fontWeight: '700', color: '#fff' },
   typingTextSmall: { fontSize: 11, color: MESSAGING_COLORS.textSecondary },
   bubbleWrap: { marginBottom: 10 },
+  bubbleWrapSelected: { opacity: 0.72 },
   bubbleWrapOwn: { alignItems: 'flex-end' },
   bubbleWrapOther: { alignItems: 'flex-start' },
   senderName: { fontSize: 12, color: MESSAGING_COLORS.primary, marginBottom: 2, marginLeft: 12 },
@@ -1064,6 +1180,28 @@ const styles = StyleSheet.create({
   bubbleColorModalCloseText: { fontSize: 16, color: MESSAGING_COLORS.primary, fontWeight: '600' },
   empty: { textAlign: 'center', color: MESSAGING_COLORS.textSecondary, marginTop: 24 },
   emptyInverted: { transform: [{ scaleY: -1 }] },
+  bulkBar: {
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  bulkBarText: { fontSize: 13, color: MESSAGING_COLORS.textSecondary, fontWeight: '600' },
+  bulkDeleteBtn: {
+    backgroundColor: '#dc2626',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  bulkDeleteBtnDisabled: { opacity: 0.5 },
+  bulkDeleteBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

@@ -24,6 +24,15 @@ export function isGccNationality(code: string | null | undefined): boolean {
   return !!code && GCC_NAT.has(String(code).toUpperCase());
 }
 
+export function isTurkishMrzDocument(
+  nationalityCode?: string | null,
+  issuingCountryCode?: string | null
+): boolean {
+  const nat = (nationalityCode ?? '').toUpperCase();
+  const iss = (issuingCountryCode ?? '').toUpperCase();
+  return nat === 'TUR' || nat === 'TR' || iss === 'TUR' || iss === 'TR';
+}
+
 /** MRZ: ad tek kelime, soyad birden fazla kelime → alanlar muhtemelen yer değiştirmiş. */
 export function mrzNamesLookSwapped(firstName: string | null, lastName: string | null): boolean {
   const fp = (firstName ?? '').trim().split(/\s+/).filter(Boolean);
@@ -52,7 +61,11 @@ export function correctSwappedMrzNames(args: {
   let lastName = sanitizePersonName(args.lastName);
   const nat = (args.nationalityCode ?? '').toUpperCase();
   const iss = (args.issuingCountryCode ?? '').toUpperCase();
-  if (isGccNationality(nat) || isGccNationality(iss)) {
+  if (
+    isGccNationality(nat) ||
+    isGccNationality(iss) ||
+    isTurkishMrzDocument(nat, iss)
+  ) {
     return { firstName, lastName };
   }
   if (mrzNamesLookSwapped(firstName, lastName)) {
@@ -61,28 +74,99 @@ export function correctSwappedMrzNames(args: {
   return { firstName, lastName };
 }
 
+/** MRZ satırındaki SOYAD<<AD(lar) — kütüphane ad alanına soyadı tekrar yazabiliyor. */
+export function parseChevronNamesFromMrz(rawMrz: string | null | undefined): {
+  surname: string | null;
+  given: string | null;
+} {
+  if (!rawMrz?.trim()) return { surname: null, given: null };
+
+  const lines = rawMrz
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((l) => l.trim().toUpperCase())
+    .filter((l) => l.includes('<<') && l.replace(/[^A-Z<]/g, '').length >= 8);
+
+  const ranked = [...lines].sort((a, b) => (b.match(/</g) ?? []).length - (a.match(/</g) ?? []).length);
+
+  for (const line of ranked) {
+    const alpha = line.replace(/[^A-Z<]/g, '');
+    const sep = alpha.indexOf('<<');
+    if (sep < 1) continue;
+
+    const surnameRaw = alpha.slice(0, sep).replace(/</g, '').trim();
+    const givenRaw = alpha
+      .slice(sep + 2)
+      .replace(/</g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const surname = sanitizePersonName(surnameRaw);
+    const given = sanitizePersonName(givenRaw);
+
+    if (isUsablePersonName(surname)) {
+      return {
+        surname,
+        given: isUsablePersonName(given) ? given : null,
+      };
+    }
+  }
+
+  return { surname: null, given: null };
+}
+
+/** Verilen ad(lar) alanında yinelenen soyadı kaldır. */
+export function stripSurnameFromGivenNames(
+  firstName: string | null,
+  lastName: string | null
+): { firstName: string | null; lastName: string | null } {
+  let fn = firstName;
+  const ln = lastName;
+  if (!fn || !ln) return { firstName: fn, lastName: ln };
+
+  const fnU = fn.toUpperCase();
+  const lnU = ln.toUpperCase();
+  const lnWords = lnU.split(/\s+/).filter(Boolean);
+  const fnWords = fnU.split(/\s+/).filter(Boolean);
+
+  if (fnU === lnU) {
+    return { firstName: null, lastName: ln };
+  }
+
+  if (fnU.startsWith(`${lnU} `)) {
+    const rest = fn.slice(ln.length).trim();
+    fn = rest.length >= 2 ? sanitizePersonName(rest) : null;
+    return { firstName: fn, lastName: ln };
+  }
+
+  let sharedPrefix = 0;
+  while (
+    sharedPrefix < lnWords.length &&
+    sharedPrefix < fnWords.length &&
+    fnWords[sharedPrefix] === lnWords[sharedPrefix]
+  ) {
+    sharedPrefix++;
+  }
+  if (sharedPrefix === lnWords.length && fnWords.length > sharedPrefix) {
+    fn = sanitizePersonName(fnWords.slice(sharedPrefix).join(' '));
+  } else if (sharedPrefix === 1 && fnWords.length > 1 && lnWords.length >= 1) {
+    fn = sanitizePersonName(fnWords.slice(1).join(' '));
+  }
+
+  if (fn && fn.toUpperCase().endsWith(` ${lnU}`)) {
+    const trimmed = fn.slice(0, -(ln.length + 1)).trim();
+    fn = trimmed.length >= 2 ? sanitizePersonName(trimmed) : fn;
+  }
+
+  return { firstName: fn, lastName: ln };
+}
+
 /** Ad alanında yinelenen soyadı ayır (OCR/MRZ gürültüsü). */
 function dedupeGivenAndSurname(firstName: string | null, lastName: string | null): {
   firstName: string | null;
   lastName: string | null;
 } {
-  let fn = firstName;
-  let ln = lastName;
-  if (!fn || !ln) return { firstName: fn, lastName: ln };
-  const fnU = fn.toUpperCase();
-  const lnU = ln.toUpperCase();
-  if (fnU === lnU) {
-    const split = splitFullNameToFirstLast(fn);
-    return { firstName: split.firstName, lastName: split.lastName };
-  }
-  if (fnU.endsWith(` ${lnU}`)) {
-    const trimmed = fnU.slice(0, -(lnU.length + 1)).trim();
-    if (trimmed.length >= 2) fn = sanitizePersonName(trimmed);
-  } else if (lnU.startsWith(`${fnU} `)) {
-    const trimmed = lnU.slice(fnU.length + 1).trim();
-    if (trimmed.length >= 2) ln = sanitizePersonName(trimmed);
-  }
-  return { firstName: fn, lastName: ln };
+  return stripSurnameFromGivenNames(firstName, lastName);
 }
 
 /**
@@ -93,6 +177,7 @@ export function finalizeMrzPersonNames(args: {
   firstNameRaw: string | null;
   lastNameRaw: string | null;
   fullNameRaw?: string | null;
+  rawMrz?: string | null;
   nationalityCode?: string | null;
   issuingCountryCode?: string | null;
 }): {
@@ -104,6 +189,15 @@ export function finalizeMrzPersonNames(args: {
   let firstName = sanitizePersonName(args.firstNameRaw);
   let lastName = sanitizePersonName(args.lastNameRaw);
   const fullNameFromField = sanitizePersonName(args.fullNameRaw);
+  const turkish = isTurkishMrzDocument(args.nationalityCode, args.issuingCountryCode);
+
+  const chevron = parseChevronNamesFromMrz(args.rawMrz);
+  if (chevron.surname) {
+    lastName = chevron.surname;
+  }
+  if (chevron.given) {
+    firstName = chevron.given;
+  }
 
   ({ firstName, lastName } = correctSwappedMrzNames({
     firstName,
@@ -118,6 +212,7 @@ export function finalizeMrzPersonNames(args: {
     const split = splitFullNameToFirstLast(fullNameFromField);
     firstName = firstName ?? split.firstName;
     lastName = lastName ?? split.lastName;
+    ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
   if (!lastName && firstName) {
@@ -126,14 +221,16 @@ export function finalizeMrzPersonNames(args: {
       firstName = split.firstName;
       lastName = split.lastName;
     }
+    ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
-  if (!firstName && lastName) {
+  if (!firstName && lastName && !turkish) {
     const split = splitFullNameToFirstLast(lastName);
     if (split.firstName) {
       firstName = split.firstName;
       lastName = split.lastName;
     }
+    ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
   const fullName =

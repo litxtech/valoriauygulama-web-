@@ -1,11 +1,20 @@
 import { useEffect } from 'react';
-import { Redirect, Stack, usePathname } from 'expo-router';
+import { Redirect, Stack, usePathname, type Href } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
-import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import { refreshStaffKbsAccess } from '@/lib/refreshStaffKbsAccess';
 import { useTranslation } from 'react-i18next';
 import { StaffStackBackButton, STAFF_TABS_FALLBACK, buildStaffNestedStackOptions } from '@/lib/staffStackBack';
+
+function isIdCaptureRoute(pathname: string | null | undefined): boolean {
+  const p = pathname ?? '';
+  return (
+    p.includes('/kbs/capture-id') ||
+    p.includes('/kbs/capture-history') ||
+    p.includes('/kbs/capture/')
+  );
+}
 
 export default function KbsLayout() {
   const { t } = useTranslation();
@@ -13,17 +22,26 @@ export default function KbsLayout() {
   const pathname = usePathname();
   const guestMrzSubtree = pathname?.includes('/kbs/guests');
   const mrzOnlyAccess = canStaffUseMrzScan(staff);
+  const idCaptureRoute = isIdCaptureRoute(pathname);
+  const idCaptureAccess = canStaffUseIdCapture(staff);
 
   useEffect(() => {
     void refreshStaffKbsAccess();
   }, [staff?.id]);
-  if (!isKbsUiEnabled() && !(guestMrzSubtree && mrzOnlyAccess)) {
+
+  if (idCaptureRoute && !idCaptureAccess) {
     return <Redirect href="/staff" />;
   }
+
+  if (!idCaptureRoute && !isKbsUiEnabled() && !(guestMrzSubtree && mrzOnlyAccess)) {
+    return <Redirect href="/staff" />;
+  }
+
   const blocked = staff?.role !== 'admin' && staff?.kbs_access_enabled === false;
-  if (blocked) {
+  if (blocked && !idCaptureRoute) {
     return <Redirect href="/staff" />;
   }
+
   return (
     <Stack screenOptions={buildStaffNestedStackOptions(t)}>
       <Stack.Screen
@@ -33,6 +51,28 @@ export default function KbsLayout() {
       <Stack.Screen
         name="scan"
         options={{ title: t('kbsNavScanSerial'), headerShown: false, contentStyle: { backgroundColor: '#000' } }}
+      />
+      <Stack.Screen
+        name="capture-id"
+        options={{ title: 'Kimlik/Pasaport Çekim', headerShown: false, contentStyle: { backgroundColor: '#000' } }}
+      />
+      <Stack.Screen
+        name="capture-history"
+        options={{
+          title: 'Çekilen Kimlikler',
+          headerLeft: () => (
+            <StaffStackBackButton fallback={'/staff/(tabs)' as Href} accessibilityLabel={t('back')} />
+          ),
+        }}
+      />
+      <Stack.Screen
+        name="capture/[id]"
+        options={{
+          title: 'Kimlik bilgileri',
+          headerLeft: () => (
+            <StaffStackBackButton fallback={'/staff/kbs/capture-history' as Href} accessibilityLabel={t('back')} />
+          ),
+        }}
       />
       <Stack.Screen name="ready" options={{ title: t('kbsNavReady') }} />
       <Stack.Screen name="submitted" options={{ title: t('kbsNavSubmitted') }} />

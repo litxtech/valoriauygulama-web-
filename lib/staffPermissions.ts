@@ -97,6 +97,40 @@ export function canManageHotelKitchenMenu(staff: StaffPermissionSlice): boolean 
   return staff.app_permissions?.otel_mutfak_menu === true;
 }
 
+/** Mutfak operasyon modülü (stok, hasılat, gün sonu) — genel otel stok sisteminden ayrı. */
+export function canAccessKitchenOps(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canAccessAdminShell(staff)) return true;
+  if (staff.app_permissions?.mutfak_operasyon === true) return true;
+  const dept = (staff.department ?? '').trim().toLowerCase();
+  return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
+}
+
+/** Mutfak operasyon yönetimi (düzeltme, silme, limit, rapor). */
+export function canManageKitchenOps(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canAccessAdminShell(staff)) return true;
+  return staff.app_permissions?.mutfak_operasyon_yonetim === true;
+}
+
+/** Reception mutfak muhasebe kontrolü (POS onay, gün sonu). */
+export function canAccessKitchenReceptionAccounting(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canAccessAdminShell(staff)) return true;
+  if (staff.role === 'reception_chief') return true;
+  return staff.app_permissions?.reception_mutfak_muhasebe === true;
+}
+
+/** Mutfak personeli (departman veya mutfak_operasyon yetkisi) — menü önceliği için. */
+export function isKitchenStaffMember(
+  staff: StaffPermissionSlice & { department?: string | null }
+): boolean {
+  if (!staff) return false;
+  if (staff.app_permissions?.mutfak_operasyon === true) return true;
+  const dept = (staff.department ?? '').trim().toLowerCase();
+  return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
+}
+
 /** Mutfak günlük onay push / panel ile aynı departmanlar (274). */
 export const MEAL_MENU_KITCHEN_DEPARTMENTS = new Set([
   'kitchen',

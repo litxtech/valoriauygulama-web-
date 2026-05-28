@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, View, StyleSheet } from 'react-native';
-import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect, useNavigation, usePathname, type Href } from 'expo-router';
+import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GuestIdentityScanner } from '@/components/kbs/GuestIdentityScanner';
@@ -25,6 +26,8 @@ type Props = {
  */
 export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const { t } = useTranslation();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const staff = useAuthStore((s) => s.staff);
@@ -38,6 +41,10 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   const sessionBootstrapped = useRef(false);
 
   const isGroup = mode === 'group' || mode === 'family' || (session?.sessionType !== 'single');
+
+  const goBack = useCallback(() => {
+    navigateStaffBack(router, navigation, pathname, (deniedFallback as Href) ?? STAFF_TABS_FALLBACK);
+  }, [router, navigation, pathname, deniedFallback]);
 
   useEffect(() => {
     if (staff == null) return;
@@ -114,7 +121,7 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
       soundEnabled={soundEnabled}
       groupCount={session?.items.length ?? 0}
       onLocked={onLocked}
-      onBack={() => router.back()}
+      onBack={goBack}
       onGalleryError={(msg) => Alert.alert(t('kbsGuestGalleryTitle'), msg)}
     />
   );

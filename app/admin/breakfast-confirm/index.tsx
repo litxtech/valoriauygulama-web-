@@ -20,6 +20,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
 import { CachedImage } from '@/components/CachedImage';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
@@ -27,6 +29,7 @@ import { awardStaffPoints } from '@/lib/staffPoints';
 
 type Row = {
   id: string;
+  organization_id: string;
   record_date: string;
   submitted_at: string;
   guest_count: number;
@@ -209,7 +212,7 @@ const BreakfastCard = memo(function BreakfastCard({ item, thumbSize, onLightbox,
 
 export default function AdminBreakfastConfirmListScreen() {
   const router = useRouter();
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, canUseAll, orgScoped, canQuery } = useAdminOrganizationQueryScope();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [rows, setRows] = useState<Row[]>([]);
@@ -228,16 +231,20 @@ export default function AdminBreakfastConfirmListScreen() {
   const [scoring, setScoring] = useState(false);
 
   const load = useCallback(async () => {
-    if (!staff?.organization_id) return;
-    const { data, error } = await supabase
+    if (!canQuery) {
+      setRows([]);
+      return;
+    }
+    let query = supabase
       .from('breakfast_confirmations')
-      .select('id, record_date, submitted_at, guest_count, note, photo_urls, approved_at, rejected_at, rejection_reason, staff_id, staff!staff_id(full_name, department)')
-      .eq('organization_id', staff.organization_id)
+      .select('id, organization_id, record_date, submitted_at, guest_count, note, photo_urls, approved_at, rejected_at, rejection_reason, staff_id, staff!staff_id(full_name, department)')
       .order('submitted_at', { ascending: false })
       .limit(200);
+    if (orgScoped) query = query.eq('organization_id', orgScoped);
+    const { data, error } = await query;
     if (error) Alert.alert('Hata', error.message);
     else setRows((data as Row[]) ?? []);
-  }, [staff?.organization_id]);
+  }, [canQuery, orgScoped]);
 
   useEffect(() => {
     (async () => {
@@ -254,7 +261,8 @@ export default function AdminBreakfastConfirmListScreen() {
   };
 
   const approve = async (item: Row) => {
-    if (!staff?.id || !staff.organization_id) return;
+    const orgId = item.organization_id || orgScoped;
+    if (!staff?.id || !orgId) return;
     try {
       const { error } = await supabase
         .from('breakfast_confirmations')
@@ -267,7 +275,7 @@ export default function AdminBreakfastConfirmListScreen() {
       await load();
 
       notifyBreakfastApproved({
-        organizationId: staff.organization_id,
+        organizationId: orgId,
         approverName: staff.full_name ?? 'Yönetici',
         recordDate: item.record_date,
         kitchenStaffId: item.staff_id,
@@ -282,7 +290,8 @@ export default function AdminBreakfastConfirmListScreen() {
   };
 
   const submitBreakfastScore = async () => {
-    if (!staff?.id || !staff.organization_id || !scoreTarget) return;
+    const orgId = scoreTarget?.organization_id || orgScoped;
+    if (!staff?.id || !orgId || !scoreTarget) return;
     const pts = parseInt(scoreValue, 10);
     if (isNaN(pts) || pts === 0) {
       setScoreTarget(null);
@@ -291,7 +300,7 @@ export default function AdminBreakfastConfirmListScreen() {
     setScoring(true);
     try {
       await supabase.from('kitchen_scores').insert({
-        organization_id: staff.organization_id,
+        organization_id: orgId,
         record_date: scoreTarget.record_date,
         breakfast_confirmation_id: scoreTarget.id,
         score_delta: pts,
@@ -300,7 +309,7 @@ export default function AdminBreakfastConfirmListScreen() {
       });
 
       await awardStaffPoints({
-        organizationId: staff.organization_id,
+        organizationId: orgId,
         staffId: scoreTarget.staff_id,
         points: pts,
         category: 'breakfast',
@@ -319,7 +328,8 @@ export default function AdminBreakfastConfirmListScreen() {
   };
 
   const reject = async () => {
-    if (!staff?.id || !staff.organization_id || !rejectTarget) return;
+    const orgId = rejectTarget?.organization_id || orgScoped;
+    if (!staff?.id || !orgId || !rejectTarget) return;
     if (!rejectReason.trim()) {
       Alert.alert('Eksik', 'Lütfen red nedenini yazın.');
       return;
@@ -339,7 +349,7 @@ export default function AdminBreakfastConfirmListScreen() {
       if (error) throw new Error(error.message);
 
       await supabase.from('kitchen_scores').insert({
-        organization_id: staff.organization_id,
+        organization_id: orgId,
         record_date: rejectTarget.record_date,
         breakfast_confirmation_id: rejectTarget.id,
         score_delta: scoreImpact,
@@ -348,7 +358,7 @@ export default function AdminBreakfastConfirmListScreen() {
       });
 
       notifyBreakfastRejected({
-        organizationId: staff.organization_id,
+        organizationId: orgId,
         rejectorName: staff.full_name ?? 'Yönetici',
         recordDate: rejectTarget.record_date,
         kitchenStaffId: rejectTarget.staff_id,
@@ -423,6 +433,12 @@ export default function AdminBreakfastConfirmListScreen() {
   const listHeader = useMemo(
     () => (
       <>
+        <View style={styles.orgPickerWrap}>
+          <AdminOrganizationPicker
+            canUseAll={canUseAll}
+            ownOrganizationId={staff?.organization_id}
+          />
+        </View>
         {/* Summary Stats */}
         <View style={styles.statsRow}>
           <TouchableOpacity
@@ -509,7 +525,7 @@ export default function AdminBreakfastConfirmListScreen() {
         )}
       </>
     ),
-    [statusFilter, stats, selectedStaffId, selectedStaffName, filteredRows.length, router]
+    [statusFilter, stats, selectedStaffId, selectedStaffName, filteredRows.length, router, canUseAll, staff?.organization_id]
   );
 
   const listEmpty = useMemo(
@@ -520,11 +536,15 @@ export default function AdminBreakfastConfirmListScreen() {
         </View>
         <Text style={styles.emptyTitle}>Kayıt bulunamadı</Text>
         <Text style={styles.emptySub}>
-          {selectedStaffId ? 'Bu personele ait kayıt yok.' : 'Henüz kayıt eklenmemiş.'}
+          {!canQuery
+            ? 'İşletme seçin veya personel kaydına işletme atayın.'
+            : selectedStaffId
+              ? 'Bu personele ait kayıt yok.'
+              : 'Henüz kayıt eklenmemiş.'}
         </Text>
       </View>
     ),
-    [selectedStaffId]
+    [selectedStaffId, canQuery]
   );
 
   if (loading) {
@@ -772,6 +792,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
   flatList: { flex: 1 },
   scrollContent: { paddingTop: 16 },
+  orgPickerWrap: { paddingHorizontal: 16, marginBottom: 12 },
 
   /* Stats */
   statsRow: {

@@ -13,12 +13,13 @@ import {
   Platform,
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import type { BreakfastConfirmationSettings } from '@/lib/breakfastConfirm';
 
 export default function AdminBreakfastConfirmSettingsScreen() {
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, canUseAll, orgScoped, canQuery } = useAdminOrganizationQueryScope();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [featureEnabled, setFeatureEnabled] = useState(true);
@@ -32,11 +33,14 @@ export default function AdminBreakfastConfirmSettingsScreen() {
   const [requireKitchen, setRequireKitchen] = useState(true);
 
   const load = useCallback(async () => {
-    if (!staff?.organization_id) return;
+    if (!canQuery || !orgScoped) {
+      setLoading(false);
+      return;
+    }
     const { data, error } = await supabase
       .from('breakfast_confirmation_settings')
       .select('*')
-      .eq('organization_id', staff.organization_id)
+      .eq('organization_id', orgScoped)
       .maybeSingle();
     if (error) {
       Alert.alert('Hata', error.message);
@@ -56,14 +60,17 @@ export default function AdminBreakfastConfirmSettingsScreen() {
       setRequireKitchen(row.require_kitchen_department);
     }
     setLoading(false);
-  }, [staff?.organization_id]);
+  }, [canQuery, orgScoped]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const save = async () => {
-    if (!staff?.organization_id) return;
+    if (!orgScoped) {
+      Alert.alert('Hata', 'İşletme seçin veya personel kaydına işletme atayın.');
+      return;
+    }
     const minP = parseInt(minPhotos, 10);
     const maxP = parseInt(maxPhotos, 10);
     const daily = parseInt(dailyLimit, 10);
@@ -114,7 +121,7 @@ export default function AdminBreakfastConfirmSettingsScreen() {
           submission_time_end: te,
           require_kitchen_department: requireKitchen,
         })
-        .eq('organization_id', staff.organization_id);
+        .eq('organization_id', orgScoped);
       if (error) throw new Error(error.message);
       Alert.alert('Kaydedildi', 'Kahvaltı teyit ayarları güncellendi.');
     } catch (e: unknown) {
@@ -135,6 +142,7 @@ export default function AdminBreakfastConfirmSettingsScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <AdminOrganizationPicker canUseAll={canUseAll} ownOrganizationId={staff?.organization_id} />
         <Text style={styles.section}>Özellik</Text>
         <View style={styles.row}>
           <Text style={styles.label}>Kahvaltı teyidi aktif</Text>

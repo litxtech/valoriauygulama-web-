@@ -13,8 +13,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import {
   APP_FEATURE_CATALOG,
   PLACEMENT_LABELS_TR,
@@ -32,7 +33,7 @@ import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesS
 const PLACEMENTS: AppFeaturePlacement[] = ['tab', 'profile', 'hamburger', 'header_left', 'header_right'];
 
 export default function AdminUiFeaturesScreen() {
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, canUseAll, orgScoped, canQuery } = useAdminOrganizationQueryScope();
   const insets = useSafeAreaInsets();
   const reloadStore = useOrganizationUiFeaturesStore((s) => s.load);
   const [loading, setLoading] = useState(true);
@@ -42,14 +43,14 @@ export default function AdminUiFeaturesScreen() {
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    if (!staff?.organization_id) {
+    if (!canQuery || !orgScoped) {
       setLoading(false);
       return;
     }
     const { data, error } = await supabase
       .from('organizations')
       .select('ui_features')
-      .eq('id', staff.organization_id)
+      .eq('id', orgScoped)
       .maybeSingle();
     if (error) {
       Alert.alert('Hata', error.message);
@@ -58,9 +59,10 @@ export default function AdminUiFeaturesScreen() {
       setConfig(mergeOrganizationUiFeatures(normalizeOrganizationUiFeatures(data?.ui_features)));
     }
     setLoading(false);
-  }, [staff?.organization_id]);
+  }, [canQuery, orgScoped]);
 
   useEffect(() => {
+    setLoading(true);
     void load();
   }, [load]);
 
@@ -104,18 +106,18 @@ export default function AdminUiFeaturesScreen() {
   };
 
   const save = async () => {
-    if (!staff?.organization_id || !config) return;
+    if (!orgScoped || !config) return;
     setSaving(true);
     const { error } = await supabase
       .from('organizations')
       .update({ ui_features: config })
-      .eq('id', staff.organization_id);
+      .eq('id', orgScoped);
     setSaving(false);
     if (error) {
       Alert.alert('Hata', error.message);
       return;
     }
-    await reloadStore(staff.organization_id);
+    await reloadStore(orgScoped);
     Alert.alert('Kaydedildi', 'Özellik görünürlüğü güncellendi. Personel ve misafir uygulaması yenilendiğinde yansır.');
   };
 
@@ -130,6 +132,10 @@ export default function AdminUiFeaturesScreen() {
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
+        <AdminOrganizationPicker canUseAll={canUseAll} ownOrganizationId={staff?.organization_id} />
+        {!orgScoped ? (
+          <Text style={styles.intro}>Liste için üstten bir işletme seçin veya personel kaydınıza işletme atayın.</Text>
+        ) : null}
         <Text style={styles.intro}>
           Kapalı özellikler personel ve misafir ekranlarında görünmez. Yerleşim: alt sekme, profil menüsü, hamburger veya üst çubuk.
         </Text>

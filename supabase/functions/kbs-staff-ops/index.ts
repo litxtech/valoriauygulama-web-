@@ -50,7 +50,13 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, error: { code: "CONFIG", message: "Supabase yapılandırması eksik" } });
     }
 
-    let meta: { action?: string; guestDocumentId?: string; roomId?: string };
+    let meta: {
+      action?: string;
+      guestDocumentId?: string;
+      roomId?: string;
+      roomNumber?: string;
+      assignments?: { guestDocumentId: string }[];
+    };
     try {
       meta = (await req.json()) as typeof meta;
     } catch {
@@ -83,6 +89,30 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, data: env.data ?? [] });
     }
 
+    if (action === "ensure_room") {
+      const roomNumber = meta.roomNumber;
+      if (!roomNumber || !String(roomNumber).trim()) {
+        return json({ ok: false, error: { code: "BAD_REQUEST", message: "roomNumber gerekli" } });
+      }
+      const { data, error } = await admin.rpc("kbs_edge_ensure_room", {
+        p_user_id: userId,
+        p_room_number: String(roomNumber).trim(),
+      });
+      if (error) {
+        return json({
+          ok: false,
+          error: {
+            code: "RPC",
+            message: `${error.message}. SQL: supabase/migrations/337_kbs_edge_ensure_room.sql`,
+          },
+        });
+      }
+      const fail = fromRpcEnvelope(data);
+      if (fail) return fail;
+      const env = data as RpcEnvelope;
+      return json({ ok: true, data: env.data ?? null });
+    }
+
     if (action === "assign_room") {
       const guestDocumentId = meta.guestDocumentId;
       const roomId = meta.roomId;
@@ -109,7 +139,49 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, data: env.data ?? null });
     }
 
-    return json({ ok: false, error: { code: "BAD_REQUEST", message: "action: list_rooms | assign_room" } });
+    if (action === "assign_rooms_batch") {
+      const roomId = meta.roomId;
+      const assignments = meta.assignments;
+      if (!roomId || !Array.isArray(assignments) || assignments.length === 0) {
+        return json({
+          ok: false,
+          error: { code: "BAD_REQUEST", message: "roomId ve assignments[] gerekli" },
+        });
+      }
+      let assigned = 0;
+      const errors: string[] = [];
+      for (const row of assignments) {
+        const guestDocumentId = row?.guestDocumentId;
+        if (!guestDocumentId) continue;
+        const { data, error } = await admin.rpc("kbs_edge_assign_room", {
+          p_user_id: userId,
+          p_guest_document_id: guestDocumentId,
+          p_room_id: roomId,
+        });
+        if (error) {
+          errors.push(error.message);
+          continue;
+        }
+        const fail = fromRpcEnvelope(data);
+        if (fail) {
+          errors.push("assign failed");
+          continue;
+        }
+        assigned += 1;
+      }
+      if (assigned === 0) {
+        return json({
+          ok: false,
+          error: { code: "ASSIGN_FAILED", message: errors[0] ?? "Oda atanamadı" },
+        });
+      }
+      return json({ ok: true, data: { assigned, total: assignments.length } });
+    }
+
+    return json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "action: list_rooms | ensure_room | assign_room | assign_rooms_batch" },
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("[kbs-staff-ops]", message, e);

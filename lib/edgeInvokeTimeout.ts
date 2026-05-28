@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 export const EDGE_INVOKE_TIMEOUT_MS = 24_000;
 
 export async function withPromiseTimeout<T>(
-  promise: Promise<T>,
+  promise: PromiseLike<T>,
   ms: number,
   label: string
 ): Promise<T> {

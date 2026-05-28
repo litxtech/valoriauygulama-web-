@@ -5,6 +5,7 @@ import {
   notifyAdmins,
   sendNotification,
 } from '@/lib/notificationService';
+import { filterStaffIdsByNotificationType } from '@/lib/staffNotificationFilter';
 import { log } from '@/lib/logger';
 // Caller passes already-translated title/body
 export async function notifyTransferTourStaffAndAdmins(params: {
@@ -38,8 +39,9 @@ export async function notifyTransferTourStaffAndAdmins(params: {
       )
       .map((s) => s.id);
     const unique = Array.from(new Set(ids));
-    if (unique.length) {
-      const rows = unique.map((staff_id) => ({
+    const filtered = await filterStaffIdsByNotificationType(unique, 'transfer_tour');
+    if (filtered.length) {
+      const rows = filtered.map((staff_id) => ({
         staff_id,
         guest_id: null,
         title,
@@ -51,7 +53,7 @@ export async function notifyTransferTourStaffAndAdmins(params: {
         sent_at: new Date().toISOString(),
       }));
       await postNotificationsReturnMinimal(rows);
-      sendExpoPushToRecipients({ staffIds: unique, title, body, data: { ...data, screen: 'notifications' } }).catch(() => {});
+      sendExpoPushToRecipients({ staffIds: filtered, title, body, data: { ...data, screen: 'notifications' } }).catch(() => {});
     } else {
       await notifyAdmins({ title, body, data });
     }

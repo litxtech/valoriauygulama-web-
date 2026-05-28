@@ -205,6 +205,7 @@ export default function StaffBreakfastConfirmScreen() {
         uploaderName: staff.full_name ?? 'Personel',
         recordDate: today,
         createdByStaffId: staff.id,
+        isNewRecord: !existing?.id,
       }).catch(() => {});
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kaydedilemedi.');

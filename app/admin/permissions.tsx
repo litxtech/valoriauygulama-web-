@@ -70,6 +70,11 @@ const STAFF_APP_PERMISSIONS = [
     desc: 'Kimlik ve pasaport MRZ okuma, KBS tarama ekranı ve header MRZ simgesi.',
   },
   {
+    key: 'id_capture',
+    label: 'Kimlik / pasaport çekim sistemi',
+    desc: 'Tam ekran belge çekimi, AI tarama, oda atama, çekilen kimlik listesi; feed header kimlik butonu.',
+  },
+  {
     key: 'teknik_varlik_yonetimi',
     label: 'Akıllı Tesis Envanteri (yönetim)',
     desc: 'Bina/lokasyon/varlık tanımlama, QR ve etiket çıktısı; yönetim paneli menüsü.',

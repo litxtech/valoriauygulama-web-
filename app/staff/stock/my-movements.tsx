@@ -1,14 +1,13 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
-  Dimensions,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -16,11 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
-
-const CARD_GAP = 12;
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 function formatShortDateTime(iso: string): string {
   const d = new Date(iso);
@@ -38,11 +33,23 @@ type MovementRow = {
   notes: string | null;
   created_at: string;
   status: 'pending' | 'approved' | 'rejected';
-  photo_proof: string | null;
+  has_photo: boolean;
   product: { id: string; name: string; unit: string | null } | null;
 };
 
 type FilterType = 'all' | 'in' | 'out';
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: 'Onay bekliyor',
+  approved: 'Onaylandı',
+  rejected: 'Reddedildi',
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  approved: theme.colors.success,
+  rejected: theme.colors.error,
+  pending: '#ca8a04',
+};
 
 export default function StaffMyMovementsScreen() {
   const router = useRouter();
@@ -51,45 +58,65 @@ export default function StaffMyMovementsScreen() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadingPhotoId, setLoadingPhotoId] = useState<string | null>(null);
 
-  const load = async () => {
-    if (!staff?.id) return;
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('stock_movements')
-      .select('id, movement_type, quantity, notes, created_at, status, photo_proof, product:stock_products(id, name, unit)')
-      .eq('staff_id', staff.id)
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (error) {
-      setMovements([]);
-    } else {
-      setMovements((data ?? []) as MovementRow[]);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  };
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!staff?.id) return;
+      if (!opts?.silent) setInitialLoading(true);
+      const { data, error } = await supabase
+        .from('stock_movements')
+        .select(
+          'id, movement_type, quantity, notes, created_at, status, photo_proof, product:stock_products(id, name, unit)'
+        )
+        .eq('staff_id', staff.id)
+        .order('created_at', { ascending: false })
+        .limit(120);
+      if (error) {
+        setMovements([]);
+      } else {
+        setMovements(
+          (data ?? []).map((row) => {
+            const r = row as MovementRow & { photo_proof?: string | null };
+            return {
+              id: r.id,
+              movement_type: r.movement_type,
+              quantity: r.quantity,
+              notes: r.notes,
+              created_at: r.created_at,
+              status: r.status,
+              has_photo: !!r.photo_proof,
+              product: r.product,
+            };
+          })
+        );
+      }
+      setInitialLoading(false);
+      setRefreshing(false);
+    },
+    [staff?.id]
+  );
 
   useEffect(() => {
     load();
-  }, [staff?.id]);
+  }, [load]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    load();
+    load({ silent: true });
   };
 
-  const handleDeleteMovement = (m: MovementRow) => {
+  const handleDeleteMovement = useCallback((m: MovementRow) => {
     const isAdmin = staff?.role === 'admin';
     if (m.status === 'approved' && !isAdmin) {
       Alert.alert('Silinemez', 'Onaylanmış hareket silinemez. Stoğa işlenmiş kayıtları admin panelinden yönetin.');
       return;
     }
     const typeLabel = m.movement_type === 'in' ? 'giriş' : 'çıkış';
-    const productName = (m.product as { name?: string })?.name ?? 'ürün';
+    const productName = m.product?.name ?? 'ürün';
     Alert.alert(
       'Hareketi sil',
       `"${productName}" ${typeLabel} hareketini silmek istediğinize emin misiniz?`,
@@ -113,7 +140,25 @@ export default function StaffMyMovementsScreen() {
         },
       ]
     );
-  };
+  }, [staff?.role]);
+
+  const openPhoto = useCallback(async (movementId: string) => {
+    setLoadingPhotoId(movementId);
+    try {
+      const { data, error } = await supabase
+        .from('stock_movements')
+        .select('photo_proof')
+        .eq('id', movementId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data?.photo_proof) setPreviewUri(data.photo_proof);
+      else Alert.alert('Fotoğraf yok', 'Bu hareket için kayıtlı görsel bulunamadı.');
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Fotoğraf yüklenemedi.');
+    } finally {
+      setLoadingPhotoId(null);
+    }
+  }, []);
 
   const filtered = useMemo(() => {
     let list = movements;
@@ -121,30 +166,162 @@ export default function StaffMyMovementsScreen() {
     else if (filter === 'out') list = list.filter((m) => m.movement_type === 'out');
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter((m) => (m.product as { name?: string })?.name?.toLowerCase().includes(q));
+      list = list.filter((m) => m.product?.name?.toLowerCase().includes(q));
     }
     return list;
   }, [movements, filter, search]);
 
   const stats = useMemo(() => {
-    const inCount = movements.filter((m) => m.movement_type === 'in').length;
-    const outCount = movements.filter((m) => m.movement_type === 'out').length;
-    const inQty = movements.filter((m) => m.movement_type === 'in').reduce((s, m) => s + m.quantity, 0);
-    const outQty = movements.filter((m) => m.movement_type === 'out').reduce((s, m) => s + m.quantity, 0);
+    let inCount = 0;
+    let outCount = 0;
+    let inQty = 0;
+    let outQty = 0;
+    for (const m of movements) {
+      if (m.movement_type === 'in') {
+        inCount++;
+        inQty += m.quantity;
+      } else {
+        outCount++;
+        outQty += m.quantity;
+      }
+    }
     return { inCount, outCount, inQty, outQty };
   }, [movements]);
 
-  const getStatusLabel = (s: string) => {
-    if (s === 'pending') return 'Onay bekliyor';
-    if (s === 'approved') return 'Onaylandı';
-    return 'Reddedildi';
-  };
+  const renderItem = useCallback(
+    ({ item: m }: { item: MovementRow }) => {
+      const productName = m.product?.name ?? '—';
+      const unit = m.product?.unit ?? 'adet';
+      const isIn = m.movement_type === 'in';
+      const productId = m.product?.id;
+      const statusColor = STATUS_COLOR[m.status] ?? STATUS_COLOR.pending;
 
-  const getStatusColor = (s: string) => {
-    if (s === 'approved') return theme.colors.success;
-    if (s === 'rejected') return theme.colors.error;
-    return '#eab308';
-  };
+      return (
+        <View style={[styles.card, isIn ? styles.cardIn : styles.cardOut]}>
+          <View style={styles.cardTop}>
+            <View style={[styles.typePill, isIn ? styles.typePillIn : styles.typePillOut]}>
+              <Ionicons name={isIn ? 'arrow-down' : 'arrow-up'} size={14} color="#fff" />
+              <Text style={styles.typePillText}>
+                {isIn ? '+' : '-'}
+                {m.quantity} {unit}
+              </Text>
+            </View>
+            <Text style={[styles.statusText, { color: statusColor }]}>{STATUS_LABEL[m.status]}</Text>
+          </View>
+          <Text style={styles.productName} numberOfLines={2}>
+            {productName}
+          </Text>
+          <Text style={styles.dateText}>{formatShortDateTime(m.created_at)}</Text>
+          {m.notes ? (
+            <Text style={styles.notesText} numberOfLines={2}>
+              {m.notes}
+            </Text>
+          ) : null}
+          <View style={styles.cardActions}>
+            {m.has_photo ? (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => openPhoto(m.id)}
+                disabled={loadingPhotoId === m.id}
+              >
+                {loadingPhotoId === m.id ? (
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                ) : (
+                  <>
+                    <Ionicons name="image-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.actionBtnTextPrimary}>Fotoğraf</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
+            {productId ? (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push(`/staff/stock/product/${productId}`)}
+              >
+                <Ionicons name="open-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.actionBtnTextPrimary}>Ürün</Text>
+              </TouchableOpacity>
+            ) : null}
+            {(m.status !== 'approved' || staff?.role === 'admin') && (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => handleDeleteMovement(m)}
+                disabled={deletingId === m.id}
+              >
+                {deletingId === m.id ? (
+                  <ActivityIndicator size="small" color={theme.colors.error} />
+                ) : (
+                  <>
+                    <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
+                    <Text style={styles.actionBtnTextDanger}>Sil</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      );
+    },
+    [deletingId, loadingPhotoId, staff?.role, router, openPhoto, handleDeleteMovement]
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <>
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, styles.statCardIn]}>
+            <Text style={[styles.statValue, { color: theme.colors.success }]}>+{stats.inQty}</Text>
+            <Text style={styles.statLabel}>Eklenen · {stats.inCount} işlem</Text>
+          </View>
+          <View style={[styles.statCard, styles.statCardOut]}>
+            <Text style={[styles.statValue, { color: theme.colors.error }]}>-{stats.outQty}</Text>
+            <Text style={styles.statLabel}>Çıkarılan · {stats.outCount} işlem</Text>
+          </View>
+        </View>
+
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={18} color={theme.colors.textMuted} />
+          <TextInput
+            style={styles.search}
+            placeholder="Ürün ara..."
+            placeholderTextColor={theme.colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 ? (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={12}>
+              <Ionicons name="close-circle" size={18} color={theme.colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <View style={styles.filterRow}>
+          {(
+            [
+              { value: 'all' as FilterType, label: 'Tümü' },
+              { value: 'in' as FilterType, label: 'Eklediğim' },
+              { value: 'out' as FilterType, label: 'Çıkardığım' },
+            ] as const
+          ).map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.filterChip, filter === opt.value && styles.filterChipActive]}
+              onPress={() => setFilter(opt.value)}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.filterChipText, filter === opt.value && styles.filterChipTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={styles.sectionTitle}>Hareketler ({filtered.length})</Text>
+      </>
+    ),
+    [stats, search, filter, filtered.length]
+  );
 
   if (!staff?.id) {
     return (
@@ -154,185 +331,45 @@ export default function StaffMyMovementsScreen() {
     );
   }
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Yükleniyor...</Text>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
-      <View style={styles.statsRow}>
-        <View style={[styles.statCard, styles.statCardIn]}>
-          <Ionicons name="arrow-down-circle" size={28} color={theme.colors.success} />
-          <View style={styles.statTextWrap}>
-            <Text style={styles.statValue}>+{stats.inQty}</Text>
-            <Text style={styles.statLabel}>Eklenen ({stats.inCount})</Text>
-          </View>
-        </View>
-        <View style={[styles.statCard, styles.statCardOut]}>
-          <Ionicons name="arrow-up-circle" size={28} color={theme.colors.error} />
-          <View style={styles.statTextWrap}>
-            <Text style={styles.statValue}>-{stats.outQty}</Text>
-            <Text style={styles.statLabel}>Çıkarılan ({stats.outCount})</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={18} color={theme.colors.textMuted} />
-        <TextInput
-          style={styles.search}
-          placeholder="Ürün ara..."
-          placeholderTextColor={theme.colors.textMuted}
-          value={search}
-          onChangeText={setSearch}
-        />
-        {search.length > 0 ? (
-          <TouchableOpacity onPress={() => setSearch('')} hitSlop={12}>
-            <Ionicons name="close-circle" size={18} color={theme.colors.textMuted} />
-          </TouchableOpacity>
-        ) : null}
-      </View>
-
-      <View style={styles.filterRow}>
-        {[
-          { value: 'all' as FilterType, label: 'Tümü', icon: 'list' as const },
-          { value: 'in' as FilterType, label: 'Eklediğim', icon: 'download' as const },
-          { value: 'out' as FilterType, label: 'Çıkardığım', icon: 'log-out' as const },
-        ].map((opt) => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[styles.filterChip, filter === opt.value && styles.filterChipActive]}
-            onPress={() => setFilter(opt.value)}
-            activeOpacity={0.8}
-          >
-            <Ionicons
-              name={`${opt.icon}-outline`}
-              size={16}
-              color={filter === opt.value ? '#fff' : theme.colors.textSecondary}
-            />
-            <Text style={[styles.filterChipText, filter === opt.value && styles.filterChipTextActive]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          initialLoading ? (
+            <View style={styles.listLoading}>
+              <ActivityIndicator size="large" color={theme.colors.primary} />
+              <Text style={styles.loadingText}>Hareketler yükleniyor…</Text>
+            </View>
+          ) : (
+            <View style={styles.emptyCard}>
+              <Ionicons name="cube-outline" size={40} color={theme.colors.textMuted} />
+              <Text style={styles.emptyText}>
+                {movements.length === 0
+                  ? 'Henüz stok girişi veya çıkışı yapmadınız.'
+                  : 'Arama veya filtreye uygun hareket yok.'}
+              </Text>
+              {movements.length === 0 && (
+                <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push('/staff/stock/entry')}>
+                  <Text style={styles.emptyBtnText}>Stok girişi yap</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )
+        }
+        contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
         }
         showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.sectionTitle}>📋 Hareketlerim ({filtered.length})</Text>
-
-        {filtered.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="cube-outline" size={48} color={theme.colors.textMuted} />
-            <Text style={styles.emptyText}>
-              {movements.length === 0
-                ? 'Henüz stok girişi veya çıkışı yapmadınız.'
-                : 'Arama veya filtreye uygun hareket yok.'}
-            </Text>
-            {movements.length === 0 && (
-              <TouchableOpacity
-                style={styles.emptyBtn}
-                onPress={() => router.push('/staff/stock/entry')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.emptyBtnText}>Stok Girişi Yap</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          filtered.map((m) => {
-            const productName = (m.product as { name?: string })?.name ?? '—';
-            const unit = (m.product as { unit?: string })?.unit ?? 'adet';
-            const isIn = m.movement_type === 'in';
-            return (
-              <View key={m.id} style={[styles.card, isIn ? styles.cardIn : styles.cardOut]}>
-                <View style={styles.cardMain}>
-                  <View style={styles.cardContent}>
-                    <View style={styles.cardHeader}>
-                      <View style={[styles.typeBadge, isIn ? styles.typeBadgeIn : styles.typeBadgeOut]}>
-                        <Ionicons name={isIn ? 'download' : 'log-out'} size={14} color="#fff" />
-                        <Text style={styles.typeBadgeText}>
-                          {isIn ? `+${m.quantity}` : `-${m.quantity}`} {unit}
-                        </Text>
-                      </View>
-                      <View style={[styles.statusBadge, { backgroundColor: getStatusColor(m.status) + '22' }]}>
-                        <Text style={[styles.statusText, { color: getStatusColor(m.status) }]}>
-                          {getStatusLabel(m.status)}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.productName} numberOfLines={2}>
-                      {productName}
-                    </Text>
-                    <Text style={styles.dateText}>{formatShortDateTime(m.created_at)}</Text>
-                    {m.notes ? (
-                      <Text style={styles.notesText} numberOfLines={2}>
-                        {m.notes}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <View style={styles.photoWrap}>
-                    {m.photo_proof ? (
-                      <TouchableOpacity
-                        style={styles.photoTouch}
-                        onPress={() => setPreviewUri(m.photo_proof)}
-                        activeOpacity={0.9}
-                      >
-                        <CachedImage uri={m.photo_proof} style={styles.photo} contentFit="cover" />
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <Ionicons name="image-outline" size={28} color={theme.colors.textMuted} />
-                      </View>
-                    )}
-                  </View>
-                </View>
-                <View style={styles.cardActions}>
-                  {(m.product as { id?: string })?.id && (
-                    <TouchableOpacity
-                      style={styles.detailBtn}
-                      onPress={() => router.push(`/staff/stock/product/${(m.product as { id: string }).id}`)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="open-outline" size={16} color={theme.colors.primary} />
-                      <Text style={styles.detailBtnText}>Ürün detayı</Text>
-                    </TouchableOpacity>
-                  )}
-                  {(m.status !== 'approved' || staff?.role === 'admin') && (
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => handleDeleteMovement(m)}
-                      disabled={deletingId === m.id}
-                      activeOpacity={0.7}
-                    >
-                      {deletingId === m.id ? (
-                        <ActivityIndicator size="small" color={theme.colors.error} />
-                      ) : (
-                        <>
-                          <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
-                          <Text style={styles.deleteBtnText}>Sil</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
-
+        initialNumToRender={12}
+        maxToRenderPerBatch={16}
+        windowSize={8}
+        removeClippedSubviews
+      />
       <ImagePreviewModal visible={!!previewUri} uri={previewUri} onClose={() => setPreviewUri(null)} />
     </View>
   );
@@ -341,149 +378,93 @@ export default function StaffMyMovementsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  loadingText: { marginTop: 12, fontSize: 15, color: theme.colors.textSecondary },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 16,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.borderLight,
-  },
+  listContent: { padding: 16, paddingBottom: 32 },
+  listLoading: { alignItems: 'center', paddingVertical: 40, gap: 12 },
+  loadingText: { fontSize: 14, color: theme.colors.textSecondary },
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   statCard: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: theme.radius.lg,
+    padding: 12,
+    borderRadius: 12,
     borderWidth: 1,
+    backgroundColor: theme.colors.surface,
   },
-  statCardIn: { borderColor: theme.colors.success + '44', backgroundColor: theme.colors.success + '0c' },
-  statCardOut: { borderColor: theme.colors.error + '44', backgroundColor: theme.colors.error + '0c' },
-  statTextWrap: {},
-  statValue: { fontSize: 18, fontWeight: '800', color: theme.colors.text },
-  statLabel: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
+  statCardIn: { borderColor: theme.colors.success + '55' },
+  statCardOut: { borderColor: theme.colors.error + '55' },
+  statValue: { fontSize: 20, fontWeight: '800' },
+  statLabel: { fontSize: 11, fontWeight: '600', color: theme.colors.textMuted, marginTop: 4 },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.borderLight,
-  },
-  search: {
-    flex: 1,
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderRadius: theme.radius.md,
-    paddingVertical: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    fontSize: 15,
-    color: theme.colors.text,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 8,
-    padding: 16,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.borderLight,
-  },
-  filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.borderLight,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    marginBottom: 10,
   },
-  filterChipActive: { backgroundColor: theme.colors.primary },
-  filterChipText: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary },
+  search: { flex: 1, fontSize: 15, color: theme.colors.text },
+  filterRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  filterChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  filterChipText: { fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary },
   filterChipTextActive: { color: '#fff' },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 100 },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: theme.colors.text, marginBottom: 14 },
+  sectionTitle: { fontSize: 14, fontWeight: '800', color: theme.colors.text, marginBottom: 10 },
   emptyCard: {
     alignItems: 'center',
-    padding: 32,
+    padding: 28,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
   },
-  emptyText: { fontSize: 14, color: theme.colors.textMuted, textAlign: 'center', marginTop: 12 },
+  emptyText: { fontSize: 14, color: theme.colors.textMuted, textAlign: 'center', marginTop: 10 },
   emptyBtn: {
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     backgroundColor: theme.colors.primary,
     borderRadius: theme.radius.md,
   },
-  emptyBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  emptyBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   card: {
     backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderLeftWidth: 4,
+    borderLeftWidth: 3,
+    borderColor: theme.colors.borderLight,
   },
-  cardIn: { borderColor: theme.colors.borderLight, borderLeftColor: theme.colors.success },
-  cardOut: { borderColor: theme.colors.borderLight, borderLeftColor: theme.colors.error },
-  cardMain: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
-  cardContent: { flex: 1, minWidth: 0 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  typeBadge: {
+  cardIn: { borderLeftColor: theme.colors.success },
+  cardOut: { borderLeftColor: theme.colors.error },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 },
+  typePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: theme.radius.sm,
-  },
-  typeBadgeIn: { backgroundColor: theme.colors.success },
-  typeBadgeOut: { backgroundColor: theme.colors.error },
-  typeBadgeText: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: theme.radius.sm,
+    borderRadius: 8,
   },
+  typePillIn: { backgroundColor: theme.colors.success },
+  typePillOut: { backgroundColor: theme.colors.error },
+  typePillText: { fontSize: 12, fontWeight: '800', color: '#fff' },
   statusText: { fontSize: 11, fontWeight: '700' },
-  productName: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
+  productName: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
   dateText: { fontSize: 12, color: theme.colors.textMuted, marginTop: 4 },
-  notesText: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 6, fontStyle: 'italic' },
-  photoWrap: { width: 80, height: 80, borderRadius: theme.radius.md, overflow: 'hidden', backgroundColor: theme.colors.borderLight },
-  photoTouch: { width: '100%', height: '100%' },
-  photo: { width: '100%', height: '100%' },
-  photoPlaceholder: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.borderLight,
-  },
-  detailBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  detailBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.primary },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  deleteBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.error },
+  notesText: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 6, fontStyle: 'italic' },
+  cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 10, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.borderLight },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  actionBtnTextPrimary: { fontSize: 13, fontWeight: '600', color: theme.colors.primary },
+  actionBtnTextDanger: { fontSize: 13, fontWeight: '600', color: theme.colors.error },
 });

@@ -14,7 +14,8 @@ import {
   Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation, usePathname } from 'expo-router';
+import { navigateStaffBack } from '@/lib/staffStackBack';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -61,8 +62,14 @@ const MRZ_SOUND_PREF_KEY = 'kbs_mrz_scan_sound_enabled';
 
 export default function KbsScanScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+
+  const goBack = useCallback(() => {
+    navigateStaffBack(router, navigation, pathname);
+  }, [router, navigation, pathname]);
 
   const [busy, setBusy] = useState(false);
   const [visionUi, setVisionUi] = useState<MrzVisionUiState>({
@@ -566,7 +573,7 @@ export default function KbsScanScreen() {
         <>
         <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={goBack}
             style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.75 }]}
             hitSlop={12}
             accessibilityRole="button"

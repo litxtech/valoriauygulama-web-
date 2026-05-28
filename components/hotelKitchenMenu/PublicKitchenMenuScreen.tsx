@@ -75,8 +75,9 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [updateToast, setUpdateToast] = useState(false);
 
-  const gridMinWidth = width >= 1100 ? 300 : width >= 700 ? 280 : Math.min(width - 40, 400);
-  const gridGap = 16;
+  const webColumns = width >= 1080 ? 2 : 1;
+  const webColumnGap = 14;
+  const webContentMax = webColumns === 2 ? 920 : 640;
 
   const applyBundle = useCallback(
     (bundle: { org: PublicKitchenMenuOrg; items: HotelKitchenMenuItemWithImages[] }) => {
@@ -204,14 +205,25 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
 
   const header = (
     <LinearGradient colors={[...menuUi.heroGradient]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
-      <View style={[styles.heroInner, { paddingTop: insets.top + (isWeb ? 20 : 12) }]}>
+      <View
+        style={[
+          styles.heroInner,
+          { paddingTop: insets.top + (isWeb ? 24 : 12) },
+          isWeb && { maxWidth: webContentMax + 80, alignSelf: 'center', width: '100%' },
+        ]}
+      >
         <View style={styles.heroBrand}>
           <View style={styles.heroIcon}>
-            <Ionicons name="restaurant" size={22} color={menuUi.accentLight} />
+            <Ionicons name="restaurant" size={isWeb ? 20 : 22} color={menuUi.accentLight} />
           </View>
           <View style={styles.heroTexts}>
-            <Text style={styles.heroHotel}>{org.name}</Text>
+            <Text style={[styles.heroHotel, isWeb && styles.heroHotelWeb]}>{org.name}</Text>
             <Text style={styles.heroTagline}>{t('hotelKitchenMenuHeroTitle')}</Text>
+            {isWeb && items.length > 0 ? (
+              <Text style={styles.heroMeta}>
+                {t('hotelKitchenMenuResultCount', { count: items.length })}
+              </Text>
+            ) : null}
           </View>
         </View>
 
@@ -235,7 +247,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   );
 
   const filters = (
-    <View style={styles.filtersPanel}>
+    <View style={[styles.filtersPanel, isWeb && styles.filtersPanelWeb]}>
       <View style={styles.sectionRow}>
         <TouchableOpacity
           style={[styles.sectionChip, section === 'all' && styles.sectionChipOn]}
@@ -371,7 +383,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         stickyHeaderIndices={isWeb ? undefined : undefined}
       >
         {header}
-        <View style={[styles.body, isWeb && styles.bodyWeb]}>
+        <View style={[styles.body, isWeb && styles.bodyWeb, isWeb && { maxWidth: webContentMax + 40 }]}>
           {filters}
 
           {filtered.length === 0 ? (
@@ -394,8 +406,8 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
                 ) : null}
                 <View
                   style={[
-                    isWeb ? styles.webGrid : styles.nativeList,
-                    isWeb && { gap: gridGap },
+                    isWeb ? styles.webMenuGrid : styles.nativeList,
+                    isWeb && webColumns === 2 && { gap: webColumnGap },
                   ]}
                 >
                   {grp.items.map((item) => (
@@ -403,18 +415,15 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
                       key={item.id}
                       style={
                         isWeb
-                          ? {
-                              flexGrow: 1,
-                              flexBasis: gridMinWidth,
-                              maxWidth: '100%',
-                              minWidth: Math.min(gridMinWidth, width - 40),
-                            }
+                          ? webColumns === 2
+                            ? styles.webMenuCell2
+                            : styles.webMenuCell1
                           : styles.nativeListItem
                       }
                     >
                       <PublicKitchenMenuDishCard
                         item={item}
-                        layout={isWeb ? 'grid' : 'list'}
+                        layout={isWeb ? 'compact' : 'list'}
                         onPress={() => openImage(item)}
                         onImagePress={() => openImage(item)}
                       />
@@ -467,7 +476,9 @@ const styles = StyleSheet.create({
   },
   heroTexts: { flex: 1, minWidth: 0 },
   heroHotel: { fontSize: 26, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
+  heroHotelWeb: { fontSize: 22, letterSpacing: -0.3 },
   heroTagline: { fontSize: 14, color: 'rgba(255,255,255,0.75)', marginTop: 4, fontWeight: '600' },
+  heroMeta: { fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 6, fontWeight: '600' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -489,7 +500,6 @@ const styles = StyleSheet.create({
   },
   body: { paddingHorizontal: 16, paddingTop: 4 },
   bodyWeb: {
-    maxWidth: 1200,
     alignSelf: 'center',
     width: '100%',
     paddingHorizontal: 20,
@@ -503,6 +513,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: menuUi.border,
     ...menuUi.shadowSm,
+  },
+  filtersPanelWeb: {
+    marginTop: -16,
+    marginBottom: 16,
+    borderRadius: 18,
+    padding: 16,
+    ...(Platform.OS === 'web'
+      ? ({
+          position: 'sticky',
+          top: 12,
+          zIndex: 20,
+          backdropFilter: 'blur(10px)',
+          backgroundColor: 'rgba(255,255,255,0.94)',
+        } as object)
+      : {}),
   },
   sectionRow: { flexDirection: 'row', gap: 10 },
   sectionChip: {
@@ -596,8 +621,14 @@ const styles = StyleSheet.create({
   },
   resultCount: { fontSize: 13, color: '#64748b', fontWeight: '600', flex: 1 },
   clearFilters: { fontSize: 13, fontWeight: '700', color: menuUi.accent },
-  categoryBlock: { marginTop: 20 },
-  categoryHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
+  categoryBlock: { marginTop: Platform.OS === 'web' ? 8 : 20 },
+  categoryHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: Platform.OS === 'web' ? 10 : 14,
+    marginTop: Platform.OS === 'web' ? 12 : 0,
+  },
   categoryDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: menuUi.accent },
   categoryTitle: {
     fontSize: 14,
@@ -607,10 +638,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   categoryLine: { flex: 1, height: 1, backgroundColor: menuUi.border },
-  webGrid: {
+  webMenuGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'stretch',
+    width: '100%',
+  },
+  webMenuCell1: { width: '100%' },
+  webMenuCell2: {
+    width: '48.5%',
+    flexGrow: 0,
+    flexShrink: 0,
   },
   nativeList: { gap: 0 },
   nativeListItem: { width: '100%' },

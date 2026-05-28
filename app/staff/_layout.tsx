@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, BackHandler, InteractionManager } from 'react-native';
 import { useRouter, Stack, useNavigation, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
@@ -15,6 +15,7 @@ import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
 import {
   StaffStackBackButton,
   resolveStaffBackFallback,
+  staffStackCanPop,
   staffStackGestureForNavigation,
   staffStackScrollSafeGestureOptions,
 } from '@/lib/staffStackBack';
@@ -84,11 +85,25 @@ export default function StaffLayout() {
   useStaffPresence(isBanned || isDeleted ? undefined : staff?.id);
 
   useEffect(() => {
-    if (staff && canStaffUseMrzScan(staff)) void preloadMrzVisionScanner();
+    if (!staff || !canStaffUseMrzScan(staff)) return;
+    if (Platform.OS === 'android') {
+      const task = InteractionManager.runAfterInteractions(() => {
+        void preloadMrzVisionScanner();
+      });
+      return () => task.cancel();
+    }
+    void preloadMrzVisionScanner();
   }, [staff?.id]);
 
   useEffect(() => {
-    if (staff?.organization_id) prefetchStaffMealMenuBrowse(staff.organization_id);
+    if (!staff?.organization_id) return;
+    if (Platform.OS === 'android') {
+      const task = InteractionManager.runAfterInteractions(() => {
+        setTimeout(() => prefetchStaffMealMenuBrowse(staff.organization_id!), 2000);
+      });
+      return () => task.cancel();
+    }
+    prefetchStaffMealMenuBrowse(staff.organization_id);
   }, [staff?.organization_id]);
 
   // Root _layout'ta initAuthListener zaten loadSession çağırıyor; burada tekrar çağırmak
@@ -140,8 +155,8 @@ export default function StaffLayout() {
   }, [staff?.id]);
 
   const handleStaffSubScreenBack = useCallback(() => {
-    if (navigation.canGoBack()) {
-      router.back();
+    if (staffStackCanPop(navigation)) {
+      navigation.goBack();
       return;
     }
     router.replace(resolveStaffBackFallback(pathname) as never);
@@ -231,6 +246,7 @@ export default function StaffLayout() {
         }}
       />
       <Stack.Screen name="stock" options={{ headerShown: false }} />
+      <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="demirbaslar" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ title: t('screenChat'), headerBackTitle: t('back') }} />
       <Stack.Screen name="new-group" options={{ title: t('screenNewGroup'), headerBackTitle: t('back') }} />
@@ -245,6 +261,8 @@ export default function StaffLayout() {
       <Stack.Screen name="profile/edit" options={{ title: t('screenEditProfile'), headerBackTitle: t('back') }} />
       <Stack.Screen name="profile/blocked-users" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="profile/notifications" options={{ headerBackTitle: t('back') }} />
+      <Stack.Screen name="operations/index" options={{ title: 'Operasyon görevleri', headerBackTitle: t('back') }} />
+      <Stack.Screen name="smart-ops/[id]" options={{ title: 'Görev teyidi', headerBackTitle: t('back') }} />
       <Stack.Screen
         name="profile/app-links"
         options={{ title: t('screenAppsAndWeb'), headerBackTitle: t('back') }}

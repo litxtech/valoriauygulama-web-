@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Animated,
   View,
@@ -12,7 +12,7 @@ import {
   Alert,
   BackHandler,
   TextInput,
-  type ViewStyle,
+  InteractionManager,
 } from 'react-native';
 import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,6 +98,8 @@ const SECTIONS: Section[] = [
       { href: '/admin/feed', icon: 'images-outline', label: 'Gönderiler' },
       { href: '/admin/local-area-guide', icon: 'map-outline', label: 'Gezilecek yerler (bölge rehberi)' },
       { href: '/admin/notifications/bulk', icon: 'megaphone-outline', label: 'Toplu duyuru' },
+      { href: '/admin/smart-ops', icon: 'pulse-outline', label: 'Operasyon merkezi' },
+      { href: '/admin/notifications/templates', icon: 'notifications-outline', label: 'Bildirim şablonları' },
       { href: '/admin/emergency-locations', icon: 'warning-outline', label: 'Acil lokasyonlari yonet' },
       { href: '/admin/reports', icon: 'flag-outline', label: 'Şikayetler (paylaşım bildirimleri)', badge: 0 },
       { href: '/admin/complaints', icon: 'chatbox-ellipses-outline', label: 'Misafir Şikayet/Oneri', badge: 0 },
@@ -112,6 +114,8 @@ const SECTIONS: Section[] = [
       { href: '/admin/stock', icon: 'cube-outline', label: 'Stok yönetimi' },
       { href: '/admin/stock/all', icon: 'layers-outline', label: 'Tüm stoklar' },
       { href: '/admin/stock/approvals', icon: 'checkmark-done-outline', label: 'Onay bekleyenler', badge: 0 },
+      { href: '/admin/kitchen-ops', icon: 'restaurant-outline', label: 'Mutfak operasyon yönetimi' },
+      { href: '/admin/kitchen-ops/reception', icon: 'checkmark-done-outline', label: 'Reception mutfak muhasebe' },
       { href: '/admin/accounting', icon: 'calculator-outline', label: 'Muhasebe (gelir / gider)', badge: 0 },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
       { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
@@ -182,8 +186,19 @@ function adminSectionsForUi() {
 }
 
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+const AnimatedPressable = Animated.createAnimatedComponent(TouchableOpacity);
 
-function AdminMenuButton({
+function normalizeSearchText(text: string) {
+  return text
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const AdminMenuButton = memo(function AdminMenuButton({
   item,
   badge,
   isLast,
@@ -300,7 +315,7 @@ function AdminMenuButton({
       </View>
     </AnimatedTouchableOpacity>
   );
-}
+});
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -339,24 +354,28 @@ export default function AdminDashboard() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const searchPulse = useRef(new Animated.Value(1)).current;
+  const loadRunIdRef = useRef(0);
+  const isAndroidDebug = __DEV__ && Platform.OS === 'android';
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (!isAndroidDebug) return;
     log.info('AdminDashboard', 'mounted', { width });
     return () => {
       log.info('AdminDashboard', 'unmounted');
     };
-  }, []);
+  }, [isAndroidDebug, width]);
 
   const load = useCallback(async () => {
     if (!staff?.id) return;
     if (loadInFlightRef.current) {
-      if (Platform.OS === 'android') log.info('AdminDashboard', 'load skipped (in flight)');
+      if (isAndroidDebug) log.info('AdminDashboard', 'load skipped (in flight)');
       return;
     }
     loadInFlightRef.current = true;
     const startedAt = Date.now();
-    if (Platform.OS === 'android') log.info('AdminDashboard', 'load start', { staffId: staff.id });
+    const loadRunId = ++loadRunIdRef.current;
+    if (isAndroidDebug) log.info('AdminDashboard', 'load start', { staffId: staff.id });
     try {
       const canUseAll = Boolean(staff?.app_permissions?.super_admin || staff?.role === 'admin');
       const orgId = canUseAll ? selectedOrganizationId : staff.organization_id;
@@ -394,7 +413,6 @@ export default function AdminDashboard() {
         reportsPendingRes,
         complaintsPendingRes,
         acceptancesUnassignedRes,
-        conversationsList,
       ] = await Promise.all([
         roomsQuery,
         roomsOccupiedQuery,
@@ -404,15 +422,13 @@ export default function AdminDashboard() {
         staffPendingQuery,
         expensesPendingQuery,
         supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('staff_id', staff.id).is('read_at', null),
-        supabase.from('feed_posts').select('*', { count: 'exact', head: true }),
+        supabase.from('feed_posts').select('id', { count: 'exact', head: true }),
         supabase.from('feed_post_reports').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         complaintsPendingQuery,
         acceptancesUnassignedQuery,
-        staffListConversations(staff.id),
       ]);
 
-      const messagesUnread = (conversationsList ?? []).reduce((s, c) => s + (c.unread_count ?? 0), 0);
-      setStats({
+      setStats((prev) => ({
         roomsTotal: roomsRes.count ?? 0,
         roomsOccupied: roomsOccupiedRes.count ?? 0,
         guestsActive: guestsRes.count ?? 0,
@@ -421,25 +437,37 @@ export default function AdminDashboard() {
         staffPending: staffPendingRes.count ?? 0,
         expensesPending: expensesPendingRes.count ?? 0,
         unreadNotifs: unreadRes.count ?? 0,
-        messagesUnread,
+        messagesUnread: prev.messagesUnread,
         feedTotal: feedCountRes.count ?? 0,
         reportsPending: reportsPendingRes.count ?? 0,
         complaintsPending: complaintsPendingRes.count ?? 0,
         acceptancesUnassigned: acceptancesUnassignedRes.count ?? 0,
-      });
-      if (Platform.OS === 'android') {
-        log.info('AdminDashboard', 'load success', { elapsedMs: Date.now() - startedAt, messagesUnread });
+      }));
+
+      // Sohbet unread hesabı bazı cihazlarda yavaş dönebiliyor; paneli bloklamadan sonra güncelle.
+      void staffListConversations(staff.id)
+        .then((conversationsList) => {
+          if (loadRunId !== loadRunIdRef.current) return;
+          const messagesUnread = (conversationsList ?? []).reduce((s, c) => s + (c.unread_count ?? 0), 0);
+          setStats((prev) => ({ ...prev, messagesUnread }));
+        })
+        .catch(() => {});
+      if (isAndroidDebug) {
+        log.info('AdminDashboard', 'load success', { elapsedMs: Date.now() - startedAt });
       }
     } catch (e) {
       log.error('AdminDashboard', 'load failed', e);
     } finally {
       loadInFlightRef.current = false;
     }
-  }, [selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.id, staff?.organization_id, staff?.role]);
+  }, [isAndroidDebug, selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.id, staff?.organization_id, staff?.role]);
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      const task = InteractionManager.runAfterInteractions(() => {
+        load();
+      });
+      return () => task.cancel();
     }, [load])
   );
 
@@ -461,7 +489,7 @@ export default function AdminDashboard() {
   }, [load]);
 
   const contentWidth = width - H_PAD * 2;
-  const normalizedQuery = searchQuery.trim().toLocaleLowerCase('tr-TR');
+  const normalizedQuery = normalizeSearchText(searchQuery);
 
   const { getEffectiveBadge, setDismissed } = useAdminBadgeDismissedStore();
 
@@ -475,7 +503,6 @@ export default function AdminDashboard() {
     return null;
   };
 
-  /** Onay merkezi listesiyle aynı kaynaklar (misafir şikayetleri ayrı menüde). */
   const totalApprovals = useMemo(
     () =>
       stats.staffPending +
@@ -486,12 +513,10 @@ export default function AdminDashboard() {
     [stats]
   );
 
-  const approvalsHubBadge = getEffectiveBadge('approvalsTotal', totalApprovals);
-
   const lastKnownApprovalsTotalRef = useRef<number | null>(null);
   useEffect(() => {
     const prev = lastKnownApprovalsTotalRef.current;
-    if (prev !== null && totalApprovals > prev) {
+    if (prev !== null && totalApprovals > prev && Platform.OS !== 'android') {
       Alert.alert(
         'Yeni onay bekleyen işlem',
         `Bekleyen toplam kayıt: ${totalApprovals} (önceki: ${prev}). Birleşik listeden inceleyebilirsiniz.`,
@@ -519,7 +544,7 @@ export default function AdminDashboard() {
   };
 
   const handleTilePress = (item: SectionItem) => {
-    if (Platform.OS === 'android') {
+    if (isAndroidDebug) {
       log.info('AdminDashboard', 'tile press', { href: item.href, label: item.label });
     }
     const key = getBadgeKey(item.href);
@@ -531,12 +556,17 @@ export default function AdminDashboard() {
   };
 
   const searchItems = useMemo(() => {
-    const unique = new Map<string, SectionItem & { sectionTitle: string; searchText: string }>();
+    const unique = new Map<string, SectionItem & { sectionTitle: string; searchText: string; quickTokens: string[] }>();
     const addItems = (items: SectionItem[], sectionTitle: string) => {
       items.forEach((item) => {
         if (unique.has(item.href)) return;
-        const searchText = `${item.label} ${sectionTitle} ${item.href}`.toLocaleLowerCase('tr-TR');
-        unique.set(item.href, { ...item, sectionTitle, searchText });
+        const quickTokens = [
+          ...item.label.split(' '),
+          ...sectionTitle.split(' '),
+          item.href.replaceAll('/', ' '),
+        ].map(normalizeSearchText).filter(Boolean);
+        const searchText = normalizeSearchText(`${item.label} ${sectionTitle} ${item.href}`);
+        unique.set(item.href, { ...item, sectionTitle, searchText, quickTokens });
       });
     };
     addItems(STAFF_QUICK_ACTIONS, 'Hızlı Personel Erişimi');
@@ -546,16 +576,61 @@ export default function AdminDashboard() {
 
   const searchResults = useMemo(() => {
     if (!normalizedQuery) return [];
+    const queryTokens = normalizedQuery.split(' ').filter(Boolean);
     return searchItems
-      .filter((item) => item.searchText.includes(normalizedQuery))
+      .map((item) => {
+        const startsWith = item.searchText.startsWith(normalizedQuery) ? 1 : 0;
+        const includes = item.searchText.includes(normalizedQuery) ? 1 : 0;
+        const tokenHits = queryTokens.filter((token) => item.quickTokens.some((s) => s.includes(token))).length;
+        const score = startsWith * 100 + includes * 50 + tokenHits * 10;
+        return { item, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item)
       .slice(0, 8);
   }, [normalizedQuery, searchItems]);
+
+  useEffect(() => {
+    if (!normalizedQuery) {
+      searchPulse.stopAnimation();
+      searchPulse.setValue(1);
+      return;
+    }
+    if (Platform.OS === 'android') {
+      // Android'de sürekli pulse animasyonu eski cihazlarda ekstra GPU/JS yükü oluşturabiliyor.
+      return;
+    }
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(searchPulse, {
+          toValue: 1.06,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+        Animated.timing(searchPulse, {
+          toValue: 1,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [normalizedQuery, searchPulse]);
+
+  const handleSearchPress = () => {
+    if (!normalizedQuery || searchResults.length === 0) return;
+    const first = searchResults[0];
+    setSearchQuery('');
+    handleTilePress(first);
+  };
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
-      removeClippedSubviews={false}
+      removeClippedSubviews={Platform.OS === 'android'}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />
       }
@@ -575,7 +650,23 @@ export default function AdminDashboard() {
             placeholder="Panelde ara: personel, maaş, şikayet, kamera..."
             placeholderTextColor={adminTheme.colors.textMuted}
             returnKeyType="search"
+            onSubmitEditing={handleSearchPress}
           />
+          <AnimatedPressable
+            style={[
+              styles.searchButton,
+              normalizedQuery ? styles.searchButtonActive : null,
+              normalizedQuery ? { transform: [{ scale: searchPulse }] } : null,
+            ]}
+            onPress={handleSearchPress}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name="arrow-forward"
+              size={14}
+              color={normalizedQuery ? '#ffffff' : adminTheme.colors.textMuted}
+            />
+          </AnimatedPressable>
           {searchQuery ? (
             <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
@@ -611,38 +702,6 @@ export default function AdminDashboard() {
           </View>
         ) : null}
       </View>
-      <TouchableOpacity
-        style={[styles.approvalsHubCard, { width: contentWidth }]}
-        activeOpacity={0.88}
-        onPress={() => {
-          setDismissed('approvalsTotal', totalApprovals);
-          router.push('/admin/approvals' as never);
-        }}
-      >
-        <View style={styles.approvalsHubIconWrap}>
-          <Ionicons name="shield-checkmark-outline" size={26} color="#0f766e" />
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.approvalsHubKicker}>Yönetim</Text>
-          <Text style={styles.approvalsHubTitle}>Onay merkezi</Text>
-          <Text style={styles.approvalsHubSub} numberOfLines={2}>
-            {totalApprovals > 0
-              ? 'Personel başvurusu, stok, harcama, paylaşım bildirimi ve sözleşme ataması — tek listede inceleyin.'
-              : 'Şu an bekleyen onay yok. Yeni başvuru veya hareket geldiğinde burada listelenir.'}
-          </Text>
-          <Text style={styles.approvalsHubMeta}>
-            {totalApprovals > 0
-              ? `Bekleyen: ${totalApprovals} kayıt · Detay için dokunun`
-              : 'Bekleyen kayıt yok'}
-          </Text>
-        </View>
-        {approvalsHubBadge > 0 ? (
-          <View style={styles.approvalsHubBadge}>
-            <Text style={styles.approvalsHubBadgeText}>{approvalsHubBadge > 99 ? '99+' : approvalsHubBadge}</Text>
-          </View>
-        ) : null}
-        <Ionicons name="chevron-forward" size={22} color={adminTheme.colors.textMuted} />
-      </TouchableOpacity>
 
       <View style={styles.section}>
         <AdminCard padded={false} elevated>
@@ -764,6 +823,17 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.text,
     paddingVertical: 10,
   },
+  searchButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+  },
+  searchButtonActive: {
+    backgroundColor: adminTheme.colors.accent,
+  },
   searchSuggestions: {
     marginTop: 8,
     backgroundColor: '#fff',
@@ -808,47 +878,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 14,
   },
-  approvalsHubCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#f8fffd',
-    borderRadius: adminTheme.radius.lg,
-    paddingVertical: 16,
-    paddingHorizontal: 15,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#bae6dd',
-    ...((Platform.OS === 'ios' ? adminTheme.shadow.md : { elevation: 4 }) as ViewStyle),
-  },
-  approvalsHubIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: '#ccfbf1',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  approvalsHubKicker: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    color: '#0f766e',
-    textTransform: 'uppercase',
-  },
-  approvalsHubTitle: { fontSize: 16, fontWeight: '900', color: adminTheme.colors.text },
-  approvalsHubSub: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textSecondary, marginTop: 4, lineHeight: 17 },
-  approvalsHubMeta: { fontSize: 12, fontWeight: '700', color: '#0f766e', marginTop: 8 },
-  approvalsHubBadge: {
-    minWidth: 26,
-    height: 26,
-    borderRadius: 13,
-    paddingHorizontal: 7,
-    backgroundColor: adminTheme.colors.error,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  approvalsHubBadgeText: { fontSize: 12, fontWeight: '900', color: '#fff' },
   section: {
     marginBottom: 16,
   },

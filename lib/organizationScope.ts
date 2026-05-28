@@ -24,6 +24,32 @@ export function resolveStaffOrganizationScope(opts: {
   return resolveOrganizationScopeId(raw);
 }
 
+/** Admin liste ekranları: seçili işletme → kendi işletmesi → yedek işletme sırasıyla org id çözümler. */
+export function resolveAdminListOrganizationId(opts: {
+  canUseAll: boolean;
+  selectedOrganizationId: string | 'all';
+  ownOrganizationId?: string | null;
+  fallbackOrganizationId?: string | null;
+}): string | null {
+  if (opts.canUseAll) {
+    const fromPicker = resolveOrganizationScopeId(opts.selectedOrganizationId);
+    if (fromPicker) return fromPicker;
+    if (opts.selectedOrganizationId === 'all') return null;
+    const own = resolveOrganizationScopeId(opts.ownOrganizationId);
+    if (own) return own;
+    return resolveOrganizationScopeId(opts.fallbackOrganizationId);
+  }
+  return resolveOrganizationScopeId(opts.ownOrganizationId);
+}
+
+export function shouldApplyOrganizationFilter(
+  canUseAll: boolean,
+  selectedOrganizationId: string | 'all'
+): boolean {
+  if (!canUseAll) return true;
+  return selectedOrganizationId !== 'all';
+}
+
 export function filterValidUuids(values: Array<string | null | undefined>): string[] {
   return values.filter(isValidUuid);
 }

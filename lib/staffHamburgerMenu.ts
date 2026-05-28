@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { canSeeBreakfastModule } from '@/lib/breakfastConfirm';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
-import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import {
   canAccessDocumentManagement,
   canAccessIncidentReports,
@@ -11,6 +11,9 @@ import {
   canStaffCreateAssignments,
   canManageStaffMealMenu,
   canManageHotelKitchenMenu,
+  canAccessKitchenOps,
+  canAccessKitchenReceptionAccounting,
+  isKitchenStaffMember,
   hasTechnicalAssetsStaffAccess,
   isGorevAtaOnlyUser,
   type StaffPermissionSlice,
@@ -32,7 +35,7 @@ export type StaffHamburgerMenuItem = {
   accent: string;
 };
 
-export type StaffHamburgerMenuSectionId = 'nav' | 'staff' | 'hotel' | 'ops' | 'admin';
+export type StaffHamburgerMenuSectionId = 'kitchen' | 'nav' | 'staff' | 'hotel' | 'ops' | 'admin';
 
 export type StaffHamburgerMenuSection = {
   id: StaffHamburgerMenuSectionId;
@@ -58,6 +61,7 @@ const ACCENTS: Record<string, string> = {
   transfer: '#0f766e',
   dining: '#b45309',
   stock: '#16a34a',
+  kitchen_ops: '#ea580c',
   profile: '#6366f1',
   kbs: '#0f766e',
   tech: '#b8860b',
@@ -97,6 +101,7 @@ type MenuBuilder = {
 function createBuilder(): { push: MenuBuilder['push']; sections: Record<StaffHamburgerMenuSectionId, StaffHamburgerMenuItem[]> } {
   const seen = new Set<string>();
   const sections: Record<StaffHamburgerMenuSectionId, StaffHamburgerMenuItem[]> = {
+    kitchen: [],
     nav: [],
     staff: [],
     hotel: [],
@@ -127,6 +132,85 @@ export function buildStaffHamburgerMenuSections(
   const isAdmin = staff.role === 'admin';
   const isFullAdmin = isAdmin && !isGorevAtaOnlyUser(staff);
   const perms = staff.app_permissions ?? {};
+  const isKitchenStaff = isKitchenStaffMember(staff) && canAccessKitchenOps(staff);
+
+  // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
+  if (isKitchenStaff) {
+    push('kitchen', {
+      id: 'kitchen_ops',
+      label: 'Mutfak Operasyon',
+      href: '/staff/kitchen-ops',
+      icon: 'restaurant-outline',
+      accent: ACCENTS.kitchen_ops,
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_entry',
+      label: 'Stok Ekle',
+      href: '/staff/kitchen-ops/stock/entry',
+      icon: 'add-circle-outline',
+      accent: '#059669',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_exit',
+      label: 'Stok Çıkışı',
+      href: '/staff/kitchen-ops/stock/exit',
+      icon: 'remove-circle-outline',
+      accent: '#d97706',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_scan',
+      label: 'Barkod Oku',
+      href: '/staff/kitchen-ops/stock/scan',
+      icon: 'scan-outline',
+      accent: '#7c3aed',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_current',
+      label: 'Mevcut Stok',
+      href: '/staff/kitchen-ops/stock/current',
+      icon: 'layers-outline',
+      accent: '#2563eb',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_low',
+      label: 'Azalan Ürünler',
+      href: '/staff/kitchen-ops/stock/low',
+      icon: 'alert-circle-outline',
+      accent: '#dc2626',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_revenue',
+      label: 'Hasılat Gir',
+      href: '/staff/kitchen-ops/revenue/new',
+      icon: 'cash-outline',
+      accent: '#10b981',
+    });
+    push('kitchen', {
+      id: 'kitchen_quick_day_close',
+      label: 'Gün Sonu',
+      href: '/staff/kitchen-ops/day-close',
+      icon: 'moon-outline',
+      accent: '#4f46e5',
+    });
+    if (canSeeBreakfastModule(staff)) {
+      push('kitchen', {
+        id: 'breakfast_staff',
+        label: t('profileUiBreakfastUpload'),
+        href: '/staff/breakfast-confirm',
+        icon: 'cafe-outline',
+        accent: ACCENTS.breakfast,
+      });
+    }
+    if (canManageStaffMealMenu(staff)) {
+      push('kitchen', {
+        id: 'meal_edit',
+        label: t('profileUiMealMenuManage'),
+        href: '/staff/meal-menu-edit',
+        icon: 'create-outline',
+        accent: ACCENTS.meal_edit,
+      });
+    }
+  }
 
   // —— Gezinti (ana sayfalar) ——
   push('nav', { id: 'home', label: t('staffHome'), href: '/staff', icon: 'home-outline', accent: ACCENTS.home });
@@ -246,6 +330,15 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.assign,
     });
   }
+  if (canStaffCreateAssignments(staff) && canAccessKitchenOps(staff) && !isAdmin) {
+    push('staff', {
+      id: 'kitchen_ops_gorev',
+      label: 'Mutfak Operasyon',
+      href: '/staff/kitchen-ops',
+      icon: 'restaurant-outline',
+      accent: ACCENTS.kitchen_ops,
+    });
+  }
   if (perms.tum_sozlesmeler && !isAdmin) {
     push('staff', {
       id: 'contracts_staff',
@@ -262,6 +355,22 @@ export function buildStaffHamburgerMenuSections(
       href: '/staff/profile/passports',
       icon: 'id-card-outline',
       accent: ACCENTS.mrz,
+    });
+  }
+  if (canStaffUseIdCapture(staff)) {
+    push('hotel', {
+      id: 'id_capture',
+      label: 'Kimlik / Pasaport Çekim',
+      href: '/staff/kbs/capture-id',
+      icon: 'camera-outline',
+      accent: ACCENTS.kbs,
+    });
+    push('hotel', {
+      id: 'id_capture_history',
+      label: 'Çekilen Kimlikler',
+      href: '/staff/kbs/capture-history',
+      icon: 'albums-outline',
+      accent: ACCENTS.kbs,
     });
   }
 
@@ -357,6 +466,24 @@ export function buildStaffHamburgerMenuSections(
     icon: 'list',
     accent: ACCENTS.my_stock,
   });
+  if (canAccessKitchenOps(staff)) {
+    push('ops', {
+      id: 'kitchen_ops',
+      label: 'Mutfak Operasyon',
+      href: '/staff/kitchen-ops',
+      icon: 'restaurant-outline',
+      accent: ACCENTS.kitchen_ops,
+    });
+  }
+  if (canAccessKitchenReceptionAccounting(staff) && !canAccessKitchenOps(staff)) {
+    push('ops', {
+      id: 'kitchen_reception',
+      label: 'Mutfak Muhasebe Kontrol',
+      href: '/staff/kitchen-ops/reception',
+      icon: 'checkmark-done-outline',
+      accent: ACCENTS.kitchen_ops,
+    });
+  }
   if (canAccessDocumentManagement(staff)) {
     push('ops', {
       id: 'docs',
@@ -411,6 +538,22 @@ export function buildStaffHamburgerMenuSections(
   // —— Yönetim ——
   if (isAdmin) {
     push('admin', { id: 'admin_tab', label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: ACCENTS.admin });
+    if (canAccessKitchenOps(staff)) {
+      push('admin', {
+        id: 'kitchen_ops',
+        label: 'Mutfak Operasyon',
+        href: '/staff/kitchen-ops',
+        icon: 'restaurant-outline',
+        accent: ACCENTS.kitchen_ops,
+      });
+      push('admin', {
+        id: 'kitchen_ops_manage',
+        label: 'Mutfak Operasyon Yönetimi',
+        href: '/admin/kitchen-ops',
+        icon: 'stats-chart-outline',
+        accent: ACCENTS.kitchen_ops,
+      });
+    }
     push('admin', {
       id: 'audits',
       label: t('perfAuditBoard'),
@@ -504,6 +647,7 @@ export function buildStaffHamburgerMenuSections(
   }
 
   const sectionTitles: Record<StaffHamburgerMenuSectionId, string> = {
+    kitchen: t('staffMenuSectionKitchen'),
     nav: t('staffMenuSectionNav'),
     staff: t('staffMenuSectionStaff'),
     hotel: t('staffMenuSectionHotel'),
@@ -511,7 +655,7 @@ export function buildStaffHamburgerMenuSections(
     admin: t('staffMenuSectionAdmin'),
   };
 
-  const built = (['nav', 'staff', 'hotel', 'ops', 'admin'] as const)
+  const built = (['kitchen', 'nav', 'staff', 'hotel', 'ops', 'admin'] as const)
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
 
@@ -540,9 +684,13 @@ export function buildStaffHamburgerMenuLayout(
   const rawSections = buildStaffHamburgerMenuSections(t, staff, orgUiFeatures);
   const all = flattenStaffHamburgerMenu(rawSections);
   const isAdmin = staff?.role === 'admin';
+  const kitchenPrimary =
+    staff && isKitchenStaffMember(staff) && canAccessKitchenOps(staff)
+      ? all.find((i) => i.id === 'kitchen_ops') ?? null
+      : null;
 
-  const primaryId = isAdmin ? null : 'emergency';
-  const primary = primaryId ? all.find((i) => i.id === primaryId) ?? null : null;
+  const primaryId = kitchenPrimary ? null : isAdmin ? null : 'emergency';
+  const primary = kitchenPrimary ?? (primaryId ? all.find((i) => i.id === primaryId) ?? null : null);
   const used = new Set<string>();
   if (primary) used.add(primary.id);
 

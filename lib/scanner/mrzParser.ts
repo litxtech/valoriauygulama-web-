@@ -184,6 +184,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       firstNameRaw: firstNameRaw ? String(firstNameRaw) : null,
       lastNameRaw: lastNameRaw ? String(lastNameRaw) : null,
       fullNameRaw,
+      rawMrz: raw,
       nationalityCode,
       issuingCountryCode,
     });

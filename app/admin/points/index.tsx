@@ -15,8 +15,8 @@ import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
-import { useAuthStore } from '@/stores/authStore';
+import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import {
   awardStaffPoints,
   fetchStaffPointsSummary,
@@ -42,7 +42,7 @@ import {
 type StaffMini = { id: string; full_name: string | null; department: string | null };
 
 export default function AdminPointsDashboard() {
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, canUseAll, orgScoped, canQuery } = useAdminOrganizationQueryScope();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<'staff' | 'kitchen'>('staff');
@@ -61,8 +61,15 @@ export default function AdminPointsDashboard() {
   const [awarding, setAwarding] = useState(false);
 
   const load = useCallback(async () => {
-    if (!staff?.organization_id) return;
-    const orgId = staff.organization_id;
+    if (!canQuery || !orgScoped) {
+      setPointsSummary([]);
+      setPointsHistory([]);
+      setKitchenSummary(null);
+      setKitchenHistory([]);
+      setStaffList([]);
+      return;
+    }
+    const orgId = orgScoped;
 
     const [summaryData, historyData, kitchenSum, kitchenHist, staffData] = await Promise.all([
       fetchStaffPointsSummary(orgId),
@@ -88,7 +95,7 @@ export default function AdminPointsDashboard() {
     } else {
       setStaffList((staffData.data ?? []) as StaffMini[]);
     }
-  }, [staff?.organization_id]);
+  }, [canQuery, orgScoped]);
 
   useFocusEffect(
     useCallback(() => {
@@ -169,6 +176,8 @@ export default function AdminPointsDashboard() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
       >
+        <AdminOrganizationPicker canUseAll={canUseAll} ownOrganizationId={staff?.organization_id} />
+        <View style={{ height: 8 }} />
         {/* Tab bar */}
         <View style={styles.tabRow}>
           <TouchableOpacity

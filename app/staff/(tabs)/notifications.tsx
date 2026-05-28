@@ -24,6 +24,7 @@ import {
   isStaffMealMenuDailyNotification,
   staffMealMenuNotificationHref,
 } from '@/lib/staffMealMenuNotification';
+import { isSmartOpsNotificationType } from '@/lib/smartOps';
 
 type NotifRow = {
   id: string;
@@ -45,6 +46,10 @@ type NotifRow = {
     warningId?: string;
     screen?: string;
     mealDate?: string;
+    taskInstanceId?: string;
+    lostFoundItemId?: string;
+    subjectStaffId?: string;
+    subject_staff_id?: string;
   } | null;
 };
 
@@ -113,6 +118,7 @@ export default function StaffNotificationsScreen() {
   const [personnelWarningDetail, setPersonnelWarningDetail] = useState<PersonnelWarningDetail | null>(null);
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
+  const { refresh: refreshBadge, setUnreadCount, setNotificationsScreenFocused } = useStaffNotificationStore();
 
   const markAllAsRead = useCallback(async () => {
     if (!staff?.id) return;
@@ -177,8 +183,6 @@ export default function StaffNotificationsScreen() {
       supabase.removeChannel(channel);
     };
   }, [staff?.id]);
-
-  const { refresh: refreshBadge, setUnreadCount, setNotificationsScreenFocused } = useStaffNotificationStore();
 
   useFocusEffect(
     useCallback(() => {
@@ -393,6 +397,20 @@ export default function StaffNotificationsScreen() {
     }
     if (isStaffMealMenuDailyNotification((n.data ?? {}) as Record<string, unknown>)) {
       router.push(staffMealMenuNotificationHref((n.data ?? {}) as Record<string, unknown>));
+      return;
+    }
+    if (isSmartOpsNotificationType(n.notification_type)) {
+      const taskId =
+        typeof n.data?.taskInstanceId === 'string'
+          ? n.data.taskInstanceId.trim()
+          : typeof n.data?.url === 'string'
+            ? n.data.url.replace(/.*\/staff\/smart-ops\//, '').split(/[?#]/)[0]
+            : '';
+      if (taskId) {
+        router.push(`/staff/smart-ops/${taskId}` as never);
+        return;
+      }
+      router.push('/staff/operations');
       return;
     }
     if (n.data?.postId) {

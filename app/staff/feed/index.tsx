@@ -12,6 +12,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  InteractionManager,
   ActivityIndicator,
   Modal,
   FlatList,
@@ -30,6 +31,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
+import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDistanceToNow } from 'date-fns';
 import { useTranslation } from 'react-i18next';
@@ -88,8 +90,10 @@ import { MentionableText } from '@/components/MentionableText';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const STAFF_FEED_CACHE_KEY = 'staff_feed_cache_v1';
-const FEED_PAGE_SIZE = Platform.OS === 'android' ? 15 : 30;
-const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 900 : 350;
+const FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 30;
+const FEED_FETCH_LIMIT = Platform.OS === 'android' ? 28 : 50;
+const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 1400 : 350;
+const FEED_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 20 : 64;
 
 function firstName(fullName: string | null | undefined): string {
   const s = (fullName ?? '').trim();
@@ -142,6 +146,7 @@ type StaffAvatarRow = {
   verification_badge?: 'blue' | 'yellow' | null;
   role?: string | null;
   profile_hidden_by_admin?: boolean | null;
+  is_online?: boolean | null;
 };
 
 type StoryPlayerState = {
@@ -151,7 +156,7 @@ type StoryPlayerState = {
 
 export default function StaffHomeScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ openPostId?: string }>();
+  const params = useLocalSearchParams<{ openPostId?: string; openStoryId?: string }>();
   const { t, i18n } = useTranslation();
   const reportReasons = useMemo(() => getFeedReportReasons(), [i18n.language]);
   const dateLocale = useMemo(() => dateFnsLocaleForApp(), [i18n.language]);
@@ -171,6 +176,13 @@ export default function StaffHomeScreen() {
   const [posts, setPosts] = useState<FeedPostRow[]>([]);
   const [staffList, setStaffList] = useState<StaffAvatarRow[]>([]);
   const staffAvatarById = useMemo(() => buildStaffAvatarLookup(staffList), [staffList]);
+  const staffOnlineById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const s of staffList) {
+      if (s.is_online) map.set(s.id, true);
+    }
+    return map;
+  }, [staffList]);
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [myLikes, setMyLikes] = useState<Set<string>>(new Set());
@@ -319,7 +331,7 @@ export default function StaffHomeScreen() {
         if (parsed.commentsByPost && typeof parsed.commentsByPost === 'object') setCommentsByPost(parsed.commentsByPost);
         if ((parsed.posts?.length ?? 0) > 0) {
           setLoading(false);
-          prefetchImageUrls(collectFeedPostPrefetchUrls(parsed.posts), Platform.OS === 'android' ? 40 : 64);
+          prefetchImageUrls(collectFeedPostPrefetchUrls(parsed.posts), FEED_IMAGE_PREFETCH_CAP);
         }
       })
       .catch(() => {});
@@ -419,7 +431,7 @@ export default function StaffHomeScreen() {
   const loadStaffList = useCallback(async (hiddenStaffIds?: Set<string>): Promise<StaffAvatarRow[]> => {
     const { data } = await supabase
       .from('staff')
-      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, organization:organization_id(name, kind)')
+      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, organization:organization_id(name, kind)')
       .eq('is_active', true)
       .is('deleted_at', null)
       .order('full_name');
@@ -430,7 +442,7 @@ export default function StaffHomeScreen() {
       if (!byKey.has(key)) byKey.set(key, r);
     });
     const mapped = Array.from(byKey.values()).map(
-      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin }) => ({
+      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin, is_online }) => ({
         id,
         full_name,
         profile_image,
@@ -440,6 +452,7 @@ export default function StaffHomeScreen() {
         verification_badge,
         role,
         profile_hidden_by_admin: profile_hidden_by_admin ?? null,
+        is_online: is_online ?? null,
       })
     );
     const visible = mapped.filter((s) => !hiddenStaffIds?.has(s.id));
@@ -459,7 +472,7 @@ export default function StaffHomeScreen() {
       .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, profile_hidden_by_admin, organization:organization_id(name, kind)), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
       .or('visibility.eq.all_staff,visibility.eq.my_team,visibility.eq.customers')
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(FEED_FETCH_LIMIT);
     const list = ((postsData ?? []) as FeedPostRow[]).filter(
       (p) =>
         !(p.staff_id && hidden.hiddenStaffIds.has(p.staff_id)) &&
@@ -513,7 +526,7 @@ export default function StaffHomeScreen() {
         })
       ).catch(() => {});
       setLoading(false);
-      prefetchImageUrls(staffListRows.map((s) => s.profile_image), 40);
+      prefetchImageUrls(staffListRows.map((s) => s.profile_image), FEED_IMAGE_PREFETCH_CAP);
       return;
     }
     const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
@@ -651,7 +664,13 @@ export default function StaffHomeScreen() {
 
   useEffect(() => {
     loadFeed();
-    loadStories();
+    if (Platform.OS === 'android') {
+      const task = InteractionManager.runAfterInteractions(() => {
+        void loadStories();
+      });
+      return () => task.cancel();
+    }
+    void loadStories();
   }, [loadFeed, loadStories]);
 
   useEffect(() => {
@@ -777,6 +796,19 @@ export default function StaffHomeScreen() {
     const idx = orderedStoryGroups.findIndex((g) => g.staff_id === staffId);
     if (idx >= 0) openStoryAt(idx);
   }, [orderedStoryGroups, openStoryAt]);
+
+  useEffect(() => {
+    const storyId = params.openStoryId;
+    if (!storyId || orderedStoryGroups.length === 0) return;
+    for (let gi = 0; gi < orderedStoryGroups.length; gi++) {
+      const si = orderedStoryGroups[gi]?.stories.findIndex((s) => s.id === storyId) ?? -1;
+      if (si >= 0) {
+        openStoryAt(gi, si);
+        router.setParams({ openStoryId: undefined });
+        break;
+      }
+    }
+  }, [params.openStoryId, orderedStoryGroups, openStoryAt, router]);
 
   const goToNextStory = useCallback(() => {
     setStoryPlayer((prev) => {
@@ -1614,9 +1646,12 @@ export default function StaffHomeScreen() {
                   <Ionicons name="add" size={13} color="#fff" />
                 </View>
               ) : null}
-              {isMe || hasStory ? (
-                <View
-                  style={[styles.storyOnlineDot, isMe ? styles.storyOnlineDotLeft : styles.storyOnlineDotRight]}
+              {s.is_online ? (
+                <OnlinePresenceDot
+                  online
+                  size={12}
+                  borderColor="#fff"
+                  position={isMe ? 'bottom-left' : 'bottom-right'}
                 />
               ) : null}
             </LinearGradient>
@@ -1641,6 +1676,11 @@ export default function StaffHomeScreen() {
       );
     },
     [staff?.id, staff?.role, storyGroupByStaffId, openStoryByStaffId, router]
+  );
+
+  const renderPostAuthorIsOnline = useCallback(
+    (staffId: string | null | undefined) => !!(staffId && staffOnlineById.get(staffId)),
+    [staffOnlineById]
   );
 
   return (
@@ -1680,7 +1720,7 @@ export default function StaffHomeScreen() {
           if (loading && posts.length === 0) {
             return (
               <View style={{ marginTop: 12, gap: 14, paddingHorizontal: 16 }}>
-                {[1, 2, 3].map((i) => (
+                {(Platform.OS === 'android' ? [1, 2] : [1, 2, 3]).map((i) => (
                   <SkeletonCard key={`staff-feed-sk-${i}`} />
                 ))}
               </View>
@@ -1802,6 +1842,7 @@ export default function StaffHomeScreen() {
                   authorAvatarUrl={authorAvatar}
                   authorBadge={authorBadge}
                   isGuestPost={isGuestPost}
+                  authorIsOnline={renderPostAuthorIsOnline(p.staff_id)}
                   roleLabel={roleLabel}
                   timeAgo={timeAgoFn(p.created_at) || feedSharedText('timeJustNow')}
                   createdAtLabel={formatDateTime(p.created_at)}

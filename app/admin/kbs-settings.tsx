@@ -498,6 +498,12 @@ export default function AdminKbsSettingsScreen() {
         <Ionicons name="chevron-forward" size={20} color={T.colors.textMuted} />
       </Pressable>
 
+      <Pressable style={styles.linkRow} onPress={() => router.push('/admin/kbs-capture-notify')}>
+        <Ionicons name="notifications-outline" size={22} color={T.colors.accent} />
+        <Text style={styles.linkRowText}>Kimlik çekim bildirimleri</Text>
+        <Ionicons name="chevron-forward" size={20} color={T.colors.textMuted} />
+      </Pressable>
+
       <View style={styles.card}>
         <SectionHeader icon="bed-outline" title={t('adminKbsOpsRoomsTitle')} />
 

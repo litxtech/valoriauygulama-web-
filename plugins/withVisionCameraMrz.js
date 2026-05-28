@@ -12,10 +12,11 @@ const gradleExt = `
 ext["react-native-vision-camera-mlkit"] = [
   mlkit: [
     textRecognition: true,
-    textRecognitionChinese: false,
-    textRecognitionDevanagari: false,
-    textRecognitionJapanese: false,
-    textRecognitionKorean: false,
+    // Build-time unresolved reference hatasını engellemek için script paketlerini açıyoruz.
+    textRecognitionChinese: true,
+    textRecognitionDevanagari: true,
+    textRecognitionJapanese: true,
+    textRecognitionKorean: true,
     faceDetection: false,
     faceMeshDetection: false,
     poseDetection: false,
@@ -28,8 +29,13 @@ ext["react-native-vision-camera-mlkit"] = [
 
 function withMlkitGradleExt(config) {
   return withProjectBuildGradle(config, (mod) => {
-    if (mod.contents.includes(MLKIT_MARKER)) return mod;
-    mod.contents = mod.contents.replace(/buildscript\s*\{/, `buildscript {${gradleExt}`);
+    const current = mod.modResults?.contents ?? mod.contents ?? '';
+    if (typeof current !== 'string' || current.length === 0) return mod;
+    if (current.includes(MLKIT_MARKER)) return mod;
+
+    const next = current.replace(/buildscript\s*\{/, `buildscript {${gradleExt}`);
+    if (mod.modResults?.contents != null) mod.modResults.contents = next;
+    else mod.contents = next;
     return mod;
   });
 }

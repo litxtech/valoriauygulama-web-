@@ -129,9 +129,9 @@ export default function BulkNotifyScreen() {
             organizationId: organizationId === 'all' ? null : organizationId ?? null,
             skipPush: true,
           });
-          Alert.alert('Gönderildi', `${result.count} personele bildirim ve pano duyurusu gönderildi.`, () =>
-            router.back()
-          );
+          Alert.alert('Gönderildi', `${result.count} personele bildirim ve pano duyurusu gönderildi.`, [
+            { text: 'Tamam', onPress: () => router.back() },
+          ]);
         }
       } else {
         const roomList = guestTarget === 'specific_rooms'
@@ -149,9 +149,9 @@ export default function BulkNotifyScreen() {
         if (result.error) {
           Alert.alert('Hata', result.error);
         } else {
-          Alert.alert('Gönderildi', `${result.count} misafire bildirim gönderildi.`, () =>
-            router.back()
-          );
+          Alert.alert('Gönderildi', `${result.count} misafire bildirim gönderildi.`, [
+            { text: 'Tamam', onPress: () => router.back() },
+          ]);
         }
       }
     } finally {

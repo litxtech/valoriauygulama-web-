@@ -39,16 +39,13 @@ async function invokeStaffOps<T>(body: Record<string, unknown>): Promise<ApiResu
 
 /** ops.rooms — önce doğrudan Supabase, olmazsa Edge RPC. */
 export async function fetchKbsOpsRooms(): Promise<ApiResult<KbsOpsRoom[]>> {
-  const { data, error } = await withPromiseTimeout(
-    supabase
-      .schema('ops')
-      .from('rooms')
-      .select('id, room_number, floor, capacity')
-      .eq('is_active', true)
-      .order('room_number'),
-    OPS_ROOMS_QUERY_TIMEOUT_MS,
-    'ops.rooms'
-  );
+  const roomsQuery = supabase
+    .schema('ops')
+    .from('rooms')
+    .select('id, room_number, floor, capacity')
+    .eq('is_active', true)
+    .order('room_number');
+  const { data, error } = await withPromiseTimeout(roomsQuery, OPS_ROOMS_QUERY_TIMEOUT_MS, 'ops.rooms');
 
   if (!error && data && data.length > 0) {
     return {
@@ -77,6 +74,37 @@ export async function fetchKbsOpsRooms(): Promise<ApiResult<KbsOpsRoom[]>> {
       details: error?.message,
     },
   };
+}
+
+/** Oda yoksa oluşturur, varsa döner (Edge RPC). */
+export async function ensureKbsOpsRoom(roomNumber: string): Promise<ApiResult<KbsOpsRoom>> {
+  const trimmed = roomNumber.trim();
+  if (!trimmed) {
+    return { ok: false, error: { code: 'BAD_REQUEST', message: 'Oda numarası gerekli' } };
+  }
+  return invokeStaffOps<KbsOpsRoom>({ action: 'ensure_room', roomNumber: trimmed });
+}
+
+/** Toplu oda ataması — tek Edge çağrısı (kayıt hızlandırma). */
+export async function assignKbsRoomsBatch(args: {
+  roomId: string;
+  guestDocumentIds: string[];
+}): Promise<ApiResult<{ assigned: number; total: number }>> {
+  const ids = args.guestDocumentIds.filter(Boolean);
+  if (!ids.length) {
+    return { ok: false, error: { code: 'BAD_REQUEST', message: 'Belge listesi boş' } };
+  }
+  if (ids.length === 1) {
+    const one = await assignKbsRoom({ guestDocumentId: ids[0]!, roomId: args.roomId });
+    if (!one.ok) return one;
+    return { ok: true, data: { assigned: 1, total: 1 } };
+  }
+  const edge = await invokeStaffOps<{ assigned: number; total: number }>({
+    action: 'assign_rooms_batch',
+    roomId: args.roomId,
+    assignments: ids.map((guestDocumentId) => ({ guestDocumentId })),
+  });
+  return edge;
 }
 
 /** Oda ataması — önce Edge (VPS yok), köprü yalnızca yedek. */

@@ -18,7 +18,7 @@ export default function AdminCarbonLayout() {
         headerShadowVisible: true,
         headerBackVisible: false,
         headerLeft: () => <AdminStackBackButton />,
-        ...(Platform.OS === 'android' && { statusBarColor: '#fff' }),
+        ...(Platform.OS === 'android' && { statusBarStyle: 'dark' as const }),
       })}
     >
       <Stack.Screen

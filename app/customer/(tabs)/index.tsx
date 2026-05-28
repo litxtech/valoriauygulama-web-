@@ -55,6 +55,7 @@ import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
+import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import {
   buildStaffAvatarLookup,
   parseFeedGuestEmbed,
@@ -255,7 +256,13 @@ export default function CustomerHome() {
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
   const setScrollToTop = useScrollToTopStore((s) => s.setScrollToTop);
-  const onlineBlinkOpacity = useRef(new Animated.Value(1)).current;
+  const staffOnlineById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const s of activeStaff) {
+      if (s.is_online) map.set(s.id, true);
+    }
+    return map;
+  }, [activeStaff]);
 
   // Açılışta: en son görünen feed'i anında bas (ağ gelene kadar kullanıcı içerik görsün)
   useEffect(() => {
@@ -291,21 +298,6 @@ export default function CustomerHome() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (Platform.OS === 'android') {
-      onlineBlinkOpacity.setValue(1);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(onlineBlinkOpacity, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-        Animated.timing(onlineBlinkOpacity, { toValue: 1, duration: 700, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [onlineBlinkOpacity]);
 
   useEffect(() => {
     setScrollToTop(() => () => scrollRef.current?.scrollTo({ y: 0, animated: true }));
@@ -1259,7 +1251,6 @@ export default function CustomerHome() {
         style={styles.storyScroll}
       >
         {activeStaff.map((staff) => {
-          const presenceColor = staff.is_online ? theme.colors.success : theme.colors.error;
           const storyGIdx = storyGroupIndexByStaffId.get(staff.id);
           const hasStory = storyGIdx !== undefined;
           const displayName = displayStaffNameForViewer(
@@ -1297,16 +1288,7 @@ export default function CustomerHome() {
                         </View>
                       )}
                     </AvatarWithBadge>
-                    <Animated.View
-                      style={[
-                        styles.statusDot,
-                        styles.statusDotOnline,
-                        {
-                          backgroundColor: presenceColor,
-                          opacity: onlineBlinkOpacity,
-                        },
-                      ]}
-                    />
+                    <OnlinePresenceDot online={!!staff.is_online} size={14} borderColor={theme.colors.surface} />
                   </LinearGradient>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1481,6 +1463,7 @@ export default function CustomerHome() {
                   authorAvatarUrl={authorAvatarUrl}
                   authorBadge={authorBadge}
                   isGuestPost={isGuestPost}
+                  authorIsOnline={!!(post.staff_id && staffOnlineById.get(post.staff_id))}
                   roleLabel={roleLabel}
                   timeAgo={timeAgoFn(post.created_at) || feedSharedText('timeJustNow')}
                   createdAtLabel={formatDateTime(post.created_at)}

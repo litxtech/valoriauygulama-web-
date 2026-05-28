@@ -27,6 +27,7 @@ import { guestGetOrCreateConversationWithStaff } from '@/lib/messagingApi';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { AvatarWithBadge, StaffNameWithBadge } from '@/components/VerifiedBadge';
+import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { blockUserForGuest, getHiddenUsersForGuest } from '@/lib/userBlocks';
@@ -525,15 +526,18 @@ export default function StaffProfileScreen() {
           </View>
         ) : null}
         <TouchableOpacity activeOpacity={1} onPress={() => staff.profile_image && setAvatarModalVisible(true)}>
-          <AvatarWithBadge badge={staff.verification_badge ?? null} avatarSize={HEADER_AVATAR_SIZE} badgeSize={18} showBadge={false}>
-            {staff.profile_image ? (
-              <CachedImage uri={staff.profile_image} style={[styles.avatar, styles.avatarSmall]} contentFit="cover" />
-            ) : (
-              <View style={[styles.avatar, styles.avatarPlaceholder, styles.avatarSmall]}>
-                <Text style={styles.avatarLetterSmall}>{(staff.full_name || '?').charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-          </AvatarWithBadge>
+          <View style={styles.avatarPresenceWrap}>
+            <AvatarWithBadge badge={staff.verification_badge ?? null} avatarSize={HEADER_AVATAR_SIZE} badgeSize={18} showBadge={false}>
+              {staff.profile_image ? (
+                <CachedImage uri={staff.profile_image} style={[styles.avatar, styles.avatarSmall]} contentFit="cover" />
+              ) : (
+                <View style={[styles.avatar, styles.avatarPlaceholder, styles.avatarSmall]}>
+                  <Text style={styles.avatarLetterSmall}>{(staff.full_name || '?').charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
+            </AvatarWithBadge>
+            <OnlinePresenceDot online={!!staff.is_online} size={16} borderColor={theme.colors.surface} />
+          </View>
         </TouchableOpacity>
         <View style={styles.header}>
           <StaffNameWithBadge name={staff.full_name || t('visitorTypeStaff')} badge={staff.verification_badge ?? null} badgeSize={18} textStyle={styles.name} center />
@@ -1059,6 +1063,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 12,
     elevation: 4,
+  },
+  avatarPresenceWrap: {
+    position: 'relative',
+    alignSelf: 'center',
   },
   heroOverlap: {
     marginTop: -(HEADER_AVATAR_SIZE / 2),

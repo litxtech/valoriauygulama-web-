@@ -27,6 +27,8 @@ const ALLOWED_BUCKETS = new Set([
   "lost-found-media",
   "hotel-kitchen-menu",
   "facility-journal",
+  "passport-private",
+  "passport-thumbs",
 ]);
 
 function json(obj: Record<string, unknown>, status: number) {

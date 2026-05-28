@@ -13,8 +13,9 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.11',
-  orientation: 'portrait',
+  version: '2.2.13',
+  /** Play: büyük ekran/tablet — manifest yön kilidi yok (telefonda sistem varsayılanı). */
+  orientation: 'default',
   icon: './assets/icon.png',
   scheme: 'valoria',
   userInterfaceStyle: 'automatic',
@@ -28,7 +29,7 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '18',
+    buildNumber: '20',
     newArchEnabled: true,
     infoPlist: {
       UIBackgroundModes: ['remote-notification'],
@@ -47,7 +48,9 @@ const baseConfig = {
   },
   android: {
     newArchEnabled: true,
-    versionCode: 19,
+    /** SDK 54 / target 35+: edge-to-edge; statusBarColor gibi eski API kullanmayın. */
+    edgeToEdgeEnabled: true,
+    versionCode: 21,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {

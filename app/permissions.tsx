@@ -212,11 +212,9 @@ export default function PermissionsScreen() {
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') refreshAll();
     });
-    const interval = setInterval(refreshAll, 1800);
     return () => {
       unsubLive();
       appStateSub.remove();
-      clearInterval(interval);
     };
   }, [refreshAll]);
 

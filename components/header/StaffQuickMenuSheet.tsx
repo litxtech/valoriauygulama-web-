@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
   Easing,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -13,7 +12,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +20,8 @@ import { CachedImage } from '@/components/CachedImage';
 import { FastPress } from '@/components/ui/FastPress';
 import { pds } from '@/constants/personelDesignSystem';
 import { hapticImpactLight, hapticSelection } from '@/lib/hapticsSafe';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
+import { STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS } from '@/lib/staffHamburgerNavigation';
 import type {
   StaffHamburgerMenuItem,
   StaffHamburgerMenuLayout,
@@ -41,6 +41,8 @@ export type StaffMenuIdentity = {
 
 type Props = {
   visible: boolean;
+  /** Geri dönüşte animasyonsuz aç (menü oturumu). */
+  instant?: boolean;
   onClose: () => void;
   closeLabel: string;
   identity?: StaffMenuIdentity | null;
@@ -48,6 +50,9 @@ type Props = {
   layout?: StaffHamburgerMenuLayout | null;
   onSelect: (href: string) => void;
 };
+
+const OPEN_MS = Platform.OS === 'android' ? 0 : 90;
+const CLOSE_MS = Platform.OS === 'android' ? 0 : 75;
 
 /** Sol kenara yapışık tam yükseklik panel; sağda yuvarlatılmış köşe */
 const DRAWER_W = Math.min(392, Math.round(Dimensions.get('window').width * 0.92));
@@ -57,6 +62,7 @@ const SEARCH_MIN_ITEMS = 9;
 const IS_ANDROID = Platform.OS === 'android';
 
 const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  kitchen: { color: '#ea580c', icon: 'restaurant-outline' },
   nav: { color: '#6366f1', icon: 'compass-outline' },
   staff: { color: '#ea580c', icon: 'person-outline' },
   hotel: { color: '#0d9488', icon: 'bed-outline' },
@@ -69,9 +75,10 @@ function accentTintBg(accent: string, alpha = '28') {
   return `${accent}${alpha}`;
 }
 
-function go(onSelect: (href: string) => void, href: string) {
-  onSelect(href);
+function go(onSelect: (href: string) => void, href: string, canPress: boolean) {
+  if (!canPress) return;
   hapticSelection();
+  onSelect(href);
 }
 
 function filterSections(sections: StaffHamburgerMenuSection[], query: string): StaffHamburgerMenuSection[] {
@@ -275,8 +282,9 @@ function DrawerIdentityHeader({
   );
 }
 
-export function StaffQuickMenuSheet({
+export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   visible,
+  instant = false,
   onClose,
   closeLabel,
   identity,
@@ -286,6 +294,8 @@ export function StaffQuickMenuSheet({
 }: Props) {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
+  /** Açılışta hamburger konumundaki çift dokunuş menü satırına düşmesin. */
+  const [itemsPressEnabled, setItemsPressEnabled] = useState(false);
 
   const primary = layout?.primary ?? null;
   const sections = layout?.sections ?? [];
@@ -305,38 +315,63 @@ export function StaffQuickMenuSheet({
   const drawer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!visible) setSearchQuery('');
-  }, [visible]);
-
-  useEffect(() => {
-    if (visible) {
-      if (!IS_ANDROID) hapticImpactLight();
+    if (!visible) {
+      setSearchQuery('');
+      setItemsPressEnabled(false);
+      backdrop.setValue(0);
+      drawer.setValue(0);
+      return;
+    }
+    setItemsPressEnabled(false);
+    const guardMs = instant ? 120 : STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS;
+    const task = runAfterUiReady(() => setItemsPressEnabled(true), {
+      androidOnly: false,
+      delayMs: guardMs,
+    });
+    if (instant || IS_ANDROID || OPEN_MS === 0) {
+      backdrop.setValue(1);
+      drawer.setValue(1);
+    } else {
+      backdrop.setValue(0);
+      drawer.setValue(0);
+      hapticImpactLight();
       Animated.parallel([
         Animated.timing(backdrop, {
           toValue: 1,
-          duration: 220,
+          duration: OPEN_MS,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(drawer, {
+          toValue: 1,
+          duration: OPEN_MS,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-        Animated.spring(drawer, {
-          toValue: 1,
-          useNativeDriver: true,
-          speed: 18,
-          bounciness: 2,
-        }),
       ]).start();
+    }
+    return () => task.cancel();
+  }, [visible, instant, backdrop, drawer]);
+
+  const runCloseAnimation = (then?: () => void) => {
+    if (IS_ANDROID || CLOSE_MS === 0) {
+      backdrop.setValue(0);
+      drawer.setValue(0);
+      then?.();
       return;
     }
     Animated.parallel([
-      Animated.timing(backdrop, { toValue: 0, duration: 180, useNativeDriver: true }),
+      Animated.timing(backdrop, { toValue: 0, duration: CLOSE_MS, useNativeDriver: true }),
       Animated.timing(drawer, {
         toValue: 0,
-        duration: 200,
-        easing: Easing.in(Easing.cubic),
+        duration: CLOSE_MS,
+        easing: Easing.in(Easing.quad),
         useNativeDriver: true,
       }),
-    ]).start();
-  }, [visible, backdrop, drawer]);
+    ]).start(({ finished }) => {
+      if (finished) then?.();
+    });
+  };
 
   const drawerOffscreenX = -DRAWER_W;
   const drawerTranslateX = drawer.interpolate({
@@ -344,18 +379,19 @@ export function StaffQuickMenuSheet({
     outputRange: [drawerOffscreenX, 0],
   });
 
+  const handleClosePress = () => {
+    runCloseAnimation(onClose);
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <View style={styles.host} pointerEvents={visible ? 'box-none' : 'none'}>
       <View style={styles.root}>
         <Pressable
           style={StyleSheet.absoluteFill}
-          onPress={onClose}
+          onPress={handleClosePress}
           accessibilityRole="button"
           accessibilityLabel={closeLabel}
         >
-          {Platform.OS === 'ios' ? (
-            <BlurView intensity={36} tint="dark" style={StyleSheet.absoluteFill} />
-          ) : null}
           <Animated.View
             style={[styles.backdrop, Platform.OS === 'ios' ? styles.backdropIos : null, { opacity: backdrop }]}
           />
@@ -392,14 +428,14 @@ export function StaffQuickMenuSheet({
               identity={identity}
               closeLabel={closeLabel}
               paddingTop={insets.top + 14}
-              onClose={onClose}
+              onClose={handleClosePress}
               onProfilePress={onProfilePress}
             />
           ) : (
             <View style={[styles.fallbackHeader, { paddingTop: insets.top + 12 }]}>
               <Text style={styles.fallbackTitle}>{t('staffMenuDrawerTitle')}</Text>
               <TouchableOpacity
-                onPress={onClose}
+                onPress={handleClosePress}
                 style={styles.drawerClose}
                 activeOpacity={0.8}
                 accessibilityRole="button"
@@ -417,9 +453,13 @@ export function StaffQuickMenuSheet({
             keyboardShouldPersistTaps="handled"
             bounces
             removeClippedSubviews={IS_ANDROID}
+            pointerEvents={itemsPressEnabled ? 'auto' : 'box-none'}
           >
             {primary ? (
-              <PrimaryActionButton item={primary} onPress={() => go(onSelect, primary.href)} />
+              <PrimaryActionButton
+                item={primary}
+                onPress={() => go(onSelect, primary.href, itemsPressEnabled)}
+              />
             ) : null}
 
             {showSearch ? (
@@ -464,7 +504,7 @@ export function StaffQuickMenuSheet({
                         key={item.id}
                         item={item}
                         isLast={idx === section.items.length - 1}
-                        onPress={() => go(onSelect, item.href)}
+                        onPress={() => go(onSelect, item.href, itemsPressEnabled)}
                       />
                     ))}
                   </View>
@@ -478,11 +518,17 @@ export function StaffQuickMenuSheet({
           </ScrollView>
         </Animated.View>
       </View>
-    </Modal>
+    </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
+  host: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    elevation: 200,
+    overflow: 'hidden',
+  },
   root: {
     flex: 1,
     flexDirection: 'row',

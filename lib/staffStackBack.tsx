@@ -12,14 +12,15 @@ export function navigateStaffBack(
   pathname: string | null,
   fallback?: Href
 ) {
-  if (navigation.canGoBack()) {
-    router.back();
+  if (staffStackCanPop(navigation)) {
+    navigation.goBack();
     return;
   }
   router.replace((fallback ?? resolveStaffBackFallback(pathname)) as never);
 }
 
-export function buildStaffNestedStackOptions(t: (key: string) => string) {
+export function buildStaffNestedStackOptions(t?: (key: string) => string) {
+  const tr = typeof t === 'function' ? t : (key: string) => key;
   return ({ navigation }: { navigation: NavigationProp<ParamListBase> }) => ({
     headerShown: true,
     headerStyle: { backgroundColor: '#fff' },
@@ -27,7 +28,7 @@ export function buildStaffNestedStackOptions(t: (key: string) => string) {
     headerTitleStyle: { fontWeight: '700' as const, fontSize: 17 },
     ...staffStackGestureForNavigation(navigation),
     headerBackVisible: false,
-    headerLeft: () => <StaffStackBackButton accessibilityLabel={t('back')} />,
+    headerLeft: () => <StaffStackBackButton accessibilityLabel={tr('back')} />,
   });
 }
 
@@ -35,7 +36,11 @@ export function buildStaffNestedStackOptions(t: (key: string) => string) {
 export function resolveStaffBackFallback(pathname: string | null): Href {
   const p = (pathname ?? '').replace(/\/+$/, '') || '/staff';
   if (p === '/staff' || p.startsWith('/staff/(tabs)')) return '/staff/(tabs)' as Href;
-  const segments = p.split('/').filter(Boolean);
+  let segments = p.split('/').filter(Boolean);
+  // file-based `index` rotaları: .../personnel/index ≡ .../personnel (replace no-op olmasın)
+  if (segments[segments.length - 1] === 'index') {
+    segments = segments.slice(0, -1);
+  }
   if (segments.length <= 2) return '/staff/(tabs)' as Href;
   return `/${segments.slice(0, -1).join('/')}` as Href;
 }
@@ -77,8 +82,8 @@ export function StaffStackBackButton({
   return (
     <TouchableOpacity
       onPress={() => {
-        if (navigation.canGoBack()) {
-          router.back();
+        if (staffStackCanPop(navigation)) {
+          navigation.goBack();
           return;
         }
         router.replace((fallback ?? resolveStaffBackFallback(pathname)) as never);

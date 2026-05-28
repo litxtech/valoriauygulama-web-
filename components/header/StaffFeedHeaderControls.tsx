@@ -11,6 +11,7 @@ import { FastPress } from '@/components/ui/FastPress';
 
 const HEADER_BTN = {
   mrz: '#0f766e',
+  idCapture: '#2563eb',
   notify: '#ea580c',
   menu: '#7c3aed',
 } as const;
@@ -108,10 +109,17 @@ export function StaffFeedHeaderLeft({
 type StaffFeedHeaderRightProps = {
   showMrz?: boolean;
   onMrzPress?: () => void;
+  showIdCapture?: boolean;
+  onIdCapturePress?: () => void;
 };
 
 /** Feed header sağ: MRZ (varsa) + bildirim */
-export function StaffFeedHeaderRight({ showMrz, onMrzPress }: StaffFeedHeaderRightProps) {
+export function StaffFeedHeaderRight({
+  showMrz,
+  onMrzPress,
+  showIdCapture,
+  onIdCapturePress,
+}: StaffFeedHeaderRightProps) {
   const router = useRouter();
   const { t } = useTranslation();
   const unreadNotify = useStaffNotificationStore((s) => s.unreadCount);
@@ -124,6 +132,14 @@ export function StaffFeedHeaderRight({ showMrz, onMrzPress }: StaffFeedHeaderRig
           onPress={onMrzPress}
           accessibilityLabel={t('kbsNavScanSerial')}
           color={HEADER_BTN.mrz}
+        />
+      ) : null}
+      {showIdCapture && onIdCapturePress ? (
+        <ModernHeaderIconButton
+          icon="id-card-outline"
+          onPress={onIdCapturePress}
+          accessibilityLabel="Kimlik çekim sistemi"
+          color={HEADER_BTN.idCapture}
         />
       ) : null}
       <ModernHeaderIconButton
@@ -145,14 +161,15 @@ export function feedHeaderLeftMinWidth(showShare: boolean) {
 }
 
 /** Sağ kol genişliği */
-export function feedHeaderRightMinWidth(showMrz: boolean) {
+export function feedHeaderRightMinWidth(showMrz: boolean, showIdCapture = false) {
   const iconW = 34;
   const mrzW = showMrz ? iconW + 4 : 0;
-  return mrzW + iconW + 12;
+  const idCaptureW = showIdCapture ? iconW + 4 : 0;
+  return mrzW + idCaptureW + iconW + 12;
 }
 
-export function feedHeaderSideMinWidth(showShare: boolean, showMrz: boolean) {
-  return Math.max(feedHeaderLeftMinWidth(showShare), feedHeaderRightMinWidth(showMrz));
+export function feedHeaderSideMinWidth(showShare: boolean, showMrz: boolean, showIdCapture = false) {
+  return Math.max(feedHeaderLeftMinWidth(showShare), feedHeaderRightMinWidth(showMrz, showIdCapture));
 }
 
 const styles = StyleSheet.create({

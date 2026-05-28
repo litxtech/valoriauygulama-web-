@@ -8,7 +8,6 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
-  Dimensions,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -17,26 +16,13 @@ import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
-import { CachedImage } from '@/components/CachedImage';
 import {
   buildStockListHtml,
   shareStockListPdf,
   formatShortDateTime as formatShortDateTimeForPdf,
   type StockListPdfRow,
 } from '@/lib/stockListPdf';
-
-const CARD_GAP = 10;
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = (SCREEN_WIDTH - 16 * 2 - CARD_GAP) / 2;
-
-function formatShortDateTime(iso: string): string {
-  const d = new Date(iso);
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  const h = d.getHours().toString().padStart(2, '0');
-  const min = d.getMinutes().toString().padStart(2, '0');
-  return `${day}.${month}.${d.getFullYear()} ${h}:${min}`;
-}
+import { StockInventoryList, type StockInventoryListItem } from '@/components/stock/StockInventoryList';
 
 type Product = {
   id: string;
@@ -72,17 +58,11 @@ const FILTER_LABELS: Record<StockFilter, string> = {
 type IonIcon = ComponentProps<typeof Ionicons>['name'];
 
 const FILTER_OPTIONS: { value: StockFilter; label: string; icon: IonIcon; activeBg: string }[] = [
-  { value: 'all', label: 'Tümü', icon: 'grid-outline', activeBg: '#1e3a5f' },
+  { value: 'all', label: 'Tümü', icon: 'list-outline', activeBg: '#1e3a5f' },
   { value: 'in_stock', label: 'Stokta', icon: 'checkmark-circle-outline', activeBg: '#047857' },
   { value: 'critical', label: 'Kritik', icon: 'warning-outline', activeBg: '#b45309' },
   { value: 'empty', label: 'Stoksuz', icon: 'close-circle-outline', activeBg: '#b91c1c' },
 ];
-
-function stockLevelMeta(current: number): { label: string; color: string; bg: string } {
-  if (current <= 0) return { label: 'Stoksuz', color: '#b91c1c', bg: '#fee2e2' };
-  if (current <= 3) return { label: 'Kritik', color: '#b45309', bg: '#fef3c7' };
-  return { label: 'Yeterli', color: '#047857', bg: '#d1fae5' };
-}
 
 type Props = {
   /** Ürün kartına tıklanınca açılacak ürün detay path öneki, örn. /admin/stock/product veya /staff/stock/product */
@@ -97,12 +77,10 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [lastPhotoByProductId, setLastPhotoByProductId] = useState<Record<string, string>>({});
   const [pdfExporting, setPdfExporting] = useState(false);
 
   const load = async () => {
     try {
-      // Önce ürünler: grid hemen görünsün (Instagram benzeri stale-while-revalidate)
       const prodRes = await supabase
         .from('stock_products')
         .select('id, name, unit, current_stock, min_stock, image_url, created_at, category:stock_categories(name)')
@@ -111,28 +89,12 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
       setLoading(false);
       setRefreshing(false);
 
-      /** Limit yoktu: tüm fotoğraflı hareketler çekiliyordu → büyük otelde timeout / "girilmiyor" hissi */
-      const [movRes, photoRes] = await Promise.all([
-        supabase
-          .from('stock_movements')
-          .select('id, product_id, movement_type, quantity, created_at, status, photo_proof, staff:staff_id(full_name)')
-          .order('created_at', { ascending: false })
-          .limit(400),
-        supabase
-          .from('stock_movements')
-          .select('product_id, photo_proof')
-          .not('photo_proof', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(2500),
-      ]);
+      const movRes = await supabase
+        .from('stock_movements')
+        .select('id, product_id, movement_type, quantity, created_at, status, photo_proof, staff:staff_id(full_name)')
+        .order('created_at', { ascending: false })
+        .limit(400);
       setMovements((movRes.data ?? []) as MovementRow[]);
-      const byProduct: Record<string, string> = {};
-      for (const m of photoRes.data ?? []) {
-        const pid = (m as { product_id: string }).product_id;
-        const url = (m as { photo_proof: string }).photo_proof;
-        if (pid && url && !(pid in byProduct)) byProduct[pid] = url;
-      }
-      setLastPhotoByProductId(byProduct);
     } catch {
       setLoading(false);
       setRefreshing(false);
@@ -188,6 +150,24 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
     return { all: products.length, in_stock: inStock, critical, empty };
   }, [products]);
 
+  const listItems = useMemo((): StockInventoryListItem[] => {
+    return [...filtered]
+      .sort((a, b) => a.name.localeCompare(b.name, 'tr', { sensitivity: 'base' }))
+      .map((p) => {
+        const catObj = Array.isArray(p.category) ? p.category[0] : p.category;
+        const categoryName =
+          catObj && typeof catObj === 'object' && 'name' in catObj ? String((catObj as { name: string }).name) : null;
+        return {
+          id: p.id,
+          name: p.name,
+          unit: p.unit,
+          current_stock: p.current_stock,
+          min_stock: p.min_stock,
+          categoryName,
+        };
+      });
+  }, [filtered]);
+
   const summary = useMemo(() => {
     let ok = 0;
     let low = 0;
@@ -205,7 +185,7 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
     return (
       <View style={styles.centered}>
         <View style={styles.loadingIconWrap}>
-          <Ionicons name="layers-outline" size={32} color={theme.colors.primary} />
+          <Ionicons name="list-outline" size={32} color={theme.colors.primary} />
         </View>
         <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 16 }} />
         <Text style={styles.loadingText}>Envanter yükleniyor…</Text>
@@ -353,89 +333,23 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
         <View style={styles.listHeader}>
           <View style={styles.listHeaderIcon}>
             <LinearGradient colors={['#0f766e', '#14b8a6']} style={styles.listHeaderGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-              <Ionicons name="layers" size={18} color="#fff" />
+              <Ionicons name="list" size={18} color="#fff" />
             </LinearGradient>
           </View>
           <View style={styles.listHeaderText}>
-            <Text style={styles.sectionTitle}>Envanter</Text>
-            <Text style={styles.sectionSub}>{filtered.length} ürün görüntüleniyor</Text>
+            <Text style={styles.sectionTitle}>Stok listesi</Text>
+            <Text style={styles.sectionSub}>
+              {filtered.length} ürün · kaydırarak miktarları görün
+            </Text>
           </View>
         </View>
 
-        {filtered.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Ionicons name="cube-outline" size={48} color={theme.colors.textMuted} />
-            <Text style={styles.emptyTitle}>Ürün bulunamadı</Text>
-            <Text style={styles.emptyText}>Aramayı veya filtreyi değiştirmeyi deneyin.</Text>
-          </View>
-        ) : (
-          <View style={styles.grid}>
-            {filtered.map((p) => {
-              const cur = p.current_stock ?? 0;
-              const level = stockLevelMeta(cur);
-              const lastMov = lastMovementByProductId[p.id];
-              const previewUrl = p.image_url ?? lastPhotoByProductId[p.id] ?? null;
-              const catObj = Array.isArray(p.category) ? p.category[0] : p.category;
-              const categoryName =
-                catObj && typeof catObj === 'object' && 'name' in catObj ? String((catObj as { name: string }).name) : null;
-              const isIn = lastMov?.movement_type === 'in';
-              const staffName = (lastMov?.staff as { full_name?: string } | null)?.full_name?.trim();
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  style={styles.card}
-                  onPress={() => router.push(productHref(p.id) as any)}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.cardImageWrap}>
-                    {previewUrl ? (
-                      <CachedImage uri={previewUrl} style={styles.cardImage} contentFit="cover" />
-                    ) : (
-                      <LinearGradient colors={['#f1f5f9', '#e2e8f0']} style={styles.cardImagePlaceholder}>
-                        <Ionicons name="cube-outline" size={32} color={theme.colors.textMuted} />
-                      </LinearGradient>
-                    )}
-                    <View style={[styles.stockBadge, { backgroundColor: level.bg }]}>
-                      <Text style={[styles.stockBadgeText, { color: level.color }]}>{level.label}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.cardName} numberOfLines={2}>
-                    {p.name}
-                  </Text>
-                  {categoryName ? (
-                    <Text style={styles.cardCategory} numberOfLines={1}>
-                      {categoryName}
-                    </Text>
-                  ) : null}
-                  <View style={styles.stockRow}>
-                    <Text style={styles.cardStock}>
-                      {cur} <Text style={styles.cardUnit}>{p.unit ?? 'adet'}</Text>
-                    </Text>
-                  </View>
-                  {lastMov ? (
-                    <View style={styles.lastMovWrap}>
-                      <View style={[styles.lastMovIcon, { backgroundColor: isIn ? '#d1fae5' : '#ffedd5' }]}>
-                        <Ionicons name={isIn ? 'arrow-down' : 'arrow-up'} size={12} color={isIn ? '#047857' : '#b45309'} />
-                      </View>
-                      <View style={styles.lastMovBody}>
-                        <Text style={styles.lastMovText} numberOfLines={1}>
-                          {isIn ? 'Giriş' : 'Çıkış'} {isIn ? '+' : '-'}
-                          {lastMov.quantity}
-                        </Text>
-                        <Text style={styles.lastMovMeta} numberOfLines={1}>
-                          {formatShortDateTime(lastMov.created_at)}
-                          {staffName ? ` · ${staffName}` : ''}
-                        </Text>
-                      </View>
-                    </View>
-                  ) : (
-                    <Text style={styles.lastMovNone}>Son işlem yok</Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
+        <StockInventoryList
+          items={listItems}
+          onPress={(item) => router.push(productHref(item.id) as never)}
+          showRowIndex
+          emptyMessage="Aramayı veya filtreyi değiştirmeyi deneyin."
+        />
       </ScrollView>
     </View>
   );
@@ -558,54 +472,4 @@ const styles = StyleSheet.create({
   listHeaderText: { flex: 1 },
   sectionTitle: { fontSize: 18, fontWeight: '800', color: theme.colors.text, letterSpacing: -0.2 },
   sectionSub: { fontSize: 13, fontWeight: '600', color: theme.colors.textMuted, marginTop: 2 },
-  emptyBox: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24 },
-  emptyTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginTop: 14 },
-  emptyText: { fontSize: 14, color: theme.colors.textMuted, textAlign: 'center', marginTop: 6, lineHeight: 20 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
-  card: {
-    width: CARD_WIDTH,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    ...theme.shadows.md,
-  },
-  cardImageWrap: {
-    width: '100%',
-    aspectRatio: 1,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.borderLight,
-  },
-  cardImage: { width: '100%', height: '100%' },
-  cardImagePlaceholder: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
-  stockBadge: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  stockBadgeText: { fontSize: 10, fontWeight: '800' },
-  cardName: { fontSize: 13, fontWeight: '800', color: theme.colors.text, marginTop: 10, minHeight: 34, lineHeight: 17 },
-  cardCategory: { fontSize: 11, fontWeight: '600', color: theme.colors.textMuted, marginTop: 2 },
-  stockRow: { marginTop: 6 },
-  cardStock: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
-  cardUnit: { fontSize: 12, fontWeight: '600', color: theme.colors.textMuted },
-  lastMovWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.borderLight,
-  },
-  lastMovIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  lastMovBody: { flex: 1, minWidth: 0 },
-  lastMovText: { fontSize: 11, fontWeight: '700', color: theme.colors.text },
-  lastMovMeta: { fontSize: 10, color: theme.colors.textMuted, marginTop: 2 },
-  lastMovNone: { fontSize: 10, color: theme.colors.textMuted, marginTop: 10, fontStyle: 'italic' },
 });

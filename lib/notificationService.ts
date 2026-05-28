@@ -5,6 +5,7 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import type { BulkGuestTarget, BulkStaffTarget, BulkCategory } from '@/lib/notifications';
 import { log } from '@/lib/logger';
+import { filterStaffIdsByNotificationType } from '@/lib/staffNotificationFilter';
 
 const EDGE_FN_PUSH = 'send-expo-push';
 const EDGE_FN_NOTIFY_ADMINS = 'notify-admins';
@@ -18,7 +19,16 @@ type ExpoPushFnResult = {
   pushTicketErrors?: string[];
 };
 
-type StaffRecipientRow = { staff_id: string };
+export interface SendNotificationParams {
+  guestId?: string | null;
+  staffId?: string | null;
+  title: string;
+  body?: string | null;
+  notificationType?: string | null;
+  category?: 'emergency' | 'guest' | 'staff' | 'admin' | 'bulk';
+  data?: Record<string, unknown>;
+  createdByStaffId?: string | null;
+}
 
 /** Push token’ları olan hedeflere Expo push gönderir (sessiz hata). */
 async function sendExpoPushToRecipients(params: {
@@ -51,41 +61,6 @@ async function sendExpoPushToRecipients(params: {
     if (r?.sent != null) log.info('notificationService', 'push gönderildi', { sent: r.sent, failed: r.failed ?? 0 });
   } catch (e) {
     log.warn('notificationService', 'sendExpoPush exception', e);
-  }
-}
-
-export interface SendNotificationParams {
-  guestId?: string | null;
-  staffId?: string | null;
-  title: string;
-  body?: string | null;
-  notificationType?: string | null;
-  category?: 'emergency' | 'guest' | 'staff' | 'admin' | 'bulk';
-  data?: Record<string, unknown>;
-  createdByStaffId?: string | null;
-}
-
-async function filterStaffRecipientsByPreference(
-  staffIds: string[],
-  notificationType?: string | null
-): Promise<string[]> {
-  if (staffIds.length === 0) return [];
-  const nt = (notificationType ?? '').trim();
-  if (!nt) return staffIds;
-  try {
-    const { data, error } = await supabase.rpc('filter_staff_notification_recipients', {
-      p_staff_ids: staffIds,
-      p_notification_type: nt,
-    });
-    if (error) {
-      log.warn('notificationService', 'filter_staff_notification_recipients', error);
-      return staffIds;
-    }
-    const rows = (data ?? []) as StaffRecipientRow[];
-    return rows.map((r) => r.staff_id).filter(Boolean);
-  } catch (e) {
-    log.warn('notificationService', 'filter staff recipients exception', e);
-    return staffIds;
   }
 }
 
@@ -138,7 +113,7 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   if (!guestId && !staffId) return { error: 'guestId veya staffId gerekli' };
 
   const originalStaffIds = staffId ? [typeof staffId === 'string' ? staffId : String(staffId)] : [];
-  const staffIds = await filterStaffRecipientsByPreference(originalStaffIds, notificationType);
+  const staffIds = await filterStaffIdsByNotificationType(originalStaffIds, notificationType);
   const guestIds = guestId ? [typeof guestId === 'string' ? guestId : String(guestId)] : [];
   const resolvedStaffId = staffIds.length > 0 ? staffIds[0] : null;
 
@@ -277,7 +252,7 @@ export async function notifyStaffBoardAnnouncementPush(params: {
   const { data: staffList, error } = await query;
   if (error || !staffList?.length) return;
 
-  const staffIds = await filterStaffRecipientsByPreference(
+  const staffIds = await filterStaffIdsByNotificationType(
     staffList.map((s: { id: string }) => s.id),
     'staff_board_announcement'
   );
@@ -328,7 +303,7 @@ export async function sendBulkToStaff(params: {
   const list = staffList ?? [];
   if (list.length === 0) return { count: 0 };
 
-  const filteredStaffIds = await filterStaffRecipientsByPreference(
+  const filteredStaffIds = await filterStaffIdsByNotificationType(
     list.map((s: { id: string }) => s.id),
     resolvedNotificationType
   );
@@ -340,6 +315,56 @@ export async function sendBulkToStaff(params: {
     title,
     body,
     category: category ?? 'bulk',
+    notification_type: resolvedNotificationType,
+    data: data ?? {},
+    created_by: createdByStaffId,
+    sent_via: 'in_app',
+    sent_at: new Date().toISOString(),
+  }));
+
+  const { error: insErr } = await postNotificationsReturnMinimal(rows);
+  if (insErr) return { count: 0, error: insErr.message };
+  sendExpoPushToRecipients({
+    staffIds: filteredStaffIds,
+    title,
+    body,
+    data: { screen: 'notifications', notificationType: resolvedNotificationType, ...(data ?? {}) },
+  }).catch(() => {});
+  return { count: rows.length };
+}
+
+/** Admin seçimli veya özel personel listesine in-app + push bildirim. */
+export async function sendNotificationToStaffIds(params: {
+  staffIds: string[];
+  title: string;
+  body: string;
+  createdByStaffId: string;
+  notificationType?: string;
+  category?: 'emergency' | 'guest' | 'staff' | 'admin' | 'bulk';
+  data?: Record<string, unknown>;
+}): Promise<{ count: number; error?: string }> {
+  const {
+    staffIds,
+    title,
+    body,
+    createdByStaffId,
+    notificationType,
+    category,
+    data,
+  } = params;
+  const unique = [...new Set(staffIds.filter(Boolean))];
+  if (unique.length === 0) return { count: 0 };
+
+  const resolvedNotificationType = (notificationType && notificationType.trim()) || 'staff';
+  const filteredStaffIds = await filterStaffIdsByNotificationType(unique, resolvedNotificationType);
+  if (filteredStaffIds.length === 0) return { count: 0 };
+
+  const rows = filteredStaffIds.map((staffId) => ({
+    guest_id: null,
+    staff_id: staffId,
+    title,
+    body,
+    category: category ?? 'staff',
     notification_type: resolvedNotificationType,
     data: data ?? {},
     created_by: createdByStaffId,
@@ -478,14 +503,16 @@ export async function notifyAdmins(params: {
   }
 }
 
-/** Kahvaltı teyidi yüklendiğinde onay yetkili personele push bildirim gönder */
+/** Kahvaltı teyidi yüklendiğinde onay yetkili personele ve admin panele push bildirim gönder */
 export async function notifyBreakfastUploaded(params: {
   organizationId: string;
   uploaderName: string;
   recordDate: string;
   createdByStaffId: string;
+  /** false ise admin push atlanır (güncelleme); personel onaycıları mevcut davranışla bilgilendirilir */
+  isNewRecord?: boolean;
 }): Promise<void> {
-  const { organizationId, uploaderName, recordDate, createdByStaffId } = params;
+  const { organizationId, uploaderName, recordDate, createdByStaffId, isNewRecord = true } = params;
   const title = 'Kahvaltı Teyidi Yüklendi';
   const body = `${uploaderName} ${recordDate} tarihli kahvaltı teyidini yükledi. Onay bekliyor.`;
 
@@ -510,7 +537,7 @@ export async function notifyBreakfastUploaded(params: {
 
   if (approverIds.length === 0) return;
 
-  const filteredIds = await filterStaffRecipientsByPreference(approverIds, 'breakfast_confirmation_uploaded');
+  const filteredIds = await filterStaffIdsByNotificationType(approverIds, 'breakfast_confirmation_uploaded');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({
@@ -537,6 +564,15 @@ export async function notifyBreakfastUploaded(params: {
       notificationType: 'breakfast_confirmation_uploaded',
     },
   }).catch(() => {});
+
+  if (isNewRecord) {
+    notifyAdminPanel({
+      title,
+      body,
+      href: '/admin/breakfast-confirm',
+      notificationType: 'breakfast_confirmation_uploaded',
+    }).catch(() => {});
+  }
 }
 
 /** Kahvaltı teyidi onaylandığında mutfak personeline push bildirim gönder */
@@ -550,7 +586,7 @@ export async function notifyBreakfastApproved(params: {
   const title = 'Kahvaltı Teyidi Onaylandı';
   const body = `${recordDate} tarihli kahvaltı teyidiniz ${approverName} tarafından onaylandı.`;
 
-  const filteredIds = await filterStaffRecipientsByPreference([kitchenStaffId], 'breakfast_confirmation_approved');
+  const filteredIds = await filterStaffIdsByNotificationType([kitchenStaffId], 'breakfast_confirmation_approved');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({
@@ -591,7 +627,7 @@ export async function notifyBreakfastRejected(params: {
   const title = 'Kahvaltı Uygun Görülmedi';
   const body = `${recordDate} tarihli kahvaltı teyidiniz reddedildi. Neden: ${reason.slice(0, 100)}`;
 
-  const filteredIds = await filterStaffRecipientsByPreference([kitchenStaffId], 'breakfast_confirmation_rejected');
+  const filteredIds = await filterStaffIdsByNotificationType([kitchenStaffId], 'breakfast_confirmation_rejected');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({

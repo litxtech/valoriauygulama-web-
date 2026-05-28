@@ -314,8 +314,8 @@ export default function StockManagement() {
           <Text style={styles.heroTitle}>Stok yönetimi</Text>
           <Text style={styles.heroSub}>Hangi üründen ne kadar kaldığını tek bakışta görün</Text>
         </View>
-        <TouchableOpacity style={styles.heroBtn} onPress={() => router.push('/admin/stock/all')}>
-          <Ionicons name="grid-outline" size={20} color="#fff" />
+        <TouchableOpacity style={styles.heroBtn} onPress={() => router.push('/admin/stock/all')} accessibilityLabel="Stok listesi">
+          <Ionicons name="list-outline" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
       <View style={styles.searchBox}>
@@ -368,30 +368,39 @@ export default function StockManagement() {
         </View>
       ) : null}
 
-      <View style={styles.quickGrid}>
-        {QUICK_ACTIONS.map((a) => (
-          <TouchableOpacity
-            key={a.key}
-            style={styles.quickTile}
-            activeOpacity={0.88}
-            onPress={() => {
-              if ('params' in a && a.params) router.push({ pathname: a.route as never, params: a.params as never });
-              else router.push(a.route as never);
-            }}
-          >
-            <LinearGradient colors={a.colors} style={styles.quickGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-              <Ionicons name={a.icon} size={24} color="#fff" />
-              {a.key === 'approvals' && pendingApprovals > 0 ? (
-                <View style={styles.quickBadge}>
-                  <Text style={styles.quickBadgeText}>{pendingApprovals > 99 ? '99+' : pendingApprovals}</Text>
-                </View>
-              ) : null}
-            </LinearGradient>
-            <Text style={styles.quickLabel}>{a.label}</Text>
-            <Text style={styles.quickSub}>{a.sub}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
+        {QUICK_ACTIONS.map((a) => {
+          const tint =
+            a.key === 'new'
+              ? { color: '#2563eb', bg: '#eff6ff' }
+              : a.key === 'in'
+                ? { color: '#059669', bg: '#ecfdf5' }
+                : a.key === 'out'
+                  ? { color: '#d97706', bg: '#fffbeb' }
+                  : { color: '#7c3aed', bg: '#f5f3ff' };
+          return (
+            <TouchableOpacity
+              key={a.key}
+              style={styles.quickChip}
+              activeOpacity={0.88}
+              onPress={() => {
+                if ('params' in a && a.params) router.push({ pathname: a.route as never, params: a.params as never });
+                else router.push(a.route as never);
+              }}
+            >
+              <View style={[styles.quickChipIcon, { backgroundColor: tint.bg }]}>
+                <Ionicons name={a.icon} size={18} color={tint.color} />
+                {a.key === 'approvals' && pendingApprovals > 0 ? (
+                  <View style={styles.quickBadge}>
+                    <Text style={styles.quickBadgeText}>{pendingApprovals > 99 ? '99+' : pendingApprovals}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.quickChipLabel}>{a.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
         <View style={styles.statCard}>
@@ -620,24 +629,40 @@ const styles = StyleSheet.create({
   alertScroll: { gap: 8 },
   alertChip: { backgroundColor: 'rgba(255,255,255,0.22)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
   alertChipText: { color: '#fff', fontSize: 12, fontWeight: '600', maxWidth: 140 },
-  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, gap: 10, marginBottom: 14 },
-  quickTile: { width: '47%', backgroundColor: '#fff', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: adminTheme.colors.border },
-  quickGrad: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  quickBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+  quickRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+  quickChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    minWidth: 118,
+  },
+  quickChipIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
   },
-  quickBadgeText: { fontSize: 10, fontWeight: '800', color: '#7c3aed' },
-  quickLabel: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
-  quickSub: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
+  quickBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#7c3aed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  quickBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  quickChipLabel: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text },
   statsRow: { paddingHorizontal: 16, gap: 8, paddingBottom: 4 },
   statCard: {
     minWidth: 100,

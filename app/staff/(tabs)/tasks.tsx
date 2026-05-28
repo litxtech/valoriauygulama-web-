@@ -18,7 +18,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -183,6 +183,7 @@ function formatMoney(v: number | string | null | undefined, locale: string) {
 }
 
 export default function StaffTasksTabScreen() {
+  const router = useRouter();
   const { t, i18n } = useTranslation();
   const loc = (i18n.language || 'tr').split('-')[0];
 
@@ -1024,6 +1025,19 @@ export default function StaffTasksTabScreen() {
         </View>
       </View>
 
+      <TouchableOpacity
+        style={styles.opsBanner}
+        activeOpacity={0.88}
+        onPress={() => router.push('/staff/operations')}
+      >
+        <Ionicons name="pulse-outline" size={22} color={theme.colors.primary} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.opsBannerTitle}>Operasyon görevleri</Text>
+          <Text style={styles.opsBannerSub}>Zamanlı checklist ve teyit (mutfak, HK, resepsiyon)</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} />
+      </TouchableOpacity>
+
       {/* ── Tab Bar ── */}
       <View style={styles.tabBar}>
         <TouchableOpacity
@@ -1465,6 +1479,21 @@ const styles = StyleSheet.create({
   dashStatNum: { fontSize: 20, fontWeight: '800', color: '#fff' },
   dashStatLabel: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.5)', marginTop: 2 },
   dashStatDivider: { width: 1, height: 28, backgroundColor: 'rgba(255,255,255,0.1)' },
+
+  opsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#ebf8ff',
+    borderWidth: 1,
+    borderColor: '#bee3f8',
+  },
+  opsBannerTitle: { fontSize: 15, fontWeight: '700', color: '#1a365d' },
+  opsBannerSub: { fontSize: 12, color: '#4a5568', marginTop: 2 },
 
   /* ── Tab Bar ── */
   tabBar: {

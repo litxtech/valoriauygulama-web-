@@ -322,7 +322,7 @@ export default function CustomerTabsLayout() {
         headerTitleAlign: 'center' as const,
         headerTintColor: IG_HEADER_FG,
         headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarColor: IG_HEADER_BG, statusBarStyle: 'dark' as const } : null),
+        ...(Platform.OS === 'android' ? { statusBarStyle: 'dark' as const } : null),
         headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 88 } : { paddingLeft: 0, minWidth: 0 },
         headerRightContainerStyle: feedTab ? { paddingRight: 6, minWidth: 88 } : { paddingRight: 0, minWidth: 0 },
         headerRight: feedTab

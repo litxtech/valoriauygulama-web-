@@ -14,6 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge } from '@/components/VerifiedBadge';
+import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import type { PostTagValue } from '@/lib/feedPostTags';
@@ -32,6 +33,8 @@ export type StaffFeedPostCardProps = {
   authorAvatarUrl: string | null;
   authorBadge: 'blue' | 'yellow' | null;
   isGuestPost: boolean;
+  /** Personel çevrimiçi (yeşil nabız) */
+  authorIsOnline?: boolean;
   /** Personel departmanı veya gösterilecek rol metni */
   roleLabel: string | null;
   timeAgo: string;
@@ -48,9 +51,9 @@ export type StaffFeedPostCardProps = {
   /** true: göz satırına basınca görüntüleyen listesi (yalnızca kendi personel paylaşımı) */
   viewersListEnabled?: boolean;
   commentPreview?: { author: string; text: string }[];
-  notifOn: boolean;
+  notifOn?: boolean;
   togglingLike: boolean;
-  togglingNotif: boolean;
+  togglingNotif?: boolean;
   deletingPost: boolean;
   onAuthorPress?: () => void;
   /** Avatar ayrı dokunulduğunda (ör. hikaye); yalnızca `onAuthorPress` ile birlikte anlamlı */
@@ -72,6 +75,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   authorAvatarUrl,
   authorBadge,
   isGuestPost,
+  authorIsOnline = false,
   roleLabel,
   timeAgo,
   createdAtLabel,
@@ -132,22 +136,25 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   const avatarUri = (authorAvatarUrl ?? '').trim() || null;
 
   const avatarBlock = showAuthorAvatar ? (
-    <View style={[styles.avatarWrap, { shadowColor: ringGlow }]}>
-      {avatarUri ? (
-        <CachedImage
-          uri={avatarUri}
-          style={styles.avatarImg}
-          contentFit="cover"
-          transition={0}
-          recyclingKey={avatarUri}
-        />
-      ) : (
-        <View style={[styles.avatarPh, isGuestPost && styles.avatarPhGuest]}>
-          <Text style={[styles.avatarLetter, isGuestPost && styles.avatarLetterGuest]}>
-            {(authorName || '?').charAt(0).toUpperCase()}
-          </Text>
-        </View>
-      )}
+    <View style={styles.avatarOuter}>
+      <View style={[styles.avatarWrap, { shadowColor: ringGlow }]}>
+        {avatarUri ? (
+          <CachedImage
+            uri={avatarUri}
+            style={styles.avatarImg}
+            contentFit="cover"
+            transition={0}
+            recyclingKey={avatarUri}
+          />
+        ) : (
+          <View style={[styles.avatarPh, isGuestPost && styles.avatarPhGuest]}>
+            <Text style={[styles.avatarLetter, isGuestPost && styles.avatarLetterGuest]}>
+              {(authorName || '?').charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+      </View>
+      {!isGuestPost && authorIsOnline ? <OnlinePresenceDot online size={11} borderColor={pds.cardBg} /> : null}
     </View>
   ) : null;
 
@@ -391,12 +398,17 @@ const styles = StyleSheet.create({
     gap: 8,
     minWidth: 0,
   },
+  avatarOuter: {
+    position: 'relative',
+    width: 36,
+    height: 36,
+    flexShrink: 0,
+  },
   avatarWrap: {
     width: 36,
     height: 36,
     borderRadius: 18,
     overflow: 'hidden',
-    flexShrink: 0,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.55,
     shadowRadius: 6,

@@ -31,6 +31,30 @@ function expoDisplayBody(messageBody: string | null | undefined): string {
   return b.length > 0 ? b : "Yeni bildirim";
 }
 
+function mentionPrefType(data: Record<string, unknown>): string {
+  const raw = data?.notificationType ?? data?.notification_type;
+  const t = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (t === "chat_mention") return "staff_mention";
+  return t || "message";
+}
+
+async function filterStaffByPreference(
+  supabase: ReturnType<typeof createClient>,
+  staffIds: string[],
+  prefType: string
+): Promise<string[]> {
+  if (staffIds.length === 0) return [];
+  const { data, error } = await supabase.rpc("filter_staff_notification_recipients", {
+    p_staff_ids: staffIds,
+    p_notification_type: prefType,
+  });
+  if (error) {
+    console.warn("filter_staff_notification_recipients", error.message);
+    return [];
+  }
+  return (data ?? []).map((r: { staff_id: string }) => r.staff_id).filter(Boolean);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS });
@@ -79,7 +103,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: participants } = await supabase
       .from("conversation_participants")
-      .select("participant_id, participant_type")
+      .select("participant_id, participant_type, is_muted")
       .eq("conversation_id", conversationId)
       .is("left_at", null);
 
@@ -96,19 +120,23 @@ Deno.serve(async (req: Request) => {
     const guestIds: string[] = [];
     const staffIds: string[] = [];
     for (const p of participants ?? []) {
-      const row = p as { participant_id: string; participant_type: string };
+      const row = p as { participant_id: string; participant_type: string; is_muted?: boolean };
       if (row.participant_type === "guest") {
         if (excludeGuestSet.has(row.participant_id)) continue;
         if (filterOnly && !onlyGuestSet.has(row.participant_id)) continue;
         guestIds.push(row.participant_id);
       } else if (row.participant_type === "staff" || row.participant_type === "admin") {
+        if (row.is_muted) continue;
         if (excludeStaffSet.has(row.participant_id)) continue;
         if (filterOnly && !onlyStaffSet.has(row.participant_id)) continue;
         staffIds.push(row.participant_id);
       }
     }
 
-    if (guestIds.length === 0 && staffIds.length === 0) {
+    const prefType = mentionPrefType(data);
+    const filteredStaffIds = await filterStaffByPreference(supabase, staffIds, prefType);
+
+    if (guestIds.length === 0 && filteredStaffIds.length === 0) {
       return new Response(
         JSON.stringify({ sent: 0, failed: 0, message: "Bildirilecek alıcı yok" }),
         { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
@@ -126,7 +154,7 @@ Deno.serve(async (req: Request) => {
     const badgeByStaff = new Map<string, number>();
     const badgeByGuest = new Map<string, number>();
     await Promise.all(
-      staffIds.map(async (sid) => {
+      filteredStaffIds.map(async (sid) => {
         badgeByStaff.set(sid, await fetchAppIconBadgeForStaff(supabase, sid));
       })
     );
@@ -152,11 +180,11 @@ Deno.serve(async (req: Request) => {
         }
       }
     }
-    if (staffIds.length > 0) {
+    if (filteredStaffIds.length > 0) {
       const { data: rows } = await supabase
         .from("push_tokens")
         .select("token, staff_id, guest_id")
-        .in("staff_id", staffIds)
+        .in("staff_id", filteredStaffIds)
         .not("token", "is", null);
       for (const r of rows ?? []) {
         const t = (r as { token: string; staff_id: string | null; guest_id: string | null }).token?.trim();

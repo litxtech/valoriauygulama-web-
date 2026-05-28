@@ -12,15 +12,15 @@ export function useAppFeatureVisible(featureId: string, placement: AppFeaturePla
   );
 }
 
-/** Expo tab: görünür mü (href null = gizli) */
-export function useStaffTabHref(routeName: string): string | null | undefined {
+/** Expo tab: görünür mü (href null = gizli, undefined = varsayılan rota) */
+export function useStaffTabHref(routeName: string): null | undefined {
   const config = useOrganizationUiFeaturesStore((s) => s.config);
   const featureId = staffTabFeatureId(routeName);
   if (!featureId) return undefined;
   return isFeatureVisibleInPlacement(config, featureId, 'tab') ? undefined : null;
 }
 
-export function useCustomerTabHref(routeName: string): string | null | undefined {
+export function useCustomerTabHref(routeName: string): null | undefined {
   const config = useOrganizationUiFeaturesStore((s) => s.config);
   const featureId = customerTabFeatureId(routeName);
   if (!featureId) return undefined;

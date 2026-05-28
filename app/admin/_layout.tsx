@@ -1,10 +1,11 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { View, TouchableOpacity, Platform, StyleSheet, Text, BackHandler } from 'react-native';
+import { View, TouchableOpacity, Platform, StyleSheet, Text, BackHandler, InteractionManager } from 'react-native';
 import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessAdminShell, isGorevAtaOnlyUser } from '@/lib/staffPermissions';
+import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { Ionicons } from '@expo/vector-icons';
@@ -130,7 +131,7 @@ export default function AdminLayout() {
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (!__DEV__ || Platform.OS !== 'android') return;
     log.info('AdminLayout', 'mounted', { pathname });
     return () => {
       log.info('AdminLayout', 'unmounted');
@@ -138,12 +139,12 @@ export default function AdminLayout() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (!__DEV__ || Platform.OS !== 'android') return;
     log.info('AdminLayout', 'route changed', { pathname });
   }, [pathname]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (!__DEV__ || Platform.OS !== 'android') return;
     log.info('AdminLayout', 'auth snapshot', {
       loading,
       hasStaff: !!staff,
@@ -154,10 +155,12 @@ export default function AdminLayout() {
 
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS === 'android') log.info('AdminLayout', 'focus effect start');
-      Promise.resolve(refreshNotifications()).catch(() => {});
-      return () => {};
-    }, [refreshNotifications])
+      if (!isAdminRootPath) return;
+      const task = InteractionManager.runAfterInteractions(() => {
+        Promise.resolve(refreshNotifications()).catch(() => {});
+      });
+      return () => task.cancel();
+    }, [refreshNotifications, isAdminRootPath])
   );
 
   /** Admin panelde push token kaydı (köke sadece personel sekmesinde girilmediyse). */
@@ -166,8 +169,19 @@ export default function AdminLayout() {
     savePushTokenForStaff(staff.id).catch((e) => log.warn('AdminLayout', 'push token', e));
   }, [staff?.id]);
 
-  const renderHeaderRight = () => (
+  const renderHeaderRight = useCallback(() => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {canStaffUseIdCapture(staff) ? (
+        <TouchableOpacity
+          onPress={() => router.push('/staff/kbs/capture-id' as Href)}
+          style={{ marginRight: 8, padding: 6 }}
+          activeOpacity={0.8}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel="Kimlik çekim"
+        >
+          <Ionicons name="id-card-outline" size={22} color={adminTheme.colors.text} />
+        </TouchableOpacity>
+      ) : null}
       <TouchableOpacity
         onPress={() => router.push('/admin/map')}
         style={{ marginRight: 12, padding: 6 }}
@@ -178,7 +192,7 @@ export default function AdminLayout() {
         <Ionicons name="map-outline" size={22} color={adminTheme.colors.text} />
       </TouchableOpacity>
     </View>
-  );
+  ), [router, staff]);
 
   useEffect(() => {
     if (loading) return;
@@ -215,9 +229,7 @@ export default function AdminLayout() {
     },
     headerShadowVisible: true,
     contentStyle: { paddingBottom: insets.bottom + 16 },
-    ...(Platform.OS === 'android' && {
-      statusBarColor: '#fff',
-    }),
+    ...(Platform.OS === 'android' && { statusBarStyle: 'dark' as const }),
   };
 
   return (
@@ -323,6 +335,7 @@ export default function AdminLayout() {
         options={{ title: t('adminDocumentsDetail'), headerRight: renderHeaderRight, headerLeft: renderDocumentDetailBack }}
       />
       <Stack.Screen name="contracts" options={{ title: t('adminContracts'), headerShown: false }} />
+      <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="stock/index" options={{ headerShown: false }} />
       <Stack.Screen name="stock/all" options={{ title: t('adminAllStocks'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="stock/product/[id]" options={{ title: t('adminProductDetail'), headerRight: renderHeaderRight }} />
@@ -352,12 +365,16 @@ export default function AdminLayout() {
       <Stack.Screen name="ui-features/index" options={{ title: 'Uygulama özellikleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="kbs-capture-notify" options={{ title: 'Kimlik çekim bildirimleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/index" options={{ title: t('adminNotifications'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/bulk" options={{ title: t('adminBulkNotification'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="reports/index" options={{ title: t('adminReports'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="complaints/index" options={{ title: complaintsText('adminTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff-complaints/index" options={{ title: 'Personel Şikayetleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/templates" options={{ title: t('adminNotificationTemplates'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="smart-ops/index" options={{ title: 'Operasyon merkezi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="smart-ops/templates" options={{ title: 'Operasyon şablonları', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="smart-ops/live" options={{ title: 'Canlı operasyon', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/emergency" options={{ title: t('adminEmergency'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="emergency-locations" options={{ title: 'Acil Lokasyonlari', headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/index" options={{ title: t('adminMessages'), headerRight: renderHeaderRight }} />

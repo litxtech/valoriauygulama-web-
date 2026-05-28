@@ -1,13 +1,15 @@
 import { Image } from 'react-native';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
+import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
 
 /**
- * `ops.guest_documents.ocr_engine` değeri.
- * Önerilen kurumsal yığın (harici, lisanslı): Regula / Microblink; cihaz üstü
- * hız ve offline için VisionCamera+MLKit mümkün ama EAS iOS bu projede
- * expo-text-extractor ile sınırlandı.
+ * `ops.guest_documents.ocr_engine` — yedek / AI yolu.
+ * Birincil kimlik çekim okuması: MRZ_OCR_ENGINE_VISION_MLKIT (mrzStillImageOcr).
  */
 export const MRZ_OCR_ENGINE_EXPO = 'expo-text-extractor' as const;
+
+export type OcrLinesEngine = typeof MRZ_OCR_ENGINE_VISION_MLKIT | typeof MRZ_OCR_ENGINE_EXPO;
 
 type OcrImageOpts = { /** Galeri kimlik/pasaport: küçük fotoğrafları büyüt, çok büyükleri küçült. */ document?: boolean };
 
@@ -37,13 +39,10 @@ async function normalizeImageForOcr(uri: string, opts?: OcrImageOpts): Promise<s
   }
 }
 
-/**
- * Cihaz üstü OCR (expo-text-extractor). VisionCamera/ML Kit kaldırıldı (EAS iOS derlemesi).
- */
-export async function ocrLinesFromImage(
+async function ocrLinesFromExpo(
   uri: string,
   opts?: OcrImageOpts
-): Promise<{ lines: string[]; engine: 'expo' }> {
+): Promise<{ lines: string[]; engine: typeof MRZ_OCR_ENGINE_EXPO }> {
   const prepared = await normalizeImageForOcr(uri, opts);
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require('expo-text-extractor') as {
@@ -52,5 +51,43 @@ export async function ocrLinesFromImage(
   };
   if (mod?.isSupported === false) throw new Error('OCR_NOT_SUPPORTED');
   const lines = await mod.extractTextFromImage(prepared);
-  return { lines, engine: 'expo' };
+  return { lines, engine: MRZ_OCR_ENGINE_EXPO };
+}
+
+/**
+ * Kimlik / pasaport görseli — önce MRZ (ML Kit, canlı tarama ile aynı), olmazsa expo yedek.
+ */
+export async function ocrLinesFromImage(
+  uri: string,
+  opts?: OcrImageOpts
+): Promise<{ lines: string[]; engine: OcrLinesEngine }> {
+  const prepared = await normalizeImageForOcr(uri, opts);
+  let visionLines: string[] = [];
+  if (isMrzVisionScannerAvailable()) {
+    try {
+      const { ocrLinesFromMrzStillImage } = await import('@/lib/scanner/mrzStillImageOcr');
+      const mrz = await ocrLinesFromMrzStillImage(prepared);
+      if (mrz?.lines.length) {
+        visionLines = mrz.lines;
+        if (visionLines.length >= 4) {
+          return mrz;
+        }
+      }
+    } catch {
+      /* ML Kit yüklenemedi — expo yedek */
+    }
+  }
+  const expo = await ocrLinesFromExpo(prepared, opts);
+  if (visionLines.length === 0) return expo;
+  const merged = [...new Set([...visionLines, ...expo.lines])];
+  return { lines: merged, engine: MRZ_OCR_ENGINE_VISION_MLKIT };
+}
+
+/** Yalnızca expo (AI yedek / manuel). */
+export async function ocrLinesFromImageExpoOnly(
+  uri: string,
+  opts?: OcrImageOpts
+): Promise<{ lines: string[]; engine: typeof MRZ_OCR_ENGINE_EXPO }> {
+  const prepared = await normalizeImageForOcr(uri, opts);
+  return ocrLinesFromExpo(prepared, opts);
 }

@@ -34,6 +34,11 @@ export function filterStaffMenuItemsByHidden(
 }
 
 /** İşletme özellik yapılandırmasına göre hamburger öğelerini filtreler */
+function menuItemFeatureId(itemId: string): string {
+  if (itemId === 'kitchen_ops' || itemId.startsWith('kitchen_quick_')) return 'kitchen_ops';
+  return itemId;
+}
+
 export function filterStaffMenuSectionsByOrgFeatures(
   sections: StaffHamburgerMenuSection[],
   config: OrganizationUiFeaturesConfig | null | undefined
@@ -42,7 +47,9 @@ export function filterStaffMenuSectionsByOrgFeatures(
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => isFeatureVisibleInPlacement(config, item.id, 'hamburger')),
+      items: section.items.filter((item) =>
+        isFeatureVisibleInPlacement(config, menuItemFeatureId(item.id), 'hamburger')
+      ),
     }))
     .filter((s) => s.items.length > 0);
 }

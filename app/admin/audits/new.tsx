@@ -193,6 +193,32 @@ export default function NewAuditScreen() {
       Alert.alert('Hata', 'En az bir sorumlu personel seçin.');
       return;
     }
+    const missingEvidenceCritical = criteria.find((c) => {
+      const points = Math.round(scores[c.id] ?? c.max_points);
+      if (points >= c.max_points) return false;
+      const hasMedia = (criterionMedia[c.id]?.length ?? 0) > 0;
+      const hasComment = (comments[c.id] ?? '').trim().length >= 8;
+      return c.is_critical && !hasMedia && !hasComment;
+    });
+    if (missingEvidenceCritical) {
+      Alert.alert(
+        'Kanıt gerekli',
+        `"${missingEvidenceCritical.title}" kriterinde puan düşürdünüz. Kritik kriterlerde en az bir foto/video veya açıklayıcı not zorunlu.`
+      );
+      return;
+    }
+
+    const totalMax = criteria.reduce((sum, c) => sum + (Number(c.max_points) || 0), 0);
+    const totalGiven = criteria.reduce((sum, c) => sum + Math.round(scores[c.id] ?? c.max_points), 0);
+    const roughScore = totalMax > 0 ? Math.round((totalGiven / totalMax) * 100) : 100;
+    if (roughScore < 70 && totalCriterionMedia === 0) {
+      Alert.alert(
+        'Düşük puan için kanıt zorunlu',
+        'Genel puan 70 altında görünüyor. Ciddiyet için en az 1 fotoğraf/video kanıtı ekleyin.'
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       const mediaUrls: {

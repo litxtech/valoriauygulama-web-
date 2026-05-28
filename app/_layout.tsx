@@ -50,54 +50,24 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { initChatVideoUploadSession } from '@/lib/chatVideoUploadSession';
-import {
-  isStaffMealMenuDailyNotification,
-  staffMealMenuNotificationHref,
-} from '@/lib/staffMealMenuNotification';
 import { registerBackgroundNotificationTask } from '@/lib/backgroundNotificationTask';
 import { safeRouterReplace } from '@/lib/safeRouter';
+import { enableFreeze } from 'react-native-screens';
+import {
+  clearPendingNotificationData,
+  navigateFromNotificationPush,
+  stashPendingNotificationData,
+} from '@/lib/notificationNavigation';
 
 if (Platform.OS !== 'web') {
   SplashScreen.preventAutoHideAsync();
 }
 if (__DEV__) log.info('RootLayout', 'app başlatılıyor');
+if (Platform.OS === 'android') {
+  enableFreeze(true);
+}
 
 const WEB_BG = '#1a365d';
-
-/** Push / deep link: mesaj bildiriminde doğru sohbet ekranı (Expo Router pathname + params). */
-function parseConversationIdFromNotificationPayload(data: Record<string, unknown>): string | undefined {
-  const raw = data.conversationId ?? data.conversation_id;
-  if (typeof raw === 'string') {
-    const t = raw.trim();
-    return t.length > 0 ? t : undefined;
-  }
-  if (raw != null && String(raw).trim().length > 0) return String(raw).trim();
-  return undefined;
-}
-
-function resolveMessagePushHref(
-  url: string,
-  conversationIdFromData?: string
-):
-  | { pathname: '/staff/chat/[id]'; params: { id: string } }
-  | { pathname: '/customer/chat/[id]'; params: { id: string } }
-  | { pathname: '/admin/messages/chat/[id]'; params: { id: string } }
-  | null {
-  const base = (url.split('?')[0] || '').replace(/\/+$/, '') || '';
-  const staff = base.match(/^\/staff\/chat\/([^/]+)$/);
-  if (staff?.[1]) return { pathname: '/staff/chat/[id]', params: { id: staff[1] } };
-  const customer = base.match(/^\/customer\/chat\/([^/]+)$/);
-  if (customer?.[1]) return { pathname: '/customer/chat/[id]', params: { id: customer[1] } };
-  const admin = base.match(/^\/admin\/messages\/chat\/([^/]+)$/);
-  if (admin?.[1]) return { pathname: '/admin/messages/chat/[id]', params: { id: admin[1] } };
-  if (
-    conversationIdFromData &&
-    (base === '/staff/(tabs)/messages' || base.startsWith('/staff/(tabs)/messages/'))
-  ) {
-    return { pathname: '/staff/chat/[id]', params: { id: conversationIdFromData } };
-  }
-  return null;
-}
 
 const ROUTE_SAVE_DEBOUNCE_MS = 400;
 
@@ -373,168 +343,10 @@ function RootLayoutInner() {
     return () => sub.remove();
   }, []);
 
-  // Bildirime tıklandığında yönlendir (aynı mantık hem listener hem cold start için)
   const handleNotificationResponse = (data: Record<string, unknown> | undefined) => {
-    if (!data) return;
-    const safePush = (target: string) => {
-      if (!target || typeof target !== 'string' || !target.startsWith('/')) return;
-      try {
-        router.push(target);
-      } catch (e) {
-        log.warn('RootLayout', 'notification route push failed', { target, error: (e as Error)?.message });
-      }
-    };
-    const notificationType =
-      typeof data.notificationType === 'string'
-        ? data.notificationType
-        : typeof data.notification_type === 'string'
-          ? data.notification_type
-          : '';
-    const screenPath = typeof data.screen === 'string' ? data.screen.trim() : '';
-    if (screenPath.startsWith('/')) {
-      safePush(screenPath);
-      return;
-    }
-    const rawUrl = data?.url && typeof data.url === 'string' ? data.url.trim() : '';
-    const url = rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
-      ? (() => {
-          try {
-            return new URL(rawUrl).pathname || '';
-          } catch {
-            return '';
-          }
-        })()
-      : rawUrl.includes('://')
-        ? rawUrl.slice(rawUrl.indexOf('://') + 3).replace(/^[^/]+/, '')
-        : rawUrl;
-    const isInternalPath = url.startsWith('/');
-
-    // Temizlik planı push'ları için her durumda doğru ekranı aç.
-    if (
-      notificationType === 'staff_room_cleaning_status' ||
-      notificationType === 'staff_room_cleaning_plan_note_saved' ||
-      url === '/staff/cleaning-plan'
-    ) {
-      safePush('/staff/cleaning-plan');
-      return;
-    }
-
-    if (isStaffMealMenuDailyNotification(data)) {
-      try {
-        router.push(staffMealMenuNotificationHref(data));
-      } catch (e) {
-        log.warn('RootLayout', 'notification meal menu route push failed', {
-          error: (e as Error)?.message,
-        });
-      }
-      return;
-    }
-
-    const pickWarningId = (d: Record<string, unknown>): string => {
-      const w = d.warningId ?? d.warning_id;
-      return typeof w === 'string' ? w.trim() : '';
-    };
-    const screenRaw = data.screen;
-    const screenStr = typeof screenRaw === 'string' ? screenRaw.trim() : '';
-    if (
-      notificationType === 'staff_personnel_warning' ||
-      screenStr === '/staff/warnings' ||
-      screenStr.startsWith('/staff/warnings')
-    ) {
-      const wid = pickWarningId(data);
-      try {
-        if (wid) {
-          router.push({ pathname: '/staff/warnings', params: { focus: wid } });
-        } else {
-          router.push('/staff/warnings');
-        }
-      } catch (e) {
-        log.warn('RootLayout', 'notification personnel warning route push failed', {
-          warningId: wid,
-          error: (e as Error)?.message,
-        });
-      }
-      return;
-    }
-    if (notificationType === 'staff_personnel_warning_ack') {
-      const sidRaw = data.subjectStaffId ?? data.subject_staff_id;
-      const sid = typeof sidRaw === 'string' ? sidRaw.trim() : '';
-      if (sid) {
-        try {
-          router.push({ pathname: '/admin/staff/[id]', params: { id: sid } } as never);
-        } catch (e) {
-          log.warn('RootLayout', 'notification warning ack route push failed', {
-            subjectStaffId: sid,
-            error: (e as Error)?.message,
-          });
-        }
-      }
-      return;
-    }
-
-    if (isInternalPath) {
-      const convFromPayload = parseConversationIdFromNotificationPayload(data);
-      const messageHref = resolveMessagePushHref(url, convFromPayload);
-      if (messageHref) {
-        try {
-          router.push(messageHref);
-        } catch (e) {
-          log.warn('RootLayout', 'notification message chat route push failed', {
-            url,
-            error: (e as Error)?.message,
-          });
-        }
-        return;
-      }
-      const rawPid = data.postId ?? (data as { postid?: unknown }).postid;
-      const postId =
-        typeof rawPid === 'string'
-          ? rawPid.trim()
-          : rawPid != null && String(rawPid).length > 0
-            ? String(rawPid).trim()
-            : undefined;
-      const assignmentId =
-        typeof data.assignmentId === 'string'
-          ? data.assignmentId
-          : typeof data.openAssignmentId === 'string'
-            ? data.openAssignmentId
-            : undefined;
-      if (postId) {
-        if (url.includes('/customer/feed/[id]')) {
-          try {
-            router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
-          } catch (e) {
-            log.warn('RootLayout', 'notification feed route push failed', { postId, error: (e as Error)?.message });
-          }
-        } else {
-          try {
-            router.push({ pathname: url, params: { openPostId: postId } });
-          } catch (e) {
-            log.warn('RootLayout', 'notification route push with params failed', {
-              url,
-              postId,
-              error: (e as Error)?.message,
-            });
-          }
-        }
-      } else if (assignmentId && url === '/staff/tasks') {
-        try {
-          router.push({ pathname: '/staff/tasks', params: { focusAssignment: assignmentId } });
-        } catch (e) {
-          log.warn('RootLayout', 'notification assignment route push failed', {
-            assignmentId,
-            error: (e as Error)?.message,
-          });
-        }
-      } else {
-        safePush(url);
-      }
-    } else if (data?.screen === 'admin') {
-      safePush('/admin');
-    } else if (data?.screen === 'notifications') {
-      const goToNotifications = () => safePush('/go-to-notifications');
-      requestAnimationFrame(() => setTimeout(goToNotifications, 100));
-    }
+    if (!data || typeof data !== 'object') return;
+    stashPendingNotificationData(data);
+    void navigateFromNotificationPush(router, data).finally(() => clearPendingNotificationData());
   };
 
   // Uygulama bildirime tıklanarak açıldıysa (kapalıyken tıklandı) ilgili sayfaya git
@@ -543,19 +355,15 @@ function RootLayoutInner() {
     if (Platform.OS === 'web') return;
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
-    const t = setTimeout(() => {
-      getLastNotificationResponseAsync().then((response) => {
-        if (response?.notification) {
-          void applyBadgeFromExpoNotificationPayload(
-            response.notification as import('expo-notifications').Notification
-          );
-        }
-        if (response?.notification?.request?.content?.data) {
-          handleNotificationResponse(response.notification.request.content.data as Record<string, unknown>);
-        }
-      });
-    }, 600);
-    return () => clearTimeout(t);
+    void getLastNotificationResponseAsync().then((response) => {
+      if (response?.notification) {
+        void applyBadgeFromExpoNotificationPayload(
+          response.notification as import('expo-notifications').Notification
+        );
+      }
+      const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
+      handleNotificationResponse(data);
+    });
   }, [router]);
 
   useEffect(() => {
@@ -861,7 +669,14 @@ export default function RootLayout() {
   if (!queryClientRef.current) {
     queryClientRef.current = new QueryClient({
       defaultOptions: {
-        queries: { retry: 1, staleTime: 10_000 },
+        queries: {
+          retry: 1,
+          staleTime: 60_000,
+          gcTime: 10 * 60_000,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+          refetchOnMount: false,
+        },
         mutations: { retry: 0 },
       },
     });

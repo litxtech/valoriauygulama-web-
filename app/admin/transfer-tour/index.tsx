@@ -15,8 +15,9 @@ import {
 import { useRouter, usePathname, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
+import { AdminOrganizationPicker } from '@/components/admin';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import { Ionicons } from '@expo/vector-icons';
 import {
   canManageTransferServices,
@@ -40,7 +41,7 @@ export default function AdminTransferTourHome() {
   const router = useRouter();
   const pathname = usePathname();
   const base = pathname?.startsWith('/staff') ? '/staff/transfer-tour' : '/admin/transfer-tour';
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, canUseAll, orgScoped, canQuery } = useAdminOrganizationQueryScope();
   const canSvc = canManageTransferServices(staff);
   const canReq = canManageTransferRequests(staff);
   const canAny = canSvc || canReq || staff?.role === 'admin';
@@ -68,24 +69,30 @@ export default function AdminTransferTourHome() {
   const [offerVal, setOfferVal] = useState('');
 
   const load = useCallback(async () => {
-    if (!staff?.organization_id) return;
+    if (!canQuery) {
+      setServices([]);
+      setRequests([]);
+      return;
+    }
     if (canSvc || staff?.role === 'admin') {
-      const { data } = await supabase
+      let servicesQuery = supabase
         .from('transfer_services')
         .select('*')
-        .eq('organization_id', staff.organization_id)
         .order('created_at', { ascending: false });
+      if (orgScoped) servicesQuery = servicesQuery.eq('organization_id', orgScoped);
+      const { data } = await servicesQuery;
       setServices((data ?? []).map((r) => serviceRowFromDb({ ...(r as object), routes: parseRoutes((r as { routes?: unknown }).routes) })));
     }
     if (canReq || staff?.role === 'admin') {
-      const { data } = await supabase
+      let requestsQuery = supabase
         .from('transfer_service_requests')
         .select('*, transfer_services(title, cover_image, pricing_type, price, currency)')
-        .eq('organization_id', staff.organization_id)
         .order('created_at', { ascending: false });
+      if (orgScoped) requestsQuery = requestsQuery.eq('organization_id', orgScoped);
+      const { data } = await requestsQuery;
       setRequests((data ?? []) as unknown as TransferRequestRow[]);
     }
-  }, [staff?.organization_id, canSvc, canReq, staff?.role]);
+  }, [canQuery, orgScoped, canSvc, canReq, staff?.role]);
 
   useEffect(() => {
     if (!canAny) return;
@@ -187,6 +194,9 @@ export default function AdminTransferTourHome() {
 
   return (
     <View style={styles.root}>
+      <View style={styles.orgPickerWrap}>
+        <AdminOrganizationPicker canUseAll={canUseAll} ownOrganizationId={staff?.organization_id} />
+      </View>
       <View style={styles.tabs}>
         {(canSvc || staff?.role === 'admin') && (
           <TouchableOpacity
@@ -366,6 +376,7 @@ export default function AdminTransferTourHome() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  orgPickerWrap: { paddingHorizontal: 16, paddingTop: 10 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   noAccess: { marginTop: 12, textAlign: 'center', color: adminTheme.colors.textSecondary },
   tabs: { flexDirection: 'row', padding: 12, gap: 8 },

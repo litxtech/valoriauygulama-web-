@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback, type ReactNode } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Tabs, useRouter, type Href } from 'expo-router';
+import { Tabs, useRouter, usePathname, type Href } from 'expo-router';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -27,17 +28,25 @@ import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
 import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
 import { buildStaffHamburgerMenuLayout } from '@/lib/staffHamburgerMenu';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
-import { useStaffTabHref } from '@/hooks/useAppFeatureVisible';
+import { useStaffTabHrefs } from '@/hooks/useStaffTabHrefs';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { staffRoleLabel } from '@/lib/staffAssignments';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
 import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
-import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import {
   scheduleStaffMessagingUnreadRefresh,
   subscribeMessagingUnreadLive,
 } from '@/lib/messagingUnreadSync';
+import {
+  clearStaffHamburgerReopenPending,
+  isStaffFeedHomePath,
+  shouldReopenStaffHamburgerOnFeedReturn,
+  navigateStaffFromHamburgerMenu,
+  signalStaffNavigatedFromHamburger,
+} from '@/lib/staffHamburgerNavigation';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -45,6 +54,7 @@ const PROFILE_TAB_AVATAR_SIZE = 26;
 const IG_HEADER_FG = pds.text;
 
 function TabBarScaledIcon({ focused, children }: { focused: boolean; children: ReactNode }) {
+  if (Platform.OS === 'android') return <>{children}</>;
   return <View style={{ transform: [{ scale: focused ? 1.1 : 1 }] }}>{children}</View>;
 }
 
@@ -80,6 +90,43 @@ function StaffProfileBackToHome() {
 }
 
 const HEADER_CTRL = 34;
+const BADGE_REFRESH_MIN_GAP_MS = Platform.OS === 'android' ? 60_000 : 30_000;
+const ANDROID_REALTIME_DEFER_MS = 3500;
+const MENU_PREMOUNT_DELAY_MS = Platform.OS === 'android' ? 600 : 300;
+const ANDROID_BADGE_HEAVY_DEFER_MS = 2800;
+const IS_ANDROID = Platform.OS === 'android';
+
+/** pathname değişimlerini ana layout’tan ayır — stack (mutfak vb.) gezinmesinde Tabs yeniden çizilmesin. */
+function StaffFeedHamburgerPathEffects({
+  onCloseMenu,
+  onReopenMenu,
+}: {
+  onCloseMenu: () => void;
+  onReopenMenu: () => void;
+}) {
+  const pathname = usePathname();
+  const prevPathRef = useRef(pathname);
+
+  useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = pathname;
+
+    if (!isStaffFeedHomePath(pathname)) {
+      onCloseMenu();
+      return;
+    }
+
+    if (!shouldReopenStaffHamburgerOnFeedReturn(prev, pathname)) return;
+
+    if (IS_ANDROID) {
+      const task = runAfterUiReady(onReopenMenu, { delayMs: 120 });
+      return () => task.cancel();
+    }
+    onReopenMenu();
+  }, [pathname, onCloseMenu, onReopenMenu]);
+
+  return null;
+}
 
 
 function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['staff']): boolean {
@@ -106,169 +153,255 @@ export default function StaffTabsLayout() {
   const staff = useAuthStore((s) => s.staff);
   const orgUiConfig = useOrganizationUiFeaturesStore((s) => s.config);
   const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
-  const tabHrefFeed = useStaffTabHref('index');
-  const tabHrefTasks = useStaffTabHref('tasks');
-  const tabHrefStock = useStaffTabHref('stock');
-  const tabHrefMessages = useStaffTabHref('messages');
-  const tabHrefEmergency = useStaffTabHref('emergency');
-  const tabHrefAcceptances = useStaffTabHref('acceptances');
-  const tabHrefAdmin = useStaffTabHref('admin');
-  const tabHrefProfile = useStaffTabHref('profile');
+  const tabHrefs = useStaffTabHrefs();
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
-  const refreshBoard = useStaffBoardStore((s) => s.refresh);
   const loadBoardList = useStaffBoardStore((s) => s.loadList);
   const unreadMessagesCount = useStaffUnreadMessagesStore((s) => s.unreadCount);
   const refreshUnreadMessages = useStaffUnreadMessagesStore((s) => s.refreshUnread);
   const adminWarningCount = useAdminWarningStore((s) => s.count);
   const refreshAdminWarning = useAdminWarningStore((s) => s.refresh);
   const newAssignMenuLabel = useStaffNewAssignmentHintStore((s) => s.showHamburgerLabel);
-  const newAssignCount = useStaffNewAssignmentHintStore((s) => s.pendingCount);
   const refreshNewAssignHint = useStaffNewAssignmentHintStore((s) => s.refresh);
   const markNewAssignMenuOpened = useStaffNewAssignmentHintStore((s) => s.markHamburgerMenuOpened);
   const bumpNewAssignFromRealtime = useStaffNewAssignmentHintStore((s) => s.bumpFromRealtime);
-  const boardHasUnread = useStaffBoardStore((s) => s.hasUnread);
-  const boardUnreadCount = useStaffBoardStore((s) => s.unreadCount);
   const router = useRouter();
   const [menuVisible, setMenuVisible] = useState(false);
+  const [menuInstant, setMenuInstant] = useState(false);
   /** İlk açılışa kadar ağır menü ağacını mount etme (Android başlangıç jank’i). */
   const [menuSheetMounted, setMenuSheetMounted] = useState(false);
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
   const canKbsMrz = canStaffUseMrzScan(staff);
+  const canIdCapture = canStaffUseIdCapture(staff);
   const showHeaderFabMenu = canCreateFeed || canKbsMrz;
+  const badgeRefreshInFlightRef = useRef(false);
+  const badgeRefreshLastAtRef = useRef(0);
+
+  const refreshTabBadgesLite = useCallback(async () => {
+    if (!staff?.id) return;
+    await Promise.all([refreshNotifications(), refreshUnreadMessages(staff.id)]);
+  }, [staff?.id, refreshNotifications, refreshUnreadMessages]);
+
+  const refreshTabBadgesHeavy = useCallback(async () => {
+    if (!staff?.id) return;
+    await Promise.all([
+      loadBoardList(staff.id),
+      staff.role === 'admin' ? refreshAdminWarning(staff.id) : Promise.resolve(),
+      refreshNewAssignHint(staff.id),
+    ]);
+  }, [staff?.id, staff?.role, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
+
+  const refreshTabBadges = useCallback(
+    async (opts?: { force?: boolean; reason?: string; lite?: boolean }) => {
+      if (!staff?.id) return;
+      const now = Date.now();
+      const force = opts?.force === true;
+      if (badgeRefreshInFlightRef.current) return;
+      if (!force && now - badgeRefreshLastAtRef.current < BADGE_REFRESH_MIN_GAP_MS) return;
+      badgeRefreshInFlightRef.current = true;
+      badgeRefreshLastAtRef.current = now;
+      try {
+        if (opts?.lite) {
+          await refreshTabBadgesLite();
+          return;
+        }
+        await Promise.all([refreshTabBadgesLite(), refreshTabBadgesHeavy()]);
+      } finally {
+        badgeRefreshInFlightRef.current = false;
+      }
+    },
+    [staff?.id, refreshTabBadgesLite, refreshTabBadgesHeavy]
+  );
 
   useEffect(() => {
-    void loadOrgUi(staff?.organization_id);
+    if (!staff?.organization_id) return;
+    if (IS_ANDROID) {
+      const task = runAfterUiReady(() => void loadOrgUi(staff.organization_id), { delayMs: 1200 });
+      return () => task.cancel();
+    }
+    void loadOrgUi(staff.organization_id);
   }, [staff?.organization_id, loadOrgUi]);
 
   useEffect(() => {
     if (!staff?.id) return;
-    const staffId = staff.id;
-    const isAdmin = staff.role === 'admin';
-    // Android: rozet API’lerini seri başlat — aynı anda 4–5 istek UI’ı kilitliyordu
-    if (Platform.OS === 'android') {
-      refreshNotifications();
-      const t1 = setTimeout(() => refreshUnreadMessages(staffId), 150);
-      const t2 = setTimeout(() => void loadBoardList(staffId), 300);
-      const t3 = setTimeout(() => {
-        if (isAdmin) refreshAdminWarning(staffId);
-        void refreshNewAssignHint(staffId);
-      }, 450);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-      };
-    }
-    refreshNotifications();
-    refreshUnreadMessages(staffId);
-    void loadBoardList(staffId);
-    if (isAdmin) refreshAdminWarning(staffId);
-    void refreshNewAssignHint(staffId);
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
+    const runInitial = () => {
+      void refreshTabBadgesLite();
+      if (IS_ANDROID) {
+        runAfterUiReady(() => void refreshTabBadgesHeavy(), { delayMs: ANDROID_BADGE_HEAVY_DEFER_MS });
+        return;
+      }
+      void refreshTabBadgesHeavy();
+    };
+    const task = runAfterUiReady(runInitial);
+    return () => task.cancel();
+  }, [staff?.id, refreshTabBadgesLite, refreshTabBadgesHeavy]);
 
   useEffect(() => {
     if (!staff?.id) return;
     const staffId = staff.id;
-    const channel = supabase
-      .channel(`staff_assign_live_${staffId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'staff_assignments',
-          filter: `assigned_staff_id=eq.${staffId}`,
-        },
-        () => {
-          bumpNewAssignFromRealtime();
-          void refreshNewAssignHint(staffId);
-        }
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    const subscribe = () => {
+      if (cancelled) return;
+      channel = supabase
+        .channel(`staff_assign_live_${staffId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'staff_assignments',
+            filter: `assigned_staff_id=eq.${staffId}`,
+          },
+          () => {
+            bumpNewAssignFromRealtime();
+            if (!IS_ANDROID) void refreshTabBadges({ reason: 'assignment-insert', lite: true });
+          }
+        )
+        .subscribe();
     };
-  }, [staff?.id, bumpNewAssignFromRealtime, refreshNewAssignHint]);
+
+    if (IS_ANDROID) {
+      const task = runAfterUiReady(subscribe, { delayMs: ANDROID_REALTIME_DEFER_MS });
+      return () => {
+        cancelled = true;
+        task.cancel();
+        if (channel) void supabase.removeChannel(channel);
+      };
+    }
+    subscribe();
+    return () => {
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [staff?.id, bumpNewAssignFromRealtime, refreshTabBadges]);
 
   // Mesaj rozeti: sohbet listesine girmeden tab menüde (realtime)
   useEffect(() => {
     if (!staff?.id) return;
     const staffId = staff.id;
-    const unsub = subscribeMessagingUnreadLive(staffId, () => {
-      scheduleStaffMessagingUnreadRefresh(staffId);
-    });
-    return unsub;
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+
+    const start = () => {
+      if (cancelled) return;
+      unsub = subscribeMessagingUnreadLive(staffId, () => {
+        scheduleStaffMessagingUnreadRefresh(staffId, IS_ANDROID ? 520 : 280);
+      });
+    };
+
+    if (IS_ANDROID) {
+      const task = runAfterUiReady(start, { delayMs: ANDROID_REALTIME_DEFER_MS });
+      return () => {
+        cancelled = true;
+        task.cancel();
+        unsub?.();
+      };
+    }
+    start();
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [staff?.id]);
 
   useEffect(() => {
     if (!staff?.id) return;
-    const channel = supabase
-      .channel(`staff_board_live_${staff.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'announcements' },
-        () => {
-          void loadBoardList(staff.id);
-        }
-      )
-      .subscribe();
+    const staffId = staff.id;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    const subscribe = () => {
+      if (cancelled) return;
+      channel = supabase
+        .channel(`staff_board_live_${staffId}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'announcements' },
+          () => {
+            void loadBoardList(staffId);
+          }
+        )
+        .subscribe();
+    };
+
+    if (IS_ANDROID) {
+      const task = runAfterUiReady(subscribe, { delayMs: ANDROID_REALTIME_DEFER_MS + 800 });
+      return () => {
+        cancelled = true;
+        task.cancel();
+        if (channel) void supabase.removeChannel(channel);
+      };
+    }
+    subscribe();
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
     };
   }, [staff?.id, loadBoardList]);
 
-  const menuLayout = useMemo(
-    () =>
-      buildStaffHamburgerMenuLayout(
-        t,
-        staff
-          ? {
-              role: staff.role,
-              app_permissions: staff.app_permissions,
-              hidden_menu_item_ids: staff.hidden_menu_item_ids,
-              kbs_access_enabled: staff.kbs_access_enabled,
-              department: staff.department,
-            }
-          : null,
-        orgUiConfig
-      ),
-    [
+  const menuLayout = useMemo(() => {
+    if (!staff) return null;
+    return buildStaffHamburgerMenuLayout(
       t,
+      staff
+        ? {
+            role: staff.role,
+            app_permissions: staff.app_permissions,
+            hidden_menu_item_ids: staff.hidden_menu_item_ids,
+            kbs_access_enabled: staff.kbs_access_enabled,
+            department: staff.department,
+          }
+        : null,
+      orgUiConfig
+    );
+  }, [
+    menuSheetMounted,
+    t,
+    staff?.role,
+    staff?.app_permissions,
+    staff?.hidden_menu_item_ids,
+    staff?.kbs_access_enabled,
+    staff?.department,
+    orgUiConfig,
+  ]);
+
+  const menuIdentity = useMemo(
+    () =>
+      staff
+        ? {
+            fullName: staff.full_name,
+            profileImage: staff.profile_image ?? null,
+            roleLabel: staffRoleLabel(staff.role),
+            department: staff.department,
+            organizationName: staff.organization?.name ?? null,
+          }
+        : null,
+    [
+      staff?.full_name,
+      staff?.profile_image,
       staff?.role,
-      staff?.app_permissions,
-      staff?.hidden_menu_item_ids,
-      staff?.kbs_access_enabled,
       staff?.department,
-      orgUiConfig,
+      staff?.organization?.name,
     ]
   );
 
   useEffect(() => {
     if (!staff?.id) return;
     const interval = setInterval(() => {
-      refreshNotifications();
-      refreshUnreadMessages(staff.id);
-      void loadBoardList(staff.id);
-      if (staff.role === 'admin') refreshAdminWarning(staff.id);
-      void refreshNewAssignHint(staff.id);
+      void refreshTabBadges({ reason: 'interval' });
     }, 60000);
     return () => clearInterval(interval);
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
+  }, [staff?.id, refreshTabBadges]);
 
   // Android: ön plana gelince tab rozetleri güncellensin (debounce — aynı anda 4 ağ isteği UI’ı kilitlemesin)
   useEffect(() => {
     if (!staff?.id) return;
-    const staffId = staff.id;
-    const isAdmin = staff.role === 'admin';
     return subscribeAppForegroundDebounced(() => {
-      refreshNotifications();
-      refreshUnreadMessages(staffId);
-      void loadBoardList(staffId);
-      if (isAdmin) refreshAdminWarning(staffId);
-      void refreshNewAssignHint(staffId);
+      void refreshTabBadges({ reason: 'app-foreground' });
     });
-  }, [staff?.id, staff?.role, refreshNotifications, refreshUnreadMessages, loadBoardList, refreshAdminWarning, refreshNewAssignHint]);
+  }, [staff?.id, refreshTabBadges]);
 
   const shareFabLabel =
     canCreateFeed && canKbsMrz
@@ -277,55 +410,89 @@ export default function StaffTabsLayout() {
         ? t('staffFabCreatePostOrStory')
         : t('staffFabCreateMrzOnly');
 
-  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu, canKbsMrz);
+  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu, canKbsMrz, canIdCapture);
 
-  const closeMenu = () => {
+  useEffect(() => {
+    if (!staff?.id) return;
+    const task = runAfterUiReady(() => setMenuSheetMounted(true), { delayMs: MENU_PREMOUNT_DELAY_MS });
+    return () => task.cancel();
+  }, [staff?.id]);
+
+  const closeMenu = useCallback(() => {
+    setMenuInstant(false);
     setMenuVisible(false);
-  };
+    clearStaffHamburgerReopenPending();
+  }, []);
 
-  const handleMenuPress = () => {
-    setMenuSheetMounted(true);
-    setMenuVisible((wasOpen) => {
-      const opening = !wasOpen;
-      if (opening) {
-        const staffId = staff?.id;
-        if (staffId) {
-          setTimeout(() => {
-            void markNewAssignMenuOpened(staffId);
-          }, 0);
-        }
-      }
-      return opening;
-    });
-  };
-
-  const renderFeedHeaderLeft = () => (
-    <StaffFeedHeaderLeft
-      menuOpen={menuVisible}
-      onMenuPress={handleMenuPress}
-      menuHighlightLabel={newAssignMenuLabel ? t('newBtn') : null}
-      showShare={showHeaderFabMenu}
-      onSharePress={() => setFabVisible(true)}
-      shareAccessibilityLabel={shareFabLabel}
-    />
+  const navigateFromHamburgerMenu = useCallback(
+    (href: Href | string) => {
+      signalStaffNavigatedFromHamburger();
+      setMenuVisible(false);
+      setMenuInstant(false);
+      navigateStaffFromHamburgerMenu(router, String(href));
+    },
+    [router]
   );
 
-  const renderFeedHeaderRight = () => (
-    <StaffFeedHeaderRight
-      showMrz={canKbsMrz}
-      onMrzPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)}
-    />
+  const reopenMenuFromNavigation = useCallback(() => {
+    setMenuSheetMounted(true);
+    setMenuInstant(true);
+    setMenuVisible(true);
+  }, []);
+
+  const handleMenuPress = useCallback(() => {
+    if (menuVisible) {
+      closeMenu();
+      return;
+    }
+    setMenuSheetMounted(true);
+    setMenuInstant(IS_ANDROID);
+    setMenuVisible(true);
+    const staffId = staff?.id;
+    if (staffId) void markNewAssignMenuOpened(staffId);
+  }, [menuVisible, closeMenu, staff?.id, markNewAssignMenuOpened]);
+
+  const renderFeedHeaderLeft = useCallback(
+    () => (
+      <StaffFeedHeaderLeft
+        menuOpen={menuVisible}
+        onMenuPress={handleMenuPress}
+        menuHighlightLabel={newAssignMenuLabel ? t('newBtn') : null}
+        showShare={showHeaderFabMenu}
+        onSharePress={() => setFabVisible(true)}
+        shareAccessibilityLabel={shareFabLabel}
+      />
+    ),
+    [menuVisible, handleMenuPress, newAssignMenuLabel, t, showHeaderFabMenu, shareFabLabel]
+  );
+
+  const renderFeedHeaderRight = useCallback(
+    () => (
+      <StaffFeedHeaderRight
+        showMrz={canKbsMrz}
+        onMrzPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)}
+        showIdCapture={canIdCapture}
+        onIdCapturePress={() => router.push('/staff/kbs/capture-id' as never)}
+      />
+    ),
+    [canKbsMrz, canIdCapture, router]
   );
 
   const isStaffFeedTab = (routeName: string) => routeName === 'index';
 
+  const renderTabBar = useCallback(
+    (props: BottomTabBarProps) => (
+      <FloatingIslandTabBar {...props} surfaceColor={pds.cardBg} borderColor={pds.borderLight} />
+    ),
+    []
+  );
+
   return (
     <>
+    <StaffFeedHamburgerPathEffects onCloseMenu={closeMenu} onReopenMenu={reopenMenuFromNavigation} />
     <StaffBoardAnnouncementToast />
     <Tabs
-      tabBar={(props) => (
-        <FloatingIslandTabBar {...props} surfaceColor={pds.cardBg} borderColor={pds.borderLight} />
-      )}
+      tabBar={renderTabBar}
       screenListeners={({ route }) => ({
         tabPress: () => {
           if (route.name === 'admin') {
@@ -383,7 +550,7 @@ export default function StaffTabsLayout() {
         headerTitleAlign: 'center' as const,
         headerTintColor: IG_HEADER_FG,
         headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarColor: 'rgba(255,255,255,0.96)', statusBarStyle: 'dark' as const } : null),
+        ...(Platform.OS === 'android' ? { statusBarStyle: 'dark' as const } : null),
         headerLeftContainerStyle: feedTab
           ? { paddingLeft: 2, minWidth: feedHeaderSideW }
           : { paddingLeft: 0, minWidth: 0 },
@@ -398,7 +565,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          href: tabHrefFeed,
+          href: tabHrefs.index,
           title: '',
           headerTitle: () => <StaffBoardHeaderEye />,
           headerTitleAlign: 'center',
@@ -424,7 +591,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="tasks"
         options={{
-          href: tabHrefTasks,
+          href: tabHrefs.tasks,
           title: t('tasks'),
           headerTitle: t('tasks'),
           tabBarActiveTintColor: pds.indigo,
@@ -443,7 +610,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="stock"
         options={{
-          href: tabHrefStock,
+          href: tabHrefs.stock,
           title: t('stockTab'),
           headerTitle: t('stockManagement'),
           tabBarActiveTintColor: pds.indigo,
@@ -462,7 +629,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          href: tabHrefMessages,
+          href: tabHrefs.messages,
           title: t('messages'),
           headerTitle: t('teamChat'),
           tabBarActiveTintColor: pds.indigo,
@@ -488,7 +655,7 @@ export default function StaffTabsLayout() {
               />
             </TabBarScaledIcon>
           ),
-          href: staff?.role === 'admin' ? null : tabHrefEmergency,
+          href: staff?.role === 'admin' ? null : tabHrefs.emergency,
         }}
       />
       <Tabs.Screen
@@ -497,6 +664,13 @@ export default function StaffTabsLayout() {
           title: t('kbsNavOperation'),
           headerTitle: t('kbsNavOperation'),
           href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="id-capture"
+        options={{
+          href: null,
+          headerShown: false,
         }}
       />
       <Tabs.Screen
@@ -510,7 +684,7 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="acceptances"
         options={{
-          href: tabHrefAcceptances,
+          href: tabHrefs.acceptances,
           title: t('acceptances'),
           headerTitle: t('acceptancesHeader'),
           tabBarActiveTintColor: pds.indigo,
@@ -558,13 +732,13 @@ export default function StaffTabsLayout() {
               />
             </TabBarScaledIcon>
           ),
-          href: staff?.role === 'admin' ? tabHrefAdmin : null,
+          href: staff?.role === 'admin' ? tabHrefs.admin : null,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          href: tabHrefProfile,
+          href: tabHrefs.profile,
           title: t('myProfile'),
           headerTitle: '',
           headerShown: true,
@@ -588,31 +762,18 @@ export default function StaffTabsLayout() {
       />
     </Tabs>
     {menuSheetMounted ? (
+      <View style={styles.menuOverlay} pointerEvents="box-none">
       <StaffQuickMenuSheet
         visible={menuVisible}
+        instant={menuInstant}
         onClose={closeMenu}
         closeLabel={t('close')}
-        identity={
-          staff
-            ? {
-                fullName: staff.full_name,
-                profileImage: staff.profile_image ?? null,
-                roleLabel: staffRoleLabel(staff.role),
-                department: staff.department,
-                organizationName: staff.organization?.name ?? null,
-              }
-            : null
-        }
-        onProfilePress={() => {
-          closeMenu();
-          router.push('/staff/profile' as Href);
-        }}
+        identity={menuIdentity}
+        onProfilePress={() => navigateFromHamburgerMenu('/staff/profile')}
         layout={menuLayout}
-        onSelect={(href) => {
-          closeMenu();
-          router.push(href as never);
-        }}
+        onSelect={(href) => navigateFromHamburgerMenu(href)}
       />
+      </View>
     ) : null}
     <StaffFeedShareSheet
       visible={fabVisible}
@@ -637,6 +798,11 @@ export default function StaffTabsLayout() {
 }
 
 const styles = StyleSheet.create({
+  menuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    elevation: 200,
+  },
   profileBackBtn: {
     marginLeft: 4,
     width: 40,

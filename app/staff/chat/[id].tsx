@@ -112,6 +112,9 @@ function MessageBubble({
   isGroup,
   onImagePress,
   onDelete,
+  onToggleSelect,
+  selected,
+  selectionMode,
   bubbleColor,
   videoUpload,
   videoUploads,
@@ -126,6 +129,9 @@ function MessageBubble({
   isGroup: boolean;
   onImagePress?: (uri: string) => void;
   onDelete?: (msg: Message) => void;
+  onToggleSelect?: (msg: Message) => void;
+  selected?: boolean;
+  selectionMode?: boolean;
   bubbleColor?: string;
   videoUpload?: ChatVideoUploadState;
   videoUploads?: Record<string, ChatVideoUploadState>;
@@ -214,8 +220,13 @@ function MessageBubble({
 
   return (
     <Pressable
-      style={[styles.bubbleWrap, isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther]}
+      style={[
+        styles.bubbleWrap,
+        isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther,
+        selected ? styles.bubbleWrapSelected : null,
+      ]}
       onLongPress={isOwn && onDelete ? () => onDelete(msg) : undefined}
+      onPress={selectionMode && isOwn ? () => onToggleSelect?.(msg) : undefined}
       delayLongPress={400}
     >
       {!isOwn && (
@@ -328,6 +339,8 @@ export default function StaffChatScreen() {
   const insets = useSafeAreaInsets();
   const [fullscreenImageUri, setFullscreenImageUri] = useState<string | null>(null);
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [allStaffMuted, setAllStaffMuted] = useState(false);
   const listRef = useRef<FlatList>(null);
   const sendInFlightRef = useRef(false);
@@ -543,6 +556,36 @@ export default function StaffChatScreen() {
       headerBackTitle: t('back'),
       headerRight: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+          {selectionMode ? (
+            <>
+              <TouchableOpacity
+                onPress={() => {
+                  const ownIds = messages
+                    .filter((m) => m.sender_id === staff?.id && !m.is_deleted)
+                    .map((m) => m.id);
+                  setSelectedMessageIds((prev) => (prev.length === ownIds.length ? [] : ownIds));
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ marginRight: 10 }}
+              >
+                <Ionicons
+                  name={selectedMessageIds.length > 0 ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={theme.colors.primary}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectionMode(false);
+                  setSelectedMessageIds([]);
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <Ionicons name="close" size={24} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
           {canEditGroup ? (
             <TouchableOpacity
               onPress={openGroupSettingsModal}
@@ -584,6 +627,8 @@ export default function StaffChatScreen() {
               <Text style={styles.headerGroupBadgeText}>{t('group')}</Text>
             </View>
           ) : null}
+            </>
+          )}
         </View>
       ),
     });
@@ -599,6 +644,9 @@ export default function StaffChatScreen() {
     canEditGroup,
     groupThemeColor,
     winWidth,
+    selectionMode,
+    selectedMessageIds.length,
+    messages,
   ]);
 
   useEffect(() => {
@@ -673,6 +721,14 @@ export default function StaffChatScreen() {
     );
     return () => subscriptionRef.current?.unsubscribe?.();
   }, [conversationId, staff?.id]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    const ownIds = new Set(
+      messages.filter((m) => m.sender_id === staff?.id && !m.is_deleted).map((m) => m.id)
+    );
+    setSelectedMessageIds((prev) => prev.filter((id) => ownIds.has(id)));
+  }, [messages, selectionMode, staff?.id]);
 
   useEffect(() => {
     if (!conversationId || !staff) return;
@@ -1024,9 +1080,54 @@ export default function StaffChatScreen() {
     );
   };
 
+  const deleteSelectedMessages = async (ids: string[]) => {
+    if (!conversationId || ids.length === 0) return;
+    const results = await Promise.all(ids.map((id) => staffDeleteMessage(conversationId, id)));
+    const failed = results.filter((r) => r.error).length;
+    const successIds = ids.filter((_, idx) => !results[idx].error);
+    if (successIds.length) {
+      setMessages((prev) => prev.filter((m) => !successIds.includes(m.id)));
+    }
+    if (failed > 0) Alert.alert(t('error'), `${failed} mesaj silinemedi.`);
+  };
+
+  const confirmDeleteSelected = () => {
+    if (selectedMessageIds.length === 0) return;
+    Alert.alert('Toplu mesaj sil', `${selectedMessageIds.length} mesaj silinsin mi?`, [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          await deleteSelectedMessages(selectedMessageIds);
+          setSelectionMode(false);
+          setSelectedMessageIds([]);
+        },
+      },
+    ]);
+  };
+
+  const toggleSelectedMessage = (msg: Message) => {
+    if (msg.sender_id !== staff?.id) return;
+    setSelectedMessageIds((prev) =>
+      prev.includes(msg.id) ? prev.filter((id) => id !== msg.id) : [...prev, msg.id]
+    );
+  };
+
   const handleDeleteMessage = (msg: Message) => {
-    if (!conversationId) return;
-    Alert.alert(t('deleteMessageTitle'), t('deleteMessageConfirm'), [
+    if (!conversationId || msg.sender_id !== staff?.id) return;
+    if (selectionMode) {
+      toggleSelectedMessage(msg);
+      return;
+    }
+    Alert.alert('Mesaj işlemi', undefined, [
+      {
+        text: 'Çoklu seç',
+        onPress: () => {
+          setSelectionMode(true);
+          setSelectedMessageIds([msg.id]);
+        },
+      },
       { text: t('cancel'), style: 'cancel' },
       {
         text: t('delete'),
@@ -1106,6 +1207,9 @@ export default function StaffChatScreen() {
                 videoUploads={videoUploads}
                 onImagePress={setFullscreenImageUri}
                 onDelete={handleDeleteMessage}
+                onToggleSelect={toggleSelectedMessage}
+                selected={selectedMessageIds.includes(msg.id)}
+                selectionMode={selectionMode}
                 bubbleColor={bubbleColor}
                 videoUpload={resolveVideoUpload(msg)}
                 onVideoRetry={
@@ -1155,6 +1259,20 @@ export default function StaffChatScreen() {
           </View>
         ) : null}
         <ChatVideoBatchBar states={videoUploads} />
+        {selectionMode ? (
+          <View style={styles.bulkBar}>
+            <Text style={styles.bulkBarText}>{selectedMessageIds.length} mesaj seçildi</Text>
+            <TouchableOpacity
+              style={[styles.bulkDeleteBtn, selectedMessageIds.length === 0 && styles.bulkDeleteBtnDisabled]}
+              disabled={selectedMessageIds.length === 0}
+              onPress={confirmDeleteSelected}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="trash-outline" size={16} color="#fff" />
+              <Text style={styles.bulkDeleteBtnText}>Toplu sil</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
           <ChatMentionComposer
             style={styles.input}
@@ -1363,6 +1481,9 @@ const styles = StyleSheet.create({
   },
   bubbleWrap: {
     marginBottom: 14,
+  },
+  bubbleWrapSelected: {
+    opacity: 0.72,
   },
   bubbleWrapOwn: {
     alignItems: 'flex-end',
@@ -1591,6 +1712,38 @@ const styles = StyleSheet.create({
   typingChip: { width: 20, height: 20, borderRadius: 10, backgroundColor: theme.colors.primary, justifyContent: 'center', alignItems: 'center' },
   typingChipLetter: { fontSize: 11, fontWeight: '700', color: theme.colors.white },
   typingTextSmall: { fontSize: 11, color: theme.colors.textMuted },
+  bulkBar: {
+    backgroundColor: theme.colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.borderLight,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  bulkBarText: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    fontWeight: '600',
+  },
+  bulkDeleteBtn: {
+    backgroundColor: '#dc2626',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  bulkDeleteBtnDisabled: {
+    opacity: 0.5,
+  },
+  bulkDeleteBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+  },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

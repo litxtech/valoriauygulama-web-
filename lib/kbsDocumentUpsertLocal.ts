@@ -39,6 +39,12 @@ export async function upsertGuestDocumentLocal(args: {
   mrzBatchKey?: string | null;
   fatherName?: string | null;
   motherName?: string | null;
+  frontImageUrl?: string | null;
+  backImageUrl?: string | null;
+  captureSource?: 'camera' | 'gallery' | 'mixed' | null;
+  capturedAt?: string | null;
+  /** Toplu kayıtta tekrarlayan ensure_my_ops_app_user RPC çağrısını önler. */
+  opsContext?: { hotelId: string; userId: string };
 }): Promise<{ ok: true; data: UpsertOk } | { ok: false; message: string; code?: string }> {
   const {
     parsed,
@@ -55,12 +61,25 @@ export async function upsertGuestDocumentLocal(args: {
     forwardDated,
     mrzBatchKey,
     fatherName,
-    motherName
+    motherName,
+    frontImageUrl,
+    backImageUrl,
+    captureSource,
+    capturedAt,
+    opsContext,
   } = args;
 
-  const ctx = await resolveOpsHotelIdForCaller();
-  if (!ctx.ok) return { ok: false, message: ctx.message, code: ctx.code };
-  const { hotelId, userId: uid } = ctx;
+  let hotelId: string;
+  let uid: string;
+  if (opsContext) {
+    hotelId = opsContext.hotelId;
+    uid = opsContext.userId;
+  } else {
+    const ctx = await resolveOpsHotelIdForCaller();
+    if (!ctx.ok) return { ok: false, message: ctx.message, code: ctx.code };
+    hotelId = ctx.hotelId;
+    uid = ctx.userId;
+  }
 
   const effectiveRaw = parsed.rawMrz ?? rawMrz;
   if (isMrzPayload(effectiveRaw)) {
@@ -107,7 +126,7 @@ export async function upsertGuestDocumentLocal(args: {
         ocr_engine: ocrEngine ?? 'expo-text-extractor',
         scanned_by_user_id: uid,
       }
-    : { mrz_checksum_valid: null as const, ocr_engine: null as null, scanned_by_user_id: null as null };
+    : { mrz_checksum_valid: null, ocr_engine: null, scanned_by_user_id: null };
 
   if (normalizedDocNo) {
     const { data: existing, error: exErr } = await supabase
@@ -132,6 +151,10 @@ export async function upsertGuestDocumentLocal(args: {
           parsed_payload: payloadJson,
           scan_confidence: scanConfidence ?? parsed.confidence ?? null,
           scan_status: scanStatus,
+          front_image_url: frontImageUrl ?? null,
+          back_image_url: backImageUrl ?? null,
+          capture_source: captureSource ?? null,
+          captured_at: capturedAt ?? new Date().toISOString(),
           ...kbsExtras,
           ...mrzAudit
         })
@@ -204,6 +227,10 @@ export async function upsertGuestDocumentLocal(args: {
       parsed_payload: payloadJson,
       scan_confidence: scanConfidence ?? parsed.confidence ?? null,
       scan_status: scanStatus,
+      front_image_url: frontImageUrl ?? null,
+      back_image_url: backImageUrl ?? null,
+      capture_source: captureSource ?? null,
+      captured_at: capturedAt ?? new Date().toISOString(),
       ...kbsExtras,
       ...mrzAudit
     })

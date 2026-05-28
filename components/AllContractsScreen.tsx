@@ -26,6 +26,7 @@ import { AdminOrganizationPicker } from '@/components/admin';
 import {
   filterValidUuids,
   isValidUuid,
+  resolveAdminListOrganizationId,
   resolveStaffOrganizationScope,
 } from '@/lib/organizationScope';
 import {
@@ -215,10 +216,11 @@ export function AllContractsScreen() {
   const load = useCallback(async () => {
     const fromIso = `${dateFrom}T00:00:00.000Z`;
     const toIso = `${dateTo}T23:59:59.999Z`;
-    const orgScoped = resolveStaffOrganizationScope({
+    const orgScoped = resolveAdminListOrganizationId({
       canUseAll: canUseAllOrganizations,
       selectedOrganizationId,
       ownOrganizationId: staff?.organization_id,
+      fallbackOrganizationId: null,
     });
 
     let listQuery = supabase
@@ -228,7 +230,7 @@ export function AllContractsScreen() {
       .lte('accepted_at', toIso)
       .order('accepted_at', { ascending: false })
       .limit(500);
-    if (orgScoped) listQuery = listQuery.eq('organization_id', orgScoped);
+    if (orgScoped && isValidUuid(orgScoped)) listQuery = listQuery.eq('organization_id', orgScoped);
 
     const { data: list, error } = await listQuery;
 
@@ -260,18 +262,18 @@ export function AllContractsScreen() {
         ? supabase.from('guests').select('id, full_name, phone').in('id', guestIds)
         : Promise.resolve({ data: [] as { id: string; full_name: string | null; phone: string | null }[] }),
     ]);
-    roomNumbers = (roomsResult.data ?? []).reduce(
-      (acc, r) => ({ ...acc, [r.id]: r.room_number }),
-      {} as Record<string, string>
-    );
-    staffNames = (staffResult.data ?? []).reduce(
-      (acc, s) => ({ ...acc, [s.id]: s.full_name ?? '—' }),
-      {} as Record<string, string>
-    );
-    guestById = (guestsResult.data ?? []).reduce(
-      (acc, g) => ({ ...acc, [g.id]: { full_name: g.full_name, phone: g.phone } }),
-      {} as Record<string, { full_name: string | null; phone: string | null }>
-    );
+    roomNumbers = {};
+    for (const r of roomsResult.data ?? []) {
+      roomNumbers[r.id] = r.room_number;
+    }
+    staffNames = {};
+    for (const s of staffResult.data ?? []) {
+      staffNames[s.id] = s.full_name ?? '—';
+    }
+    guestById = {};
+    for (const g of guestsResult.data ?? []) {
+      guestById[g.id] = { full_name: g.full_name, phone: g.phone };
+    }
 
     setRows(
       (list ?? []).map((r) => {
@@ -299,17 +301,18 @@ export function AllContractsScreen() {
     const last = new Date(year, month + 1, 0);
     const fromIso = `${localDateToYMD(first)}T00:00:00.000Z`;
     const toIso = `${localDateToYMD(last)}T23:59:59.999Z`;
-    const orgScoped = resolveStaffOrganizationScope({
+    const orgScoped = resolveAdminListOrganizationId({
       canUseAll: canUseAllOrganizations,
       selectedOrganizationId,
       ownOrganizationId: staff?.organization_id,
+      fallbackOrganizationId: null,
     });
     let occupancyQuery = supabase
       .from('contract_acceptances')
       .select('accepted_at')
       .gte('accepted_at', fromIso)
       .lte('accepted_at', toIso);
-    if (orgScoped) occupancyQuery = occupancyQuery.eq('organization_id', orgScoped);
+    if (orgScoped && isValidUuid(orgScoped)) occupancyQuery = occupancyQuery.eq('organization_id', orgScoped);
     const { data } = await occupancyQuery;
     const dates = new Set<string>();
     (data ?? []).forEach((r) => {
@@ -358,6 +361,7 @@ export function AllContractsScreen() {
   };
 
   const loadGuestForPdf = async (guestId: string): Promise<GuestForPdf | null> => {
+    if (!isValidUuid(guestId)) return null;
     const { data: guest, error } = await supabase
       .from('guests')
       .select('full_name, phone, email, id_number, verified_at, created_at, signature_data, rooms(room_number), contract_templates(title, content), total_amount_net, nights_count, vat_amount, accommodation_tax_amount, payment_method, reservation_channel')
@@ -372,7 +376,7 @@ export function AllContractsScreen() {
   };
 
   const downloadPdf = async (item: Row) => {
-    if (!item.guest_id) {
+    if (!item.guest_id || !isValidUuid(item.guest_id)) {
       Alert.alert('Bilgi', 'Bu onayda misafir kaydı yok; PDF yalnızca form doldurulup onaylanan sözleşmelerde oluşturulabilir.');
       return;
     }
@@ -450,7 +454,7 @@ export function AllContractsScreen() {
     setDetailModalVisible(true);
     setDetailGuest(null);
     setPreviewHtml(null);
-    if (!item.guest_id) {
+    if (!item.guest_id || !isValidUuid(item.guest_id)) {
       setDetailLoading(false);
       return;
     }
@@ -502,7 +506,7 @@ export function AllContractsScreen() {
   };
 
   const sharePdfToWhatsApp = async (item: Row) => {
-    if (!item.guest_id) {
+    if (!item.guest_id || !isValidUuid(item.guest_id)) {
       Alert.alert('Bilgi', 'Bu onayda misafir kaydı yok.');
       return;
     }
@@ -635,9 +639,9 @@ export function AllContractsScreen() {
                 <Text style={[styles.contactBtnText, { color: '#7c3aed' }]}>Yazdır</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.contactBtn, (pdfLoadingId === item.id || !item.guest_id) && styles.contactBtnDisabled]}
+                style={[styles.contactBtn, (pdfLoadingId === item.id || !item.guest_id || !isValidUuid(item.guest_id)) && styles.contactBtnDisabled]}
                 onPress={(e) => { e.stopPropagation(); sharePdfToWhatsApp(item); }}
-                disabled={pdfLoadingId !== null}
+                disabled={pdfLoadingId !== null || !item.guest_id || !isValidUuid(item.guest_id)}
               >
                 {pdfLoadingId === item.id ? (
                   <ActivityIndicator size="small" color="#0369a1" />
@@ -686,7 +690,7 @@ export function AllContractsScreen() {
                   </View>
                 )}
                 {detailLoading && <ActivityIndicator size="small" color={adminTheme.colors.primary} style={{ marginVertical: 8 }} />}
-                {!detailTarget.guest_id && (
+                {(!detailTarget.guest_id || !isValidUuid(detailTarget.guest_id)) && (
                   <Text style={styles.detailHint}>Bu onayda misafir kaydı yok; PDF yalnızca form doldurulup onaylanan sözleşmelerde oluşturulabilir.</Text>
                 )}
                 <View style={styles.detailActions}>
@@ -695,7 +699,7 @@ export function AllContractsScreen() {
                       <Text style={styles.previewBtnText}>Sözleşmeyi önizle / yazdır</Text>
                     </TouchableOpacity>
                   )}
-                  {detailTarget.guest_id && (
+                  {detailTarget.guest_id && isValidUuid(detailTarget.guest_id) && (
                     <TouchableOpacity
                       style={[styles.pdfBtn, pdfLoadingId === detailTarget.id && styles.pdfBtnDisabled]}
                       onPress={() => sharePdfToWhatsApp(detailTarget)}

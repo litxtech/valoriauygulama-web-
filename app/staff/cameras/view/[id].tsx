@@ -7,7 +7,8 @@ import {
   Alert,
   BackHandler,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -21,7 +22,13 @@ import type { Camera } from '@/lib/cameras';
 export default function CameraViewScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const navigation = useNavigation();
+  const pathname = usePathname();
   const insets = useSafeAreaInsets();
+
+  const goBack = useCallback(() => {
+    navigateStaffBack(router, navigation, pathname, STAFF_TABS_FALLBACK);
+  }, [router, navigation, pathname]);
   const { staff } = useAuthStore();
   const [camera, setCamera] = useState<Camera | null>(null);
   const [recording, setRecording] = useState(false);
@@ -65,11 +72,11 @@ export default function CameraViewScreen() {
 
   useEffect(() => {
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.back();
+      goBack();
       return true;
     });
     return () => handler.remove();
-  }, [router]);
+  }, [goBack]);
 
   const handleScreenshot = async () => {
     if (!camera || !staff) return;
@@ -119,7 +126,7 @@ export default function CameraViewScreen() {
         <CameraStreamView camera={camera} useSubstream style={styles.stream} />
       </View>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={12}>
+        <TouchableOpacity onPress={goBack} style={styles.headerBtn} hitSlop={12}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{camera.name}</Text>

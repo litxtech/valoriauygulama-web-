@@ -5,6 +5,7 @@
 import { supabase, supabaseAnonKey } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { postNotificationsReturnMinimal } from '@/lib/notificationService';
+import { filterStaffIdsFeedNotMuted } from '@/lib/staffNotificationFilter';
 
 export async function notifyStaffOfNewFeedPost(params: {
   postId: string;
@@ -33,10 +34,11 @@ export async function notifyStaffOfNewFeedPost(params: {
     const staffIdsToNotify = excludeStaffId
       ? allStaffIds.filter((id) => id !== excludeStaffId)
       : allStaffIds;
-    if (staffIdsToNotify.length === 0) return;
+    const afterFeedMute = await filterStaffIdsFeedNotMuted(staffIdsToNotify);
+    if (afterFeedMute.length === 0) return;
 
     const ins = await postNotificationsReturnMinimal(
-      staffIdsToNotify.map((staffId) => ({
+      afterFeedMute.map((staffId) => ({
         staff_id: staffId,
         title: notifTitle,
         body,
@@ -52,7 +54,7 @@ export async function notifyStaffOfNewFeedPost(params: {
 
     const { error: pushFnError } = await supabase.functions.invoke('send-expo-push', {
       body: {
-        staffIds: staffIdsToNotify,
+        staffIds: afterFeedMute,
         title: notifTitle,
         body,
         data: notifData,
@@ -103,9 +105,10 @@ export async function notifyStaffOfNewStory(params: {
     const { data: staffRows } = await supabase.from('staff').select('id').eq('is_active', true);
     const allStaffIds = (staffRows ?? []).map((r: { id: string }) => r.id);
     const staffIdsToNotify = excludeStaffId ? allStaffIds.filter((id) => id !== excludeStaffId) : allStaffIds;
-    if (!staffIdsToNotify.length) return;
+    const afterFeedMute = await filterStaffIdsFeedNotMuted(staffIdsToNotify);
+    if (!afterFeedMute.length) return;
     const ins = await postNotificationsReturnMinimal(
-      staffIdsToNotify.map((staffId) => ({
+      afterFeedMute.map((staffId) => ({
         staff_id: staffId,
         title,
         body,
@@ -119,7 +122,7 @@ export async function notifyStaffOfNewStory(params: {
     );
     if (ins.error) log.warn('notifyStaffOfNewStory', 'notifications insert', ins.error.message);
     await supabase.functions.invoke('send-expo-push', {
-      body: { staffIds: staffIdsToNotify, title, body, data: { screen: 'staff_feed', url: '/staff/feed', storyId } },
+      body: { staffIds: afterFeedMute, title, body, data: { screen: 'staff_feed', url: '/staff/feed', storyId } },
       headers: { Authorization: `Bearer ${jwt}` },
     });
   } catch (e) {
