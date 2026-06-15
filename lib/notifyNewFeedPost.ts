@@ -6,6 +6,7 @@ import { supabase, supabaseAnonKey } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { postNotificationsReturnMinimal } from '@/lib/notificationService';
 import { filterStaffIdsFeedNotMuted } from '@/lib/staffNotificationFilter';
+import { guestNotificationCopy } from '@/lib/guestNotificationsI18n';
 
 export async function notifyStaffOfNewFeedPost(params: {
   postId: string;
@@ -131,37 +132,53 @@ export async function notifyStaffOfNewStory(params: {
 }
 
 export async function notifyGuestsOfNewStory(storyId: string, authorDisplayName: string): Promise<void> {
-  const name = (authorDisplayName ?? '').trim() || 'Bir personel';
-  const title = 'Yeni hikaye';
-  const body = `${name} yeni bir hikaye paylaştı`;
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const jwt = sessionData.session?.access_token ?? supabaseAnonKey;
     const { data: guests } = await supabase
       .from('guests')
-      .select('id')
+      .select('id, contract_lang')
       .not('auth_user_id', 'is', null)
       .is('deleted_at', null)
       .in('status', ['pending', 'checked_in']);
-    const guestIds = (guests ?? []).map((g: { id: string }) => g.id);
-    if (!guestIds.length) return;
+    const rows = (guests ?? []) as { id: string; contract_lang: string | null }[];
+    if (!rows.length) return;
+
     const ins = await postNotificationsReturnMinimal(
-      guestIds.map((guestId) => ({
-        guest_id: guestId,
-        title,
-        body,
-        category: 'guest',
-        notification_type: 'story_post',
-        data: { storyId, url: '/customer' },
-        sent_via: 'both',
-        sent_at: new Date().toISOString(),
-      }))
+      rows.map((g) => {
+        const { title, body } = guestNotificationCopy('guest_new_story', {
+          authorName: (authorDisplayName ?? '').trim(),
+        }, g.contract_lang);
+        return {
+          guest_id: g.id,
+          title,
+          body,
+          category: 'guest' as const,
+          notification_type: 'story_post',
+          data: { storyId, url: '/customer' },
+          sent_via: 'both' as const,
+          sent_at: new Date().toISOString(),
+        };
+      })
     );
     if (ins.error) log.warn('notifyGuestsOfNewStory', 'notifications insert', ins.error.message);
-    await supabase.functions.invoke('send-expo-push', {
-      body: { guestIds, title, body, data: { screen: 'customer', url: '/customer', storyId } },
-      headers: { Authorization: `Bearer ${jwt}` },
-    });
+
+    const byLang = new Map<string, string[]>();
+    for (const g of rows) {
+      const lang = (g.contract_lang ?? 'tr').split('-')[0]?.toLowerCase() ?? 'tr';
+      const list = byLang.get(lang) ?? [];
+      list.push(g.id);
+      byLang.set(lang, list);
+    }
+    for (const [lang, guestIds] of byLang) {
+      const { title, body } = guestNotificationCopy('guest_new_story', {
+        authorName: (authorDisplayName ?? '').trim(),
+      }, lang);
+      await supabase.functions.invoke('send-expo-push', {
+        body: { guestIds, title, body, data: { screen: 'customer', url: '/customer', storyId } },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+    }
   } catch (e) {
     log.warn('notifyGuestsOfNewStory', e);
   }

@@ -1,13 +1,12 @@
-import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { notifyConversationRecipients } from '@/lib/notificationService';
+import { notifyConversationRecipients, notifyAdmins } from '@/lib/notificationService';
 import type { Message } from '@/lib/messaging';
 import { log } from '@/lib/logger';
-import { addScreenshotListenerSafe, isExpoScreenCaptureNativeAvailable } from '@/lib/expoScreenCaptureSafe';
-
-const SCREENSHOT_DEBOUNCE_MS = 4000;
-let loggedNativeMissing = false;
+import {
+  useAppScreenshotContextStore,
+  type AppScreenshotChatContext,
+} from '@/stores/appScreenshotContextStore';
 
 type ScreenshotActor =
   | {
@@ -44,6 +43,8 @@ export async function reportChatScreenshot(
     pushBody: string;
     onMessage?: (msg: Message) => void;
     reloadMessages?: () => Promise<Message[]>;
+    /** Merkezi politika zaten admin bildirimi gönderiyorsa */
+    skipAdminNotify?: boolean;
   }
 ): Promise<void> {
   const { conversationId, senderName, chatUrl } = actor;
@@ -94,6 +95,20 @@ export async function reportChatScreenshot(
     },
   }).catch(() => {});
 
+  if (!params.skipAdminNotify) {
+    void notifyAdmins({
+      title: 'Sohbet ekran görüntüsü',
+      body: params.pushBody,
+      conversationId,
+      data: {
+        conversationId,
+        url: `/admin/messages/chat/${conversationId}`,
+        screen: `/admin/messages/chat/${conversationId}`,
+        notificationType: 'chat_screenshot',
+      },
+    }).catch(() => {});
+  }
+
   if (!params.onMessage) return;
 
   let row = await fetchScreenshotMessage(messageId, conversationId);
@@ -104,7 +119,34 @@ export async function reportChatScreenshot(
   if (row) params.onMessage(row);
 }
 
-/** Sohbet ekranında ekran görüntüsü alındığında bildir. */
+/** Sohbet ekranı bağlamını merkezi dinleyiciye bildirir. */
+export function useChatScreenshotContext(
+  enabled: boolean,
+  ctx: AppScreenshotChatContext | null
+): void {
+  const setChat = useAppScreenshotContextStore((s) => s.setChat);
+
+  useEffect(() => {
+    if (!enabled || !ctx) {
+      setChat(null);
+      return;
+    }
+    setChat(ctx);
+    return () => setChat(null);
+  }, [
+    enabled,
+    setChat,
+    ctx?.conversationId,
+    ctx?.conversationName,
+    ctx?.isGroup,
+    ctx?.pushBody,
+    ctx?.chatUrl,
+    ctx?.actor.kind,
+    ctx?.actor.kind === 'staff' ? ctx.actor.staffId : ctx?.actor.kind === 'guest' ? ctx.actor.appToken : '',
+  ]);
+}
+
+/** Eski sohbet ekranları / HMR — merkezi politika ile uyumlu ince sarmalayıcı. */
 export function useChatScreenshotListener(
   enabled: boolean,
   actor: ScreenshotActor | null,
@@ -117,64 +159,28 @@ export function useChatScreenshotListener(
     reloadStaffMessages?: () => Promise<Message[]>;
   } | null
 ): void {
-  const lastAtRef = useRef(0);
-  const busyRef = useRef(false);
-
-  useEffect(() => {
-    if (!enabled || !actor || !params?.pushBody) return;
-    if (Platform.OS === 'web') return;
-
-    let removeListener: (() => void) | undefined;
-    let cancelled = false;
-
-    if (!isExpoScreenCaptureNativeAvailable()) {
-      if (!loggedNativeMissing) {
-        loggedNativeMissing = true;
-        log.info('chatScreenshot', 'native module missing — rebuild dev client after expo-screen-capture install');
-      }
-      return;
-    }
-
-    void (async () => {
-      const sub = await addScreenshotListenerSafe(() => {
-        const now = Date.now();
-        if (busyRef.current || now - lastAtRef.current < SCREENSHOT_DEBOUNCE_MS) return;
-        lastAtRef.current = now;
-        busyRef.current = true;
-        void reportChatScreenshot(actor, {
-          conversationName: params.conversationName,
-          isGroup: params.isGroup,
-          pushBody: params.pushBody,
-          onMessage: (msg) => {
-            if (params.onLocalMessage && params.ownSenderId) {
-              params.onLocalMessage(msg);
-            }
-          },
-          reloadMessages: params.reloadStaffMessages,
-        }).finally(() => {
-          busyRef.current = false;
-        });
-      });
-      if (cancelled) {
-        sub?.remove();
-        return;
-      }
-      if (!sub) {
-        log.warn('chatScreenshot', 'listener unavailable (rebuild dev client)');
-        return;
-      }
-      removeListener = () => sub.remove();
-    })();
-
-    return () => {
-      cancelled = true;
-      removeListener?.();
+  const ctx = useMemo((): AppScreenshotChatContext | null => {
+    if (!actor || !params?.pushBody) return null;
+    return {
+      conversationId: actor.conversationId,
+      conversationName: params.conversationName,
+      isGroup: params.isGroup,
+      chatUrl: actor.chatUrl,
+      actor:
+        actor.kind === 'staff'
+          ? { kind: 'staff', staffId: actor.staffId, senderName: actor.senderName }
+          : { kind: 'guest', appToken: actor.appToken, senderName: actor.senderName },
+      pushBody: params.pushBody,
+      onLocalMessage: params.onLocalMessage,
+      ownSenderId: params.ownSenderId,
+      reloadStaffMessages: params.reloadStaffMessages,
     };
   }, [
-    enabled,
     actor?.kind,
     actor?.kind === 'staff' ? actor.staffId : actor?.kind === 'guest' ? actor.appToken : '',
     actor?.conversationId,
+    actor?.chatUrl,
+    actor?.kind === 'staff' ? actor.senderName : actor?.kind === 'guest' ? actor.senderName : '',
     params?.conversationName,
     params?.isGroup,
     params?.pushBody,
@@ -182,4 +188,6 @@ export function useChatScreenshotListener(
     params?.ownSenderId,
     params?.reloadStaffMessages,
   ]);
+
+  useChatScreenshotContext(enabled, ctx);
 }

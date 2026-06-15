@@ -20,7 +20,7 @@ import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
-import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickGalleryImages } from '@/lib/galleryPicker';
 import {
   CHECK_DIRECTION_LABELS,
   CHECK_STATUS_LABELS,
@@ -84,10 +84,8 @@ export default function AdminFinanceCheckNew() {
   };
 
   const pickLib = async () => {
-    const ok = await ensureMediaLibraryPermission();
-    if (!ok) return;
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.75 });
-    if (!r.canceled && r.assets[0]?.uri) await addImage(r.assets[0].uri);
+    const uris = await pickGalleryImages({ quality: 0.75, selectionLimit: 8 });
+    for (const uri of uris) await addImage(uri);
   };
 
   const save = async () => {

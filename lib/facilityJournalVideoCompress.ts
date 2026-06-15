@@ -1,5 +1,5 @@
 /**
- * Tesis günlüğü videoları — feed’den ayrı: 720p, hızlı sıkıştırma, MB üst sınırı yok.
+ * Otel eşyası kullanım videoları — feed’den ayrı: 720p, hızlı sıkıştırma, MB üst sınırı yok.
  */
 import { Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';

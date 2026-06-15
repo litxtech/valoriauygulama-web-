@@ -16,6 +16,7 @@ import {
 } from '@/lib/kbsStays/guestStaysDb';
 import type { CheckoutType, GuestStayRow } from '@/lib/kbsStays/types';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
+import { supabase } from '@/lib/supabase';
 
 export type KbsServiceResult<T = void> =
   | { ok: true; data: T; manualKbsPanelRequired?: boolean }

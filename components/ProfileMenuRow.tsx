@@ -23,6 +23,8 @@ type Props = {
   titleDanger?: boolean;
   chevronColor?: string;
   style?: ViewStyle;
+  /** ProfileMenuGroup içinde — dış kart gölgesi yok */
+  grouped?: boolean;
 };
 
 export function ProfileMenuRow({
@@ -34,15 +36,22 @@ export function ProfileMenuRow({
   titleDanger = false,
   chevronColor,
   style,
+  grouped = false,
 }: Props) {
   const accent = VARIANT_ACCENT[variant];
   const iconWrapStyle = [styles.iconWrap, { backgroundColor: accent + '1A' }];
 
   return (
     <TouchableOpacity
-      style={[styles.row, P.cardShell, Platform.OS === 'android' && styles.rowAndroid, style]}
+      style={[
+        styles.row,
+        !grouped && P.cardShell,
+        !grouped && Platform.OS === 'android' && styles.rowAndroid,
+        grouped && styles.rowGrouped,
+        style,
+      ]}
       onPress={onPress}
-      activeOpacity={0.9}
+      activeOpacity={0.88}
     >
       {Platform.OS === 'android' ? (
         <View style={iconWrapStyle}>
@@ -80,6 +89,11 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 16,
     marginBottom: 10,
+  },
+  rowGrouped: {
+    marginBottom: 0,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   rowAndroid: {
     elevation: 0,

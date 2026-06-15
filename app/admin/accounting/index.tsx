@@ -72,9 +72,14 @@ const QUICK: { href: Href; icon: keyof typeof Ionicons.glyphMap; label: string; 
 ];
 
 const LINKS: { href: Href; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
+  { href: '/admin/payments', icon: 'card-outline', label: 'Stripe ödemeler (bahşiş / mutfak / otel)' },
   { href: '/admin/accounting/activity', icon: 'time-outline', label: 'Son işlemler (tüm kayıtlar)' },
   { href: '/admin/accounting/movements', icon: 'list-outline', label: 'Gelir / gider defteri' },
-  { href: '/admin/accounting/counterparties', icon: 'people-outline', label: 'Kişi & firmalar (cariler)' },
+  {
+    href: '/admin/accounting/counterparties',
+    icon: 'people-outline',
+    label: 'Kişi ödemeleri (usta, şahsi…)',
+  },
   { href: '/admin/accounting/categories', icon: 'pricetags-outline', label: 'Gider / gelir kategorileri' },
   { href: '/admin/debts', icon: 'swap-horizontal-outline', label: 'Borç / alacak listesi' },
   { href: '/admin/finance-checks', icon: 'document-text-outline', label: 'Çek takibi' },
@@ -213,6 +218,24 @@ export default function AccountingHub() {
                 <Text style={styles.orgBannerHint}>
                   Bu işletmenin gelir, gider, personel harcaması, çek ve borç kayıtları aşağıda.
                 </Text>
+                <Text style={styles.orgBannerPdf}>
+                  PDF başlığı:{' '}
+                  <Text style={styles.orgBannerPdfVal}>
+                    {selectedOrg.finance_report_brand?.trim() || selectedOrg.name}
+                  </Text>
+                  {selectedOrg.finance_report_brand?.trim() ? '' : ' (işletme adı)'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    router.push({
+                      pathname: '/admin/organizations/[id]',
+                      params: { id: selectedOrg.id },
+                    } as never)
+                  }
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.orgBannerLink}>Belge başlığını değiştir →</Text>
+                </TouchableOpacity>
               </AdminCard>
             ) : null}
 
@@ -269,6 +292,24 @@ export default function AccountingHub() {
                 </Text>
               </AdminCard>
             </View>
+
+            <TouchableOpacity
+              style={styles.personPayBtn}
+              onPress={() => router.push('/admin/accounting/quick-pay')}
+              activeOpacity={0.88}
+              disabled={needOrg}
+            >
+              <View style={styles.personPayIcon}>
+                <Ionicons name="people" size={30} color="#fff" />
+              </View>
+              <View style={styles.activityBtnBody}>
+                <Text style={styles.personPayTitle}>Kişi ödemeleri</Text>
+                <Text style={styles.personPaySub}>
+                  Usta, tedarikçi, şahsi kişi — kime ne ödediğiniz; isme dokunun, detayı görün
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color="#fff" />
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.activityBtn}
@@ -448,8 +489,36 @@ const styles = StyleSheet.create({
   orgBannerName: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
   orgBannerKind: { fontSize: 13, color: adminTheme.colors.primary, fontWeight: '600', marginTop: 2 },
   orgBannerHint: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 8, lineHeight: 18 },
+  orgBannerPdf: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 10 },
+  orgBannerPdfVal: { fontWeight: '700', color: adminTheme.colors.text },
+  orgBannerLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: adminTheme.colors.primary,
+    marginTop: 8,
+  },
   staffExpCard: { padding: 14, marginTop: 10 },
   staffExpAmt: { fontSize: 17, fontWeight: '700', color: '#b45309', marginTop: 4 },
+  personPayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#7c3aed',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  personPayIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  personPayTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
+  personPaySub: { fontSize: 13, color: 'rgba(255,255,255,0.9)', marginTop: 4, lineHeight: 18 },
   activityBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -457,7 +526,7 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.surface,
     borderRadius: 14,
     padding: 16,
-    marginTop: 8,
+    marginTop: 0,
     marginBottom: 4,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,

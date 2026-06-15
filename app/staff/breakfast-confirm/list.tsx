@@ -28,8 +28,10 @@ import {
   canBreakfastViewAllRecordsUi,
   canBreakfastOwnHistoryUi,
   isBreakfastListReadOnlyUi,
+  canBreakfastShareUi,
 } from '@/lib/breakfastConfirm';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
+import { BreakfastConfirmShareSheet } from '@/components/breakfast/BreakfastConfirmShareSheet';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
 import { useTranslation } from 'react-i18next';
 
@@ -52,14 +54,16 @@ type StaffCardProps = {
   item: Row;
   thumbSize: number;
   canApprove: boolean;
+  canShare: boolean;
   onLightbox: (v: { urls: string[]; index: number }) => void;
   onApprove: (item: Row) => void;
   onReject: (item: Row) => void;
+  onShare: (item: Row) => void;
   t: (k: string) => string;
 };
 
 const StaffBreakfastCard = memo(function StaffBreakfastCard({
-  item, thumbSize, canApprove: canAp, onLightbox, onApprove, onReject, t,
+  item, thumbSize, canApprove: canAp, canShare, onLightbox, onApprove, onReject, onShare, t,
 }: StaffCardProps) {
   const urls = item.photo_urls ?? [];
   const isPending = !item.approved_at && !item.rejected_at;
@@ -138,6 +142,13 @@ const StaffBreakfastCard = memo(function StaffBreakfastCard({
           </TouchableOpacity>
         </View>
       ) : null}
+
+      {canShare ? (
+        <TouchableOpacity style={styles.shareBtn} onPress={() => onShare(item)} activeOpacity={0.85}>
+          <Ionicons name="share-social-outline" size={18} color={theme.colors.primary} />
+          <Text style={styles.shareBtnText}>Paylaş / Yazdır</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 });
@@ -157,8 +168,10 @@ export default function BreakfastConfirmListScreen() {
   const [rejectTarget, setRejectTarget] = useState<Row | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  const [shareTarget, setShareTarget] = useState<Row | null>(null);
 
   const canApprove = staff ? canBreakfastApproveUi(staff) : false;
+  const canShare = staff ? canBreakfastShareUi(staff) : false;
   const isDeptView = staff ? canBreakfastDepartmentViewUi(staff) : false;
   const isReportView = staff ? canBreakfastReportViewUi(staff) : false;
   const viewAllRecords = staff ? canBreakfastViewAllRecordsUi(staff) : false;
@@ -265,6 +278,13 @@ export default function BreakfastConfirmListScreen() {
     }
   };
 
+  const visibleRows = useMemo(() => {
+    if (!staff?.id) return rows;
+    if (viewAllRecords) return rows;
+    if (ownHistoryOnly) return rows.filter((r) => r.staff_id === staff.id);
+    return rows;
+  }, [rows, staff?.id, viewAllRecords, ownHistoryOnly]);
+
   const staffOptions = useMemo<StaffOption[]>(() => {
     const map = new Map<string, StaffOption>();
     for (const r of visibleRows) {
@@ -283,13 +303,6 @@ export default function BreakfastConfirmListScreen() {
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   }, [visibleRows]);
-
-  const visibleRows = useMemo(() => {
-    if (!staff?.id) return rows;
-    if (viewAllRecords) return rows;
-    if (ownHistoryOnly) return rows.filter((r) => r.staff_id === staff.id);
-    return rows;
-  }, [rows, staff?.id, viewAllRecords, ownHistoryOnly]);
 
   const filteredRows = useMemo(
     () => (selectedStaffId ? visibleRows.filter((r) => r.staff_id === selectedStaffId) : visibleRows),
@@ -319,6 +332,14 @@ export default function BreakfastConfirmListScreen() {
         urls={lightbox?.urls ?? []}
         initialIndex={lightbox?.index ?? 0}
         onClose={() => setLightbox(null)}
+      />
+
+      <BreakfastConfirmShareSheet
+        visible={shareTarget !== null}
+        record={shareTarget}
+        staffId={staff?.id ?? null}
+        staffName={staff?.full_name ?? 'Personel'}
+        onClose={() => setShareTarget(null)}
       />
 
       {/* Toolbar */}
@@ -365,9 +386,11 @@ export default function BreakfastConfirmListScreen() {
             item={item}
             thumbSize={thumbSize}
             canApprove={canApprove && !readOnly}
+            canShare={canShare}
             onLightbox={setLightbox}
             onApprove={approve}
             onReject={(r) => { setRejectTarget(r); setRejectReason(''); }}
+            onShare={setShareTarget}
             t={t}
           />
         )}
@@ -642,6 +665,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   rejectBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    backgroundColor: '#f8fafc',
+  },
+  shareBtnText: { color: theme.colors.primary, fontWeight: '700', fontSize: 14 },
 
   badgePillReject: {
     flexDirection: 'row',

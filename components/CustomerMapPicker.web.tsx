@@ -21,6 +21,7 @@ export type CustomerMapPickerProps = {
   onPoiPress?: (poi: Poi) => void;
   onHotelPress?: () => void;
   onPostPress?: (postId: string) => void;
+  onUserPress?: (marker: MapUserMarker) => void;
   onRegionChangeComplete?: (center: { lat: number; lng: number }) => void;
   onRegionChange?: (center: { lat: number; lng: number }) => void;
   style?: object;
@@ -40,6 +41,7 @@ export default function CustomerMapPicker(props: CustomerMapPickerProps) {
       onPoiPress={props.onPoiPress}
       onHotelPress={props.onHotelPress}
       onPostPress={props.onPostPress}
+      onUserPress={props.onUserPress}
       onRegionChange={props.onRegionChange ?? props.onRegionChangeComplete}
       style={props.style}
     />

@@ -33,6 +33,14 @@ export async function getLastRoute(): Promise<string | null> {
   }
 }
 
+export async function clearLastRoute(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEY);
+  } catch {
+    // ignore
+  }
+}
+
 type UserType = { staff: { role: string } | null; user: unknown } | null;
 
 /**

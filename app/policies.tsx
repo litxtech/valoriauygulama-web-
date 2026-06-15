@@ -16,7 +16,7 @@ import { setPolicyConsent, getPendingGuest, clearPendingGuest } from '@/lib/poli
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LANGUAGES, LANG_STORAGE_KEY, type LangCode } from '@/i18n';
+import { LANGUAGES, LANG_STORAGE_KEY, changeAppLanguage, type LangCode } from '@/i18n';
 import { applyRTLAndReloadIfNeeded } from '@/lib/reloadForRTL';
 
 export default function PoliciesConsentScreen() {
@@ -140,7 +140,7 @@ export default function PoliciesConsentScreen() {
               key={code}
               style={[styles.langBtn, i18n.language === code && styles.langBtnActive]}
               onPress={async () => {
-                i18n.changeLanguage(code);
+                await changeAppLanguage(code);
                 await AsyncStorage.setItem(LANG_STORAGE_KEY, code as LangCode);
                 await applyRTLAndReloadIfNeeded(code);
               }}

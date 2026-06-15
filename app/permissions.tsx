@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,10 +20,23 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { emitPermissionLiveChange, onPermissionLiveChange } from '@/lib/permissionLive';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  disableStaffLiveLocationFromPermissions,
+  enableStaffLiveLocationFromPermissions,
+  getStaffLocationPermissionSnapshot,
+} from '@/lib/map/staffLocationSharing';
+import {
+  disableGuestLiveLocationFromPermissions,
+  enableGuestLiveLocationFromPermissions,
+  enableGuestLiveLocationQuiet,
+  getGuestLocationPermissionSnapshot,
+} from '@/lib/map/guestLocationSharing';
+import { getOrCreateGuestForCaller, getGuestFullNameFromUser } from '@/lib/getOrCreateGuestForCaller';
 
 type PermStatus = 'granted' | 'denied' | 'undetermined' | 'unavailable';
 
-const DEVICE_PERMISSIONS = [
+const BASE_DEVICE_PERMISSIONS = [
   {
     key: 'camera',
     icon: 'camera-outline' as const,
@@ -45,8 +58,8 @@ const DEVICE_PERMISSIONS = [
   {
     key: 'location',
     icon: 'location-outline' as const,
-    title: 'Konum',
-    reason: 'Harita deneyimi ve yakinlik tabanli hizmetler.',
+    title: 'Konum (uygulama acikken)',
+    reason: 'Haritada yol tarifi, yakin noktalar ve konumunuzu haritada gostermek icin.',
   },
   {
     key: 'notifications',
@@ -55,6 +68,35 @@ const DEVICE_PERMISSIONS = [
     reason: 'Mesaj, rezervasyon ve acil duyuru bildirimleri.',
   },
 ];
+
+const STAFF_LIVE_LOCATION_PERM = {
+  key: 'location_live',
+  icon: 'navigate-outline' as const,
+  title: 'Canli operasyon konumu',
+  reason:
+    'Vardiya sirasinda operasyon haritasinda avatarinizin canli gorunmesi (istege bagli). Yalnizca uygulama acikken guncellenir.',
+};
+
+const GUEST_LIVE_LOCATION_PERM = {
+  key: 'location_live_guest',
+  icon: 'navigate-outline' as const,
+  title: 'Otel haritasinda canli konum',
+  reason:
+    'Konum paylasimi acikken resepsiyon haritada sizi gorebilir. Haritadan veya buradan kapatabilirsiniz; yalnizca uygulama acikken guncellenir.',
+};
+
+function devicePermissionsForUser(isStaff: boolean) {
+  const list = [...BASE_DEVICE_PERMISSIONS];
+  const locIdx = list.findIndex((p) => p.key === 'location');
+  if (locIdx >= 0) {
+    list.splice(locIdx + 1, 0, isStaff ? STAFF_LIVE_LOCATION_PERM : GUEST_LIVE_LOCATION_PERM);
+  }
+  return list;
+}
+
+function isLiveLocationKey(key: string): boolean {
+  return key === 'location_live' || key === 'location_live_guest';
+}
 
 async function getStatus(key: string): Promise<PermStatus> {
   try {
@@ -78,6 +120,20 @@ async function getStatus(key: string): Promise<PermStatus> {
         const Location = await import('expo-location');
         const { status } = await Location.getForegroundPermissionsAsync();
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
+      }
+      case 'location_live': {
+        const snap = await getStaffLocationPermissionSnapshot();
+        if (snap.foreground === 'unavailable') return 'unavailable';
+        if (snap.enabled && snap.foreground === 'granted') return 'granted';
+        if (snap.foreground === 'denied') return 'denied';
+        return 'undetermined';
+      }
+      case 'location_live_guest': {
+        const snap = await getGuestLocationPermissionSnapshot();
+        if (snap.foreground === 'unavailable') return 'unavailable';
+        if (snap.enabled && snap.foreground === 'granted') return 'granted';
+        if (snap.foreground === 'denied') return 'denied';
+        return 'undetermined';
       }
       case 'notifications': {
         const { status } = await ExpoNotifications.getPermissionsAsync();
@@ -140,6 +196,10 @@ async function requestPermission(key: string): Promise<PermStatus> {
         emitPermissionLiveChange();
         return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
       }
+      case 'location_live': {
+        emitPermissionLiveChange();
+        return 'undetermined';
+      }
       case 'notifications': {
         const { status } = await ExpoNotifications.requestPermissionsAsync();
         emitPermissionLiveChange();
@@ -173,6 +233,9 @@ function openAppSettings(): Promise<void> {
 
 export default function PermissionsScreen() {
   const router = useRouter();
+  const staff = useAuthStore((s) => s.staff);
+  const user = useAuthStore((s) => s.user);
+  const devicePermissions = useMemo(() => devicePermissionsForUser(!!staff), [staff]);
   const [statuses, setStatuses] = useState<Record<string, PermStatus>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
@@ -181,13 +244,13 @@ export default function PermissionsScreen() {
 
   const refreshAll = useCallback(async () => {
     const next: Record<string, PermStatus> = {};
-    for (const p of DEVICE_PERMISSIONS) {
+    for (const p of devicePermissions) {
       next[p.key] = await getStatus(p.key);
     }
     const serialized = JSON.stringify(next);
     lastSerializedRef.current = serialized;
     setStatuses(next);
-  }, []);
+  }, [devicePermissions]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -237,17 +300,102 @@ export default function PermissionsScreen() {
     try {
       if (current === 'granted') {
         closePermissionCard();
-        await openAppSettings();
-        setTimeout(refreshAll, 500);
+        if (keyToRequest === 'location_live' && staff) {
+          void (async () => {
+            setLoading((prev) => ({ ...prev, location_live: true }));
+            try {
+              await disableStaffLiveLocationFromPermissions();
+              emitPermissionLiveChange();
+              await refreshAll();
+            } finally {
+              setLoading((prev) => ({ ...prev, location_live: false }));
+            }
+          })();
+        } else if (keyToRequest === 'location_live_guest' && user && !staff) {
+          void (async () => {
+            setLoading((prev) => ({ ...prev, location_live_guest: true }));
+            try {
+              await disableGuestLiveLocationFromPermissions();
+              emitPermissionLiveChange();
+              await refreshAll();
+            } finally {
+              setLoading((prev) => ({ ...prev, location_live_guest: false }));
+            }
+          })();
+        } else {
+          await openAppSettings();
+          setTimeout(refreshAll, 500);
+        }
       } else {
         // Modal açıkken sistem izin penceresi arkada kalıp görünmeyebilir (özellikle iOS).
         // Önce modalı kapatıp, animasyon bitince izin isteyerek sistem penceresinin
         // üstte görünmesini sağlıyoruz.
         closePermissionCard();
         const requestAfterClose = () => {
-          requestPermission(keyToRequest).then((next) => {
+          if (keyToRequest === 'location_live' && staff) {
+            void (async () => {
+              setLoading((prev) => ({ ...prev, location_live: true }));
+              try {
+                if (current === 'granted') {
+                  await disableStaffLiveLocationFromPermissions();
+                } else {
+                  await enableStaffLiveLocationFromPermissions({
+                    staffId: staff.id,
+                    displayName: staff.full_name ?? null,
+                    avatarUrl: staff.profile_image ?? null,
+                  });
+                }
+                emitPermissionLiveChange();
+                await refreshAll();
+              } finally {
+                setLoading((prev) => ({ ...prev, location_live: false }));
+              }
+            })();
+            return;
+          }
+          if (keyToRequest === 'location_live_guest' && user && !staff) {
+            void (async () => {
+              setLoading((prev) => ({ ...prev, location_live_guest: true }));
+              try {
+                if (current === 'granted') {
+                  await disableGuestLiveLocationFromPermissions();
+                } else {
+                  const row = await getOrCreateGuestForCaller(user);
+                  if (row?.guest_id) {
+                    await enableGuestLiveLocationFromPermissions({
+                      guestId: row.guest_id,
+                      displayName: getGuestFullNameFromUser(user) ?? null,
+                      avatarUrl: (user.user_metadata?.avatar_url as string | undefined) ?? null,
+                    });
+                  }
+                }
+                emitPermissionLiveChange();
+                await refreshAll();
+              } finally {
+                setLoading((prev) => ({ ...prev, location_live_guest: false }));
+              }
+            })();
+            return;
+          }
+          requestPermission(keyToRequest).then(async (next) => {
             setStatuses((prev) => ({ ...prev, [keyToRequest]: next }));
-            refreshAll();
+            if (
+              next === 'granted' &&
+              keyToRequest === 'location' &&
+              user &&
+              !staff
+            ) {
+              const row = await getOrCreateGuestForCaller(user);
+              if (row?.guest_id) {
+                await enableGuestLiveLocationQuiet({
+                  guestId: row.guest_id,
+                  displayName: getGuestFullNameFromUser(user) ?? null,
+                  avatarUrl: (user.user_metadata?.avatar_url as string | undefined) ?? null,
+                });
+                emitPermissionLiveChange();
+              }
+            }
+            await refreshAll();
           });
         };
         if (Platform.OS === 'ios') {
@@ -262,7 +410,7 @@ export default function PermissionsScreen() {
       clearTimeout(loadingTimeout);
       setLoading((prev) => ({ ...prev, [keyToRequest]: false }));
     }
-  }, [activeKey, statuses, refreshAll, closePermissionCard]);
+  }, [activeKey, statuses, refreshAll, closePermissionCard, staff, user]);
 
   const statusLabel = (s: PermStatus) => {
     switch (s) {
@@ -277,14 +425,15 @@ export default function PermissionsScreen() {
     }
   };
 
-  const actionHint = (s: PermStatus) => {
+  const actionHint = (key: string, s: PermStatus) => {
+    if (isLiveLocationKey(key) && s === 'granted') return 'Canli paylasimi kapatmak icin dokunun';
     if (s === 'granted') return 'Ayarlar acilir: iptal veya duzenleme yapabilirsiniz';
     if (s === 'unavailable') return 'Bu cihazda desteklenmiyor';
     return 'Izin vermek icin dokunun';
   };
 
-  const grantedCount = DEVICE_PERMISSIONS.filter((p) => statuses[p.key] === 'granted').length;
-  const totalCount = DEVICE_PERMISSIONS.length;
+  const grantedCount = devicePermissions.filter((p) => statuses[p.key] === 'granted').length;
+  const totalCount = devicePermissions.length;
 
   return (
     <ScrollView
@@ -326,7 +475,7 @@ export default function PermissionsScreen() {
         </Text>
       </View>
 
-      {DEVICE_PERMISSIONS.map((p) => {
+      {devicePermissions.map((p) => {
         const status = statuses[p.key] ?? 'undetermined';
         const busy = loading[p.key] || (activeKey === p.key && loading[p.key]);
         const unavailable = status === 'unavailable';
@@ -361,7 +510,7 @@ export default function PermissionsScreen() {
                 )}
               </View>
               <Text style={styles.permReason}>{p.reason}</Text>
-              {canTap ? <Text style={styles.permHint}>{actionHint(status)}</Text> : null}
+              {canTap ? <Text style={styles.permHint}>{actionHint(p.key, status)}</Text> : null}
             </View>
             {!busy && <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} />}
           </TouchableOpacity>
@@ -372,11 +521,17 @@ export default function PermissionsScreen() {
         <Pressable style={styles.modalOverlay}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
             {(() => {
-              const p = DEVICE_PERMISSIONS.find((x) => x.key === activeKey);
+              const p = devicePermissions.find((x) => x.key === activeKey);
               if (!p) return null;
               const status = statuses[p.key] ?? 'undetermined';
               const busy = loading[p.key] ?? false;
-              const primaryLabel = status === 'granted' ? 'Ayarları aç' : 'Devam';
+              const primaryLabel = isLiveLocationKey(activeKey ?? '')
+                ? status === 'granted'
+                  ? 'Canli konumu kapat'
+                  : 'Canli konumu ac'
+                : status === 'granted'
+                  ? 'Ayarları aç'
+                  : 'Devam';
               const statusText = statusLabel(status);
               const statusColor =
                 status === 'granted' ? theme.colors.success : status === 'denied' ? theme.colors.error : theme.colors.textSecondary;
@@ -396,12 +551,34 @@ export default function PermissionsScreen() {
                   </View>
 
                   <View style={styles.modalNotes}>
-                    <Text style={styles.modalNote}>
-                      - "Devam" derseniz sistem izin penceresi acilir.
-                    </Text>
-                    <Text style={styles.modalNote}>
-                      - Izin durumu bu sayfada canli guncellenir (uygulamanin diger bolumlerinde izin verilse bile).
-                    </Text>
+                    {activeKey === 'location_live' ? (
+                      <>
+                        <Text style={styles.modalNote}>
+                          - Vardiya haritasinda yalnizca yetkili ekip avatarinizi gorur; istediginiz zaman kapatabilirsiniz.
+                        </Text>
+                        <Text style={styles.modalNote}>
+                          - Canli konum yalnizca uygulama acikken paylasilir (Google Play politikasi).
+                        </Text>
+                      </>
+                    ) : activeKey === 'location_live_guest' ? (
+                      <>
+                        <Text style={styles.modalNote}>
+                          - Otel haritasinda yalnizca siz acinca avatariniz gorunur; resepsiyon ve yetkili ekip size yardim icin gorebilir.
+                        </Text>
+                        <Text style={styles.modalNote}>
+                          - Canli konum yalnizca uygulama acikken paylasilir. Kapatmak icin haritadaki dugmeyi veya bu ekrani kullanin.
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.modalNote}>
+                          - "Devam" derseniz sistem izin penceresi acilir.
+                        </Text>
+                        <Text style={styles.modalNote}>
+                          - Izin durumu bu sayfada canli guncellenir (uygulamanin diger bolumlerinde izin verilse bile).
+                        </Text>
+                      </>
+                    )}
                   </View>
 
                   <TouchableOpacity

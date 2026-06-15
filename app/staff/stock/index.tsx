@@ -14,11 +14,13 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { StockInventoryList, type StockInventoryListItem } from '@/components/stock/StockInventoryList';
 import { StockHubCompact } from '@/components/stock/StockHubCompact';
+import { buildLatestPhotoProofByProductId, resolveStockProductImageUrl } from '@/lib/stockProductImages';
 
 type Product = {
   id: string;
@@ -46,6 +48,7 @@ type MovementRow = {
 
 export default function StaffStockListScreen() {
   const router = useRouter();
+  const palette = usePersonelDesign();
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -54,15 +57,29 @@ export default function StaffStockListScreen() {
   const [productModalProduct, setProductModalProduct] = useState<Product | null>(null);
   const [recentModalVisible, setRecentModalVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [photoByProductId, setPhotoByProductId] = useState<Record<string, string>>({});
 
   const load = async () => {
-    const { data } = await supabase
-      .from('stock_products')
-      .select(
-        'id, name, unit, current_stock, min_stock, image_url, created_at, created_by, category:stock_categories(name), creator:created_by(full_name)'
+    const [prodRes, photoRes] = await Promise.all([
+      supabase
+        .from('stock_products')
+        .select(
+          'id, name, unit, current_stock, min_stock, image_url, created_at, created_by, category:stock_categories(name), creator:created_by(full_name)'
+        )
+        .order('name'),
+      supabase
+        .from('stock_movements')
+        .select('product_id, photo_proof')
+        .not('photo_proof', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(500),
+    ]);
+    setProducts((prodRes.data ?? []) as unknown as Product[]);
+    setPhotoByProductId(
+      buildLatestPhotoProofByProductId(
+        (photoRes.data ?? []) as Array<{ product_id: string; photo_proof: string | null }>
       )
-      .order('name');
-    setProducts((data ?? []) as unknown as Product[]);
+    );
   };
 
   const loadRecent = async () => {
@@ -100,6 +117,7 @@ export default function StaffStockListScreen() {
       current_stock: p.current_stock,
       min_stock: p.min_stock,
       categoryName: cat?.name ?? null,
+      imageUrl: resolveStockProductImageUrl(p.image_url, photoByProductId[p.id]),
     };
   });
 
@@ -109,7 +127,7 @@ export default function StaffStockListScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}

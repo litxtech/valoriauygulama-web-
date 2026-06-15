@@ -6,7 +6,18 @@ import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import { complaintsText } from '@/lib/complaintsI18n';
+import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
+import { syncGuestAppLanguage } from '@/lib/syncGuestAppLanguage';
+import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { GuestLiveLocationBootstrap } from '@/components/guest/GuestLiveLocationBootstrap';
+import { GuestWelcomeGate } from '@/components/guest/GuestWelcomeGate';
+import {
+  customerStackGestureForNavigation,
+  customerStackScrollSafeGestureOptions,
+} from '@/lib/customerStackNavigation';
+import { customerChatHeaderBackOptions } from '@/components/chat/CustomerChatHeaderBack';
 
 type GuestStatusRow = {
   guest_id: string;
@@ -28,9 +39,14 @@ export default function CustomerLayout() {
 
   useEffect(() => {
     let alive = true;
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (alive) setClientSession(session);
-    });
+    void supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (alive) setClientSession(session);
+      })
+      .catch(() => {
+        if (alive) setClientSession(null);
+      });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setClientSession(session);
     });
@@ -40,7 +56,7 @@ export default function CustomerLayout() {
     };
   }, []);
 
-  const sessionResolved = clientSession !== undefined;
+  const sessionResolved = clientSession !== undefined || !!user;
   const hasAuth = !!(user ?? clientSession?.user);
 
   useEffect(() => {
@@ -90,6 +106,17 @@ export default function CustomerLayout() {
       });
     })();
   }, [user?.id, clientSession?.user?.id, staff, staffCheckComplete, hasAuth]);
+
+  useEffect(() => {
+    if (!hasAuth || staff) return;
+    void syncGuestAppLanguage(i18n.language);
+  }, [hasAuth, staff, i18n.language]);
+
+  /** Anonim tekrar girişte profil/kapak guests satırından auth metadata'ya geri yüklenir. */
+  useEffect(() => {
+    if (!hasAuth || staff) return;
+    void getOrCreateGuestForCurrentSession();
+  }, [hasAuth, staff, user?.id, clientSession?.user?.id]);
 
   const guestDeleted = !!guestStatus && !!guestStatus.deleted_at;
   const guestBanned = !!(guestStatus && guestStatus.banned_until && new Date(guestStatus.banned_until) > new Date());
@@ -162,16 +189,19 @@ export default function CustomerLayout() {
   }
 
   return (
+    <>
+    <GuestLiveLocationBootstrap />
+    <GuestWelcomeGate />
     <Stack
-      screenOptions={{
+      screenOptions={({ navigation }) => ({
         headerShown: false,
         contentStyle: { backgroundColor: theme.colors.backgroundSecondary },
         animation: 'slide_from_right',
-        fullScreenGestureEnabled: true,
+        ...customerStackGestureForNavigation(navigation),
         headerStyle: { backgroundColor: theme.colors.surface },
         headerTintColor: theme.colors.text,
         headerTitleStyle: { fontSize: 17, fontWeight: '600' },
-      }}
+      })}
     >
       <Stack.Screen
         name="(tabs)"
@@ -182,7 +212,14 @@ export default function CustomerLayout() {
           headerBackTitleVisible: false,
         }}
       />
-      <Stack.Screen name="staff/[id]" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="staff/[id]"
+        options={{ headerShown: false, ...customerStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen
+        name="guest/[id]"
+        options={{ headerShown: false, ...customerStackScrollSafeGestureOptions }}
+      />
       <Stack.Screen
         name="staff-posts/[id]"
         options={{
@@ -235,7 +272,7 @@ export default function CustomerLayout() {
         name="facility-journal/index"
         options={{
           headerShown: true,
-          title: 'Tesis kayıtları',
+          title: t('customerFacilityJournalTitle'),
           headerBackTitle: t('back'),
         }}
       />
@@ -243,7 +280,39 @@ export default function CustomerLayout() {
         name="facility-journal/[id]"
         options={{
           headerShown: true,
-          title: 'Tesis kaydı',
+          title: t('customerFacilityJournalRecordTitle'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="hotel-info"
+        options={{
+          headerShown: true,
+          title: guestServiceText('hotelInfoTitle'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="tips/index"
+        options={{ headerShown: false, ...customerStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen
+        name="guest-extras"
+        options={{ headerShown: false, ...customerStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen
+        name="service-requests/index"
+        options={{
+          headerShown: true,
+          title: guestServiceText('screenTitle'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="service-requests/new"
+        options={{
+          headerShown: true,
+          title: guestServiceText('screenNew'),
           headerBackTitle: t('back'),
         }}
       />
@@ -267,8 +336,8 @@ export default function CustomerLayout() {
         name="chat/[id]"
         options={{
           headerShown: true,
-          title: t('screenChat'),
-          headerBackTitle: t('back'),
+          title: '',
+          ...customerChatHeaderBackOptions,
         }}
       />
       <Stack.Screen
@@ -276,7 +345,7 @@ export default function CustomerLayout() {
         options={{
           headerShown: true,
           title: t('screenNewChat'),
-          headerBackTitle: t('back'),
+          ...customerChatHeaderBackOptions,
         }}
       />
       <Stack.Screen
@@ -324,6 +393,14 @@ export default function CustomerLayout() {
         options={{
           headerShown: true,
           title: complaintsText('newScreenTitle'),
+          headerBackTitle: t('back'),
+        }}
+      />
+      <Stack.Screen
+        name="complaints/[id]"
+        options={{
+          headerShown: true,
+          title: complaintsText('complaintsSystem'),
           headerBackTitle: t('back'),
         }}
       />
@@ -383,7 +460,16 @@ export default function CustomerLayout() {
           headerBackTitle: t('back'),
         }}
       />
+      <Stack.Screen
+        name="contract-approval"
+        options={{
+          headerShown: true,
+          title: t('customerProfileContractApprovalTitle'),
+          headerBackTitle: t('back'),
+        }}
+      />
     </Stack>
+    </>
   );
 }
 

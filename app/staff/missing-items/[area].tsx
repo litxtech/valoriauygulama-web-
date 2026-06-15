@@ -9,12 +9,14 @@ import {
   Alert,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { MissingItemsChecklistSheet } from '@/components/MissingItemsChecklistSheet';
 import {
   createMissingItemReport,
+  isMissingReportNotifyOnlyError,
   listLegacyMissingItems,
   listMissingItemReports,
   resolveLegacyMissingItem,
@@ -23,8 +25,13 @@ import {
   type MissingItemReportRow,
   type MissingItemRow,
 } from '@/lib/missingItems';
+import { useAuthStore } from '@/stores/authStore';
+import { canManageMissingItemsCatalog } from '@/lib/staffPermissions';
 import { getMissingAreaMeta, type MissingItemArea } from '@/lib/missingItemsCatalog';
 import { cacheMissingItemReport } from '@/lib/missingItemsCache';
+import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
+import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
+import type { KitchenPrintReportKind } from '@/lib/kitchenOps/kitchenPrintReports';
 
 type TabKey = 'open' | 'resolved';
 
@@ -74,7 +81,12 @@ export default function MissingItemsAreaScreen() {
     [t, i18n.language]
   );
   const router = useRouter();
+  const { staff } = useAuthStore();
+  const canEditCatalog = canManageMissingItemsCatalog(staff);
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const fabBottom = theme.spacing.lg + getEffectiveBottomInset(insets);
+  const listBottomPad = fabBottom + 56;
   const missingBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { area: areaParam } = useLocalSearchParams<{ area: string }>();
   const area = parseArea(areaParam);
@@ -88,6 +100,22 @@ export default function MissingItemsAreaScreen() {
   const [saving, setSaving] = useState(false);
 
   const meta = area ? getMissingAreaMeta(area) : null;
+
+  const printKinds = useMemo((): { kind: KitchenPrintReportKind; label: string }[] => {
+    if (!area) return [];
+    if (area === 'hotel') {
+      return [
+        { kind: 'hotel_shortages_open', label: t('missingItemsPrintOpen') },
+        { kind: 'hotel_shortages_resolved', label: t('missingItemsPrintResolved') },
+      ];
+    }
+    return [
+      { kind: 'shortages_open', label: t('missingItemsPrintOpen') },
+      { kind: 'shortages_resolved', label: t('missingItemsPrintResolved') },
+    ];
+  }, [area, t, i18n.language]);
+
+  const printSectionLabel = area === 'hotel' ? t('missingItemsPrintSectionHotel') : t('missingItemsPrintSectionKitchen');
 
   const entries = useMemo((): ListEntry[] => {
     const reportEntries: ListEntry[] = reports.map((r) => ({ kind: 'report' as const, data: r }));
@@ -129,14 +157,18 @@ export default function MissingItemsAreaScreen() {
     setSaving(true);
     const result = await createMissingItemReport({ area, ...payload });
     setSaving(false);
-    if (result.error) {
+    if (result.error && !isMissingReportNotifyOnlyError(result.error)) {
       Alert.alert(t('error'), result.error);
       return;
     }
     setSheetVisible(false);
     setTab('open');
     loadAll();
-    Alert.alert(t('missingItemsSubmitSuccess'), t('missingItemsSubmitSuccessBody', { count: payload.items.length }));
+    if (isMissingReportNotifyOnlyError(result.error)) {
+      Alert.alert(t('missingItemsSubmitSuccess'), t('missingItemsSubmitNotifyWarning'));
+    } else {
+      Alert.alert(t('missingItemsSubmitSuccess'), t('missingItemsSubmitSuccessBody', { count: payload.items.length }));
+    }
   };
 
   const onResolveReport = (id: string, itemCount: number) => {
@@ -294,9 +326,25 @@ export default function MissingItemsAreaScreen() {
 
   return (
     <View style={styles.screen}>
+      {printKinds.length > 0 ? (
+        <View style={styles.printWrap}>
+          <KitchenPrintBar kinds={printKinds} compact sectionLabel={printSectionLabel} />
+        </View>
+      ) : null}
+
       <View style={[styles.areaBanner, { backgroundColor: meta.color + '14' }]}>
         <Ionicons name={meta.icon as keyof typeof Ionicons.glyphMap} size={20} color={meta.color} />
         <Text style={[styles.areaBannerText, { color: meta.color }]}>{t('missingItemsAreaShortages', { area: meta.title })}</Text>
+        {canEditCatalog ? (
+          <TouchableOpacity
+            style={[styles.editListBtn, { borderColor: meta.color }]}
+            onPress={() => router.push(`${missingBase}/catalog/${area}` as never)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="create-outline" size={16} color={meta.color} />
+            <Text style={[styles.editListBtnText, { color: meta.color }]}>{t('missingItemsEditList')}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.tabBar}>
@@ -315,7 +363,7 @@ export default function MissingItemsAreaScreen() {
         data={entries}
         keyExtractor={(e) => (e.kind === 'report' ? `r-${e.data.id}` : `l-${e.data.id}`)}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={meta.color} />}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: listBottomPad }]}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <Ionicons name="checkmark-done-outline" size={48} color={theme.colors.textMuted} />
@@ -333,7 +381,11 @@ export default function MissingItemsAreaScreen() {
       />
 
       {tab === 'open' ? (
-        <TouchableOpacity style={[styles.fab, { backgroundColor: meta.color }]} onPress={() => setSheetVisible(true)} activeOpacity={0.9}>
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: meta.color, bottom: fabBottom }]}
+          onPress={() => setSheetVisible(true)}
+          activeOpacity={0.9}
+        >
           <Ionicons name="add" size={26} color="#fff" />
           <Text style={styles.fabText}>{t('missingItemsReportFab')}</Text>
         </TouchableOpacity>
@@ -352,6 +404,7 @@ export default function MissingItemsAreaScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
+  printWrap: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm },
   invalid: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   invalidText: { color: theme.colors.textMuted },
   areaBanner: {
@@ -360,8 +413,20 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
+    flexWrap: 'wrap',
   },
-  areaBannerText: { fontSize: 14, fontWeight: '800' },
+  areaBannerText: { fontSize: 14, fontWeight: '800', flex: 1, minWidth: 120 },
+  editListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radius.full,
+    borderWidth: 1,
+    backgroundColor: theme.colors.surface,
+  },
+  editListBtnText: { fontSize: 12, fontWeight: '800' },
   tabBar: {
     flexDirection: 'row',
     gap: 8,
@@ -380,7 +445,7 @@ const styles = StyleSheet.create({
   },
   tabText: { fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary },
   tabTextActive: { color: '#fff' },
-  listContent: { padding: theme.spacing.lg, paddingBottom: 100 },
+  listContent: { padding: theme.spacing.lg },
   emptyBox: { alignItems: 'center', paddingTop: 48, paddingHorizontal: 24, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
   emptySub: { fontSize: 13, color: theme.colors.textMuted, textAlign: 'center', lineHeight: 20 },
@@ -458,7 +523,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: theme.spacing.lg,
-    bottom: theme.spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

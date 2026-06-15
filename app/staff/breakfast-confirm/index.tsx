@@ -18,7 +18,7 @@ import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { uploadUriToPublicBucket, promiseWithTimeout, FEED_MEDIA_UPLOAD_TIMEOUT_MS } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
-import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickGalleryImages } from '@/lib/galleryPicker';
 import {
   fetchBreakfastSettings,
   canBreakfastSubmitUi,
@@ -112,15 +112,18 @@ export default function StaffBreakfastConfirmScreen() {
       Alert.alert('Limit', `En fazla ${maxPhotos} fotoğraf yükleyebilirsiniz.`);
       return;
     }
-    const granted = await ensureMediaLibraryPermission({
-      title: 'Galeri izni',
-      message: 'Kahvaltı teyidi için fotoğraf seçmek üzere galeri erişimi gerekiyor.',
-      settingsMessage: 'Ayarlar üzerinden galeri iznini açın.',
+    const remaining = maxPhotos - totalPhotoCount;
+    const uris = await pickGalleryImages({
+      quality: 0.85,
+      selectionLimit: remaining,
+      permission: {
+        title: 'Galeri izni',
+        message: 'Kahvaltı teyidi için fotoğraf seçmek üzere galeri erişimi gerekiyor.',
+        settingsMessage: 'Ayarlar üzerinden galeri iznini açın.',
+      },
     });
-    if (!granted) return;
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
-    if (r.canceled || !r.assets[0]?.uri) return;
-    setPhotoUris((prev) => [...prev, r.assets[0].uri]);
+    if (!uris.length) return;
+    setPhotoUris((prev) => [...prev, ...uris].slice(0, maxPhotos));
   };
 
   const takePhoto = async () => {

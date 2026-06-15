@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessReservationSales } from '@/lib/staffPermissions';
+import { useTranslation } from 'react-i18next';
 
 type SummaryRow = {
   sales_count: number;
@@ -56,6 +57,7 @@ function StatCard({ title, value, icon }: { title: string; value: string; icon: 
 }
 
 export default function StaffSalesHome() {
+  const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const canUse = canAccessReservationSales(staff);
@@ -138,7 +140,7 @@ export default function StaffSalesHome() {
       </View>
 
       <View style={styles.statsGrid}>
-        <StatCard title="Satış sayısı" value={String(summary?.sales_count ?? 0)} icon="receipt-outline" />
+        <StatCard title={t('staffSalesCount')} value={String(summary?.sales_count ?? 0)} icon="receipt-outline" />
         <StatCard title="Toplam net" value={fmtMoneyTry(summary?.total_net_amount ?? 0)} icon="trending-up-outline" />
         <StatCard title="Toplam komisyon" value={fmtMoneyTry(summary?.total_commission_amount ?? 0)} icon="cash-outline" />
         <StatCard title="Bekleyen" value={fmtMoneyTry(summary?.pending_commission_amount ?? 0)} icon="time-outline" />

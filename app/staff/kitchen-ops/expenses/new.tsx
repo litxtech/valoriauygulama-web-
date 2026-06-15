@@ -10,6 +10,7 @@ import { KITCHEN_EXPENSE_CATEGORIES, KITCHEN_PROOFS_BUCKET } from '@/lib/kitchen
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { CachedImage } from '@/components/CachedImage';
+import { expenseReceiptPreviewStyle } from '@/lib/expenseReceiptPreviewStyles';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function KitchenExpenseNewScreen() {
@@ -41,7 +42,8 @@ export default function KitchenExpenseNewScreen() {
 
   const save = async () => {
     const amt = parseFloat(amount.replace(',', '.'));
-    if (!category || !amt || amt <= 0) {
+    const cleanCategory = category.trim();
+    if (!cleanCategory || !amt || amt <= 0) {
       Alert.alert('Eksik', 'Kategori ve tutar zorunlu.');
       return;
     }
@@ -53,7 +55,7 @@ export default function KitchenExpenseNewScreen() {
     try {
       const { error } = await supabase.from('kitchen_expenses').insert({
         organization_id: staff?.organization_id,
-        category,
+        category: cleanCategory,
         amount: amt,
         description: description.trim() || null,
         supplier_name: supplier.trim() || null,
@@ -73,7 +75,21 @@ export default function KitchenExpenseNewScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.label}>Kategori *</Text>
-      <KitchenChipSelect options={KITCHEN_EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))} value={category} onChange={setCategory} />
+      <Text style={styles.hint}>Hazır seçeneklerden birine dokunun veya kendiniz yazın.</Text>
+      <TextInput
+        style={styles.input}
+        value={category}
+        onChangeText={setCategory}
+        placeholder="Örn: Sebze, Temizlik, Kira…"
+        placeholderTextColor={theme.colors.textMuted}
+        maxLength={80}
+        autoCapitalize="sentences"
+      />
+      <KitchenChipSelect
+        options={KITCHEN_EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))}
+        value={KITCHEN_EXPENSE_CATEGORIES.includes(category as (typeof KITCHEN_EXPENSE_CATEGORIES)[number]) ? category : ''}
+        onChange={setCategory}
+      />
 
       <Text style={styles.label}>Tutar (₺) *</Text>
       <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={theme.colors.textMuted} />
@@ -88,7 +104,11 @@ export default function KitchenExpenseNewScreen() {
       <TextInput style={[styles.input, styles.multiline]} value={note} onChangeText={setNote} multiline placeholder="Opsiyonel" placeholderTextColor={theme.colors.textMuted} />
 
       <TouchableOpacity style={styles.photoBtn} onPress={pickReceipt}>
-        {receiptPhoto ? <CachedImage uri={receiptPhoto} style={styles.photoThumb} /> : <Ionicons name="receipt-outline" size={24} color={theme.colors.primary} />}
+        {receiptPhoto ? (
+          <CachedImage uri={receiptPhoto} style={styles.photoThumb} contentFit="cover" />
+        ) : (
+          <Ionicons name="receipt-outline" size={32} color={theme.colors.primary} />
+        )}
         <Text style={styles.photoLabel}>Fiş / fatura {parseFloat(amount.replace(',', '.') || '0') >= receiptRequiredAbove ? '*' : '(opsiyonel)'}</Text>
       </TouchableOpacity>
 
@@ -101,9 +121,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   content: { padding: 16, paddingBottom: 40 },
   label: { fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 6, marginTop: 12 },
-  input: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: theme.colors.text },
+  hint: { fontSize: 12, color: theme.colors.textMuted, marginBottom: 8, lineHeight: 17 },
+  input: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: theme.colors.text, marginBottom: 8 },
   multiline: { minHeight: 72, textAlignVertical: 'top' },
   photoBtn: { alignItems: 'center', padding: 16, backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.borderLight, marginTop: 16 },
-  photoThumb: { width: 56, height: 56, borderRadius: 8 },
-  photoLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary, marginTop: 6 },
+  photoThumb: expenseReceiptPreviewStyle,
+  photoLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary, marginTop: 10 },
 });

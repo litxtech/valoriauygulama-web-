@@ -72,7 +72,7 @@ export default function GuestFormScreen() {
       setStep('verify');
       router.replace('/guest/verify');
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? 'Kayıt oluşturulamadı.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('guestRegistrationCreateFailed'));
     } finally {
       setLoading(false);
     }

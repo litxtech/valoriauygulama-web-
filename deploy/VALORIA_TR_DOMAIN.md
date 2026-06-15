@@ -18,6 +18,12 @@ EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
+Supabase Edge Functions → Secrets (ödeme linki metni ve URL):
+
+```
+PAYMENT_PUBLIC_BASE_URL=https://valoria.tr
+```
+
 Deploy sonrası sabit QR adresleri:
 
 | Amaç | URL |
@@ -25,6 +31,8 @@ Deploy sonrası sabit QR adresleri:
 | Menü | `https://valoria.tr/menü/{slug}` |
 | Sözleşme | `https://valoria.tr/sözleşme?t=TOKEN&l=tr` |
 | Maliye | `https://valoria.tr/maliye?token=TOKEN` |
+| Ödeme linki | `https://valoria.tr/odeme?t=TOKEN` |
+| Sabit ödeme QR | `https://valoria.tr/odeme/qr?t=TOKEN` |
 
 Eski yollar da çalışır: `/menu/...`, `/guest/sign-one`.
 

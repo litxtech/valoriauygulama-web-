@@ -35,7 +35,34 @@ export const menuUi = {
     shadowRadius: 8,
     elevation: 2,
   },
+  shadowMd: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  shadowLg: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.14,
+    shadowRadius: 40,
+    elevation: 12,
+  },
+  webHeroGradient: ['#0c1829', '#1a365d', '#243b55', '#1a365d'] as const,
+  webHeroGlow: 'rgba(212, 168, 75, 0.18)',
+  webGlass: 'rgba(255, 255, 255, 0.92)',
+  webGlassBorder: 'rgba(255, 255, 255, 0.55)',
+  webSurface: '#faf9f7',
+  webMuted: '#64748b',
+  webText: '#0f172a',
 } as const;
+
+/** Web kart hover — RN Web style object */
+export const menuWebCardHover = {
+  transition: 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease',
+  cursor: 'pointer',
+} as object;
 
 /** Kategori vurgusu — mavi yerine marka tonları */
 export function categoryAccentColor(title: string): string {

@@ -27,6 +27,7 @@ import {
   type DebtPaymentMethod,
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
+import { useTranslation } from 'react-i18next';
 
 type DebtRow = {
   id: string;
@@ -58,6 +59,7 @@ type PayRow = {
 const PAY_METHODS: DebtPaymentMethod[] = ['cash', 'transfer', 'card', 'check', 'other'];
 
 export default function StaffDebtDetail() {
+  const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const me = useAuthStore((s) => s.staff);
   const [debt, setDebt] = useState<DebtRow | null>(null);
@@ -100,7 +102,7 @@ export default function StaffDebtDetail() {
     if (e1 || !d) {
       setDebt(null);
       setLoading(false);
-      Alert.alert('Kayıt', 'Bu kayda erişilemedi.');
+      Alert.alert(t('staffDebtsRecordLabel'), t('staffDebtsAccessDenied'));
       return;
     }
     setDebt(d as unknown as DebtRow);
@@ -159,7 +161,7 @@ export default function StaffDebtDetail() {
     });
     setSavingPay(false);
     if (error) {
-      Alert.alert('Ödeme', error.message);
+      Alert.alert(t('staffDebtsPaymentLabel'), error.message);
       return;
     }
     await notifyDebtPaymentParties({
@@ -190,10 +192,12 @@ export default function StaffDebtDetail() {
       <View style={styles.card}>
         <Text style={styles.cat}>{DEBT_CATEGORY_LABELS[debt.category]}</Text>
         <Text style={styles.parties}>
-          Borçlu: {debt.borrower_is_organization ? 'Şirket / Otel' : debt.borrower?.full_name || '—'}
+          {t('staffDebtsBorrowerLabel')}:{' '}
+          {debt.borrower_is_organization ? t('staffDebtsCompany') : debt.borrower?.full_name || '—'}
         </Text>
         <Text style={styles.parties}>
-          Alacaklı: {debt.lender_is_organization ? 'Şirket / Otel' : debt.lender?.full_name || '—'}
+          {t('staffDebtsLenderLabel')}:{' '}
+          {debt.lender_is_organization ? t('staffDebtsCompany') : debt.lender?.full_name || '—'}
         </Text>
         <Text style={styles.desc}>{debt.description}</Text>
         <View style={styles.sum}>

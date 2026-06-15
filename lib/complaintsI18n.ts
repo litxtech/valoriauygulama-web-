@@ -47,10 +47,21 @@ const UI = {
     adminBanner: 'Tüm misafir şikayet/önerileri tek ekranda toplanır ve buradan anlık değerlendirilir.',
     all: 'Tümü',
     noRecords: 'Kayıt bulunamadı.',
+    adminEmptyOrgHint: 'Üstten «Tüm işletmeler» seçerek tüm şikayetleri görebilirsiniz.',
     guest: 'Misafir',
     tel: 'Tel',
     room: 'Oda',
     adminNotePlaceholder: 'Admin notu (misafire iletilebilir)',
+    adminPresetsTitle: 'Hızlı yanıt (misafire iletilir)',
+    adminCustomReplyHint: 'İsterseniz aşağıdaki metni düzenleyip durum butonuna basın.',
+    presetBtnUnderReview: 'Değerlendirmeye alındı',
+    presetBtnStaffDiscipline: 'Yaptırım uygulandı',
+    presetBtnOwnerStarted: 'Süreç başlatıldı',
+    presetBtnStaffEta5: '5 dk içinde geliyor',
+    presetNoteUnderReview: 'Şikayetiniz değerlendirmeye alındı.',
+    presetNoteStaffDiscipline: 'Personel hatasından dolayı yaptırım uygulandı.',
+    presetNoteOwnerStarted: 'İşlem çözüm süreci otel sahibi tarafından başlatıldı.',
+    presetNoteStaffEta5: 'En geç 5 dakika içinde personel odanıza sorunu çözmek için gelecektir.',
     complaintUpdated: 'Misafir bildiriminiz güncellendi',
     homeComplaintCta: 'Şikayet / öneri / teşekkür bildir',
     detailNotFound: 'Şikayet detayı bulunamadı.',
@@ -65,6 +76,9 @@ const UI = {
     flowSectionTitle: 'İşlem akışı (anlık)',
     notifStatusPrefix: 'Durum: ',
     notifNotePrefix: 'Not: ',
+    adminPushGuestPrefix: 'Misafir',
+    adminPushRoomPrefix: 'Oda',
+    adminPushDetailPrefix: 'Detay',
   },
   en: {
     complaintsTab: 'Complaints',
@@ -99,10 +113,21 @@ const UI = {
     adminBanner: 'All guest complaints/suggestions are collected on one screen and reviewed instantly.',
     all: 'All',
     noRecords: 'No records found.',
+    adminEmptyOrgHint: 'Select «All properties» at the top to see every complaint.',
     guest: 'Guest',
     tel: 'Phone',
     room: 'Room',
     adminNotePlaceholder: 'Admin note (can be shared with guest)',
+    adminPresetsTitle: 'Quick reply (sent to guest)',
+    adminCustomReplyHint: 'You can edit the text below and tap a status button.',
+    presetBtnUnderReview: 'Under review',
+    presetBtnStaffDiscipline: 'Disciplinary action',
+    presetBtnOwnerStarted: 'Process started',
+    presetBtnStaffEta5: 'Staff in 5 min',
+    presetNoteUnderReview: 'Your report has been taken for review.',
+    presetNoteStaffDiscipline: 'Disciplinary action has been applied due to staff error.',
+    presetNoteOwnerStarted: 'The resolution process has been started by the hotel owner.',
+    presetNoteStaffEta5: 'Staff will come to your room within 5 minutes to resolve the issue.',
     complaintUpdated: 'Your guest report was updated',
     homeComplaintCta: 'Report complaint / suggestion / thanks',
     detailNotFound: 'Report details not found.',
@@ -117,6 +142,9 @@ const UI = {
     flowSectionTitle: 'Process flow (live)',
     notifStatusPrefix: 'Status: ',
     notifNotePrefix: 'Note: ',
+    adminPushGuestPrefix: 'Guest',
+    adminPushRoomPrefix: 'Room',
+    adminPushDetailPrefix: 'Detail',
   },
   ar: {
     complaintsTab: 'الشكاوى',
@@ -155,6 +183,16 @@ const UI = {
     tel: 'هاتف',
     room: 'غرفة',
     adminNotePlaceholder: 'ملاحظة المدير (يمكن مشاركتها مع الضيف)',
+    adminPresetsTitle: 'رد سريع (يُرسل للضيف)',
+    adminCustomReplyHint: 'يمكنك تعديل النص أدناه ثم الضغط على زر الحالة.',
+    presetBtnUnderReview: 'قيد التقييم',
+    presetBtnStaffDiscipline: 'تم تطبيق جزاء',
+    presetBtnOwnerStarted: 'بدأت المعالجة',
+    presetBtnStaffEta5: 'الموظف خلال 5 د',
+    presetNoteUnderReview: 'تم أخذ شكواك للتقييم.',
+    presetNoteStaffDiscipline: 'تم تطبيق جزاء بسبب خطأ الموظف.',
+    presetNoteOwnerStarted: 'بدأ مالك الفندق عملية حل المشكلة.',
+    presetNoteStaffEta5: 'سيأتي الموظف إلى غرفتك خلال 5 دقائق لحل المشكلة.',
     complaintUpdated: 'تم تحديث بلاغك',
     homeComplaintCta: 'أبلغ عن شكوى / اقتراح / شكر',
     detailNotFound: 'تعذر العثور على تفاصيل البلاغ.',
@@ -169,6 +207,9 @@ const UI = {
     flowSectionTitle: 'سير المعالجة (مباشر)',
     notifStatusPrefix: 'الحالة: ',
     notifNotePrefix: 'ملاحظة: ',
+    adminPushGuestPrefix: 'ضيف',
+    adminPushRoomPrefix: 'غرفة',
+    adminPushDetailPrefix: 'تفاصيل',
   },
   de: {
     complaintsTab: 'Beschwerde',
@@ -207,6 +248,16 @@ const UI = {
     tel: 'Tel',
     room: 'Zimmer',
     adminNotePlaceholder: 'Admin-Notiz (kann mit Gast geteilt werden)',
+    adminPresetsTitle: 'Schnellantwort (an Gast)',
+    adminCustomReplyHint: 'Text unten bearbeiten und Status tippen.',
+    presetBtnUnderReview: 'In Prüfung',
+    presetBtnStaffDiscipline: 'Maßnahme',
+    presetBtnOwnerStarted: 'Prozess gestartet',
+    presetBtnStaffEta5: 'Personal in 5 Min.',
+    presetNoteUnderReview: 'Ihre Meldung wurde zur Prüfung angenommen.',
+    presetNoteStaffDiscipline: 'Aufgrund eines Personalfehlers wurde eine Maßnahme verhängt.',
+    presetNoteOwnerStarted: 'Der Hotelinhaber hat den Lösungsprozess gestartet.',
+    presetNoteStaffEta5: 'Personal kommt innerhalb von 5 Minuten in Ihr Zimmer.',
     complaintUpdated: 'Ihre Meldung wurde aktualisiert',
     homeComplaintCta: 'Beschwerde / Vorschlag / Dank melden',
     detailNotFound: 'Meldungsdetails nicht gefunden.',
@@ -221,6 +272,9 @@ const UI = {
     flowSectionTitle: 'Ablauf (live)',
     notifStatusPrefix: 'Status: ',
     notifNotePrefix: 'Notiz: ',
+    adminPushGuestPrefix: 'Gast',
+    adminPushRoomPrefix: 'Zimmer',
+    adminPushDetailPrefix: 'Detail',
   },
   fr: {
     complaintsTab: 'Réclamation',
@@ -259,6 +313,16 @@ const UI = {
     tel: 'Tél',
     room: 'Chambre',
     adminNotePlaceholder: 'Note admin (peut être partagée au client)',
+    adminPresetsTitle: 'Réponse rapide (envoyée au client)',
+    adminCustomReplyHint: 'Modifiez le texte ci-dessous puis appuyez sur un statut.',
+    presetBtnUnderReview: 'Prise en charge',
+    presetBtnStaffDiscipline: 'Sanction appliquée',
+    presetBtnOwnerStarted: 'Processus lancé',
+    presetBtnStaffEta5: 'Personnel sous 5 min',
+    presetNoteUnderReview: 'Votre signalement a été pris en charge pour évaluation.',
+    presetNoteStaffDiscipline: 'Une sanction a été appliquée en raison d’une erreur du personnel.',
+    presetNoteOwnerStarted: 'Le propriétaire de l’hôtel a lancé le processus de résolution.',
+    presetNoteStaffEta5: 'Le personnel viendra dans votre chambre dans les 5 minutes pour résoudre le problème.',
     complaintUpdated: 'Votre signalement a été mis à jour',
     homeComplaintCta: 'Signaler réclamation / suggestion / remerciement',
     detailNotFound: 'Détails du signalement introuvables.',
@@ -273,6 +337,9 @@ const UI = {
     flowSectionTitle: 'Déroulement (temps réel)',
     notifStatusPrefix: 'Statut : ',
     notifNotePrefix: 'Note : ',
+    adminPushGuestPrefix: 'Client',
+    adminPushRoomPrefix: 'Chambre',
+    adminPushDetailPrefix: 'Détail',
   },
   ru: {
     complaintsTab: 'Жалобы',
@@ -311,6 +378,16 @@ const UI = {
     tel: 'Тел',
     room: 'Комната',
     adminNotePlaceholder: 'Заметка администратора (можно отправить гостю)',
+    adminPresetsTitle: 'Быстрый ответ (гостю)',
+    adminCustomReplyHint: 'Отредактируйте текст ниже и нажмите статус.',
+    presetBtnUnderReview: 'На рассмотрении',
+    presetBtnStaffDiscipline: 'Мера принята',
+    presetBtnOwnerStarted: 'Процесс начат',
+    presetBtnStaffEta5: 'Персонал через 5 мин',
+    presetNoteUnderReview: 'Ваша жалоба принята на рассмотрение.',
+    presetNoteStaffDiscipline: 'Из-за ошибки персонала применена дисциплинарная мера.',
+    presetNoteOwnerStarted: 'Владелец отеля начал процесс решения проблемы.',
+    presetNoteStaffEta5: 'Персонал придёт в ваш номер в течение 5 минут для решения проблемы.',
     complaintUpdated: 'Ваше обращение обновлено',
     homeComplaintCta: 'Сообщить: жалоба / предложение / благодарность',
     detailNotFound: 'Детали обращения не найдены.',
@@ -325,6 +402,9 @@ const UI = {
     flowSectionTitle: 'Ход рассмотрения (онлайн)',
     notifStatusPrefix: 'Статус: ',
     notifNotePrefix: 'Заметка: ',
+    adminPushGuestPrefix: 'Гость',
+    adminPushRoomPrefix: 'Комната',
+    adminPushDetailPrefix: 'Детали',
   },
   es: {
     complaintsTab: 'Quejas',
@@ -363,6 +443,16 @@ const UI = {
     tel: 'Tel',
     room: 'Habitación',
     adminNotePlaceholder: 'Nota admin (se puede compartir con el huésped)',
+    adminPresetsTitle: 'Respuesta rápida (al huésped)',
+    adminCustomReplyHint: 'Edite el texto abajo y pulse un estado.',
+    presetBtnUnderReview: 'En evaluación',
+    presetBtnStaffDiscipline: 'Sanción aplicada',
+    presetBtnOwnerStarted: 'Proceso iniciado',
+    presetBtnStaffEta5: 'Personal en 5 min',
+    presetNoteUnderReview: 'Su queja ha sido tomada para evaluación.',
+    presetNoteStaffDiscipline: 'Se aplicó una sanción por error del personal.',
+    presetNoteOwnerStarted: 'El propietario del hotel inició el proceso de solución.',
+    presetNoteStaffEta5: 'El personal irá a su habitación en un máximo de 5 minutos para resolver el problema.',
     complaintUpdated: 'Su reporte fue actualizado',
     homeComplaintCta: 'Informar queja / sugerencia / agradecimiento',
     detailNotFound: 'No se encontró el detalle del reporte.',
@@ -377,6 +467,9 @@ const UI = {
     flowSectionTitle: 'Flujo (en vivo)',
     notifStatusPrefix: 'Estado: ',
     notifNotePrefix: 'Nota: ',
+    adminPushGuestPrefix: 'Huésped',
+    adminPushRoomPrefix: 'Habitación',
+    adminPushDetailPrefix: 'Detalle',
   },
 } as const;
 
@@ -575,6 +668,34 @@ export function guestComplaintTimelineManagerDesc(name: string): string {
   return complaintsText('timelineManagerReviewingDesc').replace(/\{\{name\}\}/g, name);
 }
 
+export function truncateComplaintDescription(text: string, maxLen = 100): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, maxLen - 1).trim()}…`;
+}
+
+/** Admin push — yeni misafir şikayeti/önerisi (başlık + kısa detay). */
+export function buildGuestComplaintAdminPush(params: {
+  topicType: string;
+  category: string;
+  description: string;
+  guestName?: string | null;
+  roomNumber?: string | null;
+}): { title: string; body: string } {
+  const typeL = complaintTypeLabel(params.topicType);
+  const catL = complaintCategoryLabel(params.category);
+  const title = `${typeL} · ${catL}`;
+  const detail = truncateComplaintDescription(params.description);
+  const parts: string[] = [];
+  const guest = (params.guestName ?? '').trim();
+  const room = (params.roomNumber ?? '').trim();
+  if (guest) parts.push(`${complaintsText('adminPushGuestPrefix')}: ${guest}`);
+  if (room) parts.push(`${complaintsText('adminPushRoomPrefix')}: ${room}`);
+  if (detail) parts.push(`${complaintsText('adminPushDetailPrefix')}: ${detail}`);
+  return { title, body: parts.join(' · ') || detail || title };
+}
+
 export function formatGuestComplaintPushBody(status: string, note: string | undefined): string {
   const statusL = complaintStatusLabel(status);
   const base = `${complaintsText('notifStatusPrefix')}${statusL}`;
@@ -582,3 +703,37 @@ export function formatGuestComplaintPushBody(status: string, note: string | unde
   if (!t) return base;
   return `${base} · ${complaintsText('notifNotePrefix')}${t.slice(0, 80)}`;
 }
+
+export type GuestComplaintAdminPreset = {
+  id: string;
+  status: 'taken_for_review' | 'solution_in_progress' | 'resolved' | 'unresolved';
+  labelKey: 'presetBtnUnderReview' | 'presetBtnStaffDiscipline' | 'presetBtnOwnerStarted' | 'presetBtnStaffEta5';
+  noteKey: 'presetNoteUnderReview' | 'presetNoteStaffDiscipline' | 'presetNoteOwnerStarted' | 'presetNoteStaffEta5';
+};
+
+export const GUEST_COMPLAINT_ADMIN_PRESETS: GuestComplaintAdminPreset[] = [
+  {
+    id: 'under_review',
+    status: 'taken_for_review',
+    labelKey: 'presetBtnUnderReview',
+    noteKey: 'presetNoteUnderReview',
+  },
+  {
+    id: 'staff_discipline',
+    status: 'solution_in_progress',
+    labelKey: 'presetBtnStaffDiscipline',
+    noteKey: 'presetNoteStaffDiscipline',
+  },
+  {
+    id: 'owner_started',
+    status: 'solution_in_progress',
+    labelKey: 'presetBtnOwnerStarted',
+    noteKey: 'presetNoteOwnerStarted',
+  },
+  {
+    id: 'staff_eta_5',
+    status: 'solution_in_progress',
+    labelKey: 'presetBtnStaffEta5',
+    noteKey: 'presetNoteStaffEta5',
+  },
+];

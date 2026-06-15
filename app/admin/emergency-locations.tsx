@@ -63,7 +63,10 @@ export default function AdminEmergencyLocationsScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Acil Durum Lokasyonlari</Text>
-      <Text style={styles.sub}>Personel acil butonunda gorunen listeyi buradan anlik yonetin.</Text>
+      <Text style={styles.sub}>
+        Personel acil butonunda görünen listeyi buradan yönetin. Alarm göndermek için «Personel
+        toplanma alarmı» ekranını kullanın.
+      </Text>
 
       <View style={styles.addRow}>
         <TextInput

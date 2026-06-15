@@ -1,8 +1,10 @@
+import i18n from '@/i18n';
 import { supabase } from '@/lib/supabase';
 import { sendNotification } from '@/lib/notificationService';
 import { publishTaskAssignmentBoardNotice } from '@/lib/staffBoard';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { STAFF_TASK_MEDIA_BUCKET } from '@/lib/staffAssignmentMedia';
+import { copyUriToCacheForUpload, isLocalFileUriForUpload } from '@/lib/uploadMedia';
 
 export type PendingAssignmentAttachment = { uri: string; type: 'image' | 'video' };
 
@@ -14,9 +16,13 @@ export async function uploadStaffAssignmentAttachments(
   if (items.length === 0) return [];
   return Promise.all(
     items.map(async (item) => {
+      let uploadUri = item.uri;
+      if (!isLocalFileUriForUpload(uploadUri)) {
+        uploadUri = await copyUriToCacheForUpload(uploadUri, item.type);
+      }
       const { publicUrl } = await uploadUriToPublicBucket({
         bucketId: STAFF_TASK_MEDIA_BUCKET,
-        uri: item.uri,
+        uri: uploadUri,
         kind: item.type,
         subfolder: `tasks/${assignmentId}`,
         preferStreamUpload: item.type === 'image',
@@ -50,7 +56,7 @@ export function dispatchNewTaskAssignmentNotify(params: NewTaskAssignmentNotifyP
       }),
       sendNotification({
         staffId: params.assigneeStaffId,
-        title: 'Yeni görev atandı',
+        title: i18n.t('staffAssignNewTask'),
         body: params.pushBody,
         notificationType: 'staff_assignment',
         category: 'staff',
@@ -89,8 +95,8 @@ export type CreateStaffAssignmentsParams = {
 export async function createStaffAssignmentsForAssignees(
   params: CreateStaffAssignmentsParams
 ): Promise<{ rows: { id: string; assigned_staff_id: string }[]; uploadedUrls: string[] }> {
-  const ids = params.assigneeStaffIds.filter(Boolean);
-  if (ids.length === 0) throw new Error('Atanan personel seçin');
+  const ids = (params.assigneeStaffIds ?? []).filter(Boolean);
+  if (ids.length === 0) throw new Error(i18n.t('staffAssignPickStaff'));
 
   const payload = ids.map((assigned_staff_id) => ({
     title: params.title,
@@ -111,7 +117,7 @@ export async function createStaffAssignmentsForAssignees(
 
   if (error) throw error;
   const inserted = (rows ?? []) as { id: string; assigned_staff_id: string }[];
-  if (inserted.length === 0) throw new Error('Görev kaydı oluşturulamadı');
+  if (inserted.length === 0) throw new Error(i18n.t('staffAssignCreateFailed'));
 
   let uploadedUrls: string[] = [];
   if (params.pendingAttachments.length > 0) {
@@ -125,7 +131,72 @@ export async function createStaffAssignmentsForAssignees(
 export function dispatchNewTaskAssignmentsNotify(
   items: NewTaskAssignmentNotifyParams[]
 ): void {
+  if (!Array.isArray(items) || items.length === 0) return;
   for (const item of items) {
     dispatchNewTaskAssignmentNotify(item);
   }
+}
+
+export type TaskCompletionNotifyParams = {
+  assignmentId: string;
+  title: string;
+  createdByStaffId: string | null;
+  completedByStaffId: string;
+  completedByStaffName: string;
+};
+
+/** Görevi veren admin/personele tamamlama push + uygulama içi bildirim. */
+export type TaskFailureNotifyParams = {
+  assignmentId: string;
+  title: string;
+  createdByStaffId: string | null;
+  failedByStaffId: string;
+  failedByStaffName: string;
+  reason: string;
+};
+
+/** Görevi veren personele "yapılamadı" bildirimi. */
+export function dispatchTaskFailureNotify(params: TaskFailureNotifyParams): void {
+  const creatorId = params.createdByStaffId?.trim();
+  if (!creatorId || creatorId === params.failedByStaffId) return;
+
+  const assigneeLabel = params.failedByStaffName.trim() || i18n.t('staffTaskDoneNotifyStaffFallback');
+  const taskTitle = params.title.trim() || i18n.t('staffTaskDoneNotifyTitleFallback');
+  const reason = params.reason.trim();
+
+  void sendNotification({
+    staffId: creatorId,
+    title: i18n.t('staffTaskFailedNotifyTitle'),
+    body: i18n.t('staffTaskFailedNotifyBody', { name: assigneeLabel, title: taskTitle, reason }),
+    notificationType: 'staff_task_failed',
+    category: 'admin',
+    createdByStaffId: params.failedByStaffId,
+    data: {
+      url: '/admin/tasks',
+      assignmentId: params.assignmentId,
+      screen: 'notifications',
+    },
+  });
+}
+
+export function dispatchTaskCompletionNotify(params: TaskCompletionNotifyParams): void {
+  const creatorId = params.createdByStaffId?.trim();
+  if (!creatorId || creatorId === params.completedByStaffId) return;
+
+  const assigneeLabel = params.completedByStaffName.trim() || i18n.t('staffTaskDoneNotifyStaffFallback');
+  const taskTitle = params.title.trim() || i18n.t('staffTaskDoneNotifyTitleFallback');
+
+  void sendNotification({
+    staffId: creatorId,
+    title: i18n.t('staffTaskDoneNotifyTitle'),
+    body: i18n.t('staffTaskDoneNotifyBody', { name: assigneeLabel, title: taskTitle }),
+    notificationType: 'staff_task_done',
+    category: 'admin',
+    createdByStaffId: params.completedByStaffId,
+    data: {
+      url: '/admin/tasks',
+      assignmentId: params.assignmentId,
+      screen: 'notifications',
+    },
+  });
 }

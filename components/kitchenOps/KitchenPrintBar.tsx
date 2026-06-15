@@ -20,9 +20,11 @@ type Props = {
   kind?: KitchenPrintReportKind;
   kinds?: { kind: KitchenPrintReportKind; label: string }[];
   compact?: boolean;
+  /** Üst satırda bölüm adı — örn. Mutfak / Otel */
+  sectionLabel?: string;
 };
 
-export function KitchenPrintBar({ kind, kinds, compact }: Props) {
+export function KitchenPrintBar({ kind, kinds, compact, sectionLabel = 'Mutfak' }: Props) {
   const options = kinds ?? (kind ? [{ kind, label: KITCHEN_PRINT_REPORT_TITLES[kind] }] : []);
   const [selected, setSelected] = useState(options[0]?.kind);
   const [open, setOpen] = useState(false);
@@ -69,7 +71,7 @@ export function KitchenPrintBar({ kind, kinds, compact }: Props) {
         <View style={styles.headerTextWrap}>
           <Text style={styles.headerTitle}>Yazdır / PDF</Text>
           <Text style={styles.headerSub} numberOfLines={1}>
-            Valoria Hotel · Mutfak · {selectedLabel}
+            Valoria Hotel · {sectionLabel} · {selectedLabel}
           </Text>
         </View>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={22} color="#0f766e" />

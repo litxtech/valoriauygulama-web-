@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Animated,
   Dimensions,
   Easing,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -18,16 +19,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
 import { FastPress } from '@/components/ui/FastPress';
-import { pds } from '@/constants/personelDesignSystem';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { hapticImpactLight, hapticSelection } from '@/lib/hapticsSafe';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
-import { STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS } from '@/lib/staffHamburgerNavigation';
+import {
+  STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS,
+  clearStaffHamburgerMenuRestore,
+  peekStaffHamburgerMenuRestore,
+} from '@/lib/staffHamburgerNavigation';
+import { StaffHamburgerRecentFlyout } from '@/components/header/StaffHamburgerRecentFlyout';
 import type {
   StaffHamburgerMenuItem,
   StaffHamburgerMenuLayout,
   StaffHamburgerMenuSection,
   StaffHamburgerMenuSectionId,
 } from '@/lib/staffHamburgerMenu';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 
 export type StaffQuickMenuItem = StaffHamburgerMenuItem;
 
@@ -41,6 +48,8 @@ export type StaffMenuIdentity = {
 
 type Props = {
   visible: boolean;
+  /** Menüden sayfaya geçerken tam ekran opak perde. */
+  navigatingAway?: boolean;
   /** Geri dönüşte animasyonsuz aç (menü oturumu). */
   instant?: boolean;
   onClose: () => void;
@@ -48,18 +57,23 @@ type Props = {
   identity?: StaffMenuIdentity | null;
   onProfilePress?: () => void;
   layout?: StaffHamburgerMenuLayout | null;
-  onSelect: (href: string) => void;
+  recentItems?: StaffHamburgerMenuItem[];
+  onSelect: (href: string, target?: { itemId?: string; scrollY?: number; item?: StaffHamburgerMenuItem }) => void;
 };
 
-const OPEN_MS = Platform.OS === 'android' ? 0 : 90;
-const CLOSE_MS = Platform.OS === 'android' ? 0 : 75;
+const OPEN_MS = Platform.OS === 'android' ? 0 : 120;
+const CLOSE_MS = Platform.OS === 'android' ? 0 : 100;
 
-/** Sol kenara yapışık tam yükseklik panel; sağda yuvarlatılmış köşe */
-const DRAWER_W = Math.min(392, Math.round(Dimensions.get('window').width * 0.92));
+/** Sol drawer + sağda ince son-kullanılan ikon şeridi */
+const SCREEN_W = Dimensions.get('window').width;
+const FLYOUT_W = 50;
+const DRAWER_W = SCREEN_W - FLYOUT_W;
 const DRAWER_RADIUS = 26;
 const H_PAD = 16;
 const SEARCH_MIN_ITEMS = 9;
 const IS_ANDROID = Platform.OS === 'android';
+/** Android: çift dokunuş koruması — görsel açılışı geciktirmez. */
+const ANDROID_ITEM_PRESS_GUARD_MS = 28;
 
 const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   kitchen: { color: '#ea580c', icon: 'restaurant-outline' },
@@ -75,10 +89,27 @@ function accentTintBg(accent: string, alpha = '28') {
   return `${accent}${alpha}`;
 }
 
-function go(onSelect: (href: string) => void, href: string, canPress: boolean) {
+function go(
+  onSelect: (href: string, target?: { itemId?: string; scrollY?: number; item?: StaffHamburgerMenuItem }) => void,
+  href: string,
+  canPress: boolean,
+  item: StaffHamburgerMenuItem,
+  scrollY: number
+) {
   if (!canPress) return;
   hapticSelection();
-  onSelect(href);
+  onSelect(href, { itemId: item.id, scrollY, item });
+}
+
+function sectionIdForMenuItem(
+  sections: StaffHamburgerMenuSection[],
+  itemId: string | null | undefined
+): string | null {
+  if (!itemId) return null;
+  for (const section of sections) {
+    if (section.items.some((item) => item.id === itemId)) return section.id;
+  }
+  return null;
 }
 
 function filterSections(sections: StaffHamburgerMenuSection[], query: string): StaffHamburgerMenuSection[] {
@@ -99,6 +130,12 @@ function PrimaryActionButton({
   item: StaffHamburgerMenuItem;
   onPress: () => void;
 }) {
+  const isEmergency = item.id === 'emergency';
+  const androidBg = isEmergency ? '#dc2626' : '#f43f5e';
+  const gradColors = isEmergency
+    ? (['#dc2626', '#ef4444', '#f87171'] as const)
+    : (['#f43f5e', '#fb7185', '#fda4af'] as const);
+
   if (IS_ANDROID) {
     return (
       <FastPress
@@ -107,7 +144,7 @@ function PrimaryActionButton({
         rippleColor="rgba(255,255,255,0.25)"
         accessibilityRole="button"
       >
-        <View style={[styles.primaryBtn, styles.primaryBtnAndroid]}>
+        <View style={[styles.primaryBtn, styles.primaryBtnAndroid, { backgroundColor: androidBg }]}>
           <View style={styles.primaryIconBubble}>
             <Ionicons name={item.icon} size={22} color="#fff" />
           </View>
@@ -120,7 +157,7 @@ function PrimaryActionButton({
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={styles.primaryWrap} accessibilityRole="button">
       <LinearGradient
-        colors={['#f43f5e', '#fb7185', '#fda4af']}
+        colors={gradColors}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.primaryBtn}
@@ -138,34 +175,33 @@ function MenuListRow({
   item,
   onPress,
   isLast,
+  palette,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
   isLast: boolean;
+  palette: PersonelDesignPalette;
 }) {
-  const iconNode = IS_ANDROID ? (
+  const iconNode = (
     <View style={[styles.listIcon, { backgroundColor: accentTintBg(item.accent) }]}>
       <Ionicons name={item.icon} size={19} color={item.accent} />
     </View>
-  ) : (
-    <LinearGradient
-      colors={[`${item.accent}28`, `${item.accent}0c`]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.listIcon}
-    >
-      <Ionicons name={item.icon} size={19} color={item.accent} />
-    </LinearGradient>
   );
 
   const rowBody = (
     <>
       {iconNode}
-      <Text style={styles.listLabel} numberOfLines={2}>
+      <Text style={[styles.listLabel, { color: palette.text }]} numberOfLines={2}>
         {item.label}
       </Text>
-      <View style={[styles.listChevron, IS_ANDROID && styles.listChevronAndroid]}>
-        <Ionicons name="chevron-forward" size={16} color="#a78bfa" />
+      <View
+        style={[
+          styles.listChevron,
+          IS_ANDROID && styles.listChevronAndroid,
+          { backgroundColor: palette.secondaryBtn },
+        ]}
+      >
+        <Ionicons name="chevron-forward" size={16} color={palette.indigo} />
       </View>
     </>
   );
@@ -174,7 +210,7 @@ function MenuListRow({
     return (
       <FastPress
         onPress={onPress}
-        style={[styles.listRow, !isLast && styles.listRowDivider]}
+        style={[styles.listRow, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
         rippleColor={`${item.accent}22`}
         accessibilityRole="button"
         accessibilityLabel={item.label}
@@ -188,7 +224,7 @@ function MenuListRow({
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.82}
-      style={[styles.listRow, !isLast && styles.listRowDivider]}
+      style={[styles.listRow, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
       accessibilityRole="button"
       accessibilityLabel={item.label}
     >
@@ -197,21 +233,27 @@ function MenuListRow({
   );
 }
 
-function DrawerIdentityHeader({
+const MenuListRowMemo = memo(MenuListRow);
+
+function UnifiedMenuHeader({
   identity,
-  closeLabel,
   paddingTop,
+  closeLabel,
   onClose,
   onProfilePress,
 }: {
   identity: StaffMenuIdentity;
-  closeLabel: string;
   paddingTop: number;
+  closeLabel: string;
   onClose: () => void;
   onProfilePress?: () => void;
 }) {
   const displayName = identity.fullName?.trim() || '—';
-  const body = (
+  const identityColors = IS_ANDROID
+    ? (['#6366f1', '#8b5cf6'] as const)
+    : (['#6366f1', '#8b5cf6', '#d946ef', '#fb7185'] as const);
+
+  const identityBody = (
     <>
       <View style={styles.avatarRing}>
         {identity.profileImage ? (
@@ -240,62 +282,61 @@ function DrawerIdentityHeader({
     </>
   );
 
-  const identityColors = IS_ANDROID
-    ? (['#6366f1', '#8b5cf6'] as const)
-    : (['#6366f1', '#8b5cf6', '#d946ef', '#fb7185'] as const);
-
   return (
     <LinearGradient
       colors={identityColors}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={[styles.identityHeader, { paddingTop }]}
+      style={[styles.unifiedHeader, { paddingTop }]}
     >
       <View style={styles.identityDecorA} pointerEvents="none" />
       <View style={styles.identityDecorB} pointerEvents="none" />
-      <View style={styles.identityTopRow}>
-        {onProfilePress ? (
-          <TouchableOpacity
-            onPress={onProfilePress}
-            activeOpacity={0.88}
-            style={styles.identityPressable}
-            accessibilityRole="button"
-            accessibilityLabel={displayName}
-          >
-            {body}
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.identityPressable}>{body}</View>
-        )}
+      <TouchableOpacity
+        onPress={onClose}
+        style={[styles.headerDismissBtn, { top: paddingTop + 6 }]}
+        activeOpacity={0.82}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel={closeLabel}
+      >
+        <Ionicons name="chevron-back" size={20} color="#fff" />
+      </TouchableOpacity>
+      {onProfilePress ? (
         <TouchableOpacity
-          onPress={onClose}
-          style={styles.drawerCloseOnGrad}
-          activeOpacity={0.8}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          onPress={onProfilePress}
+          activeOpacity={0.88}
+          style={styles.identityPressableFull}
           accessibilityRole="button"
-          accessibilityLabel={closeLabel}
+          accessibilityLabel={displayName}
         >
-          <Ionicons name="close" size={22} color="#fff" />
+          {identityBody}
         </TouchableOpacity>
-      </View>
+      ) : (
+        <View style={styles.identityPressableFull}>{identityBody}</View>
+      )}
     </LinearGradient>
   );
 }
 
 export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   visible,
+  navigatingAway = false,
   instant = false,
   onClose,
   closeLabel,
   identity,
   onProfilePress,
   layout,
+  recentItems = [],
   onSelect,
 }: Props) {
   const { t } = useTranslation();
+  const palette = usePersonelDesign();
   const [searchQuery, setSearchQuery] = useState('');
   /** Açılışta hamburger konumundaki çift dokunuş menü satırına düşmesin. */
   const [itemsPressEnabled, setItemsPressEnabled] = useState(false);
+  /** Kapanış animasyonu bitene kadar mount tut. */
+  const [mounted, setMounted] = useState(visible);
 
   const primary = layout?.primary ?? null;
   const sections = layout?.sections ?? [];
@@ -313,22 +354,139 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
   const drawer = useRef(new Animated.Value(0)).current;
+  const closingRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const sectionOffsetsRef = useRef<Record<string, number>>({});
+  const listCardOffsetsRef = useRef<Record<string, number>>({});
+  const itemOffsetsRef = useRef<Record<string, number>>({});
+  const restoreTargetRef = useRef<{ itemId: string | null; scrollY: number | null } | null>(null);
+  const restoreAppliedRef = useRef(false);
 
-  useEffect(() => {
-    if (!visible) {
+  const tryApplyMenuScrollRestore = useCallback(() => {
+    if (restoreAppliedRef.current) return true;
+    const target = restoreTargetRef.current ?? peekStaffHamburgerMenuRestore();
+    if (!target.itemId && (target.scrollY == null || target.scrollY <= 0)) return false;
+
+    let y: number | null = null;
+    if (target.itemId && itemOffsetsRef.current[target.itemId] != null) {
+      y = itemOffsetsRef.current[target.itemId]!;
+    } else {
+      const sectionId = sectionIdForMenuItem(sections, target.itemId);
+      if (sectionId && sectionOffsetsRef.current[sectionId] != null) {
+        y = sectionOffsetsRef.current[sectionId]!;
+      }
+    }
+    if (y == null && target.scrollY != null && target.scrollY > 0) {
+      y = target.scrollY;
+    }
+    if (y == null) return false;
+
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - 10), animated: false });
+    restoreAppliedRef.current = true;
+    restoreTargetRef.current = null;
+    clearStaffHamburgerMenuRestore();
+    return true;
+  }, [sections]);
+
+  const queueMenuScrollRestore = useCallback(() => {
+    restoreAppliedRef.current = false;
+    restoreTargetRef.current = peekStaffHamburgerMenuRestore();
+    sectionOffsetsRef.current = {};
+    listCardOffsetsRef.current = {};
+    itemOffsetsRef.current = {};
+    tryApplyMenuScrollRestore();
+  }, [tryApplyMenuScrollRestore]);
+
+  const runCloseAnimation = useCallback(
+    (then?: () => void) => {
+      if (closingRef.current) return;
+      closingRef.current = true;
       setSearchQuery('');
       setItemsPressEnabled(false);
-      backdrop.setValue(0);
-      drawer.setValue(0);
+      if (IS_ANDROID || CLOSE_MS === 0) {
+        backdrop.setValue(0);
+        drawer.setValue(0);
+        closingRef.current = false;
+        setMounted(false);
+        then?.();
+        return;
+      }
+      Animated.parallel([
+        Animated.timing(backdrop, { toValue: 0, duration: CLOSE_MS, useNativeDriver: true }),
+        Animated.timing(drawer, {
+          toValue: 0,
+          duration: CLOSE_MS,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        closingRef.current = false;
+        if (finished) {
+          setMounted(false);
+          then?.();
+        }
+      });
+    },
+    [backdrop, drawer]
+  );
+
+  useEffect(() => {
+    if (visible) return;
+    restoreAppliedRef.current = false;
+  }, [visible]);
+
+  useEffect(() => {
+    if (IS_ANDROID) {
+      if (!visible) {
+        setSearchQuery('');
+        setItemsPressEnabled(false);
+        return;
+      }
+      setItemsPressEnabled(false);
+      const task = runAfterUiReady(() => setItemsPressEnabled(true), {
+        androidOnly: false,
+        delayMs: ANDROID_ITEM_PRESS_GUARD_MS,
+      });
+      return () => task.cancel();
+    }
+
+    if (!visible && mounted && !instant && !navigatingAway) {
+      runCloseAnimation();
+    }
+  }, [visible, mounted, instant, navigatingAway, runCloseAnimation]);
+
+  useLayoutEffect(() => {
+    if (IS_ANDROID) return;
+    if (visible || navigatingAway) {
+      if (!mounted) setMounted(true);
       return;
     }
+    if (instant && mounted) {
+      closingRef.current = false;
+      backdrop.setValue(0);
+      drawer.setValue(0);
+      setMounted(false);
+    }
+  }, [visible, navigatingAway, instant, mounted, backdrop, drawer]);
+
+  useLayoutEffect(() => {
+    if (!visible || !instant) return;
+    if (!IS_ANDROID && !mounted) return;
+    queueMenuScrollRestore();
+  }, [visible, instant, mounted, queueMenuScrollRestore]);
+
+  useEffect(() => {
+    if (IS_ANDROID || !visible) return;
+    closingRef.current = false;
     setItemsPressEnabled(false);
-    const guardMs = instant ? 120 : STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS;
+    const guardMs = instant ? 40 : STAFF_HAMBURGER_ITEM_PRESS_GUARD_MS;
     const task = runAfterUiReady(() => setItemsPressEnabled(true), {
       androidOnly: false,
       delayMs: guardMs,
     });
-    if (instant || IS_ANDROID || OPEN_MS === 0) {
+
+    if (instant || OPEN_MS === 0) {
       backdrop.setValue(1);
       drawer.setValue(1);
     } else {
@@ -353,172 +511,232 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
     return () => task.cancel();
   }, [visible, instant, backdrop, drawer]);
 
-  const runCloseAnimation = (then?: () => void) => {
-    if (IS_ANDROID || CLOSE_MS === 0) {
-      backdrop.setValue(0);
-      drawer.setValue(0);
-      then?.();
-      return;
-    }
-    Animated.parallel([
-      Animated.timing(backdrop, { toValue: 0, duration: CLOSE_MS, useNativeDriver: true }),
-      Animated.timing(drawer, {
-        toValue: 0,
-        duration: CLOSE_MS,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (finished) then?.();
-    });
-  };
-
-  const drawerOffscreenX = -DRAWER_W;
+  const panelOffscreenX = -SCREEN_W;
   const drawerTranslateX = drawer.interpolate({
     inputRange: [0, 1],
-    outputRange: [drawerOffscreenX, 0],
+    outputRange: [panelOffscreenX, 0],
   });
 
-  const handleClosePress = () => {
-    runCloseAnimation(onClose);
-  };
+  const handleClosePress = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  const drawerBg = palette.pageBg;
+  const panelShellStyle = [
+    styles.menuPanel,
+    IS_ANDROID && styles.menuPanelAndroid,
+    {
+      width: SCREEN_W,
+      backgroundColor: drawerBg,
+      borderColor: palette.cardBorder,
+    },
+  ] as const;
+
+  const menuScroll = (
+    <ScrollView
+      ref={scrollRef}
+      style={styles.drawerScroll}
+      contentContainerStyle={[styles.drawerScrollContent, { paddingBottom: insets.bottom + 20 }]}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      bounces={!IS_ANDROID}
+      removeClippedSubviews={IS_ANDROID}
+      pointerEvents={itemsPressEnabled ? 'auto' : 'box-none'}
+      scrollEventThrottle={16}
+      onScroll={(e) => {
+        scrollYRef.current = e.nativeEvent.contentOffset.y;
+      }}
+      onContentSizeChange={tryApplyMenuScrollRestore}
+    >
+        {primary ? (
+          <PrimaryActionButton
+            item={primary}
+            onPress={() => go(onSelect, primary.href, itemsPressEnabled, primary, scrollYRef.current)}
+          />
+        ) : null}
+
+        {showSearch ? (
+          <View
+            style={[
+              styles.searchWrap,
+              IS_ANDROID && styles.searchWrapAndroid,
+              {
+                backgroundColor: palette.cardBg,
+                borderColor: palette.cardBorder,
+              },
+            ]}
+          >
+            <Ionicons name="search-outline" size={18} color={palette.muted} style={styles.searchIcon} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('staffMenuSearch')}
+              placeholderTextColor={palette.muted}
+              style={[styles.searchInput, { color: palette.text }]}
+              autoCorrect={false}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('clear')}
+              >
+                <Ionicons name="close-circle" size={18} color={palette.muted} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
+
+        {filteredSections.map((section) => {
+          const theme = SECTION_THEME[section.id as StaffHamburgerMenuSectionId] ?? SECTION_THEME.ops;
+          return (
+            <View
+              key={section.id}
+              style={styles.menuSection}
+              onLayout={(e) => {
+                sectionOffsetsRef.current[section.id] = e.nativeEvent.layout.y;
+                tryApplyMenuScrollRestore();
+              }}
+            >
+              <View style={styles.sectionLabelRow}>
+                <View style={[styles.sectionLabelDot, { backgroundColor: theme.color }]} />
+                <Ionicons name={theme.icon} size={14} color={theme.color} style={{ marginRight: 5 }} />
+                <Text style={[styles.sectionLabel, { color: theme.color }]}>{section.title}</Text>
+              </View>
+              <View
+                style={[
+                  styles.listCard,
+                  IS_ANDROID && styles.listCardAndroid,
+                  {
+                    borderTopColor: `${theme.color}20`,
+                    borderTopWidth: 2,
+                    backgroundColor: palette.cardBg,
+                    borderColor: palette.cardBorder,
+                  },
+                ]}
+                onLayout={(e) => {
+                  listCardOffsetsRef.current[section.id] = e.nativeEvent.layout.y;
+                  tryApplyMenuScrollRestore();
+                }}
+              >
+                {section.items.map((item, idx) => (
+                  <View
+                    key={item.id}
+                    onLayout={(e) => {
+                      const sectionY = sectionOffsetsRef.current[section.id] ?? 0;
+                      const cardY = listCardOffsetsRef.current[section.id] ?? 0;
+                      itemOffsetsRef.current[item.id] = sectionY + cardY + e.nativeEvent.layout.y;
+                      tryApplyMenuScrollRestore();
+                    }}
+                  >
+                    <MenuListRowMemo
+                      item={item}
+                      isLast={idx === section.items.length - 1}
+                      palette={palette}
+                      onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          );
+        })}
+
+        {searchQuery.trim() && filteredSections.length === 0 ? (
+          <Text style={[styles.emptySearch, { color: palette.muted }]}>{t('staffMenuSearchEmpty')}</Text>
+        ) : null}
+    </ScrollView>
+  );
+
+  const modalVisible = IS_ANDROID ? visible || navigatingAway : mounted || navigatingAway;
+  if (!modalVisible) return null;
+
+  const panelInner = (
+    <>
+      {identity ? (
+        <UnifiedMenuHeader
+          identity={identity}
+          paddingTop={insets.top + 14}
+          closeLabel={closeLabel}
+          onClose={handleClosePress}
+          onProfilePress={onProfilePress}
+        />
+      ) : (
+        <View style={[styles.fallbackHeader, { paddingTop: insets.top + 12, borderBottomColor: palette.cardBorder }]}>
+          <Text style={[styles.fallbackTitle, { color: palette.text }]}>{t('staffMenuDrawerTitle')}</Text>
+          <TouchableOpacity
+            onPress={handleClosePress}
+            style={[styles.fallbackDismissBtn, { backgroundColor: palette.secondaryBtn }]}
+            activeOpacity={0.82}
+            accessibilityRole="button"
+            accessibilityLabel={closeLabel}
+          >
+            <Ionicons name="chevron-back" size={20} color={palette.text} />
+          </TouchableOpacity>
+        </View>
+      )}
+      <View style={styles.panelBody}>
+        <View style={[styles.panelDrawerCol, { width: DRAWER_W }]}>{menuScroll}</View>
+        <View style={[styles.panelFlyoutCol, { width: FLYOUT_W, borderLeftColor: palette.cardBorder }]}>
+          <StaffHamburgerRecentFlyout
+            items={recentItems}
+            bottomInset={insets.bottom}
+            canPress={itemsPressEnabled}
+            palette={palette}
+            onSelect={(href, target) => {
+              onSelect(href, { ...target, scrollY: scrollYRef.current });
+            }}
+          />
+        </View>
+      </View>
+    </>
+  );
 
   return (
-    <View style={styles.host} pointerEvents={visible ? 'box-none' : 'none'}>
-      <View style={styles.root}>
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={handleClosePress}
-          accessibilityRole="button"
-          accessibilityLabel={closeLabel}
-        >
-          <Animated.View
-            style={[styles.backdrop, Platform.OS === 'ios' ? styles.backdropIos : null, { opacity: backdrop }]}
-          />
-        </Pressable>
-
-        <Animated.View
-          style={[
-            styles.drawer,
-            IS_ANDROID && styles.drawerAndroid,
-            {
-              width: DRAWER_W,
-              left: 0,
-              top: 0,
-              bottom: 0,
-              borderTopRightRadius: DRAWER_RADIUS,
-              borderBottomRightRadius: DRAWER_RADIUS,
-              transform: [{ translateX: drawerTranslateX }],
-            },
-          ]}
-        >
-          {IS_ANDROID ? (
-            <View style={[StyleSheet.absoluteFill, styles.drawerBgAndroid]} pointerEvents="none" />
-          ) : (
-            <LinearGradient
-              colors={['#fefcff', '#f8f4ff', '#fdf2f8']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0.3, y: 1 }}
+    <Modal
+      visible={modalVisible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      navigationBarTranslucent={IS_ANDROID}
+      hardwareAccelerated={IS_ANDROID}
+      onRequestClose={navigatingAway ? undefined : handleClosePress}
+    >
+      <View style={styles.host} pointerEvents={navigatingAway ? 'none' : 'box-none'}>
+        {navigatingAway ? (
+          <View style={[styles.navCoverFull, { backgroundColor: drawerBg }]} />
+        ) : (
+          <View style={styles.root}>
+            <Pressable
               style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
-          )}
-          {identity ? (
-            <DrawerIdentityHeader
-              identity={identity}
-              closeLabel={closeLabel}
-              paddingTop={insets.top + 14}
-              onClose={handleClosePress}
-              onProfilePress={onProfilePress}
-            />
-          ) : (
-            <View style={[styles.fallbackHeader, { paddingTop: insets.top + 12 }]}>
-              <Text style={styles.fallbackTitle}>{t('staffMenuDrawerTitle')}</Text>
-              <TouchableOpacity
-                onPress={handleClosePress}
-                style={styles.drawerClose}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={closeLabel}
+              onPress={handleClosePress}
+              accessibilityRole="button"
+              accessibilityLabel={closeLabel}
+            >
+              {IS_ANDROID ? (
+                <View style={styles.backdrop} />
+              ) : (
+                <Animated.View style={[styles.backdrop, styles.backdropIos, { opacity: backdrop }]} />
+              )}
+            </Pressable>
+
+            {IS_ANDROID ? (
+              <View style={panelShellStyle}>{panelInner}</View>
+            ) : (
+              <Animated.View
+                style={[...panelShellStyle, { transform: [{ translateX: drawerTranslateX }] }]}
               >
-                <Ionicons name="close" size={22} color={pds.text} />
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <ScrollView
-            style={styles.drawerScroll}
-            contentContainerStyle={[styles.drawerScrollContent, { paddingBottom: insets.bottom + 20 }]}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            bounces
-            removeClippedSubviews={IS_ANDROID}
-            pointerEvents={itemsPressEnabled ? 'auto' : 'box-none'}
-          >
-            {primary ? (
-              <PrimaryActionButton
-                item={primary}
-                onPress={() => go(onSelect, primary.href, itemsPressEnabled)}
-              />
-            ) : null}
-
-            {showSearch ? (
-              <View style={[styles.searchWrap, IS_ANDROID && styles.searchWrapAndroid]}>
-                <Ionicons name="search-outline" size={18} color="#94a3b8" style={styles.searchIcon} />
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder={t('staffMenuSearch')}
-                  placeholderTextColor="#94a3b8"
-                  style={styles.searchInput}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  clearButtonMode="while-editing"
-                  returnKeyType="search"
-                />
-                {searchQuery.length > 0 ? (
-                  <TouchableOpacity
-                    onPress={() => setSearchQuery('')}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('clear')}
-                  >
-                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ) : null}
-
-            {filteredSections.map((section) => {
-              const theme = SECTION_THEME[section.id as StaffHamburgerMenuSectionId] ?? SECTION_THEME.ops;
-              return (
-                <View key={section.id} style={styles.menuSection}>
-                  <View style={styles.sectionLabelRow}>
-                    <View style={[styles.sectionLabelDot, { backgroundColor: theme.color }]} />
-                    <Ionicons name={theme.icon} size={14} color={theme.color} style={{ marginRight: 5 }} />
-                    <Text style={[styles.sectionLabel, { color: theme.color }]}>{section.title}</Text>
-                  </View>
-                  <View style={[styles.listCard, IS_ANDROID && styles.listCardAndroid, { borderTopColor: `${theme.color}20`, borderTopWidth: 2 }]}>
-                    {section.items.map((item, idx) => (
-                      <MenuListRow
-                        key={item.id}
-                        item={item}
-                        isLast={idx === section.items.length - 1}
-                        onPress={() => go(onSelect, item.href, itemsPressEnabled)}
-                      />
-                    ))}
-                  </View>
-                </View>
-              );
-            })}
-
-            {searchQuery.trim() && filteredSections.length === 0 ? (
-              <Text style={styles.emptySearch}>{t('staffMenuSearchEmpty')}</Text>
-            ) : null}
-          </ScrollView>
-        </Animated.View>
+                {panelInner}
+              </Animated.View>
+            )}
+          </View>
+        )}
       </View>
-    </View>
+    </Modal>
   );
 });
 
@@ -526,7 +744,7 @@ const styles = StyleSheet.create({
   host: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 200,
-    elevation: 200,
+    elevation: IS_ANDROID ? 999 : 200,
     overflow: 'hidden',
   },
   root: {
@@ -539,6 +757,9 @@ const styles = StyleSheet.create({
   },
   backdropIos: {
     backgroundColor: 'rgba(88,28,135,0.28)',
+  },
+  navCoverFull: {
+    ...StyleSheet.absoluteFillObject,
   },
   drawer: {
     position: 'absolute',
@@ -553,16 +774,86 @@ const styles = StyleSheet.create({
     shadowRadius: 36,
     elevation: 24,
   },
-  drawerAndroid: {
-    elevation: 10,
+  menuPanel: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    flexDirection: 'column',
+    overflow: 'hidden',
+    borderTopRightRadius: DRAWER_RADIUS,
+    borderBottomRightRadius: DRAWER_RADIUS,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#7c3aed',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.2,
+    shadowRadius: 36,
+    elevation: 24,
+    zIndex: 3,
+  },
+  menuPanelAndroid: {
     shadowOpacity: 0,
     shadowRadius: 0,
+  },
+  unifiedHeader: {
+    paddingHorizontal: 18,
+    paddingBottom: 16,
+    overflow: 'hidden',
+  },
+  identityPressableFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minWidth: 0,
+    paddingRight: 44,
+  },
+  headerDismissBtn: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  fallbackDismissBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  panelBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  panelDrawerCol: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  panelFlyoutCol: {
+    flexGrow: 0,
+    flexShrink: 0,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+  },
+  drawerAndroid: {
+    elevation: 24,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+  },
+  drawerNight: {
+    shadowOpacity: 0.12,
   },
   drawerBgAndroid: {
     backgroundColor: '#f8f4ff',
   },
   identityHeader: {
-    paddingHorizontal: H_PAD + 2,
+    paddingHorizontal: 18,
     paddingBottom: 18,
     overflow: 'hidden',
   },
@@ -679,7 +970,7 @@ const styles = StyleSheet.create({
   },
   fallbackTitle: {
     flex: 1,
-    color: pds.text,
+    color: '#1e1b4b',
     fontSize: 20,
     fontWeight: '800',
   },
@@ -776,7 +1067,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: pds.text,
+    color: '#1e1b4b',
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
   },
   menuSection: {

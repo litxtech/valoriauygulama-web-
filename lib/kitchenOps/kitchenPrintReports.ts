@@ -21,6 +21,7 @@ import {
 } from './kitchenPrintHtml';
 import { formatDateShort, formatTime } from '@/lib/date';
 import { listMissingItemReports } from '@/lib/missingItems';
+import type { MissingItemArea } from '@/lib/missingItemsCatalog';
 
 const PRINT_LIMIT = 500;
 
@@ -41,6 +42,8 @@ export type KitchenPrintReportKind =
   | 'day_close'
   | 'shortages_open'
   | 'shortages_resolved'
+  | 'hotel_shortages_open'
+  | 'hotel_shortages_resolved'
   | 'handover_list';
 
 export const KITCHEN_PRINT_REPORT_TITLES: Record<KitchenPrintReportKind, string> = {
@@ -60,6 +63,8 @@ export const KITCHEN_PRINT_REPORT_TITLES: Record<KitchenPrintReportKind, string>
   day_close: 'Gün sonu özeti',
   shortages_open: 'Mutfak açık eksik listesi',
   shortages_resolved: 'Mutfak giderilen eksikler',
+  hotel_shortages_open: 'Otel açık eksik listesi',
+  hotel_shortages_resolved: 'Otel giderilen eksikler',
   handover_list: 'Mutfak teslim kayıtları',
 };
 
@@ -128,9 +133,13 @@ export async function buildKitchenPrintReport(kind: KitchenPrintReportKind): Pro
     case 'handover_list':
       return buildHandoverListReport();
     case 'shortages_open':
-      return buildKitchenShortagesReport('open');
+      return buildShortagesReport('kitchen', 'open');
     case 'shortages_resolved':
-      return buildKitchenShortagesReport('resolved');
+      return buildShortagesReport('kitchen', 'resolved');
+    case 'hotel_shortages_open':
+      return buildShortagesReport('hotel', 'open');
+    case 'hotel_shortages_resolved':
+      return buildShortagesReport('hotel', 'resolved');
     default:
       throw new Error('Bilinmeyen rapor türü');
   }
@@ -138,8 +147,8 @@ export async function buildKitchenPrintReport(kind: KitchenPrintReportKind): Pro
 
 const SHORTAGE_PRIORITY: Record<string, string> = { low: 'Düşük', medium: 'Normal', high: 'Acil' };
 
-async function buildKitchenShortagesReport(status: 'open' | 'resolved'): Promise<KitchenPrintPayload> {
-  const { data, error } = await listMissingItemReports('kitchen', status);
+async function buildShortagesReport(area: MissingItemArea, status: 'open' | 'resolved'): Promise<KitchenPrintPayload> {
+  const { data, error } = await listMissingItemReports(area, status);
   if (error) throw new Error(error);
 
   const rows: KitchenPrintRow[] = [];
@@ -177,14 +186,29 @@ async function buildKitchenShortagesReport(status: 'open' | 'resolved'): Promise
     }
   }
 
-  const kind = status === 'open' ? 'shortages_open' : 'shortages_resolved';
+  const isHotel = area === 'hotel';
+  const kind: KitchenPrintReportKind =
+    status === 'open'
+      ? isHotel
+        ? 'hotel_shortages_open'
+        : 'shortages_open'
+      : isHotel
+        ? 'hotel_shortages_resolved'
+        : 'shortages_resolved';
+
   return payloadFromInput(
     {
       reportTitle: KITCHEN_PRINT_REPORT_TITLES[kind],
       subtitle:
         status === 'open'
-          ? 'Onaylanmış açık mutfak eksik listesi — tedarik gerekli kalemler kırmızı'
-          : 'Giderilmiş mutfak eksik listeleri',
+          ? isHotel
+            ? 'Onaylanmış açık otel eksik listesi — tedarik gerekli kalemler kırmızı'
+            : 'Onaylanmış açık mutfak eksik listesi — tedarik gerekli kalemler kırmızı'
+          : isHotel
+            ? 'Giderilmiş otel eksik listeleri'
+            : 'Giderilmiş mutfak eksik listeleri',
+      brandDepartment: isHotel ? 'Otel Operasyon' : KITCHEN_PRINT_DEPT,
+      footerTag: isHotel ? 'Otel' : 'Mutfak',
       meta: [...nowMeta(), { label: 'Kayıt / kalem', value: String(rows.length) }],
       columns: [
         { key: 'date', label: 'Tarih', width: '14%' },
@@ -196,7 +220,14 @@ async function buildKitchenShortagesReport(status: 'open' | 'resolved'): Promise
       ],
       rows,
       landscape: true,
-      emptyMessage: status === 'open' ? 'Açık mutfak eksik listesi yok.' : 'Giderilmiş eksik kaydı yok.',
+      emptyMessage:
+        status === 'open'
+          ? isHotel
+            ? 'Açık otel eksik listesi yok.'
+            : 'Açık mutfak eksik listesi yok.'
+          : isHotel
+            ? 'Giderilmiş otel eksik kaydı yok.'
+            : 'Giderilmiş eksik kaydı yok.',
     },
     kind
   );

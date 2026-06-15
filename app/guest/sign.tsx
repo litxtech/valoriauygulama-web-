@@ -33,7 +33,7 @@ export default function SignScreen() {
       setStep('done');
       router.replace('/guest/success');
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? 'Kayıt yapılamadı.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('guestSignFailed'));
     }
     setLoading(false);
   };
@@ -47,9 +47,9 @@ export default function SignScreen() {
   };
 
   const handleBiometric = async () => {
-    const result = await authenticate('Sözleşmeyi onaylamak için kimliğinizi doğrulayın');
+    const result = await authenticate(t('guestBiometricPrompt'));
     if (!result.success) {
-      Alert.alert(t('error'), result.error ?? 'Biyometrik doğrulama başarısız.');
+      Alert.alert(t('error'), result.error ?? t('guestBiometricFailed'));
       return;
     }
     await saveAndFinish('biometric:' + new Date().toISOString());

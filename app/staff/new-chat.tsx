@@ -7,6 +7,7 @@ import {
   Pressable,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -121,9 +122,21 @@ export default function StaffNewChatScreen() {
   const start = async (item: RowItem) => {
     if (!staff) return;
     setStarting(item.id);
-    const convId = await staffGetOrCreateDirectConversation(staff.id, item.id, item.type);
-    setStarting(null);
-    if (convId) router.replace({ pathname: '/staff/chat/[id]', params: { id: convId } });
+    try {
+      const convId = await staffGetOrCreateDirectConversation(staff.id, item.id, item.type);
+      if (convId) {
+        router.push({ pathname: '/staff/chat/[id]', params: { id: convId } });
+        return;
+      }
+      Alert.alert(
+        t('error'),
+        item.type === 'guest'
+          ? 'Misafir ile sohbet başlatılamadı. Misafir kaydının silinmediğinden emin olun.'
+          : 'Personel ile sohbet başlatılamadı. Lütfen tekrar deneyin.'
+      );
+    } finally {
+      setStarting(null);
+    }
   };
 
   if (!staff) return null;

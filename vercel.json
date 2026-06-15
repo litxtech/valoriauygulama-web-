@@ -18,6 +18,14 @@
       "destination": "/maliye/index.html"
     },
     {
+      "source": "/odeme/qr",
+      "destination": "/api/odeme/qr"
+    },
+    {
+      "source": "/odeme",
+      "destination": "/api/odeme"
+    },
+    {
       "source": "/:path*",
       "destination": "/"
     }

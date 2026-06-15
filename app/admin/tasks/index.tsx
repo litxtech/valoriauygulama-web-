@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,8 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { awardStaffPoints } from '@/lib/staffPoints';
+import { prefetchAdminAssignPickers } from '@/lib/adminAssignPickersCache';
+import { fetchStaffTaskViewers, type StaffTaskViewerRow } from '@/lib/staffTaskViewers';
 
 type AssignmentRow = {
   id: string;
@@ -42,6 +44,8 @@ type AssignmentRow = {
   attachment_urls?: string[] | null;
   completion_proof_urls?: string[] | null;
   completion_note?: string | null;
+  failure_reason?: string | null;
+  failed_at?: string | null;
 };
 
 type StaffMini = { id: string; full_name: string | null; role: string | null; department: string | null };
@@ -64,30 +68,96 @@ export default function AdminTasksIndexScreen() {
   const [scoreValue, setScoreValue] = useState('5');
   const [scoreNote, setScoreNote] = useState('');
   const [scoring, setScoring] = useState(false);
+  const [viewersOpen, setViewersOpen] = useState(false);
+  const [viewers, setViewers] = useState<StaffTaskViewerRow[]>([]);
+  const [viewersLoading, setViewersLoading] = useState(false);
+
+  const orgIdForViewers = useMemo(() => {
+    const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : authStaff?.organization_id;
+    return orgId && orgId !== 'all' ? orgId : authStaff?.organization_id ?? null;
+  }, [authStaff?.app_permissions?.super_admin, authStaff?.organization_id, authStaff?.role, selectedOrganizationId]);
+
+  const viewerCount = viewers.length;
+
+  const loadViewers = useCallback(async () => {
+    if (!orgIdForViewers) {
+      setViewers([]);
+      return;
+    }
+    setViewersLoading(true);
+    try {
+      setViewers(await fetchStaffTaskViewers(orgIdForViewers));
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Personel listesi yüklenemedi.');
+      setViewers([]);
+    } finally {
+      setViewersLoading(false);
+    }
+  }, [orgIdForViewers]);
+
+  useEffect(() => {
+    if (viewersOpen) void loadViewers();
+  }, [viewersOpen, loadViewers]);
+
+  useEffect(() => {
+    if (!isAdmin || !orgIdForViewers) {
+      setViewers([]);
+      return;
+    }
+    void fetchStaffTaskViewers(orgIdForViewers)
+      .then(setViewers)
+      .catch(() => setViewers([]));
+  }, [isAdmin, orgIdForViewers]);
 
   const load = useCallback(async () => {
     const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
     const orgId = canUseAll ? selectedOrganizationId : authStaff?.organization_id;
-    let baseQuery = supabase
-      .from('staff_assignments')
-      .select(
-        'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls, completion_proof_urls, completion_note'
-      )
-      .order('created_at', { ascending: false })
-      .limit(120);
-    if (orgId && orgId !== 'all') baseQuery = baseQuery.eq('organization_id', orgId);
+
+    let orgStaffIds: string[] | null = null;
+    if (orgId && orgId !== 'all') {
+      const { data: orgStaffRows } = await supabase.from('staff').select('id').eq('organization_id', orgId);
+      orgStaffIds = (orgStaffRows ?? []).map((r: { id: string }) => r.id);
+      if (orgStaffIds.length === 0) {
+        setRows([]);
+        setStaffMap({});
+        setRoomMap({});
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
+
+    const applyOrgFilter = <T extends { in: (col: string, vals: string[]) => T }>(query: T) =>
+      orgStaffIds ? query.in('assigned_staff_id', orgStaffIds) : query;
+
+    let baseQuery = applyOrgFilter(
+      supabase
+        .from('staff_assignments')
+        .select(
+          'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls, completion_proof_urls, completion_note, failure_reason, failed_at'
+        )
+        .order('created_at', { ascending: false })
+        .limit(120)
+    );
     const { data: list, error } = await baseQuery;
     if (error) {
       const msg = error.message ?? '';
-      if (msg.includes('attachment_urls') || error.code === 'PGRST204') {
-        let legacyQuery = supabase
-          .from('staff_assignments')
-          .select(
-            'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at'
-          )
-          .order('created_at', { ascending: false })
-          .limit(120);
-        if (orgId && orgId !== 'all') legacyQuery = legacyQuery.eq('organization_id', orgId);
+      if (
+        msg.includes('attachment_urls') ||
+        msg.includes('completion_') ||
+        msg.includes('failure_') ||
+        error.code === 'PGRST204'
+      ) {
+        let legacyQuery = applyOrgFilter(
+          supabase
+            .from('staff_assignments')
+            .select(
+              'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at'
+            )
+            .order('created_at', { ascending: false })
+            .limit(120)
+        );
         const { data: list2, error: e2 } = await legacyQuery;
         if (e2) {
           setRows([]);
@@ -217,8 +287,9 @@ export default function AdminTasksIndexScreen() {
   const stats = useMemo(() => {
     const open = rows.filter((r) => r.status === 'pending' || r.status === 'in_progress').length;
     const done = rows.filter((r) => r.status === 'completed').length;
-    const urgent = rows.filter((r) => (r.priority === 'urgent' || r.priority === 'high') && r.status !== 'completed' && r.status !== 'cancelled').length;
-    return { open, done, urgent, total: rows.length };
+    const failed = rows.filter((r) => r.status === 'failed').length;
+    const urgent = rows.filter((r) => (r.priority === 'urgent' || r.priority === 'high') && r.status !== 'completed' && r.status !== 'cancelled' && r.status !== 'failed').length;
+    return { open, done, failed, urgent, total: rows.length };
   }, [rows]);
 
   const filteredRows = useMemo(() => {
@@ -227,7 +298,7 @@ export default function AdminTasksIndexScreen() {
     if (filter === 'open') {
       list = list.filter((r) => r.status === 'pending' || r.status === 'in_progress');
     } else if (filter === 'done') {
-      list = list.filter((r) => r.status === 'completed' || r.status === 'cancelled');
+      list = list.filter((r) => r.status === 'completed' || r.status === 'cancelled' || r.status === 'failed');
     }
     if (!q) return list;
     return list.filter((r) => {
@@ -287,11 +358,30 @@ export default function AdminTasksIndexScreen() {
         </View>
         <AdminButton
           title="Yeni görev ata"
-          onPress={() => router.push('/admin/tasks/assign')}
+          onPress={() => {
+            prefetchAdminAssignPickers();
+            router.push('/admin/tasks/assign');
+          }}
           variant="accent"
           fullWidth
           leftIcon={<Ionicons name="add-circle-outline" size={20} color="#fff" />}
         />
+        {isAdmin ? (
+          <TouchableOpacity
+            style={styles.viewersBtn}
+            onPress={() => setViewersOpen(true)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="eye-outline" size={18} color={adminTheme.colors.primary} />
+            <Text style={styles.viewersBtnText}>Görevleri gören personel</Text>
+            {viewerCount > 0 ? (
+              <View style={styles.viewersBadge}>
+                <Text style={styles.viewersBadgeText}>{viewerCount}</Text>
+              </View>
+            ) : null}
+            <Ionicons name="chevron-forward" size={16} color={adminTheme.colors.textMuted} />
+          </TouchableOpacity>
+        ) : null}
       </AdminCard>
 
       <Text style={styles.listTitle}>Görev listesi</Text>
@@ -339,6 +429,8 @@ export default function AdminTasksIndexScreen() {
           const statusColor =
             r.status === 'completed'
               ? adminTheme.colors.success
+              : r.status === 'failed'
+                ? adminTheme.colors.error
               : r.status === 'cancelled'
                 ? adminTheme.colors.textMuted
                 : r.status === 'in_progress'
@@ -408,12 +500,17 @@ export default function AdminTasksIndexScreen() {
                   <Text style={styles.roomText}>Odalar: {rooms.join(', ')}</Text>
                 </View>
               )}
+              {r.failure_reason?.trim() ? (
+                <Text style={styles.failureNote}>
+                  Yapılamadı açıklaması: {r.failure_reason.trim()}
+                </Text>
+              ) : null}
               {r.body ? (
                 <Text style={styles.rowBody} numberOfLines={5}>
                   {r.body}
                 </Text>
               ) : null}
-              {isAdmin && r.status !== 'completed' && r.status !== 'cancelled' ? (
+              {isAdmin && r.status !== 'completed' && r.status !== 'cancelled' && r.status !== 'failed' ? (
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => cancelAssignment(r.id)} activeOpacity={0.8}>
                   <Text style={styles.cancelBtnText}>Görevi iptal et</Text>
                 </TouchableOpacity>
@@ -496,6 +593,50 @@ export default function AdminTasksIndexScreen() {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={viewersOpen} transparent animationType="slide" onRequestClose={() => setViewersOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, styles.viewersSheet]}>
+            <View style={styles.viewersSheetHeader}>
+              <Ionicons name="people-outline" size={24} color={adminTheme.colors.primary} />
+              <Text style={styles.viewersSheetTitle}>Görevleri gören personel</Text>
+              <TouchableOpacity onPress={() => setViewersOpen(false)} hitSlop={12}>
+                <Ionicons name="close" size={24} color={adminTheme.colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.viewersSheetSub}>
+              Aynı oteldeki aktif personel &quot;Tüm görevler&quot; sekmesinde görevleri görür. Kendi görevlerinde tamamlama / yapamadım yapabilir.
+            </Text>
+            {viewersLoading ? (
+              <ActivityIndicator style={{ marginVertical: 24 }} color={adminTheme.colors.primary} />
+            ) : viewers.length === 0 ? (
+              <Text style={styles.viewersEmpty}>Liste boş veya otel seçilmedi.</Text>
+            ) : (
+              <ScrollView style={styles.viewersList} keyboardShouldPersistTaps="handled">
+                {viewers.map((v) => (
+                  <View key={v.id} style={styles.viewerRow}>
+                    <View style={styles.viewerAvatar}>
+                      <Text style={styles.viewerAvatarText}>{(v.full_name?.[0] ?? '?').toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.viewerBody}>
+                      <Text style={styles.viewerName}>{v.full_name ?? 'Personel'}</Text>
+                      <Text style={styles.viewerMeta}>
+                        {v.role ? STAFF_ROLE_LABELS[v.role] ?? v.role : '—'}
+                        {v.department ? ` · ${v.department}` : ''}
+                      </Text>
+                    </View>
+                    {v.canAssignTasks ? (
+                      <View style={styles.viewerTag}>
+                        <Text style={styles.viewerTagText}>Görev atar</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -595,6 +736,15 @@ const styles = StyleSheet.create({
   roomRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   roomText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
   rowBody: { fontSize: 14, lineHeight: 21, color: adminTheme.colors.textSecondary, marginBottom: 8 },
+  failureNote: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: adminTheme.colors.error,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: adminTheme.colors.error + '10',
+  },
   cancelBtn: { marginTop: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 12 },
   cancelBtnText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.error },
   scoreBtn: {
@@ -611,6 +761,67 @@ const styles = StyleSheet.create({
     borderColor: '#A7F3D0',
   },
   scoreBtnText: { fontSize: 13, fontWeight: '700', color: '#047857' },
+  viewersBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+  },
+  viewersBtnText: { flex: 1, fontSize: 14, fontWeight: '700', color: adminTheme.colors.primary },
+  viewersBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: adminTheme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  viewersBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  viewersSheet: { maxHeight: '80%' },
+  viewersSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  viewersSheetTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: adminTheme.colors.text },
+  viewersSheetSub: { fontSize: 13, lineHeight: 19, color: adminTheme.colors.textMuted, marginBottom: 12 },
+  viewersEmpty: { fontSize: 14, color: adminTheme.colors.textMuted, textAlign: 'center', paddingVertical: 20 },
+  viewersList: { maxHeight: 360 },
+  viewerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: adminTheme.colors.border,
+  },
+  viewerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: adminTheme.colors.primary + '18',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerAvatarText: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.primary },
+  viewerBody: { flex: 1, minWidth: 0 },
+  viewerName: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
+  viewerMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
+  viewerTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: adminTheme.colors.warningLight,
+  },
+  viewerTagText: { fontSize: 10, fontWeight: '800', color: adminTheme.colors.accent },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

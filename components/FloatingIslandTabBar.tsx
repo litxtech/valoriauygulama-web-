@@ -1,17 +1,22 @@
-import { useCallback, useContext } from 'react';
-import { View, StyleSheet, Platform, type LayoutChangeEvent } from 'react-native';
+import { useCallback, useContext, useEffect, useRef } from 'react';
+import { View, StyleSheet, Platform, Animated, type LayoutChangeEvent } from 'react-native';
 import { BottomTabBar, BottomTabBarHeightCallbackContext } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IOS_TAB_BAR_FLOAT_MARGIN } from '@/constants/floatingTabBarMetrics';
 import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
+import { GlassTabBarShell } from '@/components/premium/GlassTabBarShell';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import { getAppTabBarColors } from '@/constants/tabBarTheme';
+import { getPersonelDesign } from '@/constants/personelDesignSystem';
 
 const ISLAND_RADIUS = 22;
 const IOS_HORIZONTAL_INSET = 10;
 
 export type FloatingIslandTabBarProps = BottomTabBarProps & {
-  surfaceColor: string;
+  surfaceColor?: string;
   borderColor?: string;
+  hidden?: boolean;
 };
 
 /**
@@ -20,10 +25,28 @@ export type FloatingIslandTabBarProps = BottomTabBarProps & {
  */
 export function FloatingIslandTabBar({
   surfaceColor,
-  borderColor = 'rgba(15, 23, 42, 0.08)',
+  borderColor: borderColorProp,
+  hidden = false,
   insets: navInsets,
   ...props
 }: FloatingIslandTabBarProps) {
+  const { isNight } = usePremiumTheme();
+  const palette = getPersonelDesign(isNight);
+  const tabBar = getAppTabBarColors(isNight);
+  const resolvedSurface = surfaceColor ?? (isNight ? palette.pageBg : 'transparent');
+  const resolvedBorder = borderColorProp ?? tabBar.border;
+
+  const translateY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.spring(translateY, {
+      toValue: hidden ? 120 : 0,
+      useNativeDriver: true,
+      speed: 18,
+      bounciness: 0,
+    }).start();
+  }, [hidden, translateY]);
+
   const safeInsets = useSafeAreaInsets();
   const rawBottom = navInsets?.bottom ?? safeInsets.bottom;
   const resolvedInsets = {
@@ -43,51 +66,59 @@ export function FloatingIslandTabBar({
 
   if (Platform.OS === 'android') {
     return (
-      <View
+      <Animated.View
         onLayout={handleShellLayout}
-        style={[styles.androidShell, { backgroundColor: surfaceColor, borderTopColor: borderColor }]}
+        style={[
+          styles.androidShell,
+          {
+            backgroundColor: resolvedSurface,
+            borderTopColor: resolvedBorder,
+            transform: [{ translateY }],
+          },
+        ]}
       >
-        <BottomTabBar
-          {...props}
-          insets={{
-            top: 0,
-            right: resolvedInsets.right,
-            bottom: resolvedInsets.bottom,
-            left: resolvedInsets.left,
-          }}
-        />
-      </View>
+        <GlassTabBarShell borderRadius={0}>
+          <BottomTabBar
+            {...props}
+            insets={{
+              top: 0,
+              right: resolvedInsets.right,
+              bottom: resolvedInsets.bottom,
+              left: resolvedInsets.left,
+            }}
+          />
+        </GlassTabBarShell>
+      </Animated.View>
     );
   }
 
   return (
-    <View
+    <Animated.View
       onLayout={handleShellLayout}
       style={[
         styles.iosShell,
         {
-          backgroundColor: surfaceColor,
+          backgroundColor: resolvedSurface,
           paddingBottom: IOS_TAB_BAR_FLOAT_MARGIN,
           paddingHorizontal: IOS_HORIZONTAL_INSET,
+          transform: [{ translateY }],
         },
       ]}
     >
-      <View style={styles.shadowHost}>
-        <View style={[styles.ring, { borderColor }]}>
-          <View style={[styles.islandFill, { backgroundColor: surfaceColor }]}>
-            <BottomTabBar
-              {...props}
-              insets={{
-                top: 0,
-                right: 0,
-                bottom: resolvedInsets.bottom,
-                left: 0,
-              }}
-            />
-          </View>
-        </View>
+      <View style={[styles.shadowHost, isNight && styles.shadowHostNight]}>
+        <GlassTabBarShell borderRadius={ISLAND_RADIUS}>
+          <BottomTabBar
+            {...props}
+            insets={{
+              top: 0,
+              right: 0,
+              bottom: resolvedInsets.bottom,
+              left: 0,
+            }}
+          />
+        </GlassTabBarShell>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -95,7 +126,11 @@ const styles = StyleSheet.create({
   androidShell: {
     width: '100%',
     borderTopWidth: StyleSheet.hairlineWidth,
-    elevation: 2,
+    elevation: 8,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
   },
   iosShell: {
     width: '100%',
@@ -107,12 +142,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 14,
   },
-  ring: {
-    borderRadius: ISLAND_RADIUS,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  islandFill: {
-    overflow: 'hidden',
+  shadowHostNight: {
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
   },
 });

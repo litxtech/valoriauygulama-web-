@@ -2,7 +2,7 @@
  * Tüm sözleşmeler ekranı – Admin ve Staff (tum_sozlesmeler yetkisi) tarafından kullanılır.
  * Günlük/Haftalık/Aylık/Senelik filtre, takvim doluluk noktaları, liste & tek misafir yazdırma.
  */
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import {
   ScrollView,
   Platform,
   Linking,
+  InteractionManager,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -102,6 +103,10 @@ function getDateRange(period: PeriodKey, referenceDate: Date): { from: string; t
     }
     case 'yearly': {
       return { from: `${d.getFullYear()}-01-01`, to: `${d.getFullYear()}-12-31` };
+    }
+    default: {
+      const fallback = localDateToYMD(new Date());
+      return { from: fallback, to: fallback };
     }
   }
 }
@@ -198,7 +203,7 @@ export function AllContractsScreen() {
   const [occupancyDates, setOccupancyDates] = useState<Set<string>>(new Set());
   const [listPrinting, setListPrinting] = useState(false);
 
-  const { dateFrom, dateTo } = useMemo(
+  const { from: dateFrom, to: dateTo } = useMemo(
     () => getDateRange(selectedPeriod, referenceDate),
     [selectedPeriod, referenceDate]
   );
@@ -213,7 +218,17 @@ export function AllContractsScreen() {
     return `${new Date(dateFrom + 'T00:00:00').toLocaleDateString('tr-TR')} – ${new Date(dateTo + 'T00:00:00').toLocaleDateString('tr-TR')}`;
   }, [dateFrom, dateTo]);
 
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    if (!dateFrom || !dateTo) {
+      setRows([]);
+      setLoadError(null);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     const fromIso = `${dateFrom}T00:00:00.000Z`;
     const toIso = `${dateTo}T23:59:59.999Z`;
     const orgScoped = resolveAdminListOrganizationId({
@@ -223,77 +238,85 @@ export function AllContractsScreen() {
       fallbackOrganizationId: null,
     });
 
-    let listQuery = supabase
-      .from('contract_acceptances')
-      .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id')
-      .gte('accepted_at', fromIso)
-      .lte('accepted_at', toIso)
-      .order('accepted_at', { ascending: false })
-      .limit(500);
-    if (orgScoped && isValidUuid(orgScoped)) listQuery = listQuery.eq('organization_id', orgScoped);
+    try {
+      let listQuery = supabase
+        .from('contract_acceptances')
+        .select('id, token, room_id, contract_lang, accepted_at, assigned_staff_id, assigned_at, guest_id')
+        .gte('accepted_at', fromIso)
+        .lte('accepted_at', toIso)
+        .order('accepted_at', { ascending: false })
+        .limit(300);
+      if (orgScoped && isValidUuid(orgScoped)) listQuery = listQuery.eq('organization_id', orgScoped);
 
-    const { data: list, error } = await listQuery;
+      const { data: list, error } = await listQuery;
+      if (seq !== loadSeqRef.current) return;
 
-    if (error) {
-      setRows([]);
-      setLoadError(error.message);
-      setLoading(false);
-      setRefreshing(false);
-      return;
+      if (error) {
+        setRows([]);
+        setLoadError(error.message);
+        return;
+      }
+      setLoadError(null);
+
+      const roomIds = filterValidUuids([...new Set((list ?? []).map((r) => r.room_id))]);
+      const staffIds = filterValidUuids([...new Set((list ?? []).map((r) => r.assigned_staff_id))]);
+      const guestIds = filterValidUuids([...new Set((list ?? []).map((r) => r.guest_id))]);
+
+      const [roomsResult, staffResult, guestsResult] = await Promise.all([
+        roomIds.length > 0
+          ? supabase.from('rooms').select('id, room_number').in('id', roomIds)
+          : Promise.resolve({ data: [] as { id: string; room_number: string }[] }),
+        staffIds.length > 0
+          ? supabase.from('staff').select('id, full_name').in('id', staffIds)
+          : Promise.resolve({ data: [] as { id: string; full_name: string | null }[] }),
+        guestIds.length > 0
+          ? supabase.from('guests').select('id, full_name, phone').in('id', guestIds)
+          : Promise.resolve({ data: [] as { id: string; full_name: string | null; phone: string | null }[] }),
+      ]);
+      if (seq !== loadSeqRef.current) return;
+
+      const roomNumbers: Record<string, string> = {};
+      for (const r of roomsResult.data ?? []) {
+        roomNumbers[r.id] = r.room_number;
+      }
+      const staffNames: Record<string, string> = {};
+      for (const s of staffResult.data ?? []) {
+        staffNames[s.id] = s.full_name ?? '—';
+      }
+      const guestById: Record<string, { full_name: string | null; phone: string | null }> = {};
+      for (const g of guestsResult.data ?? []) {
+        guestById[g.id] = { full_name: g.full_name, phone: g.phone };
+      }
+
+      setRows(
+        (list ?? []).map((r) => {
+          const guestObj = r.guest_id && isValidUuid(r.guest_id) ? guestById[r.guest_id] : undefined;
+          return {
+            ...r,
+            room_number: r.room_id && isValidUuid(r.room_id) ? roomNumbers[r.room_id] ?? '—' : null,
+            assigned_staff_name:
+              r.assigned_staff_id && isValidUuid(r.assigned_staff_id)
+                ? staffNames[r.assigned_staff_id] ?? '—'
+                : null,
+            signer_name: guestObj?.full_name ?? null,
+            signer_phone: guestObj?.phone ?? null,
+          };
+        })
+      );
+    } finally {
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-    setLoadError(null);
-
-    const roomIds = filterValidUuids([...new Set((list ?? []).map((r) => r.room_id))]);
-    const staffIds = filterValidUuids([...new Set((list ?? []).map((r) => r.assigned_staff_id))]);
-    const guestIds = filterValidUuids([...new Set((list ?? []).map((r) => r.guest_id))]);
-
-    let roomNumbers: Record<string, string> = {};
-    let staffNames: Record<string, string> = {};
-    let guestById: Record<string, { full_name: string | null; phone: string | null }> = {};
-
-    const [roomsResult, staffResult, guestsResult] = await Promise.all([
-      roomIds.length > 0
-        ? supabase.from('rooms').select('id, room_number').in('id', roomIds)
-        : Promise.resolve({ data: [] as { id: string; room_number: string }[] }),
-      staffIds.length > 0
-        ? supabase.from('staff').select('id, full_name').in('id', staffIds)
-        : Promise.resolve({ data: [] as { id: string; full_name: string | null }[] }),
-      guestIds.length > 0
-        ? supabase.from('guests').select('id, full_name, phone').in('id', guestIds)
-        : Promise.resolve({ data: [] as { id: string; full_name: string | null; phone: string | null }[] }),
-    ]);
-    roomNumbers = {};
-    for (const r of roomsResult.data ?? []) {
-      roomNumbers[r.id] = r.room_number;
-    }
-    staffNames = {};
-    for (const s of staffResult.data ?? []) {
-      staffNames[s.id] = s.full_name ?? '—';
-    }
-    guestById = {};
-    for (const g of guestsResult.data ?? []) {
-      guestById[g.id] = { full_name: g.full_name, phone: g.phone };
-    }
-
-    setRows(
-      (list ?? []).map((r) => {
-        const guestObj = r.guest_id && isValidUuid(r.guest_id) ? guestById[r.guest_id] : undefined;
-        return {
-          ...r,
-          room_number: r.room_id && isValidUuid(r.room_id) ? roomNumbers[r.room_id] ?? '—' : null,
-          assigned_staff_name:
-            r.assigned_staff_id && isValidUuid(r.assigned_staff_id)
-              ? staffNames[r.assigned_staff_id] ?? '—'
-              : null,
-          signer_name: guestObj?.full_name ?? null,
-          signer_phone: guestObj?.phone ?? null,
-        };
-      })
-    );
   }, [canUseAllOrganizations, dateFrom, dateTo, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
-    load().finally(() => setLoading(false));
+    setLoading(true);
+    const task = InteractionManager.runAfterInteractions(() => {
+      void load();
+    });
+    return () => task.cancel();
   }, [load]);
 
   const loadOccupancyForMonth = useCallback(async (year: number, month: number) => {
@@ -322,13 +345,14 @@ export function AllContractsScreen() {
   }, [canUseAllOrganizations, selectedOrganizationId, staff?.organization_id]);
 
   useEffect(() => {
-    loadOccupancyForMonth(calendarYear, calendarMonth);
-  }, [calendarYear, calendarMonth, loadOccupancyForMonth]);
+    if (!calendarVisible) return;
+    void loadOccupancyForMonth(calendarYear, calendarMonth);
+  }, [calendarVisible, calendarYear, calendarMonth, loadOccupancyForMonth]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    setLoading(true);
     await load();
-    setRefreshing(false);
   }, [load]);
 
   const selectPeriod = (key: PeriodKey) => {

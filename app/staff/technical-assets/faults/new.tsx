@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { fetchTechAssetDetail } from '@/lib/technicalAssets';
+import { notifyTechFaultCreated } from '@/lib/technicalAssetNotifications';
 import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -48,22 +49,38 @@ export default function TechnicalFaultNewScreen() {
     setSaving(true);
     try {
       let organizationId = staff.organization_id;
-      if (assetId) {
-        const { data: a } = await fetchTechAssetDetail(assetId);
+      let assetDetail = null;
+      if (assetId?.trim()) {
+        const { data: a } = await fetchTechAssetDetail(assetId.trim());
+        assetDetail = a;
         if (a) organizationId = a.organization_id;
       }
-      const { error } = await supabase.from('tech_fault_reports').insert({
-        organization_id: organizationId,
-        asset_id: assetId?.trim() || null,
-        title: title.trim(),
-        description: description.trim() || null,
-        is_emergency: emergency,
-        created_by_staff_id: staff.id,
-      });
+      const { data: inserted, error } = await supabase
+        .from('tech_fault_reports')
+        .insert({
+          organization_id: organizationId,
+          asset_id: assetId?.trim() || null,
+          title: title.trim(),
+          description: description.trim() || null,
+          is_emergency: emergency,
+          created_by_staff_id: staff.id,
+        })
+        .select('id, created_at')
+        .single();
       if (error) {
         Alert.alert('Hata', error.message);
         return;
       }
+      void notifyTechFaultCreated({
+        organizationId,
+        faultId: String(inserted.id),
+        title: title.trim(),
+        description: description.trim() || null,
+        isEmergency: emergency,
+        asset: assetDetail,
+        createdByStaffId: staff.id,
+        createdAt: inserted.created_at,
+      });
       Alert.alert('Kaydedildi', 'Arıza bildirimi oluşturuldu.', [{ text: 'Tamam', onPress: () => router.replace('/staff/technical-assets/faults') }]);
     } finally {
       setSaving(false);

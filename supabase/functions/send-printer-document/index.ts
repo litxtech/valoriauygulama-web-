@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
     const smtpHost = (Deno.env.get("SMTP_HOST") ?? "").trim();
     const smtpPortRaw = (Deno.env.get("SMTP_PORT") ?? "").trim();
     const smtpUser = (Deno.env.get("SMTP_USER") ?? "").trim();
-    const smtpPass = Deno.env.get("SMTP_PASS") ?? "";
+    const smtpPass = (Deno.env.get("SMTP_PASS") ?? "").trim();
     const smtpFrom = normalizeFrom(Deno.env.get("SMTP_FROM_EMAIL") ?? Deno.env.get("PRINTER_FROM_EMAIL") ?? "");
 
     if (!smtpHost || !smtpPortRaw || !smtpUser || !smtpPass) {

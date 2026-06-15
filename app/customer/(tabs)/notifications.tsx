@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,8 +21,11 @@ import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
+import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
 
 type NotifRow = {
   id: string;
@@ -39,6 +42,8 @@ type LoadOpts = { force?: boolean };
 export default function CustomerNotificationsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const palette = usePersonelDesign();
+  const styles = useMemo(() => createCustomerNotifStyles(palette), [palette]);
   const [token, setToken] = useState<string | null>(null);
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +60,7 @@ export default function CustomerNotificationsScreen() {
   }, [list]);
 
   const { refresh: refreshNotificationCount, setUnreadCount, setNotificationsScreenFocused } = useGuestNotificationStore();
+  const { displayFor } = useNotificationLocalization(list, { guestAppToken: token, enabled: Boolean(token) });
 
   const load = useCallback(async (opts?: LoadOpts) => {
     const force = opts?.force === true;
@@ -348,7 +354,9 @@ export default function CustomerNotificationsScreen() {
       ) : list.length === 0 ? (
         <Text style={styles.noList}>{t('guestNotifListEmpty')}</Text>
       ) : (
-        list.map((n) => (
+        list.map((n) => {
+          const shown = displayFor(n);
+          return (
           <TouchableOpacity
             key={n.id}
             style={[styles.row, n.read_at ? styles.rowRead : null]}
@@ -358,10 +366,10 @@ export default function CustomerNotificationsScreen() {
             <View style={styles.rowContent}>
               {!n.read_at ? <View style={styles.unreadDot} /> : null}
               <View style={styles.rowTextWrap}>
-                <Text style={styles.rowTitle}>{n.title}</Text>
-                {n.body ? (
+                <Text style={styles.rowTitle}>{shown.title}</Text>
+                {shown.body ? (
                   <Text style={styles.rowBody} numberOfLines={2}>
-                    {n.body}
+                    {shown.body}
                   </Text>
                 ) : null}
                 <Text style={styles.rowTime}>
@@ -371,28 +379,30 @@ export default function CustomerNotificationsScreen() {
               <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
             </View>
           </TouchableOpacity>
-        ))
+          );
+        })
       )}
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  centered: { justifyContent: 'center', alignItems: 'center' },
+function createCustomerNotifStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: p.pageBg },
+  centered: { justifyContent: 'center', alignItems: 'center', backgroundColor: p.pageBg },
   content: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 20, fontWeight: '700', color: theme.colors.text, marginBottom: 16 },
+  title: { fontSize: 20, fontWeight: '700', color: p.text, marginBottom: 16 },
   pushCard: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: p.cardBg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: p.cardBorder,
     padding: 14,
     marginBottom: 14,
   },
   pushCardRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  pushCardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
-  pushCardDesc: { fontSize: 13, color: theme.colors.textSecondary, lineHeight: 18 },
+  pushCardTitle: { fontSize: 15, fontWeight: '700', color: p.text },
+  pushCardDesc: { fontSize: 13, color: p.subtext, lineHeight: 18 },
   pushCardBtnRow: { marginTop: 12, gap: 10 },
   pushCardBtn: {
     backgroundColor: theme.colors.primary,
@@ -412,24 +422,24 @@ const styles = StyleSheet.create({
   },
   pushCardBtnSecondaryText: { color: theme.colors.primary, fontWeight: '600' },
   emptyCard: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: p.cardBg,
     padding: 24,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: p.cardBorder,
   },
-  emptyTitle: { fontSize: 17, fontWeight: '600', color: theme.colors.text, marginBottom: 8 },
-  emptyDesc: { fontSize: 14, color: theme.colors.textSecondary, marginBottom: 20 },
+  emptyTitle: { fontSize: 17, fontWeight: '600', color: p.text, marginBottom: 8 },
+  emptyDesc: { fontSize: 14, color: p.subtext, marginBottom: 20 },
   btn: { backgroundColor: theme.colors.primary, padding: 14, borderRadius: 10, alignItems: 'center' },
   btnText: { color: '#fff', fontWeight: '600' },
-  noList: { color: theme.colors.textMuted, fontSize: 14 },
+  noList: { color: p.muted, fontSize: 14 },
   row: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: p.cardBg,
     padding: 16,
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: p.cardBorder,
   },
   rowRead: { opacity: 0.85 },
   rowContent: { flexDirection: 'row', alignItems: 'center' },
@@ -441,7 +451,8 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   rowTextWrap: { flex: 1 },
-  rowTitle: { fontSize: 16, fontWeight: '600', color: theme.colors.text, marginBottom: 4 },
-  rowBody: { fontSize: 14, color: theme.colors.textSecondary, marginBottom: 8 },
-  rowTime: { fontSize: 12, color: theme.colors.textMuted },
-});
+  rowTitle: { fontSize: 16, fontWeight: '600', color: p.text, marginBottom: 4 },
+  rowBody: { fontSize: 14, color: p.subtext, marginBottom: 8 },
+  rowTime: { fontSize: 12, color: p.muted },
+  });
+}

@@ -335,7 +335,6 @@ async function runChatVideoUploadPipeline(
       lastError = (e as Error)?.message ?? 'prep_failed';
       failed += 1;
       setState(tempKey, { phase: 'failed', progress: 0, error: lastError });
-      handlers.onMessagesPatch((prev) => prev.filter((m) => m.id !== tempKey));
       continue;
     }
 
@@ -362,7 +361,6 @@ async function runChatVideoUploadPipeline(
       lastError = errText;
       failed += 1;
       setState(tempKey, { phase: 'failed', progress: 0, error: errText });
-      handlers.onMessagesPatch((prev) => prev.filter((m) => m.id !== tempKey));
       continue;
     }
 
@@ -383,7 +381,11 @@ async function runChatVideoUploadPipeline(
     handlers.onMessagesPatch((prev) => {
       const withoutTemp = prev.filter((m) => m.id !== tempKey);
       const withThumb = { ...message!, media_thumbnail: displayThumb, content: albumContent };
-      return upsertIncomingChatMessage(withoutTemp, withThumb, { ownSenderId, ownSenderType });
+      return upsertIncomingChatMessage(withoutTemp, withThumb, {
+        ownSenderId,
+        ownSenderType,
+        replaceTempId: tempKey,
+      });
     });
 
     if (!remoteThumb) {

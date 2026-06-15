@@ -12,7 +12,7 @@ export type StaffProfileViewCacheEntry<TProfile = Record<string, unknown>> = {
   cachedAt: number;
 };
 
-const PREFIX = 'staff_profile_view_v1';
+const PREFIX = 'staff_profile_view_v2';
 const memory = new Map<string, StaffProfileViewCacheEntry>();
 
 function cacheKey(mode: StaffProfileViewCacheMode, staffId: string) {

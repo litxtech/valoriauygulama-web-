@@ -1,20 +1,28 @@
 import { supabase } from '@/lib/supabase';
+import type { FinanceLedgerScope } from '@/lib/financeLedger';
 
 export type CounterpartyBalance = { income: number; expense: number; net: number };
 
 const balanceCache = new Map<string, { at: number; map: Map<string, CounterpartyBalance> }>();
 const CACHE_MS = 60_000;
 
+function cacheKey(organizationId: string, ledgerScope?: FinanceLedgerScope | null) {
+  return `${organizationId}:${ledgerScope ?? 'all'}`;
+}
+
 export async function fetchCounterpartyBalanceMap(
-  organizationId: string
+  organizationId: string,
+  ledgerScope?: FinanceLedgerScope | null
 ): Promise<Map<string, CounterpartyBalance>> {
-  const hit = balanceCache.get(organizationId);
+  const key = cacheKey(organizationId, ledgerScope);
+  const hit = balanceCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.map;
 
   const map = new Map<string, CounterpartyBalance>();
 
   const { data, error } = await supabase.rpc('accounting_counterparty_balances', {
     p_organization_id: organizationId,
+    p_ledger_scope: ledgerScope ?? null,
   });
 
   if (!error && data) {
@@ -26,29 +34,31 @@ export async function fetchCounterpartyBalanceMap(
         net: Number(r.net) || 0,
       });
     }
-    balanceCache.set(organizationId, { at: Date.now(), map });
+    balanceCache.set(key, { at: Date.now(), map });
     return map;
   }
 
-  const fallback = await fetchCounterpartyBalanceMapFallback(organizationId);
-  balanceCache.set(organizationId, { at: Date.now(), map: fallback });
+  const fallback = await fetchCounterpartyBalanceMapFallback(organizationId, ledgerScope);
+  balanceCache.set(key, { at: Date.now(), map: fallback });
   return fallback;
 }
 
 async function fetchCounterpartyBalanceMapFallback(
-  organizationId: string
+  organizationId: string,
+  ledgerScope?: FinanceLedgerScope | null
 ): Promise<Map<string, CounterpartyBalance>> {
   const map = new Map<string, CounterpartyBalance>();
   const page = 1000;
   let from = 0;
 
   for (;;) {
-    const { data, error } = await supabase
+    let q = supabase
       .from('finance_movements')
       .select('counterparty_id, kind, amount')
       .eq('organization_id', organizationId)
-      .not('counterparty_id', 'is', null)
-      .range(from, from + page - 1);
+      .not('counterparty_id', 'is', null);
+    if (ledgerScope) q = q.eq('ledger_scope', ledgerScope);
+    const { data, error } = await q.range(from, from + page - 1);
 
     if (error || !data?.length) break;
 
@@ -72,6 +82,11 @@ async function fetchCounterpartyBalanceMapFallback(
 }
 
 export function invalidateCounterpartyBalanceCache(organizationId?: string) {
-  if (!organizationId) balanceCache.clear();
-  else balanceCache.delete(organizationId);
+  if (!organizationId) {
+    balanceCache.clear();
+    return;
+  }
+  for (const k of balanceCache.keys()) {
+    if (k.startsWith(`${organizationId}:`)) balanceCache.delete(k);
+  }
 }

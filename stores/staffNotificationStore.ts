@@ -11,8 +11,11 @@ interface StaffNotificationState {
   notificationsScreenFocused: boolean;
   setUnreadCount: (n: number) => void;
   setNotificationsScreenFocused: (v: boolean) => void;
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
 }
+
+const REFRESH_MIN_MS = 30_000;
+let lastRefreshAt = 0;
 
 export const useStaffNotificationStore = create<StaffNotificationState>((set, get) => ({
   unreadCount: 0,
@@ -22,12 +25,14 @@ export const useStaffNotificationStore = create<StaffNotificationState>((set, ge
 
   setNotificationsScreenFocused: (v) => set({ notificationsScreenFocused: v }),
 
-  refresh: async () => {
+  refresh: async (opts) => {
+    if (!opts?.force && Date.now() - lastRefreshAt < REFRESH_MIN_MS) return;
     const staffId = useAuthStore.getState().staff?.id;
     if (!staffId) {
       set({ unreadCount: 0 });
       return;
     }
+    lastRefreshAt = Date.now();
     const { count, error } = await supabase
       .from('notifications')
       .select('id', { count: 'exact', head: true })

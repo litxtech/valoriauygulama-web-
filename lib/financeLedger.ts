@@ -4,7 +4,29 @@
 import { fmtMoneyTry, PAYMENT_METHOD_LABELS, type DebtPaymentMethod } from '@/lib/finance';
 
 export type FinanceMovementKind = 'income' | 'expense';
-export type FinanceCounterpartyType = 'customer' | 'supplier' | 'subcontractor' | 'staff' | 'other';
+export type FinanceLedgerScope = 'hotel' | 'personal';
+export type FinanceCounterpartyType =
+  | 'customer'
+  | 'supplier'
+  | 'subcontractor'
+  | 'staff'
+  | 'private_person'
+  | 'other'
+  | 'landlord'
+  | 'utility'
+  | 'agency'
+  | 'consultant'
+  | 'government'
+  | 'bank'
+  | 'insurance'
+  | 'lawyer'
+  | 'accountant'
+  | 'freelancer';
+
+export const LEDGER_SCOPE_LABELS: Record<FinanceLedgerScope, string> = {
+  hotel: 'Otel / işletme',
+  personal: 'Şahsi',
+};
 
 export const MOVEMENT_KIND_LABELS: Record<FinanceMovementKind, string> = {
   income: 'Gelir',
@@ -14,14 +36,34 @@ export const MOVEMENT_KIND_LABELS: Record<FinanceMovementKind, string> = {
 export const COUNTERPARTY_TYPE_LABELS: Record<FinanceCounterpartyType, string> = {
   customer: 'Müşteri',
   supplier: 'Tedarikçi',
-  subcontractor: 'Taşeron',
+  subcontractor: 'Taşeron / usta',
   staff: 'Personel',
+  private_person: 'Şahsi kişi',
   other: 'Diğer',
+  landlord: 'Mal sahibi / kira',
+  utility: 'Fatura kurumu',
+  agency: 'Acente',
+  consultant: 'Danışman',
+  government: 'Resmi kurum',
+  bank: 'Banka',
+  insurance: 'Sigorta',
+  lawyer: 'Avukat / hukuk',
+  accountant: 'Muhasebeci',
+  freelancer: 'Serbest çalışan',
 };
 
 export const MOVEMENT_CATEGORY_LABELS: Record<string, string> = {
   sales: 'Satış / Tahsilat',
   advance: 'Avans',
+  bahsis: 'Bahşiş (Stripe)',
+  mutfak_yemek: 'Mutfak yemek',
+  mutfak_restoran: 'Restoran',
+  oda_servisi: 'Oda servisi',
+  otel_hizmet: 'Otel hizmeti',
+  transfer_tur: 'Transfer / tur',
+  otel_genel: 'Otel genel',
+  stripe_odeme: 'Stripe POS',
+  diger: 'Diğer',
   salary: 'Maaş / İşçilik',
   material: 'Malzeme',
   rent: 'Kira',

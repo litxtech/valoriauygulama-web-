@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { updateGuestLoginInfo } from '@/lib/updateGuestLoginInfo';
@@ -6,6 +7,27 @@ import type { Session, User } from '@supabase/supabase-js';
 import { getOrCreateGuestDeviceInstallId } from '@/lib/guestDeviceInstallId';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useAuthStore } from '@/stores/authStore';
+import { queueGuestWelcomeCard } from '@/lib/guestWelcomeCard';
+import { syncGuestProfileMediaToAuth } from '@/lib/syncGuestProfileMedia';
+
+const staffAuthSkipCache = new Map<string, boolean>();
+
+/** Personel oturumunda misafir RPC çağrılmasın (auth_user_id unique çakışması). */
+export async function authUserIsStaff(authUserId: string): Promise<boolean> {
+  const { staff } = useAuthStore.getState();
+  if (staff?.auth_id === authUserId) return true;
+  const cached = staffAuthSkipCache.get(authUserId);
+  if (cached !== undefined) return cached;
+  const { data } = await supabase
+    .from('staff')
+    .select('id')
+    .eq('auth_id', authUserId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  const isStaff = !!data?.id;
+  staffAuthSkipCache.set(authUserId, isStaff);
+  return isStaff;
+}
 
 /**
  * Apple/Google dahil tüm giriş türlerinde kullanılacak full_name.
@@ -35,9 +57,7 @@ export function getGuestFullNameFromUser(user: User | null | undefined): string 
  */
 export async function getOrCreateGuestForCaller(user: User | null | undefined): Promise<{ guest_id: string; app_token: string; is_new?: boolean } | null> {
   if (!user) return null;
-  const { staff, staffCheckComplete } = useAuthStore.getState();
-  if (staff) return null;
-  if (!staffCheckComplete) return null;
+  if (await authUserIsStaff(user.id)) return null;
   const fullName = getGuestFullNameFromUser(user);
   /** Cihaz kimliği sunucuda yalnızca anonim JWT + cihaz eşlemesinde kullanılır; her zaman gönderilir (parametre kaybı olmasın). */
   const deviceInstallId = await getOrCreateGuestDeviceInstallId();
@@ -54,6 +74,14 @@ export async function getOrCreateGuestForCaller(user: User | null | undefined): 
     : null;
   if (row) {
     updateGuestLoginInfo(user).catch((e) => log.warn('getOrCreateGuestForCaller', 'updateGuestLoginInfo', (e as Error)?.message));
+    syncGuestProfileMediaToAuth(user).catch((e) =>
+      log.warn('getOrCreateGuestForCaller', 'syncGuestProfileMedia', (e as Error)?.message)
+    );
+    if (row.is_new) {
+      queueGuestWelcomeCard(row.guest_id).catch((e) =>
+        log.warn('getOrCreateGuestForCaller', 'queueGuestWelcomeCard', (e as Error)?.message)
+      );
+    }
   }
   return row ?? null;
 }
@@ -66,10 +94,10 @@ export async function getSessionOrRefreshOnce(): Promise<Session | null> {
   const { data: s0 } = await supabase.auth.getSession();
   if (s0.session?.user) return s0.session;
   try {
-    const { data } = await supabase.auth.refreshSession();
-    if (data.session?.user) return data.session;
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error && data.session?.user) return data.session;
   } catch {
-    /* çevrimdışı / limit */
+    /* çevrimdışı / limit / 522 */
   }
   const { data: s1 } = await supabase.auth.getSession();
   return s1.session?.user ? s1.session : null;
@@ -94,9 +122,24 @@ export async function getOrCreateGuestForCurrentSession(): Promise<{
  */
 export async function syncGuestMessagingAppToken(): Promise<string | null> {
   const session = await getSessionOrRefreshOnce();
-  if (!session?.user) return null;
-  const row = await getOrCreateGuestForCaller(session.user);
-  if (!row?.app_token) return null;
-  await useGuestMessagingStore.getState().setAppToken(row.app_token);
-  return row.app_token;
+  if (session?.user) {
+    const row = await getOrCreateGuestForCaller(session.user);
+    if (row?.app_token) {
+      await useGuestMessagingStore.getState().setAppToken(row.app_token);
+      return row.app_token;
+    }
+  }
+  const inMemory = useGuestMessagingStore.getState().appToken?.trim();
+  if (inMemory) return inMemory;
+  try {
+    const stored = await AsyncStorage.getItem('valoria_guest_messaging_token');
+    const trimmed = stored?.trim();
+    if (trimmed) {
+      await useGuestMessagingStore.getState().setAppToken(trimmed);
+      return trimmed;
+    }
+  } catch {
+    /* disk okunamazsa devam */
+  }
+  return null;
 }

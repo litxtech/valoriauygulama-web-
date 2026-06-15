@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
+import { defaultStaffAppPermissions } from '@/lib/staffAppPermissionsCatalog';
+import { StaffAppPermissionsEditor } from '@/components/admin/StaffAppPermissionsEditor';
 
 const DEPARTMENTS = [
   { value: 'owner', label: 'Sahip' },
@@ -70,38 +72,6 @@ const SHIFT_TYPES = [
   { value: 'flexible', label: 'Esnek' },
 ];
 
-const APP_PERMISSIONS = [
-  { key: 'stok_giris', label: 'Stok girişi yapabilir' },
-  { key: 'mesajlasma', label: 'Müşterilerle mesajlaşabilir' },
-  { key: 'misafir_mesaj_alabilir', label: 'Müşteriden direkt mesaj alabilir' },
-  { key: 'video_paylasim', label: 'Video/resim paylaşabilir' },
-  { key: 'ekip_sohbet', label: 'Ekip sohbetini görebilir' },
-  { key: 'dokuman_yukle', label: 'Doküman yükleyebilir / yönetebilir' },
-  { key: 'gorev_ata', label: 'Görev atayabilir' },
-  { key: 'personel_ekle', label: 'Personel ekleyebilir (sadece yönetici)' },
-  { key: 'raporlar', label: 'Raporları görebilir' },
-  { key: 'satis_komisyon', label: 'Satış / komisyon modülüne erişebilir' },
-  { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeleri görüntüleyebilir' },
-  { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturabilir' },
-  { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitlerini (mutfak) görüntüleyebilir / düzenleyebilir' },
-  { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyitlerini onaylayabilir' },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur, onay/puan yok)' },
-  { key: 'transfer_tour_services', label: 'Transfer & Tur: hizmetleri yönet (ekle, düzenle, sil)' },
-  { key: 'transfer_tour_requests', label: 'Transfer & Tur: talepleri yönet (onay, red, fiyat)' },
-  { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },
-  { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesini yönetebilir' },
-  { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi oluşturabilir / düzenleyebilir' },
-  { key: 'yemek_listesi_mutfak_onay', label: 'Günlük yemek listesi mutfak onayı verebilir' },
-  { key: 'otel_mutfak_menu', label: 'Otel mutfağı menüsünü yönetebilir (yemek/içecek, fiyat, fotoğraf)' },
-  { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
-  { key: 'id_capture', label: 'Kimlik / pasaport çekim sistemi' },
-  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri: bina, lokasyon, varlık ve QR yönetimi' },
-  { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
-  { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
-  { key: 'emanet_buluntu', label: 'Emanet / buluntu: kayıt oluşturma ve yönetim' },
-  { key: 'tesis_gunlugu', label: 'Tesis günlüğü: kayıt oluşturma (foto/video, zimmet/değişiklik)' },
-];
-
 const CONTRACT_TYPES: { value: string; label: string }[] = [
   { value: '', label: 'Seçilmedi' },
   { value: 'full_time', label: 'Belirsiz süreli' },
@@ -150,37 +120,7 @@ export default function AddStaffScreen() {
   const [sgk_no, setSgkNo] = useState('');
   const [shift_type, setShiftType] = useState('');
   const [work_days, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5]);
-  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>({
-    stok_giris: true,
-    mesajlasma: true,
-    misafir_mesaj_alabilir: true,
-    video_paylasim: true,
-    ekip_sohbet: true,
-    dokuman_yukle: false,
-    gorev_ata: false,
-    personel_ekle: false,
-    raporlar: false,
-    satis_komisyon: false,
-    tum_sozlesmeler: false,
-    kahvalti_teyit_olustur: false,
-    kahvalti_teyit_departman: false,
-    kahvalti_teyit_onayla: false,
-    kahvalti_rapor: false,
-    transfer_tour_services: false,
-    transfer_tour_requests: false,
-    dining_venues: false,
-    yarin_oda_temizlik_listesi: false,
-    yemek_listesi_olustur: false,
-    yemek_listesi_mutfak_onay: false,
-    otel_mutfak_menu: false,
-    kbs_mrz_scan: false,
-    id_capture: false,
-    teknik_varlik_yonetimi: false,
-    teknik_varliklar: false,
-    teknik_varliklar_okuma: false,
-    emanet_buluntu: false,
-    tesis_gunlugu: false,
-  });
+  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>(() => defaultStaffAppPermissions());
   const [notes, setNotes] = useState('');
   const [emergency_contact_name, setEmergencyContactName] = useState('');
   const [emergency_contact_phone, setEmergencyContactPhone] = useState('');
@@ -215,10 +155,6 @@ export default function AddStaffScreen() {
     setWorkDays((prev) =>
       prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)
     );
-  };
-
-  const togglePermission = (key: string) => {
-    setAppPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const submit = async (active: boolean) => {
@@ -278,6 +214,7 @@ export default function AddStaffScreen() {
           salary: salary ? parseFloat(salary.replace(',', '.')) : null,
           sgk_no: sgk_no.trim() || null,
           app_permissions,
+          tips_enabled: app_permissions.bahsis_alabilir !== false,
           work_days,
           shift_type: shift_type || null,
           notes: notes.trim() || null,
@@ -582,16 +519,7 @@ export default function AddStaffScreen() {
       </View>
 
       <Text style={styles.sectionTitle}>📱 Uygulama yetkileri</Text>
-      {APP_PERMISSIONS.map((p) => (
-        <TouchableOpacity
-          key={p.key}
-          style={styles.checkRow}
-          onPress={() => togglePermission(p.key)}
-        >
-          <Text style={styles.checkbox}>{app_permissions[p.key] ? '☑' : '☐'}</Text>
-          <Text style={styles.checkLabel}>{p.label}</Text>
-        </TouchableOpacity>
-      ))}
+      <StaffAppPermissionsEditor permissions={app_permissions} onChange={setAppPermissions} variant="checkbox" />
 
       <Text style={styles.label}>Açıklama / Not</Text>
       <TextInput

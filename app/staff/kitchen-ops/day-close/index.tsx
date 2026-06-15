@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { fetchDaySummary, checkPosMismatch, fetchUnresolvedAlertCount } from '@/lib/kitchenOps/api';
 import type { KitchenDaySummary } from '@/lib/kitchenOps/types';
+import { EMPTY_KITCHEN_DAY_SUMMARY } from '@/lib/kitchenOps/types';
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 import { KitchenMoneyStat, KitchenSaveButton } from '@/components/kitchenOps/KitchenUi';
 import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
@@ -33,7 +34,7 @@ const CHECK_ITEMS: { key: keyof Checklist; label: string }[] = [
 export default function KitchenDayCloseScreen() {
   const staff = useAuthStore((s) => s.staff);
   const today = new Date().toISOString().slice(0, 10);
-  const [summary, setSummary] = useState<KitchenDaySummary | null>(null);
+  const [summary, setSummary] = useState<KitchenDaySummary>(EMPTY_KITCHEN_DAY_SUMMARY);
   const [checklist, setChecklist] = useState<Checklist>({
     has_revenue: false,
     has_expenses: false,
@@ -44,27 +45,36 @@ export default function KitchenDayCloseScreen() {
     no_critical_stock: true,
   });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [posMismatch, setPosMismatch] = useState(false);
   const [criticalCount, setCriticalCount] = useState(0);
 
   const load = useCallback(async () => {
-    const [s, mismatch, alerts] = await Promise.all([
-      fetchDaySummary(today),
-      checkPosMismatch(today),
-      fetchUnresolvedAlertCount(),
-    ]);
-    setSummary(s);
-    setPosMismatch(mismatch);
-    setCriticalCount(alerts);
-    setChecklist((c) => ({
-      ...c,
-      has_revenue: Number(s.total_revenue) > 0,
-      has_expenses: Number(s.total_expenses) > 0,
-      pos_ok: !mismatch,
-      personnel_ok: Number(s.personnel_expenses) >= 0,
-      no_critical_stock: alerts === 0,
-    }));
+    setLoadError(null);
+    try {
+      const [s, mismatch, alerts] = await Promise.all([
+        fetchDaySummary(today),
+        checkPosMismatch(today).catch(() => false),
+        fetchUnresolvedAlertCount().catch(() => 0),
+      ]);
+      setSummary(s);
+      setPosMismatch(mismatch);
+      setCriticalCount(alerts);
+      setChecklist((c) => ({
+        ...c,
+        has_revenue: Number(s.total_revenue) > 0,
+        has_expenses: Number(s.total_expenses) > 0,
+        pos_ok: !mismatch,
+        personnel_ok: Number(s.personnel_expenses) >= 0,
+        no_critical_stock: alerts === 0,
+      }));
+    } catch (e) {
+      setSummary(EMPTY_KITCHEN_DAY_SUMMARY);
+      setPosMismatch(false);
+      setCriticalCount(0);
+      setLoadError(e instanceof Error ? e.message : 'Gün özeti alınamadı');
+    }
   }, [today]);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
@@ -84,11 +94,14 @@ export default function KitchenDayCloseScreen() {
   };
 
   const submitClose = async () => {
+    if (loadError) {
+      Alert.alert('Gün kapatılamaz', 'Gün özeti yüklenemedi. Lütfen yeniden deneyin.');
+      return;
+    }
     if (!canClose()) {
       Alert.alert('Gün kapatılamaz', posMismatch ? 'POS farkı bulundu. Önce uyuşmazlığı giderin.' : 'Eksik işlemler var. Checklist tamamlanmalı.');
       return;
     }
-    if (!summary) return;
     setSaving(true);
     try {
       const { error } = await supabase.from('kitchen_day_closures').upsert({
@@ -116,12 +129,18 @@ export default function KitchenDayCloseScreen() {
     }
   };
 
-  if (loading || !summary) {
+  if (loading) {
     return <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>;
   }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {loadError ? (
+        <Pressable style={styles.errorBox} onPress={() => void load()}>
+          <Text style={styles.errorText}>{loadError}</Text>
+          <Text style={styles.errorRetry}>Yeniden dene</Text>
+        </Pressable>
+      ) : null}
       <KitchenPrintBar kind="day_close" />
       <Text style={styles.dateTitle}>{today} — Gün Özeti</Text>
 
@@ -158,7 +177,7 @@ export default function KitchenDayCloseScreen() {
         <Text style={styles.criticalNote}>{criticalCount} açık stok alarmı var.</Text>
       ) : null}
 
-      <KitchenSaveButton label="Günü Kapat" onPress={submitClose} loading={saving} disabled={!canClose()} />
+      <KitchenSaveButton label="Günü Kapat" onPress={submitClose} loading={saving} disabled={!canClose() || !!loadError} />
     </ScrollView>
   );
 }
@@ -175,4 +194,14 @@ const styles = StyleSheet.create({
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.borderLight },
   checkLabel: { fontSize: 15, color: theme.colors.text, flex: 1 },
   criticalNote: { color: '#dc2626', fontSize: 13, marginTop: 8, fontWeight: '600' },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  errorText: { color: '#dc2626', fontSize: 13, fontWeight: '600' },
+  errorRetry: { color: '#b91c1c', fontSize: 12, fontWeight: '700', marginTop: 6 },
 });

@@ -27,6 +27,10 @@ export type KitchenPrintInput = {
   summary?: KitchenPrintMeta;
   landscape?: boolean;
   emptyMessage?: string;
+  /** PDF üst bilgi — varsayılan: Mutfak Operasyon */
+  brandDepartment?: string;
+  /** PDF alt bilgi etiketi — varsayılan: Mutfak */
+  footerTag?: string;
 };
 
 export function escapeKitchenHtml(s: string): string {
@@ -76,6 +80,8 @@ export function buildKitchenPrintHtml(input: KitchenPrintInput): string {
     .join('');
 
   const pageSize = input.landscape ? 'A4 landscape' : 'A4 portrait';
+  const dept = input.brandDepartment ?? KITCHEN_PRINT_DEPT;
+  const footerTag = input.footerTag ?? 'Mutfak';
 
   return `<!DOCTYPE html>
 <html lang="tr">
@@ -120,7 +126,7 @@ export function buildKitchenPrintHtml(input: KitchenPrintInput): string {
 <body>
   <div class="brand">
     <h1 class="hotel">${escapeKitchenHtml(KITCHEN_PRINT_HOTEL)}</h1>
-    <p class="dept">${escapeKitchenHtml(KITCHEN_PRINT_DEPT)}</p>
+    <p class="dept">${escapeKitchenHtml(dept)}</p>
   </div>
   <h2 class="report-title">${escapeKitchenHtml(input.reportTitle)}</h2>
   ${input.subtitle ? `<p class="subtitle">${escapeKitchenHtml(input.subtitle)}</p>` : ''}
@@ -131,7 +137,7 @@ export function buildKitchenPrintHtml(input: KitchenPrintInput): string {
     <tbody>${body}</tbody>
   </table>
   ${summaryHtml ? `<div class="summary">${summaryHtml}</div>` : ''}
-  <div class="footer">${escapeKitchenHtml(KITCHEN_PRINT_HOTEL)} · Mutfak · ${input.rows.length} kayıt</div>
+  <div class="footer">${escapeKitchenHtml(KITCHEN_PRINT_HOTEL)} · ${escapeKitchenHtml(footerTag)} · ${input.rows.length} kayıt</div>
 </body>
 </html>`;
 }

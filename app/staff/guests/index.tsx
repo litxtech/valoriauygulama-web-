@@ -9,14 +9,17 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { guestDisplayName } from '@/lib/guestDisplayName';
+import { formatDateTime } from '@/lib/date';
 import {
   peekStaffGuestsListMemory,
   readStaffGuestsListCache,
@@ -28,6 +31,12 @@ const LIST_ROW_HEIGHT = 84;
 const INITIAL_LIMIT = 64;
 const SEARCH_LIMIT = 48;
 
+const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  pending: { label: 'Giriş bekliyor', color: '#a16207', bg: '#fef3c7' },
+  checked_in: { label: 'Odada', color: '#166534', bg: '#dcfce7' },
+  checked_out: { label: 'Çıkış yaptı', color: '#475569', bg: '#f1f5f9' },
+};
+
 type GuestRowRaw = {
   id: string;
   full_name: string | null;
@@ -36,6 +45,8 @@ type GuestRowRaw = {
   email: string | null;
   banned_until?: string | null;
   room_id?: string | null;
+  created_at?: string | null;
+  status?: string | null;
 };
 
 function escapeIlike(term: string): string {
@@ -53,6 +64,8 @@ function mapGuestRows(data: GuestRowRaw[] | null, roomById: Record<string, strin
       phone: g.phone ?? null,
       email: g.email ?? null,
       room_number: g.room_id ? roomById[g.room_id] ?? null : null,
+      created_at: g.created_at ?? null,
+      status: g.status ?? null,
     }));
 }
 
@@ -107,10 +120,25 @@ const GuestListRow = memo(function GuestListRow({
             {profileMeta}
           </Text>
         )}
-        {item.room_number ? (
-          <View style={styles.roomChip}>
-            <Ionicons name="bed-outline" size={12} color={theme.colors.primaryDark} />
-            <Text style={styles.roomChipText}>Oda {item.room_number}</Text>
+        <View style={styles.metaChips}>
+          {item.room_number ? (
+            <LinearGradient colors={['#1d4ed8', '#2563eb']} style={styles.roomChipGrad}>
+              <Ionicons name="bed" size={12} color="#fff" />
+              <Text style={styles.roomChipGradText}>Oda {item.room_number}</Text>
+            </LinearGradient>
+          ) : null}
+          {item.status && STATUS_LABELS[item.status] ? (
+            <View style={[styles.statusChip, { backgroundColor: STATUS_LABELS[item.status]!.bg }]}>
+              <Text style={[styles.statusChipText, { color: STATUS_LABELS[item.status]!.color }]}>
+                {STATUS_LABELS[item.status]!.label}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        {item.created_at ? (
+          <View style={styles.regRow}>
+            <Ionicons name="calendar-outline" size={12} color="#6366f1" />
+            <Text style={styles.regText}>Kayıt: {formatDateTime(item.created_at)}</Text>
           </View>
         ) : null}
       </View>
@@ -118,6 +146,21 @@ const GuestListRow = memo(function GuestListRow({
     </Pressable>
   );
 });
+
+function StaffLiveDot() {
+  const opacity = useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return <Animated.View style={[styles.liveDot, { opacity }]} />;
+}
 
 function SkeletonRows() {
   return (
@@ -153,7 +196,7 @@ export default function StaffGuestsIndexScreen() {
 
     let request = supabase
       .from('guests')
-      .select('id, full_name, photo_url, banned_until, phone, email, room_id')
+      .select('id, full_name, photo_url, banned_until, phone, email, room_id, created_at, status')
       .is('deleted_at', null)
       .order('updated_at', { ascending: false });
 
@@ -198,6 +241,18 @@ export default function StaffGuestsIndexScreen() {
   }, [fetchGuests]);
 
   useEffect(() => {
+    const channel = supabase
+      .channel('staff-guests-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, () => {
+        fetchGuests(search.trim().length >= 2 ? search : undefined, { background: true });
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchGuests, search]);
+
+  useEffect(() => {
     if (searchSkipInitial.current) {
       searchSkipInitial.current = false;
       return;
@@ -240,22 +295,21 @@ export default function StaffGuestsIndexScreen() {
 
   const listHeader = (
     <View style={styles.headerBlock}>
-      <View style={styles.hero}>
-        <View style={styles.heroIcon}>
-          <Ionicons name="people" size={22} color={theme.colors.primaryDark} />
+      <LinearGradient colors={['#0f766e', '#0891b2', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroGrad}>
+        <View style={styles.heroTop}>
+          <StaffLiveDot />
+          <Text style={styles.liveLbl}>{t('staffGuestsLive', { defaultValue: 'Canlı' })}</Text>
         </View>
-        <View style={styles.heroText}>
-          <Text style={styles.heroTitle}>{t('adminGuests')}</Text>
-          <Text style={styles.heroSub}>
-            {loading && guests.length === 0
-              ? t('staffGuestsLoading', { defaultValue: 'Yükleniyor…' })
-              : t('staffGuestsCount', {
-                  defaultValue: '{{count}} kayıt',
-                  count: filteredGuests.length,
-                })}
-          </Text>
-        </View>
-      </View>
+        <Text style={styles.heroTitleGrad}>{t('adminGuests')}</Text>
+        <Text style={styles.heroSubGrad}>
+          {loading && guests.length === 0
+            ? t('staffGuestsLoading', { defaultValue: 'Yükleniyor…' })
+            : t('staffGuestsCount', {
+                defaultValue: '{{count}} kayıt · oda ve kayıt tarihi',
+                count: filteredGuests.length,
+              })}
+        </Text>
+      </LinearGradient>
 
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={18} color={theme.colors.textMuted} />
@@ -335,23 +389,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   listContent: { paddingBottom: 28 },
   headerBlock: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, gap: 10 },
-  hero: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 4,
+  heroGrad: {
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 4,
+    ...Platform.select({
+      ios: { shadowColor: '#0f766e', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 12 },
+      android: { elevation: 4 },
+    }),
   },
-  heroIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: theme.colors.primary + '18',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroTitle: { fontSize: 18, fontWeight: '800', color: theme.colors.text },
-  heroSub: { marginTop: 2, fontSize: 13, color: theme.colors.textMuted, fontWeight: '600' },
-  heroText: { flex: 1 },
+  heroTop: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4ade80' },
+  liveLbl: { color: 'rgba(255,255,255,0.95)', fontSize: 12, fontWeight: '700' },
+  heroTitleGrad: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  heroSubGrad: { marginTop: 4, fontSize: 13, color: 'rgba(255,255,255,0.9)', fontWeight: '600' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -412,18 +463,20 @@ const styles = StyleSheet.create({
   name: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
   contact: { fontSize: 13, color: theme.colors.textSecondary },
   contactMuted: { fontSize: 13, color: theme.colors.textMuted },
-  roomChip: {
+  metaChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  roomChipGrad: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     gap: 4,
-    marginTop: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: theme.colors.primary + '14',
+    paddingVertical: 4,
+    borderRadius: 999,
   },
-  roomChipText: { fontSize: 11, fontWeight: '700', color: theme.colors.primaryDark },
+  roomChipGradText: { fontSize: 11, fontWeight: '800', color: '#fff' },
+  statusChip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  statusChipText: { fontSize: 11, fontWeight: '700' },
+  regRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  regText: { fontSize: 11, fontWeight: '600', color: '#4338ca', flex: 1 },
   skeletonWrap: { paddingHorizontal: 16, gap: 10, paddingTop: 8 },
   skeletonRow: {
     flexDirection: 'row',

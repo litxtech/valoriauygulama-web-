@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,64 +9,75 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { sendEmergencyToAllGuests } from '@/lib/notificationService';
-import { EMERGENCY_TYPES, EMERGENCY_MESSAGES } from '@/lib/notifications';
+import {
+  emergencyNotificationCopy,
+  emergencyOptionLabel,
+  EMERGENCY_OPTION_TYPES,
+  type EmergencyNotifType,
+} from '@/lib/emergencyNotificationsI18n';
 import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 
-const EMERGENCY_OPTIONS = [
-  { type: EMERGENCY_TYPES.fire_drill, label: 'Yangın Tatbikatı' },
-  { type: EMERGENCY_TYPES.water_outage, label: 'Su Kesintisi' },
-  { type: EMERGENCY_TYPES.power_outage, label: 'Elektrik Kesintisi' },
-  { type: EMERGENCY_TYPES.emergency_evacuate, label: 'Acil Tahliye' },
-];
-
 export default function EmergencyNotifyScreen() {
   const router = useRouter();
+  const { t, i18n } = useTranslation();
   const { staff } = useAuthStore();
   const { selectedOrganizationId } = useAdminOrgStore();
   const [sending, setSending] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const handleSend = async (notificationType: string) => {
+  const previewLang = (i18n.language || 'tr').split('-')[0];
+
+  const options = useMemo(
+    () =>
+      EMERGENCY_OPTION_TYPES.map((type) => ({
+        type,
+        label: emergencyOptionLabel(type, previewLang),
+        preview: emergencyNotificationCopy(type, previewLang),
+      })),
+    [previewLang]
+  );
+
+  const handleSend = async (notificationType: EmergencyNotifType) => {
     if (!staff?.id) {
-      Alert.alert('Hata', 'Oturum bulunamadı.');
+      Alert.alert(t('error'), t('loginRequired'));
       return;
     }
-    const msg = EMERGENCY_MESSAGES[notificationType];
-    if (!msg) return;
+    const preview = emergencyNotificationCopy(notificationType, previewLang);
     const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
     const organizationId = canUseAll ? selectedOrganizationId : staff.organization_id;
     if (canUseAll && organizationId === 'all') {
-      Alert.alert('Otel seçin', 'Acil bildirim için hedef otel seçmelisiniz.');
+      Alert.alert(t('error'), t('adminEmergencySelectHotel'));
       return;
     }
     Alert.alert(
-      'Acil Bildirim Gönder',
-      `"${msg.title}" tüm giriş yapmış misafirlere gönderilecek. Emin misiniz?`,
+      t('adminEmergencyConfirmTitle'),
+      t('adminEmergencyConfirmBody', { title: preview.title }),
       [
-        { text: 'İptal', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Gönder',
+          text: t('emergencySendYes'),
           style: 'destructive',
           onPress: async () => {
             setSending(true);
             setSelected(notificationType);
             const result = await sendEmergencyToAllGuests({
               notificationType,
-              title: msg.title,
-              body: msg.body,
               organizationId: organizationId === 'all' ? null : organizationId ?? null,
               createdByStaffId: staff.id,
             });
             setSending(false);
             setSelected(null);
             if (result.error) {
-              Alert.alert('Hata', result.error);
+              Alert.alert(t('error'), result.error);
             } else {
-              Alert.alert('Gönderildi', `${result.count} misafire acil bildirim iletildi.`, () =>
-                router.back()
+              Alert.alert(
+                t('adminEmergencyBulkSentTitle'),
+                t('adminEmergencyBulkSentBody', { count: result.count }),
+                () => router.back()
               );
             }
           },
@@ -81,16 +92,15 @@ export default function EmergencyNotifyScreen() {
         canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
         ownOrganizationId={staff?.organization_id}
       />
-      <Text style={styles.warning}>
-        🚨 Bu bildirimler tüm check-in yapmış misafirlere gider ve kapatılamaz.
-      </Text>
-      {EMERGENCY_OPTIONS.map((opt) => {
-        const msg = EMERGENCY_MESSAGES[opt.type];
+      <Text style={styles.warning}>{t('adminEmergencyWarning')}</Text>
+      <Text style={styles.hint}>{t('adminEmergencyLangHint')}</Text>
+      {options.map((opt) => {
         const busy = sending && selected === opt.type;
         return (
           <View key={opt.type} style={styles.card}>
             <Text style={styles.cardTitle}>{opt.label}</Text>
-            <Text style={styles.cardBody}>{msg?.body ?? ''}</Text>
+            <Text style={styles.cardPreviewLabel}>{t('adminEmergencyPreviewLabel')}</Text>
+            <Text style={styles.cardBody}>{opt.preview.body}</Text>
             <TouchableOpacity
               style={[styles.btn, busy && styles.btnDisabled]}
               onPress={() => handleSend(opt.type)}
@@ -99,7 +109,7 @@ export default function EmergencyNotifyScreen() {
               {busy ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text style={styles.btnText}>Gönder</Text>
+                <Text style={styles.btnText}>{t('emergencySendBtn')}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -118,9 +128,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff5f5',
     padding: 14,
     borderRadius: 10,
-    marginBottom: 20,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#feb2b2',
+  },
+  hint: {
+    fontSize: 13,
+    color: '#4a5568',
+    marginBottom: 20,
+    lineHeight: 20,
   },
   card: {
     backgroundColor: '#fff',
@@ -130,7 +146,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  cardTitle: { fontSize: 17, fontWeight: '600', color: '#1a202c', marginBottom: 8 },
+  cardTitle: { fontSize: 17, fontWeight: '600', color: '#1a202c', marginBottom: 6 },
+  cardPreviewLabel: { fontSize: 12, color: '#718096', marginBottom: 4 },
   cardBody: { fontSize: 14, color: '#4a5568', marginBottom: 14 },
   btn: {
     backgroundColor: '#e53e3e',

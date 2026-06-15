@@ -21,6 +21,15 @@ export const CHAT_FLAT_LIST_PROPS: Partial<FlatListProps<unknown>> = Platform.se
   default: {},
 }) ?? {};
 
+/** FlashList (inverted) — daha akıcı uzun geçmiş. */
+export const CHAT_FLASH_LIST_PROPS = {
+  inverted: true as const,
+  estimatedItemSize: 76,
+  drawDistance: 420,
+} as const;
+
+export const CHAT_MESSAGES_PAGE_SIZE = 30;
+
 /** Medya satırları layout'u için kısa gecikme; scroll'u yeniden tetiklemez. */
 export function useChatHeavyMediaReady(
   conversationId: string | undefined,

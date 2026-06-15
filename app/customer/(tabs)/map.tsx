@@ -22,9 +22,29 @@ import {
   AppState,
 } from 'react-native';
 import { usePathname, useRouter, useFocusEffect, type Href } from 'expo-router';
+import { isAdminMapViewer } from '@/lib/map/mapLiveLocationPolicy';
+import { fetchAdminLiveTracking, adminTrackedPersonToMapMarker } from '@/lib/map/adminLiveTracking';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
+import { AdminOrganizationPicker } from '@/components/admin';
+import {
+  enableGuestLiveLocationAfterForegroundGranted,
+  pauseGuestLiveLocationWatch,
+  tryAutoEnableGuestLiveLocation,
+} from '@/lib/map/guestLocationSharing';
+import { pauseStaffLiveLocationWatch, tryAutoEnableStaffLiveLocation } from '@/lib/map/staffLocationSharing';
+import { setLiveMapScreenActive, subscribeLiveMapLocation } from '@/lib/map/liveLocationConfig';
+import {
+  getOrCreateGuestForCaller,
+  getOrCreateGuestForCurrentSession,
+  getGuestFullNameFromUser,
+} from '@/lib/getOrCreateGuestForCaller';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import CustomerMapPicker from '@/components/CustomerMapPicker';
+import CustomerMapPicker, {
+  type MapUserMarker,
+  type MapDiningMarker,
+  type MapTransferTourMarker,
+} from '@/components/CustomerMapPicker';
 import {
   fetchPoisHybrid,
   getPoiIcon,
@@ -37,13 +57,16 @@ import { searchPoisByText } from '@/lib/map/poiSearch';
 import { getRoute, formatDuration, formatDistance, estimateWalkingDuration } from '@/lib/map/osrm';
 import type { OSRMRoute } from '@/lib/map/osrm';
 import { pathLengthMeters, trimRoutePolyline, type LatLng } from '@/lib/map/routePolylineTrim';
-import { fetchNearbyMapUsers, upsertMyLocation } from '@/lib/map/userLocations';
-import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { fetchNearbyMapUsers } from '@/lib/map/userLocations';
+import { subscribeMapUserLocations } from '@/lib/map/subscribeMapUserLocations';
+import { patchMapUserMarkerFromRealtime } from '@/lib/map/patchMapUserMarker';
+import { mapUserProfileHref } from '@/lib/map/mapUserProfileHref';
+import { StaffMapLiveLocationBar } from '@/components/staff/StaffMapLiveLocationBar';
+import { GuestMapLiveLocationBar } from '@/components/guest/GuestMapLiveLocationBar';
 import { guestDisplayName } from '@/lib/guestDisplayName';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { MapUserMarker, MapDiningMarker, MapTransferTourMarker } from '@/lib/map/types';
 import MapShareSheet from '@/components/MapShareSheet';
 import MapPostDetailSheet from '@/components/MapPostDetailSheet';
 import { supabase } from '@/lib/supabase';
@@ -65,6 +88,8 @@ export default function CustomerMapScreen() {
   const insets = useSafeAreaInsets();
   const { height: winHeight } = useWindowDimensions();
   const { user, staff } = useAuthStore();
+  const adminViewer = isAdminMapViewer(staff);
+  const adminScope = useAdminOrganizationQueryScope();
   const [pois, setPois] = useState<Poi[]>([]);
   const [nearbyMapUsers, setNearbyMapUsers] = useState<MapUserMarker[]>([]);
   const [filterTypes, setFilterTypes] = useState<PoiType[]>([]);
@@ -250,6 +275,14 @@ export default function CustomerMapScreen() {
   const displayName = staff?.full_name ?? (user?.user_metadata?.full_name as string) ?? (user?.user_metadata?.name as string) ?? user?.email?.split('@')[0] ?? null;
 
   const loadNearbyMapUsers = useCallback(async () => {
+    if (adminViewer) {
+      const { snapshot } = await fetchAdminLiveTracking(adminScope.orgScoped, {
+        hotelLat: HOTEL_LAT,
+        hotelLng: HOTEL_LON,
+      });
+      setNearbyMapUsers(snapshot.onMap.map(adminTrackedPersonToMapMarker));
+      return;
+    }
     const center = userLocation ?? poiCenter;
     const users = await fetchNearbyMapUsers(center.lat, center.lng);
     const myGuestId = staff ? undefined : (await getOrCreateGuestForCurrentSession())?.guest_id;
@@ -258,45 +291,41 @@ export default function CustomerMapScreen() {
       .filter((u) => (u.userType === 'guest' && u.userId !== myGuestId) || (u.userType === 'staff' && u.userId !== myStaffId))
       .map((u) => ({
         id: u.id,
+        userId: u.userId,
+        userType: u.userType,
         lat: u.lat,
         lng: u.lng,
         displayName: u.displayName,
         avatarUrl: u.avatarUrl,
         isMe: false,
+        isLiveGps: true,
+        updatedAt: u.updatedAt,
       }));
     setNearbyMapUsers(markers);
-  }, [poiCenter.lat, poiCenter.lng, userLocation, staff]);
-
-  const upsertMyMapLocation = useCallback(async () => {
-    if (!userLocation) return;
-    if (staff) {
-      await upsertMyLocation({
-        lat: userLocation.lat,
-        lng: userLocation.lng,
-        userType: 'staff',
-        userId: staff.id,
-        displayName: staff.full_name ?? null,
-        avatarUrl: staff.profile_image ?? null,
-      });
-    } else {
-      const guest = await getOrCreateGuestForCurrentSession();
-      if (guest) {
-        await upsertMyLocation({
-          lat: userLocation.lat,
-          lng: userLocation.lng,
-          userType: 'guest',
-          userId: guest.guest_id,
-          displayName: displayName ?? null,
-          avatarUrl: avatarUrl ?? null,
-        });
-      }
-    }
-  }, [userLocation, staff, displayName, avatarUrl]);
+  }, [adminScope.orgScoped, adminViewer, poiCenter.lat, poiCenter.lng, userLocation, staff]);
 
   useEffect(() => {
+    const pollMs = adminViewer ? 15_000 : 45_000;
     const t = setTimeout(loadNearbyMapUsers, 400);
-    return () => clearTimeout(t);
-  }, [loadNearbyMapUsers, poiCenter.lat, poiCenter.lng]);
+    const poll = setInterval(loadNearbyMapUsers, pollMs);
+    const unsub = subscribeMapUserLocations((change) => {
+      if (change?.row) {
+        setNearbyMapUsers((prev) => {
+          const patched = patchMapUserMarkerFromRealtime(prev, change);
+          if (patched) return patched;
+          void loadNearbyMapUsers();
+          return prev;
+        });
+        return;
+      }
+      void loadNearbyMapUsers();
+    });
+    return () => {
+      clearTimeout(t);
+      clearInterval(poll);
+      unsub();
+    };
+  }, [adminViewer, loadNearbyMapUsers, poiCenter.lat, poiCenter.lng]);
 
   useFocusEffect(
     useCallback(() => {
@@ -304,6 +333,44 @@ export default function CustomerMapScreen() {
       void loadDiningMapMarkers();
       void loadTransferTourMapMarkers();
     }, [loadFeedPostsWithLocation, loadDiningMapMarkers, loadTransferTourMapMarkers])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (adminViewer || (!user && !staff)) return () => {};
+      setLiveMapScreenActive(true);
+      const unsubLoc = subscribeLiveMapLocation((coords) => setUserLocation(coords));
+      void (async () => {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const cur = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
+          if (cur) setUserLocation({ lat: cur.coords.latitude, lng: cur.coords.longitude });
+        }
+        if (staff?.id) {
+          await tryAutoEnableStaffLiveLocation({
+            staffId: staff.id,
+            displayName: staff.full_name ?? null,
+            avatarUrl: staff.profile_image ?? null,
+          });
+          return;
+        }
+        if (user && !staff) {
+          const row = await getOrCreateGuestForCaller(user);
+          if (!row?.guest_id) return;
+          await tryAutoEnableGuestLiveLocation({
+            guestId: row.guest_id,
+            displayName: getGuestFullNameFromUser(user) ?? null,
+            avatarUrl: (user.user_metadata?.avatar_url as string | undefined) ?? null,
+          });
+        }
+      })();
+      return () => {
+        setLiveMapScreenActive(false);
+        if (staff?.id) pauseStaffLiveLocationWatch();
+        else pauseGuestLiveLocationWatch();
+        unsubLoc();
+      };
+    }, [adminViewer, staff, user])
   );
 
   useEffect(() => {
@@ -360,27 +427,35 @@ export default function CustomerMapScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!userLocation || (!user && !staff)) return;
-    upsertMyMapLocation();
-    const t = setInterval(upsertMyMapLocation, 2 * 60 * 1000);
-    return () => clearInterval(t);
-  }, [userLocation, user, staff, upsertMyMapLocation]);
+  const userMarkers: MapUserMarker[] = useMemo(() => {
+    if (adminViewer) return nearbyMapUsers;
+    if (userLocation && (user || staff)) {
+      return [
+        {
+          id: 'me',
+          lat: userLocation.lat,
+          lng: userLocation.lng,
+          displayName: displayName ?? undefined,
+          avatarUrl: avatarUrl ?? undefined,
+          isMe: true,
+          isLiveGps: true,
+        },
+        ...nearbyMapUsers,
+      ];
+    }
+    return nearbyMapUsers;
+  }, [adminViewer, avatarUrl, displayName, nearbyMapUsers, staff, user, userLocation]);
 
-  const userMarkers: MapUserMarker[] =
-    userLocation && (user || staff)
-      ? [
-          {
-            id: 'me',
-            lat: userLocation.lat,
-            lng: userLocation.lng,
-            displayName: displayName ?? undefined,
-            avatarUrl: avatarUrl ?? undefined,
-            isMe: true,
-          },
-          ...nearbyMapUsers,
-        ]
-      : nearbyMapUsers;
+  const onUserMarkerPress = useCallback(
+    (marker: MapUserMarker) => {
+      if (marker.isMe) return;
+      const userId = marker.userId;
+      const userType = marker.userType;
+      if (!userId || !userType) return;
+      router.push(mapUserProfileHref({ userId, userType, pathname }) as Href);
+    },
+    [pathname, router]
+  );
 
   // Metin araması: Nominatim (OSM) ile tam entegre; filtre: Overpass/DB.
   useEffect(() => {
@@ -471,10 +546,20 @@ export default function CustomerMapScreen() {
       const loc = await Location.getCurrentPositionAsync({}).catch(() => null);
       if (loc) setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
       setLocationCardVisible(false);
+      if (user && !staff) {
+        const row = await getOrCreateGuestForCaller(user);
+        if (row?.guest_id) {
+          await enableGuestLiveLocationAfterForegroundGranted({
+            guestId: row.guest_id,
+            displayName: getGuestFullNameFromUser(user) ?? null,
+            avatarUrl: (user.user_metadata?.avatar_url as string | undefined) ?? null,
+          });
+        }
+      }
     } finally {
       setLocationRequesting(false);
     }
-  }, [t]);
+  }, [t, user, staff]);
 
   const q = searchQuery.trim();
   const filteredPois =
@@ -578,7 +663,7 @@ export default function CustomerMapScreen() {
           <CustomerMapPicker
             initialLat={HOTEL_LAT}
             initialLng={HOTEL_LON}
-            initialZoom={15}
+            initialZoom={adminViewer ? 14 : 15}
             pois={filteredPois}
             routeCoordinates={displayRoutePath}
             hotelMarker={{ lat: HOTEL_LAT, lng: HOTEL_LON, title: t('screenHotel') }}
@@ -591,7 +676,10 @@ export default function CustomerMapScreen() {
             onPostPress={(postId) => setSelectedPostId(postId)}
             onDiningPress={onDiningVenueMapPress}
             onTransferTourPress={onTransferTourMapPress}
+            onUserPress={onUserMarkerPress}
             onRegionChangeComplete={handleRegionChange}
+            showUserNameLabels={adminViewer}
+            autoFitUserMarkers={false}
             style={styles.mapPicker}
           />
         </View>
@@ -700,7 +788,7 @@ export default function CustomerMapScreen() {
         </View>
       )}
 
-      {locationPermStatus && locationPermStatus !== 'granted' && locationPermStatus !== 'unavailable' && (
+      {locationPermStatus && locationPermStatus !== 'granted' && locationPermStatus !== 'unavailable' && !adminViewer && (
         <TouchableOpacity
           style={[styles.locationUseBtn, { bottom: shareFabBottom }]}
           onPress={() => setLocationCardVisible(true)}
@@ -711,8 +799,7 @@ export default function CustomerMapScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Haritadan paylaşım — artı butonu: haritada kart açılır, sayfa değişmez */}
-      {(user || staff) && (
+      {(user || staff) && !adminViewer && (
         <TouchableOpacity
           style={[
             styles.shareFab,
@@ -854,6 +941,25 @@ export default function CustomerMapScreen() {
               ) : null}
             </TouchableOpacity>
           </View>
+          {adminViewer && pathname?.startsWith('/admin') ? (
+            <View style={styles.adminMapBar}>
+              {adminScope.canUseAll ? (
+                <AdminOrganizationPicker
+                  canUseAll={adminScope.canUseAll}
+                  ownOrganizationId={staff?.organization_id}
+                />
+              ) : null}
+              <Text style={styles.adminMapHint}>
+                {nearbyMapUsers.filter((m) => m.isLiveGps).length} canlı GPS ·{' '}
+                {nearbyMapUsers.filter((m) => m.userType === 'staff').length} personel ·{' '}
+                {nearbyMapUsers.filter((m) => m.userType === 'guest').length} misafir
+              </Text>
+            </View>
+          ) : staff && pathname?.startsWith('/staff') ? (
+            <StaffMapLiveLocationBar embedded />
+          ) : user && !staff ? (
+            <GuestMapLiveLocationBar embedded />
+          ) : null}
           {mapPosts.length > 0 && (
             <ScrollView
               horizontal
@@ -862,7 +968,11 @@ export default function CustomerMapScreen() {
               style={styles.postAvatarsBar}
             >
               {mapPosts.map((p) => {
-                const profileHref = p.staffId ? `/customer/staff/${p.staffId}` : p.guestId ? `/customer/guest/${p.guestId}` : null;
+                const profileHref = p.staffId
+                  ? mapUserProfileHref({ userId: p.staffId, userType: 'staff', pathname })
+                  : p.guestId
+                    ? mapUserProfileHref({ userId: p.guestId, userType: 'guest', pathname })
+                    : null;
                 const isGuestPost = !!p.guestId && !p.staffId;
                 return (
                 <TouchableOpacity
@@ -1105,6 +1215,13 @@ const styles = StyleSheet.create({
   filterChipText: { fontSize: 12, color: 'rgba(255,255,255,0.8)' },
   filterChipTextActive: { color: '#fff', fontWeight: '600' },
   topBarContent: { maxHeight: 280 },
+  adminMapBar: { marginTop: 8, gap: 6 },
+  adminMapHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
+    paddingHorizontal: 4,
+  },
   suggestionsList: { maxHeight: 200, marginTop: theme.spacing.sm },
   suggestionRow: {
     flexDirection: 'row',

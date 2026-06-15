@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -33,6 +33,7 @@ import {
   staffListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
+  uploadVoiceMessageForStaff,
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
 import {
@@ -49,6 +50,7 @@ import {
 } from '@/lib/chatListScroll';
 import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
+import { parseVoiceDuration, resolveVoiceMediaUrl } from '@/lib/voiceMessageMeta';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
 import {
@@ -56,8 +58,8 @@ import {
   getBubbleColorForSender,
   getContrastTextColor,
   BUBBLE_OTHER_DIRECT,
-  BUBBLE_COLOR_OPTIONS,
 } from '@/stores/messagingBubbleStore';
+import { BubbleColorPickerModal } from '@/components/chat/BubbleColorPickerModal';
 import { useTranslation } from 'react-i18next';
 import { ChatVideoMessage } from '@/components/ChatVideoMessage';
 import { ChatImageMessage } from '@/components/ChatImageMessage';
@@ -83,7 +85,7 @@ import {
   sendChatImageUris,
 } from '@/lib/chatMediaSend';
 import { formatChatMessageDateTime, formatChatMessageTime } from '@/lib/formatChatTime';
-import { useChatScreenshotListener } from '@/lib/chatScreenshot';
+import { useChatScreenshotContext } from '@/lib/chatScreenshot';
 import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
 import { ChatMentionComposer } from '@/components/ChatMentionComposer';
 import { ChatMentionText } from '@/components/ChatMentionText';
@@ -95,6 +97,13 @@ import {
   type ChatMentionParticipant,
 } from '@/lib/chatMentions';
 import { usePendingMuxVideoPoll } from '@/lib/usePendingMuxVideoPoll';
+import { ChatVoiceInputPreview } from '@/components/chat/ChatVoiceInputPreview';
+import { ChatInputTrailingActions } from '@/components/chat/ChatInputTrailingActions';
+import { useChatVoiceRecording } from '@/hooks/chat/useChatVoiceRecording';
+import { useChatVoiceQueueSync } from '@/hooks/chat/useChatVoiceQueueSync';
+import { sendStaffVoiceMessage } from '@/lib/chatVoiceSend';
+import { createOptimisticVoiceMessage } from '@/lib/chatOptimisticMessage';
+import { ChatGroupExportHeaderButtons } from '@/components/chat/ChatGroupExportHeaderButtons';
 
 function MessageBubble({
   msg,
@@ -126,7 +135,8 @@ function MessageBubble({
   mediaPreloadReady?: boolean;
 }) {
   const { t } = useTranslation();
-  const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
+  const voiceUri = msg.message_type === 'voice' ? resolveVoiceMediaUrl(msg.media_url, msg.content) : null;
+  const isVoice = msg.message_type === 'voice' && !!voiceUri;
   const isVideo = msg.message_type === 'video';
   const isImage = msg.message_type === 'image' && (msg.media_url || msg.media_thumbnail);
   const isMediaCard = isVideo || !!imageAlbum?.length || !!videoAlbum?.length || isImage;
@@ -159,7 +169,8 @@ function MessageBubble({
                 styles.bubble,
                 styles.bubbleOther,
                 isMediaCard && styles.bubbleVideo,
-                !isMediaCard && { backgroundColor: bubbleColor },
+                isVoice && styles.bubbleVoice,
+                !isMediaCard && !isVoice && { backgroundColor: bubbleColor },
               ]}
             >
               {msg.message_type === 'text' ? (
@@ -170,7 +181,12 @@ function MessageBubble({
                   mentionStyle={{ color: MESSAGING_COLORS.primary, fontWeight: '700' }}
                 />
               ) : msg.message_type === 'voice' && voiceUri ? (
-                <VoiceMessagePlayer uri={voiceUri} isOwn={false} />
+                <VoiceMessagePlayer
+                  messageId={msg.id}
+                  uri={voiceUri}
+                  isOwn={false}
+                  durationSec={parseVoiceDuration(msg.content)}
+                />
               ) : videoAlbum && videoAlbum.length > 1 ? (
                 <ChatVideoAlbum
                   messages={videoAlbum}
@@ -219,7 +235,8 @@ function MessageBubble({
             styles.bubble,
             styles.bubbleOwn,
             isMediaCard && styles.bubbleVideo,
-            !isMediaCard && { backgroundColor: bubbleColor },
+            isVoice && styles.bubbleVoice,
+            !isMediaCard && !isVoice && { backgroundColor: bubbleColor },
           ]}
         >
           {msg.message_type === 'text' ? (
@@ -230,7 +247,13 @@ function MessageBubble({
               mentionStyle={{ color: '#fff', fontWeight: '700' }}
             />
           ) : msg.message_type === 'voice' && voiceUri ? (
-            <VoiceMessagePlayer uri={voiceUri} isOwn={true} />
+            <VoiceMessagePlayer
+              messageId={msg.id}
+              uri={voiceUri}
+              isOwn={true}
+              durationSec={parseVoiceDuration(msg.content)}
+              uploading={String(msg.id).startsWith('temp-')}
+            />
           ) : videoAlbum && videoAlbum.length > 1 ? (
             <ChatVideoAlbum
               messages={videoAlbum}
@@ -304,6 +327,8 @@ export default function AdminChatScreen() {
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
+  const [pendingMentions, setPendingMentions] = useState<ChatMention[]>([]);
+  const [mentionParticipants, setMentionParticipants] = useState<ChatMentionParticipant[]>([]);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
   const chatHasVideosEarly = useMemo(
@@ -328,6 +353,7 @@ export default function AdminChatScreen() {
   const isGroup = conversationType === 'group';
   const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
   const invertedChatListItems = useInvertedChatListItems(chatListItems);
+  useChatVoiceQueueSync(messages, invertedChatListItems, listRef);
   const canEditGroup = isAdmin && isGroup;
   const screenshotSenderName =
     staff?.full_name?.trim() || staff?.email?.trim() || t('chatMessageSenderStaff');
@@ -352,31 +378,32 @@ export default function AdminChatScreen() {
 
   const mentionEnabled = mentionParticipants.length > 0;
 
-  useChatScreenshotListener(
-    Boolean(staff?.id && conversationId && !loading),
-    staff?.id && conversationId
-      ? {
-          kind: 'staff',
-          staffId: staff.id,
-          senderName: screenshotSenderName,
-          conversationId,
-          chatUrl: `/admin/messages/chat/${conversationId}`,
-        }
-      : null,
-    staff?.id && conversationId
-      ? {
-          conversationName,
-          isGroup,
-          pushBody: screenshotPushBody,
-          ownSenderId: staff.id,
-          onLocalMessage: (msg) => {
-            setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff!.id }));
-            setTimeout(() => scrollChatListToLatest(listRef, true), 100);
-          },
-          reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff!.id),
-        }
-      : null
-  );
+  const screenshotChatContext = useMemo(() => {
+    if (!staff?.id || !conversationId) return null;
+    return {
+      conversationId,
+      conversationName,
+      isGroup,
+      chatUrl: `/admin/messages/chat/${conversationId}`,
+      actor: { kind: 'staff' as const, staffId: staff.id, senderName: screenshotSenderName },
+      pushBody: screenshotPushBody,
+      ownSenderId: staff.id,
+      onLocalMessage: (msg: Message) => {
+        setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff.id }));
+        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      },
+      reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff.id),
+    };
+  }, [
+    staff?.id,
+    conversationId,
+    conversationName,
+    isGroup,
+    screenshotSenderName,
+    screenshotPushBody,
+  ]);
+
+  useChatScreenshotContext(Boolean(staff?.id && conversationId && !loading), screenshotChatContext);
 
   const navigation = useNavigation();
   useEffect(() => {
@@ -419,12 +446,22 @@ export default function AdminChatScreen() {
         </View>
       ),
       headerRight: () => (
-        <TouchableOpacity onPress={() => setShowBubbleColorModal(true)} style={{ padding: 8, marginRight: 8 }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Ionicons name="color-palette-outline" size={24} color={MESSAGING_COLORS.primary} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {canEditGroup && staff?.id && conversationId ? (
+            <ChatGroupExportHeaderButtons
+              conversationId={conversationId}
+              staffId={staff.id}
+              conversationName={conversationName || t('screenChat')}
+              iconColor={MESSAGING_COLORS.primary}
+            />
+          ) : null}
+          <TouchableOpacity onPress={() => setShowBubbleColorModal(true)} style={{ padding: 8, marginRight: 8 }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Ionicons name="color-palette-outline" size={24} color={MESSAGING_COLORS.primary} />
+          </TouchableOpacity>
+        </View>
       ),
     });
-  }, [navigation, conversationName, conversationAvatar, t, winWidth]);
+  }, [navigation, conversationName, conversationAvatar, t, winWidth, canEditGroup, staff?.id, conversationId]);
 
   const openGroupSettings = () => {
     setEditGroupName(conversationName);
@@ -745,6 +782,80 @@ export default function AdminChatScreen() {
     );
   };
 
+  const sendVoiceMessage = useCallback(
+    async ({
+      localUri,
+      preUploadedUrl,
+      durationSec,
+    }: {
+      localUri: string;
+      preUploadedUrl: string | null;
+      durationSec: number;
+    }) => {
+      if (!staff || !conversationId || sending) return;
+      const tempId = `temp-voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setMessages((prev) => [
+        ...prev,
+        createOptimisticVoiceMessage({
+          tempId,
+          conversationId,
+          senderId: staff.id,
+          senderType: 'admin',
+          senderName: staff.full_name || staff.email,
+          senderAvatar: staff.profile_image ?? null,
+          localUri,
+          durationSec,
+        }),
+      ]);
+      setTimeout(() => scrollChatListToLatest(listRef, true), 50);
+      const actor = {
+        kind: 'staff' as const,
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        conversationId,
+      };
+      const { message, error, conversationId: cid } = await sendStaffVoiceMessage(
+        actor,
+        localUri,
+        conversationId,
+        { preUploadedMediaUrl: preUploadedUrl, durationSec }
+      );
+      if (error || !message) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        throw new Error(typeof error === 'string' ? error : t('chatVoiceSendFailed'));
+      }
+      setMessages((prev) =>
+        upsertIncomingChatMessage(
+          prev.filter((m) => m.id !== tempId),
+          message,
+          { ownSenderId: staff.id, replaceTempId: tempId }
+        )
+      );
+      const convId = cid ?? conversationId;
+      void import('@/lib/notificationService').then(({ notifyConversationRecipients }) =>
+        notifyConversationRecipients({
+          conversationId: convId,
+          excludeStaffId: staff.id,
+          title: conversationName || t('notifNewMessage'),
+          body: t('staffChatVoiceSentBody'),
+          data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
+        })
+      );
+      scrollChatListToLatest(listRef, true);
+    },
+    [staff, conversationId, sending, t, conversationName]
+  );
+
+  const preUploadVoice = useCallback((uri: string) => uploadVoiceMessageForStaff(uri), []);
+
+  const voiceRecorder = useChatVoiceRecording({
+    onSend: sendVoiceMessage,
+    preUpload: preUploadVoice,
+    preUploadKey: conversationId,
+    disabled: sending,
+  });
+
   const showAttachOptions = () => {
     Alert.alert(
       t('chatAttachTitle'),
@@ -754,6 +865,7 @@ export default function AdminChatScreen() {
         { text: t('chatPickMultiplePhotos'), onPress: () => void sendImagesFromLibrary() },
         { text: t('chatPickMultipleVideos'), onPress: () => void sendVideoFromSource('library') },
         { text: t('chatRecordVideo'), onPress: () => sendVideoFromSource('camera') },
+        { text: t('staffChatAttachVoice'), onPress: () => void voiceRecorder.start() },
         { text: t('cancel'), style: 'cancel' },
       ]
     );
@@ -938,51 +1050,59 @@ export default function AdminChatScreen() {
       ) : null}
       <ChatVideoBatchBar states={videoUploads} />
       <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
-        <ChatMentionComposer
-          style={styles.input}
-          placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('messageInputPlaceholder')}
-          placeholderTextColor={MESSAGING_COLORS.textSecondary}
-          value={input}
-          onChangeText={(text) => {
-            setInput(text);
-            typingPresenceRef.current?.updateTyping(true);
-            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = setTimeout(() => {
-              typingPresenceRef.current?.updateTyping(false);
-              typingTimeoutRef.current = null;
-            }, 3000);
-          }}
-          participants={mentionParticipants}
-          mentions={pendingMentions}
-          onMentionsChange={setPendingMentions}
-          enabled={mentionEnabled}
-          multiline
-          maxLength={2000}
-          onSubmitEditing={send}
-        />
-        <TouchableOpacity style={styles.mediaBtn} onPress={showAttachOptions} disabled={sending} activeOpacity={0.7}>
-          <Ionicons name="add-circle-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
-        </TouchableOpacity>
         <TouchableOpacity
           style={styles.mediaBtn}
-          onPress={() => sendVideoFromSource('library')}
-          disabled={videoBatchActive}
+          onPress={showAttachOptions}
+          disabled={sending || voiceRecorder.phase !== 'idle'}
           activeOpacity={0.7}
         >
-          <Ionicons name="videocam-outline" size={18} color={MESSAGING_COLORS.textSecondary} />
+          <Ionicons name="add-circle-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
-          onPress={send}
-          disabled={!input.trim() || sending}
-          activeOpacity={0.85}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
+        <View style={[styles.input, voiceRecorder.phase !== 'idle' && styles.inputVoice]}>
+          {voiceRecorder.phase !== 'idle' ? (
+            <ChatVoiceInputPreview
+              phase={voiceRecorder.phase}
+              durationSec={voiceRecorder.durationSec}
+              onCancel={() => void voiceRecorder.cancel()}
+              textColor={MESSAGING_COLORS.text}
+              mutedColor={MESSAGING_COLORS.textSecondary}
+            />
           ) : (
-            <Ionicons name="send" size={20} color="#fff" />
+            <ChatMentionComposer
+              style={styles.mentionInput}
+              placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('messageInputPlaceholder')}
+              placeholderTextColor={MESSAGING_COLORS.textSecondary}
+              value={input}
+              onChangeText={(text) => {
+                setInput(text);
+                typingPresenceRef.current?.updateTyping(true);
+                if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                typingTimeoutRef.current = setTimeout(() => {
+                  typingPresenceRef.current?.updateTyping(false);
+                  typingTimeoutRef.current = null;
+                }, 3000);
+              }}
+              participants={mentionParticipants}
+              mentions={pendingMentions}
+              onMentionsChange={setPendingMentions}
+              enabled={mentionEnabled}
+              multiline
+              maxLength={2000}
+              onSubmitEditing={send}
+            />
           )}
-        </TouchableOpacity>
+        </View>
+        <ChatInputTrailingActions
+          hasText={Boolean(input.trim())}
+          voicePhase={voiceRecorder.phase}
+          onSendText={send}
+          onSendVoice={() => void voiceRecorder.send()}
+          onMicPress={() => void voiceRecorder.toggleMic()}
+          sending={sending}
+          iconColor={MESSAGING_COLORS.textSecondary}
+          sendBtnStyle={styles.sendBtn}
+          sendBtnDisabledStyle={styles.sendBtnDisabled}
+        />
       </View>
 
       <Modal visible={showGroupSettings} transparent animationType="fade">
@@ -1042,32 +1162,14 @@ export default function AdminChatScreen() {
         </TouchableOpacity>
       </Modal>
 
-      <Modal visible={showBubbleColorModal} transparent animationType="fade">
-        <TouchableOpacity activeOpacity={1} style={styles.modalOverlay} onPress={() => setShowBubbleColorModal(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Mesaj balon renginiz</Text>
-            <View style={styles.bubbleColorRow}>
-              {BUBBLE_COLOR_OPTIONS.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[
-                    styles.bubbleColorChip,
-                    { backgroundColor: c },
-                    myBubbleColor === c && styles.bubbleColorChipSelected,
-                  ]}
-                  onPress={() => {
-                    setMyBubbleColor(c);
-                    setShowBubbleColorModal(false);
-                  }}
-                />
-              ))}
-            </View>
-            <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowBubbleColorModal(false)}>
-              <Text style={styles.modalCancelText}>{t('close')}</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      <BubbleColorPickerModal
+        visible={showBubbleColorModal}
+        onClose={() => setShowBubbleColorModal(false)}
+        selectedColor={myBubbleColor}
+        onSelectColor={(c) => void setMyBubbleColor(c)}
+        title={t('chatYourBubbleColorTitle')}
+        accentColor="#1a365d"
+      />
 
       <ChatFullscreenImageModal uri={fullscreenImageUri} onClose={() => setFullscreenImageUri(null)} />
     </KeyboardAvoidingView>
@@ -1134,6 +1236,12 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     maxWidth: '92%',
   },
+  bubbleVoice: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+  },
   bubbleTimeVideo: {
     color: MESSAGING_COLORS.textSecondary,
     marginTop: 4,
@@ -1188,6 +1296,19 @@ const styles = StyleSheet.create({
     maxHeight: 100,
     marginRight: 8,
     color: '#1F2937',
+    justifyContent: 'center',
+  },
+  inputVoice: {
+    maxHeight: 56,
+    paddingVertical: 4,
+  },
+  mentionInput: {
+    flex: 1,
+    fontSize: 15,
+    maxHeight: 100,
+    color: '#1F2937',
+    padding: 0,
+    margin: 0,
   },
   sendBtn: {
     backgroundColor: MESSAGING_COLORS.primary,

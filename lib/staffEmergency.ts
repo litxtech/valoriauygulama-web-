@@ -54,9 +54,9 @@ export async function notifyStaffEmergency(params: {
   const location = params.locationName.trim();
   const note = (params.note ?? '').trim();
   const author = (params.createdByName ?? '').trim();
-  const title = `Acil Durum: ${location}`;
+  const title = `Acil Durum — Toplanma: ${location}`;
   const body = [
-    `${location} noktasinda acil durum bildirimi var.`,
+    `Tüm personel ${location} toplanma alanına yönlendirilmelidir.`,
     note ? `Not: ${note}` : null,
     author ? `Bildirimi gonderen: ${author}` : null,
     `Saat: ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`,

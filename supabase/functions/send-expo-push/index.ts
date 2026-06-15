@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchAppIconBadgeForGuest, fetchAppIconBadgeForStaff, iconBadgeForPush } from "../_shared/appBadgeFromRpc.ts";
 import { buildExpoPushMessage } from "../_shared/buildExpoPushMessage.ts";
 import { getExpoPushHeaders } from "../_shared/expoPushHeaders.ts";
+import { resolveNotificationFeatureKey } from "../_shared/resolveNotificationFeatureKey.ts";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const BATCH_SIZE = 100;
@@ -119,12 +120,71 @@ Deno.serve(async (req: Request) => {
     }
 
     const displayBody = expoDisplayBody(messageBody);
+    const notificationType =
+      typeof data?.notificationType === "string"
+        ? data.notificationType.trim()
+        : typeof data?.notification_type === "string"
+          ? data.notification_type.trim()
+          : "";
+    const category =
+      typeof data?.category === "string" ? data.category.trim() : null;
+    const featureKeyRaw =
+      typeof data?.feature_key === "string" && data.feature_key.trim()
+        ? data.feature_key.trim()
+        : resolveNotificationFeatureKey(notificationType, category);
+    const isEmergency =
+      data?.emergency === true ||
+      notificationType.includes("emergency") ||
+      featureKeyRaw === "emergency_alert";
+
+    const staffOrgById = new Map<string, string>();
+    const staffNameById = new Map<string, string>();
+    if (uStaff.size > 0) {
+      const { data: staffRows } = await supabase
+        .from("staff")
+        .select("id, organization_id, full_name")
+        .in("id", [...uStaff]);
+      for (const row of staffRows ?? []) {
+        const typed = row as {
+          id?: string;
+          organization_id?: string | null;
+          full_name?: string | null;
+        };
+        if (typed.id && typed.organization_id) staffOrgById.set(typed.id, typed.organization_id);
+        if (typed.id) {
+          const name = (typed.full_name ?? "").trim();
+          if (name) staffNameById.set(typed.id, name);
+        }
+      }
+    }
+    const guestOrgById = new Map<string, string>();
+    if (guestIds.length > 0) {
+      const { data: guestRows } = await supabase
+        .from("guests")
+        .select("id, organization_id")
+        .in("id", guestIds);
+      for (const row of guestRows ?? []) {
+        const typed = row as { id?: string; organization_id?: string | null };
+        if (typed.id && typed.organization_id) guestOrgById.set(typed.id, typed.organization_id);
+      }
+    }
+
+    const soundConfigByOrg = new Map<string, Record<string, unknown>>();
+    async function soundConfigForOrg(orgId: string | undefined): Promise<Record<string, unknown>> {
+      if (!orgId) return {};
+      const cacheKey = `${orgId}:${featureKeyRaw}`;
+      if (soundConfigByOrg.has(cacheKey)) return soundConfigByOrg.get(cacheKey)!;
+      const { data: cfg } = await supabase.rpc("get_notification_sound_push_config", {
+        p_organization_id: orgId,
+        p_feature_key: featureKeyRaw,
+      });
+      const resolved = (cfg && typeof cfg === "object" ? cfg : {}) as Record<string, unknown>;
+      soundConfigByOrg.set(cacheKey, resolved);
+      return resolved;
+    }
+
     const payloadChannelId = typeof data?.androidChannelId === "string" ? data.androidChannelId.trim() : "";
     const payloadSound = typeof data?.sound === "string" ? data.sound.trim() : "";
-    const notificationType = typeof data?.notificationType === "string" ? data.notificationType.trim() : "";
-    const isEmergency = data?.emergency === true || notificationType.includes("emergency");
-    const resolvedChannel = payloadChannelId || (isEmergency ? EMERGENCY_CHANNEL_ID : ANDROID_CHANNEL_ID);
-    const resolvedSound = payloadSound || (isEmergency ? EMERGENCY_SOUND : "default");
     const roomCleaningMarked = notificationType === "staff_room_cleaning_status";
     const roomCleaningSoundDisabledStaffIds = new Set<string>();
     if (roomCleaningMarked && staffIds.length > 0) {
@@ -138,8 +198,103 @@ Deno.serve(async (req: Request) => {
         if (typed.staff_id && typed.enabled === false) roomCleaningSoundDisabledStaffIds.add(typed.staff_id);
       }
     }
-    const messages: Record<string, unknown>[] = [...byToken.values()].map((row) => {
+    const deliveryGroupId = crypto.randomUUID();
+    const eventIdByRecipient = new Map<string, string>();
+    const logRows: Record<string, unknown>[] = [];
+    for (const sid of uStaff) {
+      logRows.push({
+        organization_id: staffOrgById.get(sid) ?? null,
+        user_id: sid,
+        user_kind: "staff",
+        feature_key: featureKeyRaw,
+        notification_title: title.trim(),
+        notification_body: displayBody,
+        sound_key: featureKeyRaw,
+        sound_file_name: payloadSound || null,
+        delivery_status: "sent",
+        delivery_group_id: deliveryGroupId,
+        staff_display_name: staffNameById.get(sid) ?? null,
+        metadata: { notificationType: notificationType || null },
+      });
+    }
+    for (const gid of uGuest) {
+      logRows.push({
+        organization_id: guestOrgById.get(gid) ?? null,
+        user_id: gid,
+        user_kind: "guest",
+        feature_key: featureKeyRaw,
+        notification_title: title.trim(),
+        notification_body: displayBody,
+        sound_key: featureKeyRaw,
+        sound_file_name: payloadSound || null,
+        delivery_status: "sent",
+        delivery_group_id: deliveryGroupId,
+        metadata: { notificationType: notificationType || null },
+      });
+    }
+    if (logRows.length > 0) {
+      try {
+        const { data: insertedIds } = await supabase.rpc("insert_notification_events_batch", {
+          p_rows: logRows,
+        });
+        const ids = Array.isArray(insertedIds)
+          ? insertedIds
+          : typeof insertedIds === "string"
+            ? JSON.parse(insertedIds)
+            : [];
+        let i = 0;
+        for (const sid of uStaff) {
+          const id = ids[i];
+          if (typeof id === "string") eventIdByRecipient.set(`staff:${sid}`, id);
+          i++;
+        }
+        for (const gid of uGuest) {
+          const id = ids[i];
+          if (typeof id === "string") eventIdByRecipient.set(`guest:${gid}`, id);
+          i++;
+        }
+      } catch {
+        // log optional — push devam eder
+      }
+    }
+
+    const messages: Record<string, unknown>[] = await Promise.all(
+      [...byToken.values()].map(async (row) => {
       const b = badgeForRow(row);
+      const recipientKey = row.staff_id ? `staff:${row.staff_id}` : row.guest_id ? `guest:${row.guest_id}` : "";
+      const notificationEventId = recipientKey ? eventIdByRecipient.get(recipientKey) : undefined;
+      const orgId = row.staff_id
+        ? staffOrgById.get(row.staff_id)
+        : row.guest_id
+          ? guestOrgById.get(row.guest_id)
+          : undefined;
+      const soundCfg = await soundConfigForOrg(orgId);
+      const cfgChannel =
+        typeof soundCfg.android_channel_id === "string" ? soundCfg.android_channel_id.trim() : "";
+      const cfgIosSound =
+        typeof soundCfg.ios_push_sound === "string" ? soundCfg.ios_push_sound.trim() : "";
+      const cfgSoundFileUrl =
+        typeof soundCfg.sound_file_url === "string" ? soundCfg.sound_file_url.trim() : "";
+      const cfgSoundDuration =
+        typeof soundCfg.sound_duration === "number" && Number.isFinite(soundCfg.sound_duration)
+          ? Math.round(soundCfg.sound_duration)
+          : null;
+      const hasCustomOrgSound = cfgSoundFileUrl.length > 0;
+      const cfgSuppressDefault =
+        soundCfg.suppress_default_sound === true || soundCfg.suppress_default_sound === "true";
+      // Özel ses yüklüyse sistem varsayılanını kapat (admin toggle veya otomatik).
+      const suppressDefaultPush = hasCustomOrgSound && !isEmergency;
+      const resolvedChannel =
+        payloadChannelId ||
+        cfgChannel ||
+        (isEmergency ? EMERGENCY_CHANNEL_ID : ANDROID_CHANNEL_ID);
+      const resolvedIosSound =
+        payloadSound ||
+        cfgIosSound ||
+        (isEmergency ? EMERGENCY_SOUND : "default");
+      // Özel org sesi: push sound null (Android varsayılanı tetiklemez). suppress_default açıksa iOS da null.
+      const resolvedSound =
+        suppressDefaultPush || (hasCustomOrgSound && !isEmergency) ? null : resolvedIosSound;
       const disableSoundForThisMessage = !!(
         roomCleaningMarked &&
         row.staff_id &&
@@ -155,12 +310,27 @@ Deno.serve(async (req: Request) => {
         sound: disableSoundForThisMessage ? null : resolvedSound,
         data: {
           ...data,
+          feature_key: featureKeyRaw,
+          sound: disableSoundForThisMessage ? null : resolvedSound,
+          androidChannelId: disableSoundForThisMessage ? ANDROID_SILENT_CHANNEL_ID : resolvedChannel,
+          ...(orgId ? { organizationId: orgId } : {}),
+          ...(hasCustomOrgSound
+            ? {
+                customOrgSound: true,
+                sound_file_url: cfgSoundFileUrl,
+                ...(cfgSoundDuration != null ? { soundDurationSec: cfgSoundDuration } : {}),
+                ...(suppressDefaultPush ? { suppressDefaultSound: true } : {}),
+              }
+            : {}),
+          ...(notificationEventId ? { notificationEventId, notification_event_id: notificationEventId } : {}),
           ...(disableSoundForThisMessage ? { muteSound: true } : {}),
           screen:
             typeof data?.screen === "string" && data.screen.trim() ? data.screen : "notifications",
         },
+        ...(isEmergency ? { interruptionLevel: "time-sensitive" as const } : {}),
       });
-    });
+    })
+    );
 
     let sent = 0;
     let failed = 0;

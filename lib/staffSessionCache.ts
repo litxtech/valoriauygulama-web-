@@ -20,16 +20,26 @@ export type CachedStaffProfile = {
   organization?: { name: string; slug?: string | null; kind?: string | null } | null;
 };
 
-export async function readStaffSessionCache(authId: string): Promise<CachedStaffProfile | null> {
+/** getSession ile paralel okunabilir — auth_id eşleşmesi loadSession içinde yapılır. */
+export async function peekStaffSessionCache(): Promise<{
+  auth_id: string;
+  staff: CachedStaffProfile;
+} | null> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { auth_id?: string; staff?: CachedStaffProfile };
-    if (parsed?.auth_id !== authId || !parsed?.staff?.id) return null;
-    return parsed.staff;
+    if (!parsed?.auth_id || !parsed?.staff?.id || parsed.staff.deleted_at) return null;
+    return { auth_id: parsed.auth_id, staff: parsed.staff };
   } catch {
     return null;
   }
+}
+
+export async function readStaffSessionCache(authId: string): Promise<CachedStaffProfile | null> {
+  const peek = await peekStaffSessionCache();
+  if (!peek || peek.auth_id !== authId) return null;
+  return peek.staff;
 }
 
 export async function writeStaffSessionCache(authId: string, staff: CachedStaffProfile): Promise<void> {

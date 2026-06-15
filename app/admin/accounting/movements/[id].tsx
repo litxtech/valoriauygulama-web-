@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,22 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard } from '@/components/admin';
+import { FinanceMovementReceiptActions } from '@/components/admin/FinanceMovementReceiptActions';
+import {
+  prepareFinanceMovementReceiptInput,
+  type FinanceMovementReceiptInput,
+} from '@/lib/financeMovementReceiptPdf';
+import { expenseReceiptPreviewStyle } from '@/lib/expenseReceiptPreviewStyles';
 import {
   fmtMoneyTry,
   MOVEMENT_KIND_LABELS,
@@ -25,9 +35,13 @@ import {
   type MovementPaymentMethod,
 } from '@/lib/financeLedger';
 import { formatDateShort } from '@/lib/date';
+import { invalidateCounterpartyBalanceCache } from '@/lib/financeCounterpartyBalances';
+import { LEDGER_SCOPE_LABELS, type FinanceLedgerScope } from '@/lib/financeLedger';
 
 type Row = {
   id: string;
+  organization_id: string;
+  counterparty_id: string | null;
   kind: FinanceMovementKind;
   amount: number;
   movement_date: string;
@@ -38,24 +52,48 @@ type Row = {
   receipt_urls: string[] | null;
   created_at: string;
   counterparty?: { name: string } | null;
+  guest?: { full_name: string | null } | null;
   project?: { name: string } | null;
   creator?: { full_name: string | null } | null;
+  source_payment_request_id?: string | null;
 };
 
 export default function AccountingMovementDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, returnCounterpartyId } = useLocalSearchParams<{
+    id: string;
+    returnCounterpartyId?: string;
+  }>();
   const router = useRouter();
+  const me = useAuthStore((s) => s.staff);
+  const selectedOrg = useAdminOrgStore((s) =>
+    s.organizations.find((o) => o.id === (s.selectedOrganizationId !== 'all' ? s.selectedOrganizationId : me?.organization_id))
+  );
   const [row, setRow] = useState<Row | null>(null);
+  const [receiptInput, setReceiptInput] = useState<FinanceMovementReceiptInput | null>(null);
   const [loading, setLoading] = useState(true);
+  const [menuVisible, setMenuVisible] = useState(false);
+
+  useEffect(() => {
+    if (!row) {
+      setReceiptInput(null);
+      return;
+    }
+    let cancelled = false;
+    prepareFinanceMovementReceiptInput(row, selectedOrg).then((input) => {
+      if (!cancelled) setReceiptInput(input);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [row, selectedOrg?.name]);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('finance_movements')
-      .select(
-        `
+    const selectBase = `
         id,
+        organization_id,
+        counterparty_id,
         kind,
         amount,
         movement_date,
@@ -65,15 +103,28 @@ export default function AccountingMovementDetail() {
         description,
         receipt_urls,
         created_at,
-        counterparty:counterparty_id(name),
+        counterparty:counterparty_id(name, phone, party_type, profile_image),
+        guest:guest_id(full_name),
         project:project_id(name),
-        creator:created_by_staff_id(full_name)
-      `
-      )
+        creator:created_by_staff_id(full_name),
+        source_payment_request_id
+      `;
+    let { data, error } = await supabase
+      .from('finance_movements')
+      .select(`${selectBase}, ledger_scope`)
       .eq('id', id)
       .single();
+    if (error?.message?.includes('ledger_scope')) {
+      const res = await supabase.from('finance_movements').select(selectBase).eq('id', id).single();
+      data = res.data;
+      error = res.error;
+    }
     if (error || !data) setRow(null);
-    else setRow(data as unknown as Row);
+    else
+      setRow({
+        ...(data as object),
+        ledger_scope: (data as { ledger_scope?: FinanceLedgerScope }).ledger_scope ?? 'hotel',
+      } as Row);
     setLoading(false);
   }, [id]);
 
@@ -83,16 +134,32 @@ export default function AccountingMovementDetail() {
     }, [load])
   );
 
+  const goBackAfterDelete = () => {
+    const cpId = returnCounterpartyId || row?.counterparty_id;
+    if (cpId) {
+      router.replace({
+        pathname: '/admin/accounting/counterparties/[id]',
+        params: { id: cpId },
+      } as never);
+      return;
+    }
+    router.replace('/admin/accounting/movements' as never);
+  };
+
   const deleteRow = () => {
-    Alert.alert('Sil', 'Bu hareket silinsin mi?', [
+    Alert.alert('Sil', 'Bu ödeme / tahsilat kaydı silinsin mi?', [
       { text: 'İptal', style: 'cancel' },
       {
         text: 'Sil',
         style: 'destructive',
         onPress: async () => {
+          const org = row?.organization_id;
           const { error } = await supabase.from('finance_movements').delete().eq('id', id);
           if (error) Alert.alert('Hata', error.message);
-          else router.replace('/admin/accounting/movements' as never);
+          else {
+            if (org) invalidateCounterpartyBalanceCache(org);
+            goBackAfterDelete();
+          }
         },
       },
     ]);
@@ -114,7 +181,11 @@ export default function AccountingMovementDetail() {
     );
   }
 
-  const who = row.counterparty?.name?.trim() || row.counterparty_name?.trim() || '—';
+  const who =
+    row.guest?.full_name?.trim() ||
+    row.counterparty?.name?.trim() ||
+    row.counterparty_name?.trim() ||
+    '—';
   const receipts = Array.isArray(row.receipt_urls) ? row.receipt_urls : [];
 
   return (
@@ -125,14 +196,19 @@ export default function AccountingMovementDetail() {
       </TouchableOpacity>
 
       <AdminCard>
-        <View
-          style={[
-            styles.kindBanner,
-            row.kind === 'income' ? styles.kindIncome : styles.kindExpense,
-          ]}
-        >
-          <Text style={styles.kindBannerText}>{MOVEMENT_KIND_LABELS[row.kind]}</Text>
-          <Text style={styles.kindAmt}>{fmtMoneyTry(Number(row.amount))}</Text>
+        <View style={styles.kindBannerRow}>
+          <View
+            style={[
+              styles.kindBanner,
+              row.kind === 'income' ? styles.kindIncome : styles.kindExpense,
+            ]}
+          >
+            <Text style={styles.kindBannerText}>{MOVEMENT_KIND_LABELS[row.kind]}</Text>
+            <Text style={styles.kindAmt}>{fmtMoneyTry(Number(row.amount))}</Text>
+          </View>
+          <TouchableOpacity style={styles.moreBtn} onPress={() => setMenuVisible(true)} hitSlop={12}>
+            <Ionicons name="ellipsis-vertical" size={24} color={adminTheme.colors.textMuted} />
+          </TouchableOpacity>
         </View>
         <Text style={styles.summary}>
           {movementSummaryLine({
@@ -146,10 +222,16 @@ export default function AccountingMovementDetail() {
           <Text style={styles.metaLabel}>Tarih</Text>
           <Text style={styles.metaVal}>{formatDateShort(row.movement_date)}</Text>
           <Text style={styles.metaLabel}>Ödeme</Text>
-          <Text style={styles.metaVal}>{PAYMENT_METHOD_LABELS[row.payment_method]}</Text>
+          <Text style={styles.metaVal}>
+            {row.source_payment_request_id ? 'Kart (Stripe POS)' : PAYMENT_METHOD_LABELS[row.payment_method]}
+          </Text>
           <Text style={styles.metaLabel}>Kategori</Text>
           <Text style={styles.metaVal}>{MOVEMENT_CATEGORY_LABELS[row.category] ?? row.category}</Text>
-          <Text style={styles.metaLabel}>Cari</Text>
+          <Text style={styles.metaLabel}>Kapsam</Text>
+          <Text style={styles.metaVal}>
+            {LEDGER_SCOPE_LABELS[(row as Row & { ledger_scope?: FinanceLedgerScope }).ledger_scope ?? 'hotel']}
+          </Text>
+          <Text style={styles.metaLabel}>{row.guest?.full_name ? 'Misafir' : 'Cari'}</Text>
           <Text style={styles.metaVal}>{who}</Text>
           {row.project?.name ? (
             <>
@@ -171,6 +253,8 @@ export default function AccountingMovementDetail() {
         </View>
       </AdminCard>
 
+      {receiptInput ? <FinanceMovementReceiptActions input={receiptInput} /> : null}
+
       {receipts.length > 0 ? (
         <AdminCard>
           <Text style={styles.sectionTitle}>Fiş / belge</Text>
@@ -188,10 +272,43 @@ export default function AccountingMovementDetail() {
         </AdminCard>
       )}
 
-      <TouchableOpacity style={styles.delBtn} onPress={deleteRow}>
-        <Ionicons name="trash-outline" size={18} color="#dc2626" />
-        <Text style={styles.delBtnText}>Kaydı sil</Text>
-      </TouchableOpacity>
+      <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}>
+          <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                router.push({
+                  pathname: '/admin/accounting/movements/edit',
+                  params: {
+                    id: row.id,
+                    ...(returnCounterpartyId || row.counterparty_id
+                      ? { returnCounterpartyId: returnCounterpartyId || row.counterparty_id! }
+                      : {}),
+                  },
+                } as never);
+              }}
+            >
+              <Ionicons name="create-outline" size={20} color={adminTheme.colors.primary} />
+              <Text style={styles.menuItemText}>Düzenle</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                deleteRow();
+              }}
+            >
+              <Ionicons name="trash-outline" size={20} color="#dc2626" />
+              <Text style={[styles.menuItemText, styles.menuItemDanger]}>Kaydı sil</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuCancel} onPress={() => setMenuVisible(false)}>
+              <Text style={styles.menuCancelText}>İptal</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -203,7 +320,9 @@ const styles = StyleSheet.create({
   empty: { color: adminTheme.colors.textMuted },
   backHub: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   backHubText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
-  kindBanner: { borderRadius: 10, padding: 16, marginBottom: 12 },
+  kindBannerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 12 },
+  kindBanner: { flex: 1, borderRadius: 10, padding: 16 },
+  moreBtn: { padding: 8, marginTop: 4 },
   kindIncome: { backgroundColor: '#dcfce7' },
   kindExpense: { backgroundColor: '#fee2e2' },
   kindBannerText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text },
@@ -214,15 +333,31 @@ const styles = StyleSheet.create({
   metaVal: { fontSize: 15, color: adminTheme.colors.text, fontWeight: '500' },
   sectionTitle: { fontSize: 15, fontWeight: '700', marginBottom: 10 },
   thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  thumb: { width: 100, height: 100, borderRadius: 8 },
+  thumb: expenseReceiptPreviewStyle,
   noReceipt: { fontSize: 14, color: adminTheme.colors.textMuted },
-  delBtn: {
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: adminTheme.colors.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 28,
+    paddingTop: 8,
+  },
+  menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 16,
-    padding: 14,
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: adminTheme.colors.border,
   },
-  delBtnText: { color: '#dc2626', fontWeight: '600' },
+  menuItemText: { fontSize: 16, fontWeight: '600', color: adminTheme.colors.text, flex: 1 },
+  menuItemDanger: { color: '#dc2626' },
+  menuCancel: { paddingVertical: 16, alignItems: 'center' },
+  menuCancelText: { fontSize: 16, color: adminTheme.colors.textMuted, fontWeight: '600' },
 });

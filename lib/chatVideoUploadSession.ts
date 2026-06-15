@@ -294,6 +294,29 @@ export function clearChatVideoUploadState(conversationId: string, messageKey: st
   if (bucket.actor) setBucketStates(conversationId, bucket.actor, next);
 }
 
+/** Yarım kalan video yüklemesini iptal et — UI ve oturum durumundan kaldırır. */
+export function cancelChatVideoUpload(conversationId: string, state: ChatVideoUploadState): string[] {
+  const tempKey = `temp-video-${state.clientId}`;
+  const messageIds = [state.messageId, tempKey].filter((id): id is string => Boolean(id));
+
+  const bucket = buckets.get(conversationId);
+  if (bucket?.actor) {
+    const next = { ...bucket.states };
+    for (const [key, s] of Object.entries(next)) {
+      if (s.clientId === state.clientId || key === tempKey || key === state.messageId) {
+        delete next[key];
+      }
+    }
+    setBucketStates(conversationId, bucket.actor, next);
+  }
+
+  screens.get(conversationId)?.patchMessages((prev) =>
+    prev.filter((m) => !messageIds.includes(m.id))
+  );
+  void persistAll();
+  return messageIds;
+}
+
 export function isChatVideoInterruptedError(error?: string): boolean {
   return error === INTERRUPTED_ERROR;
 }

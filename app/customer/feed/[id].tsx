@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -36,6 +36,7 @@ import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/
 import { MentionableText } from '@/components/MentionableText';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
+import { createOptimisticCommentId, persistGuestFeedLike } from '@/lib/feedLikeActions';
 
 type PostRow = {
   id: string;
@@ -124,8 +125,7 @@ export default function CustomerFeedPostDetail() {
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [replyToName, setReplyToName] = useState<string | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
-  const [togglingLike, setTogglingLike] = useState(false);
-  const [postingComment, setPostingComment] = useState(false);
+  const likeInFlightRef = useRef(false);
   const [mentionSuggestions, setMentionSuggestions] = useState<StaffMentionCandidate[]>([]);
   const [mentionDirectory, setMentionDirectory] = useState<StaffMentionCandidate[]>([]);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -335,91 +335,178 @@ export default function CustomerFeedPostDetail() {
   const isVideo = firstMedia?.media_type === 'video';
 
   const toggleLike = async () => {
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert(t('loginRequiredTitle'), t('loginRequiredLikeMessage'));
-      return;
+    if (!post || likeInFlightRef.current) return;
+    let guestId = myGuestId;
+    if (!guestId) {
+      const guestRow = await getOrCreateGuestForCurrentSession();
+      if (!guestRow?.guest_id) {
+        Alert.alert(t('loginRequiredTitle'), t('loginRequiredLikeMessage'));
+        return;
+      }
+      guestId = guestRow.guest_id;
+      setMyGuestId(guestId);
     }
-    setTogglingLike(true);
+
+    let wasLiked = false;
+    setMyLike((prev) => {
+      wasLiked = prev;
+      return !prev;
+    });
+    setLikeCount((c) => (wasLiked ? Math.max(0, c - 1) : c + 1));
+
+    likeInFlightRef.current = true;
     try {
-      if (myLike) {
-        await supabase.from('feed_post_reactions').delete().eq('post_id', post.id).eq('guest_id', guestRow.guest_id);
-        setMyLike(false);
-        setLikeCount((c) => Math.max(0, c - 1));
-      } else {
-        await supabase.from('feed_post_reactions').insert({ post_id: post.id, guest_id: guestRow.guest_id, reaction: 'like' });
-        setMyLike(true);
-        setLikeCount((c) => c + 1);
+      const { ok, error } = await persistGuestFeedLike(post.id, guestId, !wasLiked);
+      if (!ok) throw error;
+      if (!wasLiked) {
         const displayName = getDisplayName() || t('aGuest');
         if (post.staff_id) {
-          await sendNotification({ staffId: post.staff_id, title: t('notifNewLikeTitle'), body: t('notifNewLikeBody', { name: displayName }), category: 'staff', notificationType: 'feed_like', data: { url: '/staff', postId: post.id } });
-        } else if (post.guest_id) {
-          await sendNotification({ guestId: post.guest_id, title: t('notifNewLikeTitle'), body: t('notifNewLikeBody', { name: displayName }), category: 'guest', notificationType: 'feed_like', data: { url: '/customer', postId: post.id } });
+          void sendNotification({
+            staffId: post.staff_id,
+            title: t('notifNewLikeTitle'),
+            body: t('notifNewLikeBody', { name: displayName }),
+            category: 'staff',
+            notificationType: 'feed_like',
+            data: { url: '/staff', postId: post.id },
+          });
+        } else if (post.guest_id && post.guest_id !== guestId) {
+          void sendNotification({
+            guestId: post.guest_id,
+            title: t('notifNewLikeTitle'),
+            body: t('notifNewLikeBody', { name: displayName }),
+            category: 'guest',
+            notificationType: 'feed_like',
+            data: { url: '/customer', postId: post.id },
+          });
         }
       }
-    } catch (e) {}
-    setTogglingLike(false);
+    } catch {
+      setMyLike(wasLiked);
+      setLikeCount((c) => (wasLiked ? c + 1 : Math.max(0, c - 1)));
+    } finally {
+      likeInFlightRef.current = false;
+    }
   };
 
-  const submitComment = async () => {
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert(t('loginRequiredTitle'), t('loginRequiredCommentMessage'));
-      return;
-    }
+  const submitComment = () => {
+    if (!post) return;
     const text = commentText.trim();
     if (!text) return;
-    setPostingComment(true);
-    try {
-      const { data: inserted } = await supabase
-        .from('feed_post_comments')
-        .insert({ post_id: post.id, guest_id: guestRow.guest_id, content: text, parent_comment_id: replyToCommentId })
-        .select('id, parent_comment_id, content, created_at')
-        .single();
+
+    void (async () => {
+      let guestId = myGuestId;
+      if (!guestId) {
+        const guestRow = await getOrCreateGuestForCurrentSession();
+        if (!guestRow?.guest_id) {
+          Alert.alert(t('loginRequiredTitle'), t('loginRequiredCommentMessage'));
+          return;
+        }
+        guestId = guestRow.guest_id;
+        setMyGuestId(guestId);
+      }
+
+      const parentCommentId = replyToCommentId;
+      const parentComment = parentCommentId ? comments.find((c) => c.id === parentCommentId) : null;
+      const displayName = getDisplayName() || t('guestDefaultName');
+      const tempId = createOptimisticCommentId();
+
       setCommentText('');
       setReplyToCommentId(null);
       setReplyToName(null);
-      const displayName = getDisplayName() || t('guestDefaultName');
       setComments((prev) => [
         ...prev,
         {
-          id: (inserted as { id: string }).id,
-          parent_comment_id: (inserted as { parent_comment_id?: string | null }).parent_comment_id ?? null,
+          id: tempId,
+          parent_comment_id: parentCommentId,
           content: text,
-          created_at: (inserted as { created_at: string }).created_at,
+          created_at: new Date().toISOString(),
           staff: null,
           guest: { full_name: displayName },
         },
       ]);
       setCommentCount((c) => c + 1);
-      const notifyBody = `${displayName}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
-      const parentComment = replyToCommentId ? comments.find((c) => c.id === replyToCommentId) : null;
-      const notifiedStaffIds = new Set<string>();
-      if (parentComment && parentComment.staff_id) {
-        notifiedStaffIds.add(parentComment.staff_id);
-        await sendNotification({ staffId: parentComment.staff_id, title: t('notifNewCommentTitle'), body: notifyBody, category: 'staff', notificationType: 'feed_comment_reply', data: { url: `/customer/feed/${post.id}`, postId: post.id, parentCommentId: parentComment.id } });
-      } else if (parentComment && parentComment.guest_id && parentComment.guest_id !== guestRow.guest_id) {
-        await sendNotification({ guestId: parentComment.guest_id, title: t('notifNewCommentTitle'), body: notifyBody, category: 'guest', notificationType: 'feed_comment_reply', data: { url: `/customer/feed/${post.id}`, postId: post.id, parentCommentId: parentComment.id } });
-      } else if (post.staff_id) {
-        notifiedStaffIds.add(post.staff_id);
-        await sendNotification({ staffId: post.staff_id, title: t('notifNewCommentTitle'), body: notifyBody, category: 'staff', notificationType: 'feed_comment', data: { url: '/staff', postId: post.id } });
-      } else if (post.guest_id) {
-        await sendNotification({ guestId: post.guest_id, title: t('notifNewCommentTitle'), body: notifyBody, category: 'guest', notificationType: 'feed_comment', data: { url: '/customer', postId: post.id } });
+
+      try {
+        const { data: inserted, error } = await supabase
+          .from('feed_post_comments')
+          .insert({ post_id: post.id, guest_id: guestId, content: text, parent_comment_id: parentCommentId })
+          .select('id, parent_comment_id, content, created_at')
+          .single();
+        if (error || !inserted) throw error;
+
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === tempId
+              ? {
+                  ...c,
+                  id: (inserted as { id: string }).id,
+                  parent_comment_id: (inserted as { parent_comment_id?: string | null }).parent_comment_id ?? parentCommentId,
+                  created_at: (inserted as { created_at: string }).created_at,
+                }
+              : c
+          )
+        );
+
+        const notifyBody = `${displayName}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
+        const notifiedStaffIds = new Set<string>();
+        if (parentComment?.staff_id) {
+          notifiedStaffIds.add(parentComment.staff_id);
+          void sendNotification({
+            staffId: parentComment.staff_id,
+            title: t('notifNewCommentTitle'),
+            body: notifyBody,
+            category: 'staff',
+            notificationType: 'feed_comment_reply',
+            data: { url: `/customer/feed/${post.id}`, postId: post.id, parentCommentId: parentComment.id },
+          });
+        } else if (parentComment?.guest_id && parentComment.guest_id !== guestId) {
+          void sendNotification({
+            guestId: parentComment.guest_id,
+            title: t('notifNewCommentTitle'),
+            body: notifyBody,
+            category: 'guest',
+            notificationType: 'feed_comment_reply',
+            data: { url: `/customer/feed/${post.id}`, postId: post.id, parentCommentId: parentComment.id },
+          });
+        } else if (post.staff_id) {
+          notifiedStaffIds.add(post.staff_id);
+          void sendNotification({
+            staffId: post.staff_id,
+            title: t('notifNewCommentTitle'),
+            body: notifyBody,
+            category: 'staff',
+            notificationType: 'feed_comment',
+            data: { url: '/staff', postId: post.id },
+          });
+        } else if (post.guest_id && post.guest_id !== guestId) {
+          void sendNotification({
+            guestId: post.guest_id,
+            title: t('notifNewCommentTitle'),
+            body: notifyBody,
+            category: 'guest',
+            notificationType: 'feed_comment',
+            data: { url: '/customer', postId: post.id },
+          });
+        }
+        const mentionStaffIds = await resolveMentionedStaffIdsFromText(text);
+        for (const sid of mentionStaffIds) {
+          if (notifiedStaffIds.has(sid)) continue;
+          void sendNotification({
+            staffId: sid,
+            title: t('notifStaffMentionTitle'),
+            body: t('notifStaffMentionBody', { name: displayName }),
+            category: 'staff',
+            notificationType: 'staff_mention',
+            data: { url: `/customer/feed/${post.id}`, postId: post.id, commentId: (inserted as { id: string }).id },
+          });
+        }
+      } catch (e) {
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+        setCommentCount((c) => Math.max(0, c - 1));
+        setCommentText(text);
+        Alert.alert(t('error'), (e as Error)?.message ?? t('reviewSubmitFailed'));
       }
-      const mentionStaffIds = await resolveMentionedStaffIdsFromText(text);
-      for (const sid of mentionStaffIds) {
-        if (notifiedStaffIds.has(sid)) continue;
-        await sendNotification({
-          staffId: sid,
-          title: t('notifStaffMentionTitle'),
-          body: t('notifStaffMentionBody', { name: displayName }),
-          category: 'staff',
-          notificationType: 'staff_mention',
-          data: { url: `/customer/feed/${post.id}`, postId: post.id, commentId: (inserted as { id: string }).id },
-        });
-      }
-    } catch (e) {}
-    setPostingComment(false);
+    })();
   };
 
   const deleteOwnComment = async (commentId: string) => {
@@ -542,14 +629,9 @@ export default function CustomerFeedPostDetail() {
               <TouchableOpacity
                 style={[styles.actionPill, myLike && styles.actionPillActive]}
                 onPress={toggleLike}
-                disabled={togglingLike}
                 activeOpacity={0.8}
               >
-                {togglingLike ? (
-                  <ActivityIndicator size="small" color={theme.colors.textMuted} />
-                ) : (
-                  <Ionicons name={myLike ? 'heart' : 'heart-outline'} size={20} color={myLike ? theme.colors.error : theme.colors.textSecondary} />
-                )}
+                <Ionicons name={myLike ? 'heart' : 'heart-outline'} size={20} color={myLike ? theme.colors.error : theme.colors.textSecondary} />
                 <Text style={[styles.actionPillText, myLike && styles.actionPillTextActive]}>{likeCount}</Text>
               </TouchableOpacity>
             ) : null}
@@ -712,7 +794,11 @@ export default function CustomerFeedPostDetail() {
             >
               {replyToCommentId ? (
                 <View style={styles.replyTargetChip}>
-                  <Text style={styles.replyTargetText}>@{replyToName || 'kullanici'} yanit yaziyorsun...</Text>
+                  <Text style={styles.replyTargetText}>
+                    {t('feedReplyToUser', {
+                      name: replyToName || t('feedReplyUserFallback'),
+                    })}
+                  </Text>
                   <TouchableOpacity onPress={() => { setReplyToCommentId(null); setReplyToName(null); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                     <Ionicons name="close" size={16} color={theme.colors.textMuted} />
                   </TouchableOpacity>
@@ -726,15 +812,14 @@ export default function CustomerFeedPostDetail() {
                 onChangeText={setCommentText}
                 multiline
                 maxLength={500}
-                editable={!postingComment}
               />
               <TouchableOpacity
-                style={[styles.commentSendBtn, (!commentText.trim() || postingComment) && styles.commentSendBtnDisabled]}
+                style={[styles.commentSendBtn, !commentText.trim() && styles.commentSendBtnDisabled]}
                 onPress={submitComment}
-                disabled={!commentText.trim() || postingComment}
+                disabled={!commentText.trim()}
                 activeOpacity={0.8}
               >
-                {postingComment ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={20} color="#fff" />}
+                <Ionicons name="send" size={20} color="#fff" />
               </TouchableOpacity>
             </KeyboardAvoidingView>
           </>

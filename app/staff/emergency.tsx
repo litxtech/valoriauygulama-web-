@@ -4,9 +4,55 @@ import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { listEmergencyLocations, notifyStaffEmergency, type EmergencyLocation } from '@/lib/staffEmergency';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+
+function createEmergencyStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: p.pageBg },
+    content: { padding: 16, paddingBottom: 30 },
+    title: { fontSize: 22, fontWeight: '800', color: p.text },
+    sub: { marginTop: 6, color: p.subtext, marginBottom: 16 },
+    label: { fontSize: 14, fontWeight: '700', color: p.text, marginBottom: 8, marginTop: 4 },
+    chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+    chip: {
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      borderRadius: 10,
+      backgroundColor: p.cardBg,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    chipActive: { borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.15)' },
+    chipText: { color: p.text, fontWeight: '600' },
+    chipTextActive: { color: '#f87171' },
+    noteInput: {
+      minHeight: 90,
+      borderWidth: 1,
+      borderColor: p.cardBorder,
+      borderRadius: 12,
+      backgroundColor: p.cardBg,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      textAlignVertical: 'top',
+      color: p.text,
+    },
+    sendBtn: {
+      marginTop: 18,
+      backgroundColor: '#dc2626',
+      borderRadius: 12,
+      paddingVertical: 15,
+      alignItems: 'center',
+    },
+    sendBtnDisabled: { opacity: 0.6 },
+    sendBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  });
+}
 
 export default function StaffEmergencyScreen() {
   const { t } = useTranslation();
+  const palette = usePersonelDesign();
+  const styles = useMemo(() => createEmergencyStyles(palette), [palette]);
   const { staff } = useAuthStore();
   const [locations, setLocations] = useState<EmergencyLocation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -63,6 +109,7 @@ export default function StaffEmergencyScreen() {
               note,
               createdByStaffId: staff.id,
               createdByName: staff.full_name,
+              organizationId: staff.organization_id ?? null,
             });
             setSending(false);
             if (res.error) {
@@ -105,7 +152,7 @@ export default function StaffEmergencyScreen() {
         value={note}
         onChangeText={setNote}
         placeholder={t('staffEmergencyNotePlaceholder')}
-        placeholderTextColor="#94a3b8"
+        placeholderTextColor={palette.muted}
         multiline
       />
 
@@ -119,43 +166,3 @@ export default function StaffEmergencyScreen() {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  content: { padding: 16, paddingBottom: 30 },
-  title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
-  sub: { marginTop: 6, color: '#475569', marginBottom: 16 },
-  label: { fontSize: 14, fontWeight: '700', color: '#0f172a', marginBottom: 8, marginTop: 4 },
-  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  chip: {
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 10,
-    backgroundColor: '#fff',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  chipActive: { borderColor: '#dc2626', backgroundColor: '#fef2f2' },
-  chipText: { color: '#1e293b', fontWeight: '600' },
-  chipTextActive: { color: '#b91c1c' },
-  noteInput: {
-    minHeight: 90,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    textAlignVertical: 'top',
-    color: '#0f172a',
-  },
-  sendBtn: {
-    marginTop: 18,
-    backgroundColor: '#dc2626',
-    borderRadius: 12,
-    paddingVertical: 15,
-    alignItems: 'center',
-  },
-  sendBtnDisabled: { opacity: 0.6 },
-  sendBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-});

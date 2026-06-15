@@ -76,6 +76,10 @@ verify_jwt = false
 [functions.translate-text]
 verify_jwt = false
 
+# DeepSeek sözleşme taslağı: Bearer ile fonksiyon içinde getUser + yetki doğrulaması
+[functions.generate-managed-contract]
+verify_jwt = false
+
 [functions.mux-create-upload]
 verify_jwt = false
 
@@ -87,3 +91,40 @@ verify_jwt = false
 
 [functions.mux-create-story-upload]
 verify_jwt = false
+
+# Stripe Checkout sonrası HTML dönüş (JWT gerekmez — tarayıcı yönlendirmesi)
+[functions.payment-return]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.create-payment-request]
+verify_jwt = true
+
+[functions.create-guest-tip-payment]
+verify_jwt = true
+
+[functions.create-guest-extra-payment]
+verify_jwt = true
+
+[functions.refund-staff-tip]
+verify_jwt = true
+
+[functions.accept-staff-tip-payment]
+verify_jwt = true
+
+[functions.open-payment]
+verify_jwt = false
+
+[functions.open-payment-qr]
+verify_jwt = false
+
+[functions.create-payment-qr-stand]
+verify_jwt = true
+
+[functions.close-payment-qr-stand]
+verify_jwt = true
+
+[functions.close-payment-request]
+verify_jwt = true

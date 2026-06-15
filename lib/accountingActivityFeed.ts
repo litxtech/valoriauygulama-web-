@@ -7,6 +7,8 @@ import type { Href } from 'expo-router';
 export type AccountingActivityItem = {
   id: string;
   source: 'movement' | 'staff_expense' | 'check' | 'debt_payment';
+  /** Defter gideri için fiş butonları */
+  movementId?: string;
   sortAt: string;
   title: string;
   subtitle: string;
@@ -73,6 +75,7 @@ export async function fetchAccountingActivityFeed(
       items.push({
         id: `mov-${r.id}`,
         source: 'movement',
+        movementId: r.id,
         sortAt: `${r.movement_date}T12:00:00`,
         title: isIn ? `Gelir · ${who}` : `Gider · ${who}`,
         subtitle: [cat, r.description?.trim()].filter(Boolean).join(' · ') || '—',

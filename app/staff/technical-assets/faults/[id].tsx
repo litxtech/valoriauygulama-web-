@@ -13,7 +13,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { canOperateTechnicalAssets, hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
-import type { TechFaultReportRow } from '@/lib/technicalAssets';
+import { fetchTechAssetDetail, type TechFaultReportRow } from '@/lib/technicalAssets';
+import { notifyTechFaultStatusChanged } from '@/lib/technicalAssetNotifications';
 
 export default function TechnicalFaultDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -59,6 +60,20 @@ export default function TechnicalFaultDetailScreen() {
           const { error } = await supabase.from('tech_fault_reports').update(patch).eq('id', row.id);
           if (error) Alert.alert('Hata', error.message);
           else {
+            let assetDetail = null;
+            if (row.asset_id) {
+              const { data: a } = await fetchTechAssetDetail(row.asset_id);
+              assetDetail = a;
+            }
+            void notifyTechFaultStatusChanged({
+              organizationId: row.organization_id,
+              faultId: row.id,
+              title: row.title,
+              status,
+              asset: assetDetail,
+              resolutionNote: typeof patch.resolution_note === 'string' ? patch.resolution_note : row.resolution_note,
+              updatedByStaffId: staff!.id,
+            });
             setResolution('');
             await load();
           }

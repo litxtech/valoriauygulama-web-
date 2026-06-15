@@ -1,17 +1,16 @@
 /**
  * Profil (misafir + personel) — ortak renk, gölge ve ölçüler.
- * Yumuşak kontrast, göz yormayan yüzeyler.
  */
 export const profileScreenTheme = {
-  /** Ana gradient (marka) — düşük doygunluk */
-  gradient: { start: '#6366F1', end: '#8B5CF6' },
-  bg: '#F1F5F9',
+  gradient: { start: '#4F46E5', end: '#7C3AED' },
+  gradientSoft: { start: 'rgba(79,70,229,0.12)', end: 'rgba(124,58,237,0.06)' },
+  bg: '#FFFFFF',
   card: '#FFFFFF',
   cardMuted: '#F8FAFC',
-  text: '#1E293B',
+  text: '#0F172A',
   subtext: '#64748B',
-  border: 'rgba(15, 23, 42, 0.07)',
-  borderStrong: 'rgba(15, 23, 42, 0.11)',
+  border: 'rgba(15, 23, 42, 0.06)',
+  borderStrong: 'rgba(15, 23, 42, 0.1)',
   /** Kart ikonları */
   accent: {
     blue: '#4F46E5',
@@ -21,12 +20,20 @@ export const profileScreenTheme = {
     red: '#DC2626',
   },
   hero: {
-    height: 180,
+    height: 200,
     bottomRadius: 24,
   },
   avatar: {
-    size: 88,
+    size: 100,
     border: 4,
+  },
+  identityCard: {
+    marginTop: -56,
+    paddingTop: 4,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    borderRadius: 22,
+    borderTopWidth: 0,
   },
   iconBg: 'rgba(99, 102, 241, 0.09)',
   /** Ortak kart kabuğu */
@@ -57,10 +64,14 @@ export const profileScreenTheme = {
   },
   coverFrame: {
     inset: 0,
-    radiusBottom: 20,
+    radiusBottom: 28,
     borderW: 1,
-    border: 'rgba(15, 23, 42, 0.08)',
+    border: 'rgba(15, 23, 42, 0.06)',
     marginTop: 0,
+  },
+  pill: {
+    online: { bg: 'rgba(34,197,94,0.12)', text: '#15803d', dot: '#22c55e' },
+    offline: { bg: 'rgba(100,116,139,0.12)', text: '#475569', dot: '#94a3b8' },
   },
   coverFrameShadow: {
     shadowColor: '#0f172a',

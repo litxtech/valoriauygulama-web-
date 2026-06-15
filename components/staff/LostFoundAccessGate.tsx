@@ -7,7 +7,7 @@ import { theme } from '@/constants/theme';
 
 type Props = { children: React.ReactNode };
 
-/** Emanet modülü: yalnızca admin veya emanet_buluntu yetkili personel. */
+/** Kayıp eşya (buluntu) modülü: yalnızca admin veya emanet_buluntu yetkili personel. */
 export function LostFoundAccessGate({ children }: Props) {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);

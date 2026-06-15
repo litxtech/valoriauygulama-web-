@@ -17,6 +17,35 @@ export const appTabBar = {
   },
 } as const;
 
+/** Karanlık mod tab bar — #666/#777 kullanılmaz */
+export const appTabBarNight = {
+  background: '#171923',
+  border: 'rgba(255,255,255,0.08)',
+  inactive: '#A7B0C0',
+  fallbackActive: '#7C5CFF',
+  centerMessage: appTabBar.centerMessage,
+} as const;
+
+export type AppTabBarColors = typeof appTabBar;
+
+export function getAppTabBarColors(isNight: boolean): AppTabBarColors {
+  return isNight ? appTabBarNight : appTabBar;
+}
+
+export function vibrantIconColor(
+  which: 'customer' | 'staff',
+  routeName: string,
+  focused: boolean,
+  isNight = false
+): string {
+  if (!focused) return getAppTabBarColors(isNight).inactive;
+  const m =
+    which === 'customer'
+      ? (appTabBarCustomer as Record<string, string>)[routeName]
+      : (appTabBarStaff as Record<string, string>)[routeName];
+  return m ?? getAppTabBarColors(isNight).fallbackActive;
+}
+
 export const appTabBarCustomer = {
   index: '#D97706',
   map: '#059669',
@@ -39,13 +68,3 @@ export const appTabBarStaff = {
   profile: '#4F46E5',
 } as const;
 
-export function vibrantIconColor(
-  which: 'customer' | 'staff',
-  routeName: string,
-  focused: boolean
-): string {
-  if (!focused) return appTabBar.inactive;
-  const m =
-    which === 'customer' ? (appTabBarCustomer as Record<string, string>)[routeName] : (appTabBarStaff as Record<string, string>)[routeName];
-  return m ?? appTabBar.fallbackActive;
-}

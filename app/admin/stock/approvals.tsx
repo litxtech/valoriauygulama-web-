@@ -5,6 +5,7 @@ import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
+import { stockProductImagePatchFromEntry } from '@/lib/stockProductImages';
 
 type Movement = {
   id: string;
@@ -48,7 +49,11 @@ export default function StockApprovalsScreen() {
       return;
     }
     await supabase.from('stock_movements').update({ status: 'approved', approved_by: currentStaff.id, approved_at: new Date().toISOString() }).eq('id', movement.id);
-    await supabase.from('stock_products').update({ current_stock: newStock }).eq('id', movement.product_id);
+    const imagePatch = stockProductImagePatchFromEntry(movement.photo_proof, movement.movement_type);
+    await supabase
+      .from('stock_products')
+      .update({ current_stock: newStock, ...(imagePatch ?? {}) })
+      .eq('id', movement.product_id);
     load();
   };
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,10 @@ import { CachedImage } from '@/components/CachedImage';
 import { SwipeToDelete } from '@/components/SwipeToDelete';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { useChatTheme } from '@/hooks/useScreenTheme';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 
 /** Sohbet adından avatar emoji tahmini: oda numarası → grup, aksi halde ilk harf */
 function chatAvatarChar(name: string | null | undefined, chatFallback: string): string {
@@ -38,6 +42,9 @@ function chatAvatarChar(name: string | null | undefined, chatFallback: string): 
 
 export default function CustomerMessagesScreen() {
   const { t } = useTranslation();
+  const palette = usePersonelDesign();
+  const chat = useChatTheme();
+  const styles = useMemo(() => createCustomerMessagesStyles(palette, chat), [palette, chat]);
   const router = useRouter();
   const { appToken, setAppToken, loadStoredToken, setUnreadCount } = useGuestMessagingStore();
   const [conversations, setConversations] = useState<ConversationWithMeta[]>([]);
@@ -45,7 +52,6 @@ export default function CustomerMessagesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const sessionUserId = useAuthStore((s) => s.user?.id ?? null);
 
@@ -98,12 +104,8 @@ export default function CustomerMessagesScreen() {
         setLoading(false);
         return () => {};
       }
-      loadConversations();
-      pollRef.current = setInterval(loadConversations, 45000);
-      return () => {
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = null;
-      };
+      void loadConversations();
+      return () => {};
     }, [appToken, authChecked])
   );
 
@@ -150,7 +152,7 @@ export default function CustomerMessagesScreen() {
   if (authChecked && !appToken) {
     if (!hasSession) {
       return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
           <View style={styles.loginPrompt}>
             <Text style={styles.loginTitle}>{t('customerMessagesTitle')}</Text>
             <Text style={styles.loginSubtitle}>
@@ -164,7 +166,7 @@ export default function CustomerMessagesScreen() {
       );
     }
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
         <View style={styles.loginPrompt}>
           <Text style={styles.loginTitle}>{t('customerMessagesTitle')}</Text>
           <Text style={styles.loginSubtitle}>{t('customerMessagesAccountLoading')}</Text>
@@ -193,7 +195,7 @@ export default function CustomerMessagesScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
       <FlatList
         data={conversations}
         keyExtractor={(item) => item.id}
@@ -257,23 +259,26 @@ export default function CustomerMessagesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: MESSAGING_COLORS.background },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+function createCustomerMessagesStyles(palette: PersonelDesignPalette, chat: ChatThemePalette) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: palette.pageBg },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.pageBg },
   listContent: { padding: 12, paddingBottom: 24 },
   loginPrompt: {
     margin: 16,
     padding: 20,
-    backgroundColor: '#fff',
+    backgroundColor: palette.cardBg,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.cardBorder,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
   },
-  loginTitle: { fontSize: 20, fontWeight: '700', color: MESSAGING_COLORS.text, marginBottom: 8 },
-  loginSubtitle: { fontSize: 14, color: MESSAGING_COLORS.textSecondary, marginBottom: 16, lineHeight: 20 },
+  loginTitle: { fontSize: 20, fontWeight: '700', color: palette.text, marginBottom: 8 },
+  loginSubtitle: { fontSize: 14, color: palette.subtext, marginBottom: 16, lineHeight: 20 },
   loginBtn: {
     backgroundColor: MESSAGING_COLORS.primary,
     paddingVertical: 14,
@@ -284,12 +289,12 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: chat.surface,
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: chat.border,
     ...(Platform.OS === 'android' && { elevation: 1 }),
     ...(Platform.OS === 'ios' && {
       shadowColor: '#000',
@@ -302,7 +307,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: palette.secondaryBtn,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -311,15 +316,15 @@ const styles = StyleSheet.create({
   avatarImg: { width: 48, height: 48 },
   avatarText: { fontSize: 24 },
   cardBody: { flex: 1, minWidth: 0 },
-  cardName: { fontWeight: '600', fontSize: 16, color: MESSAGING_COLORS.text },
-  cardPreview: { fontSize: 14, color: MESSAGING_COLORS.textSecondary, marginTop: 2 },
+  cardName: { fontWeight: '600', fontSize: 16, color: chat.text },
+  cardPreview: { fontSize: 14, color: chat.textSecondary, marginTop: 2 },
   cardMeta: { alignItems: 'flex-end', marginLeft: 8 },
-  cardTime: { fontSize: 12, color: MESSAGING_COLORS.textSecondary },
+  cardTime: { fontSize: 12, color: chat.textMuted },
   badge: {
     minWidth: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: MESSAGING_COLORS.error,
+    backgroundColor: chat.unreadBadge,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 4,
@@ -327,5 +332,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   empty: { padding: 32, alignItems: 'center' },
-  emptyText: { fontSize: 16, color: MESSAGING_COLORS.textSecondary },
-});
+  emptyText: { fontSize: 16, color: chat.textSecondary },
+  });
+}

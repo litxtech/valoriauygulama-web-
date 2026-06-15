@@ -1,29 +1,39 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SectionList,
   RefreshControl,
   ActivityIndicator,
   Pressable,
   Alert,
   Modal,
+  TextInput,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
-import { staffDeleteConversation, staffListConversations, subscribeToConversationList, staffSetConversationMuted } from '@/lib/messagingApi';
+import {
+  staffDeleteConversation,
+  staffListConversations,
+  subscribeToConversationList,
+  staffSetConversationMuted,
+  staffSetConversationArchived,
+} from '@/lib/messagingApi';
+import { ChatListSwipeRow, type ChatListSwipeAction } from '@/components/chat/ChatListSwipeRow';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ConversationWithMeta } from '@/lib/messaging';
-import { theme } from '@/constants/theme';
-import { CachedImage } from '@/components/CachedImage';
-import { SwipeToDelete } from '@/components/SwipeToDelete';
+import type { ChatThemePalette } from '@/hooks/useScreenTheme';
+import { useChatTheme } from '@/hooks/useScreenTheme';
+import { FlashList } from '@shopify/flash-list';
+import { ChatListItem } from '@/components/chat/ChatListItem';
+import { BulkSelectionHeader } from '@/components/chat/BulkSelectionHeader';
+import { useMessageSelection } from '@/hooks/chat/useMessageSelection';
 
-/** Veritabanındaki sabit grup adı (karşılaştırma için) */
 const ALL_STAFF_GROUP_NAME_DB = 'Tüm Çalışanlar';
 let conversationListCache: ConversationWithMeta[] = [];
 let conversationListCacheUpdatedAt = 0;
@@ -37,102 +47,19 @@ function formatTime(iso: string | null, lang: string): string {
   const d = new Date(iso);
   const now = new Date();
   const loc = lang.startsWith('ar') ? 'ar-SA' : lang.startsWith('tr') ? 'tr-TR' : 'en-US';
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+  }
   if (d.getTime() > now.getTime() - 86400000 * 2) return i18n.t('staffMessagesYesterday');
   return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' });
 }
 
-function ConversationRow({
-  item,
-  onPress,
-  onMutePress,
-  onDelete,
-  staffId,
-}: {
-  item: ConversationWithMeta;
-  onPress: () => void;
-  onMutePress?: () => void;
-  onDelete?: () => void;
-  staffId?: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const unread = item.unread_count ?? 0;
-  const isGroup = item.type === 'group';
-  const isAllStaff = item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME_DB;
-  const displayName = isAllStaff ? t('staffAllStaffGroupName') : item.name || t('messages');
-  const isMuted = item.is_muted ?? false;
-
-  return (
-    <SwipeToDelete onSwipeDelete={() => onDelete?.()}>
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        android_ripple={{ color: theme.colors.borderLight }}
-      >
-        <View style={[styles.avatarWrap, isAllStaff && styles.avatarWrapGroup]}>
-          {isAllStaff ? (
-            <View style={styles.avatarGroup}>
-              <Ionicons name="people" size={24} color={theme.colors.white} />
-            </View>
-          ) : (item.type === 'direct' ? item.other_avatar : item.avatar) ? (
-            <CachedImage
-              uri={(item.type === 'direct' ? item.other_avatar : item.avatar) as string}
-              style={styles.avatarImg}
-              contentFit="cover"
-            />
-          ) : (
-            <Text style={styles.avatarText} numberOfLines={1}>
-              {displayName.charAt(0).toUpperCase()}
-            </Text>
-          )}
-        </View>
-        <View style={styles.rowBody}>
-          <View style={styles.rowTitleRow}>
-            <View style={styles.rowTitleLeft}>
-              {isGroup ? (
-                <View style={styles.groupChip}>
-                  <Ionicons name="people" size={11} color={theme.colors.primary} />
-                  <Text style={styles.groupChipText}>Grup</Text>
-                </View>
-              ) : null}
-              <Text style={styles.rowTitle} numberOfLines={1}>
-                {displayName}
-              </Text>
-            </View>
-            <Text style={styles.rowTime}>{formatTime(item.last_message_at ?? null, i18n.language)}</Text>
-          </View>
-          <Text
-            style={[styles.rowPreview, unread > 0 && styles.rowPreviewUnread]}
-            numberOfLines={1}
-          >
-            {item.last_message_preview || t('messagesNoMessagesYet')}
-          </Text>
-        </View>
-        {isAllStaff && staffId && onMutePress ? (
-          <Pressable
-            onPress={(e) => { e.stopPropagation(); onMutePress(); }}
-            style={styles.muteBtn}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <Ionicons
-              name={isMuted ? 'notifications-off' : 'notifications'}
-              size={22}
-              color={isMuted ? theme.colors.textMuted : theme.colors.primary}
-            />
-          </Pressable>
-        ) : null}
-        {unread > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
-          </View>
-        )}
-      </Pressable>
-    </SwipeToDelete>
-  );
-}
-
 export default function StaffMessagesTabScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const chat = useChatTheme();
+  const styles = useMemo(() => createStaffMessagesStyles(chat), [chat]);
   const { t, i18n } = useTranslation();
   const { staff } = useAuthStore();
   const { setUnreadCount } = useStaffUnreadMessagesStore();
@@ -140,9 +67,22 @@ export default function StaffMessagesTabScreen() {
   const [loading, setLoading] = useState(() => conversationListCache.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [adminMenuVisible, setAdminMenuVisible] = useState(false);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const loadingRef = useRef(false);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLoadAtRef = useRef(0);
+
+  const {
+    selectionMode,
+    selectedIds,
+    selectedCount,
+    enterSelection,
+    exitSelection,
+    toggle,
+    selectAll,
+    isSelected,
+  } = useMessageSelection<ConversationWithMeta>();
 
   useEffect(() => {
     let cancelled = false;
@@ -167,7 +107,7 @@ export default function StaffMessagesTabScreen() {
         conversationListDirty = false;
         setConversations(cachedList);
       } catch {
-        // Sessiz: bozuk cache açılışı engellemesin.
+        /* */
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -177,32 +117,35 @@ export default function StaffMessagesTabScreen() {
     };
   }, []);
 
-  const load = useCallback(async (opts?: { showRefreshing?: boolean; force?: boolean }) => {
-    if (!staff) return;
-    if (loadingRef.current) return;
-    const now = Date.now();
-    if (!opts?.force && now - lastLoadAtRef.current < MIN_LOAD_INTERVAL_MS) return;
-    loadingRef.current = true;
-    lastLoadAtRef.current = now;
-    if (opts?.showRefreshing) setRefreshing(true);
-    try {
-      const list = await staffListConversations(staff.id);
-      conversationListCache = list;
-      conversationListCacheUpdatedAt = Date.now();
-      conversationListDirty = false;
-      setConversations(list);
-      void AsyncStorage.setItem(
-        STAFF_MESSAGES_PERSIST_KEY,
-        JSON.stringify({ conversations: list, updatedAt: conversationListCacheUpdatedAt })
-      ).catch(() => {});
-      const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
-      setUnreadCount(total);
-    } finally {
-      if (opts?.showRefreshing) setRefreshing(false);
-      setLoading(false);
-      loadingRef.current = false;
-    }
-  }, [staff, setUnreadCount]);
+  const load = useCallback(
+    async (opts?: { showRefreshing?: boolean; force?: boolean }) => {
+      if (!staff) return;
+      if (loadingRef.current) return;
+      const now = Date.now();
+      if (!opts?.force && now - lastLoadAtRef.current < MIN_LOAD_INTERVAL_MS) return;
+      loadingRef.current = true;
+      lastLoadAtRef.current = now;
+      if (opts?.showRefreshing) setRefreshing(true);
+      try {
+        const list = await staffListConversations(staff.id);
+        conversationListCache = list;
+        conversationListCacheUpdatedAt = Date.now();
+        conversationListDirty = false;
+        setConversations(list);
+        void AsyncStorage.setItem(
+          STAFF_MESSAGES_PERSIST_KEY,
+          JSON.stringify({ conversations: list, updatedAt: conversationListCacheUpdatedAt })
+        ).catch(() => {});
+        const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+        setUnreadCount(total);
+      } finally {
+        if (opts?.showRefreshing) setRefreshing(false);
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    },
+    [staff, setUnreadCount]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -211,9 +154,7 @@ export default function StaffMessagesTabScreen() {
       if (!hasCache || conversationListDirty || !isCacheFresh) {
         load();
       }
-      if (!staff?.id) {
-        return () => {};
-      }
+      if (!staff?.id) return () => {};
       const sub = subscribeToConversationList(staff.id, () => {
         conversationListDirty = true;
         if (reloadDebounceRef.current) return;
@@ -227,16 +168,34 @@ export default function StaffMessagesTabScreen() {
         if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
         reloadDebounceRef.current = null;
       };
-    }, [setUnreadCount, load, staff?.id])
+    }, [load, staff?.id])
+  );
+
+  const filteredConversations = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter((c) => {
+      const name = (c.name ?? '').toLowerCase();
+      const preview = (c.last_message_preview ?? '').toLowerCase();
+      return name.includes(q) || preview.includes(q);
+    });
+  }, [conversations, searchQuery]);
+
+  const getDisplayName = useCallback(
+    (item: ConversationWithMeta) => {
+      const isAllStaff = item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME_DB;
+      return isAllStaff ? t('staffAllStaffGroupName') : item.name || t('messages');
+    },
+    [t]
   );
 
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!staff?.id) return;
-    const name = item.name || t('messages');
-    Alert.alert(t('messagesDeleteTitle'), t('messagesDeleteBody', { name }), [
+    const name = getDisplayName(item);
+    Alert.alert('Bu sohbet silinsin mi?', name, [
       { text: t('cancel'), style: 'cancel' },
       {
-        text: t('delete'),
+        text: 'Benden sil',
         style: 'destructive',
         onPress: async () => {
           const { error } = await staffDeleteConversation(item.id, staff.id);
@@ -252,25 +211,82 @@ export default function StaffMessagesTabScreen() {
     ]);
   };
 
+  const confirmBulkDelete = () => {
+    if (!staff?.id || selectedIds.length === 0) return;
+    const isAdmin = staff.role === 'admin';
+    Alert.alert(
+      `Seçili ${selectedIds.length} sohbet silinsin mi?`,
+      undefined,
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: 'Benden sil',
+          style: 'destructive',
+          onPress: async () => {
+            const results = await Promise.all(
+              selectedIds.map((id) => staffDeleteConversation(id, staff.id))
+            );
+            const failed = results.filter((r) => r.error).length;
+            const okIds = selectedIds.filter((_, i) => !results[i].error);
+            if (okIds.length) {
+              setConversations((prev) => prev.filter((c) => !okIds.includes(c.id)));
+              conversationListCache = conversationListCache.filter((c) => !okIds.includes(c.id));
+            }
+            exitSelection();
+            if (failed > 0) Alert.alert(t('error'), `${failed} sohbet silinemedi.`);
+          },
+        },
+        ...(isAdmin
+          ? [
+              {
+                text: 'Herkesten sil',
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert(
+                    t('info'),
+                    t('staffChatDeleteGroupAdminHint')
+                  );
+                },
+              },
+            ]
+          : []),
+      ]
+    );
+  };
+
+  useLayoutEffect(() => {
+    if (selectionMode) {
+      navigation.setOptions({
+        headerShown: true,
+        headerTitle: () => null,
+        headerLeft: () => null,
+        headerRight: () => null,
+      });
+      return;
+    }
+    navigation.setOptions({
+      headerShown: true,
+      headerTitle: undefined,
+      headerLeft: undefined,
+      headerRight: () => (
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => setSearchVisible((v) => !v)} hitSlop={10} style={styles.headerIconBtn}>
+            <Ionicons name="search" size={22} color={chat.text} />
+          </Pressable>
+          {staff?.role === 'admin' ? (
+            <Pressable onPress={() => setAdminMenuVisible(true)} hitSlop={10} style={styles.headerIconBtn}>
+              <Ionicons name="ellipsis-horizontal" size={22} color={chat.text} />
+            </Pressable>
+          ) : null}
+        </View>
+      ),
+    });
+  }, [navigation, selectionMode, staff?.role]);
+
   if (!staff) return null;
 
   const allStaffConv = conversations.find((c) => c.type === 'group' && c.name === ALL_STAFF_GROUP_NAME_DB);
   const editableGroupConv = allStaffConv ?? conversations.find((c) => c.type === 'group') ?? null;
-  const otherConvs = conversations.filter((c) => !(allStaffConv && c.id === allStaffConv.id));
-  const sections: { title: string; data: ConversationWithMeta[] }[] = [];
-  if (allStaffConv) sections.push({ title: t('group'), data: [allStaffConv] });
-  if (otherConvs.length) sections.push({ title: t('messages'), data: otherConvs });
-
-  const renderSectionHeader = ({ section }: { section: { title: string } }) => (
-    <View style={styles.sectionHeader}>
-      <Ionicons
-        name={section.title === t('group') ? 'people' : 'chatbubbles-outline'}
-        size={18}
-        color={theme.colors.primary}
-      />
-      <Text style={styles.sectionHeaderText}>{section.title}</Text>
-    </View>
-  );
 
   const openAllStaffChat = () => {
     if (!allStaffConv) {
@@ -285,87 +301,131 @@ export default function StaffMessagesTabScreen() {
       Alert.alert(t('info'), t('messagesGroupEditNotFound'));
       return;
     }
-    router.push({ pathname: '/staff/chat/[id]', params: { id: editableGroupConv.id, openGroupSettings: '1' } });
+    router.push({
+      pathname: '/staff/chat/[id]',
+      params: { id: editableGroupConv.id, openGroupSettings: '1' },
+    });
   };
 
-  const isAdmin = staff?.role === 'admin';
+  const handleSwipeAction = (item: ConversationWithMeta, action: ChatListSwipeAction) => {
+    if (!staff?.id) return;
+    if (action === 'mute') {
+      const next = !(item.is_muted ?? false);
+      void staffSetConversationMuted(item.id, staff.id, next).then(({ error }) => {
+        if (error) Alert.alert(t('error'), error);
+        else {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === item.id ? { ...c, is_muted: next } : c))
+          );
+        }
+      });
+      return;
+    }
+    if (action === 'archive') {
+      void staffSetConversationArchived(item.id, staff.id, true).then(({ error }) => {
+        if (error) Alert.alert(t('error'), error);
+        else setConversations((prev) => prev.filter((c) => c.id !== item.id));
+      });
+      return;
+    }
+    handleDeleteConversation(item);
+  };
 
-  const renderHeaderActions = () => (
-    <>
-      <View style={styles.headerActionRow}>
-        <Pressable
-          onPress={() => router.push('/staff/new-chat')}
-          style={({ pressed }) => [styles.newMessageBtn, pressed && styles.headerBtnPressed]}
-        >
-          <Ionicons name="create-outline" size={18} color={theme.colors.white} />
-          <Text style={styles.newMessageBtnText}>{t('screenNewChat')}</Text>
-        </Pressable>
-        {isAdmin ? (
-          <Pressable
-            onPress={() => setAdminMenuVisible(true)}
-            style={({ pressed }) => [styles.moreBtn, pressed && styles.moreBtnPressed]}
-          >
-            <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.primary} />
-          </Pressable>
-        ) : null}
-      </View>
-    </>
+  const renderRow = ({ item }: { item: ConversationWithMeta }) => (
+    <ChatListSwipeRow
+      enabled={!selectionMode}
+      isMuted={item.is_muted}
+      onAction={(action) => handleSwipeAction(item, action)}
+    >
+      <ChatListItem
+        item={item}
+        displayName={getDisplayName(item)}
+        timeLabel={formatTime(item.last_message_at ?? null, i18n.language)}
+        selected={isSelected(item.id)}
+        selectionMode={selectionMode}
+        onPress={() => {
+          if (selectionMode) {
+            toggle(item.id);
+            return;
+          }
+          router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } });
+        }}
+        onLongPress={() => {
+          if (!selectionMode) enterSelection(item.id);
+          else toggle(item.id);
+        }}
+      />
+    </ChatListSwipeRow>
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: chat.background }]}>
+      {selectionMode ? (
+        <View style={[styles.selectionBar, { paddingTop: insets.top + 4 }]}>
+          <BulkSelectionHeader
+            count={selectedCount}
+            onClose={exitSelection}
+            onDelete={confirmBulkDelete}
+            onSelectAll={() => selectAll(filteredConversations)}
+          />
+        </View>
+      ) : null}
+
+      {searchVisible && !selectionMode ? (
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={18} color={chat.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Personel veya mesaj ara"
+            placeholderTextColor={chat.textMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+            clearButtonMode="while-editing"
+          />
+        </View>
+      ) : null}
+
       {loading && conversations.length === 0 ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <ActivityIndicator size="large" color={chat.accent} />
           <Text style={styles.loadingText}>{t('messagesLoading')}</Text>
         </View>
-      ) : conversations.length === 0 ? (
+      ) : filteredConversations.length === 0 ? (
         <View style={styles.empty}>
-          <View style={styles.emptyIconWrap}>
-            <Ionicons name="chatbubbles-outline" size={48} color={theme.colors.textMuted} />
-          </View>
+          <Ionicons name="chatbubbles-outline" size={48} color={chat.textMuted} />
           <Text style={styles.emptyTitle}>{t('messagesEmptyTitle')}</Text>
           <Text style={styles.emptyText}>{t('messagesEmptyBody')}</Text>
-          {renderHeaderActions()}
         </View>
       ) : (
-        <SectionList
-          sections={sections}
+        <FlashList
+          style={styles.list}
+          data={filteredConversations}
+          estimatedItemSize={76}
           keyExtractor={(item) => item.id}
-          ListHeaderComponent={renderHeaderActions()}
+          renderItem={renderRow}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => load({ showRefreshing: true })}
-              colors={[theme.colors.primary]}
-              tintColor={theme.colors.primary}
+              colors={[chat.accent]}
+              tintColor={chat.accent}
             />
           }
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
-          stickySectionHeadersEnabled={false}
-          renderSectionHeader={renderSectionHeader}
-          renderItem={({ item }) => (
-            <ConversationRow
-              item={item}
-              staffId={staff?.id}
-              onPress={() => router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } })}
-              onDelete={() => handleDeleteConversation(item)}
-              onMutePress={
-                item.type === 'group' && item.name === ALL_STAFF_GROUP_NAME_DB && staff
-                  ? async () => {
-                      const next = !(item.is_muted ?? false);
-                      await staffSetConversationMuted(item.id, staff.id, next);
-                      setConversations((prev) => prev.map((c) => (c.id === item.id ? { ...c, is_muted: next } : c)));
-                      conversationListCache = conversationListCache.map((c) => (c.id === item.id ? { ...c, is_muted: next } : c));
-                      conversationListCacheUpdatedAt = Date.now();
-                    }
-                  : undefined
-              }
-            />
-          )}
         />
       )}
+
+      {!selectionMode ? (
+        <Pressable
+          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+          onPress={() => router.push('/staff/new-chat')}
+        >
+          <Ionicons name="create" size={26} color="#fff" />
+        </Pressable>
+      ) : null}
+
       <Modal visible={adminMenuVisible} transparent animationType="fade" onRequestClose={() => setAdminMenuVisible(false)}>
         <Pressable style={styles.menuOverlay} onPress={() => setAdminMenuVisible(false)}>
           <Pressable style={styles.menuCard} onPress={(e) => e.stopPropagation()}>
@@ -377,7 +437,7 @@ export default function StaffMessagesTabScreen() {
               }}
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
             >
-              <Ionicons name="people-outline" size={18} color={theme.colors.primary} />
+              <Ionicons name="people-outline" size={18} color={chat.accent} />
               <Text style={styles.menuItemText}>{t('teamChat')}</Text>
             </Pressable>
             <Pressable
@@ -387,7 +447,7 @@ export default function StaffMessagesTabScreen() {
               }}
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
             >
-              <Ionicons name="add-circle-outline" size={18} color={theme.colors.primary} />
+              <Ionicons name="add-circle-outline" size={18} color={chat.accent} />
               <Text style={styles.menuItemText}>{t('screenNewGroup')}</Text>
             </Pressable>
             <Pressable
@@ -397,7 +457,7 @@ export default function StaffMessagesTabScreen() {
               }}
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
             >
-              <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+              <Ionicons name="create-outline" size={18} color={chat.accent} />
               <Text style={styles.menuItemText}>{t('messagesGroupEdit')}</Text>
             </Pressable>
           </Pressable>
@@ -407,67 +467,101 @@ export default function StaffMessagesTabScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStaffMessagesStyles(chat: ChatThemePalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.backgroundSecondary,
+    backgroundColor: chat.background,
+  },
+  list: {
+    flex: 1,
+  },
+  selectionBar: {
+    backgroundColor: chat.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: chat.border,
+    zIndex: 20,
+    elevation: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+    gap: 4,
+  },
+  headerIconBtn: {
+    padding: 8,
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: chat.surface,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.border,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: chat.text,
+    padding: 0,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: theme.spacing.md,
+    gap: 12,
   },
   loadingText: {
     fontSize: 15,
-    color: theme.colors.textMuted,
+    color: chat.textMuted,
   },
   listContent: {
-    paddingVertical: theme.spacing.sm,
-    paddingBottom: theme.spacing.xxl,
+    paddingBottom: 88,
   },
-  headerActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: theme.spacing.lg,
-    marginTop: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-    gap: 10,
-  },
-  newMessageBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
+  empty: {
     flex: 1,
-    borderRadius: theme.radius.lg,
-    backgroundColor: theme.colors.primary,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    ...theme.shadows.sm,
-  },
-  newMessageBtnText: {
-    color: theme.colors.white,
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-  headerBtnPressed: {
-    transform: [{ scale: 0.98 }],
-  },
-  moreBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    gap: 12,
   },
-  moreBtnPressed: { transform: [{ scale: 0.96 }] },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: chat.text,
+    textAlign: 'center',
+  },
+  emptyText: {
+    fontSize: 15,
+    color: chat.textSecondary,
+    textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: chat.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  fabPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.96 }],
+  },
   menuOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -475,16 +569,16 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   menuCard: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: chat.surface,
     borderRadius: 14,
     padding: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.border,
   },
   menuTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: chat.text,
     marginBottom: 6,
     paddingHorizontal: 6,
   },
@@ -496,166 +590,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 10,
   },
-  menuItemPressed: { backgroundColor: theme.colors.backgroundSecondary },
-  menuItemText: { fontSize: 14, fontWeight: '600', color: theme.colors.text },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.sm,
-    paddingTop: theme.spacing.md,
-  },
-  sectionHeaderText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.colors.primary,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: theme.spacing.lg,
-    marginHorizontal: theme.spacing.lg,
-    marginVertical: 4,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.lg,
-    ...theme.shadows.sm,
-  },
-  rowPressed: {
-    opacity: 0.9,
-  },
-  avatarWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: theme.colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-    overflow: 'hidden',
-  },
-  avatarImg: {
-    width: 52,
-    height: 52,
-  },
-  avatarWrapGroup: {
-    backgroundColor: theme.colors.primaryDark,
-  },
-  avatarGroup: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: theme.colors.primaryDark,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: theme.colors.white,
-    fontWeight: '700',
-    fontSize: 20,
-  },
-  rowBody: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  rowTitleLeft: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
-  },
-  groupChip: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-  },
-  groupChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: theme.colors.primary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
-  rowTitle: {
-    fontWeight: '700',
-    fontSize: 16,
-    color: theme.colors.text,
-    flex: 1,
-  },
-  rowPreview: {
-    fontSize: 14,
-    color: theme.colors.textMuted,
-    marginTop: 2,
-  },
-  rowPreviewUnread: {
-    fontWeight: '600',
-    color: theme.colors.text,
-  },
-  rowTime: {
-    fontSize: 12,
-    color: theme.colors.textMuted,
-  },
-  badge: {
-    backgroundColor: theme.colors.primary,
-    minWidth: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 8,
-  },
-  badgeText: {
-    color: theme.colors.white,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  muteBtn: {
-    padding: 8,
-    marginLeft: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.xxl,
-  },
-  emptyIconWrap: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: theme.colors.borderLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: theme.spacing.xl,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: theme.colors.text,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 15,
-    color: theme.colors.textMuted,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-});
+  menuItemPressed: { backgroundColor: chat.background },
+  menuItemText: { fontSize: 14, fontWeight: '600', color: chat.text },
+  });
+}

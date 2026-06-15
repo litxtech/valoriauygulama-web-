@@ -122,3 +122,13 @@ export function isPublicWebPath(pathname: string): boolean {
   if (p === '/maliye' || p.startsWith('/maliye/')) return true;
   return resolvePublicWebRoute(pathname) != null;
 }
+
+/** Vercel statik export: expo-router bazen [slug] paramını boş bırakır; adres çubuğundan oku. */
+export function parsePublicMenuSlugFromLocation(
+  pathname?: string | null,
+  search?: string | null
+): string {
+  const route = resolvePublicWebRoute(pathname ?? '', search ?? '');
+  if (route?.kind !== 'menu') return '';
+  return route.slug.trim().toLowerCase();
+}

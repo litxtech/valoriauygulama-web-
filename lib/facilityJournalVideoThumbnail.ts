@@ -2,7 +2,7 @@ import { extractChatVideoThumbnailUri, ensureChatVideoLocalUri } from '@/lib/cha
 import { FACILITY_JOURNAL_MEDIA_BUCKET } from '@/lib/facilityJournalMedia';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 
-/** Tesis günlüğü videosu için JPEG poster üret ve storage’a yükle. */
+/** Kullanım kaydı videosu için JPEG poster üret ve storage’a yükle. */
 export async function extractAndUploadFacilityJournalVideoThumbnail(
   localVideoUri: string,
   organizationId: string

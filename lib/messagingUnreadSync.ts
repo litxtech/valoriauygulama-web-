@@ -2,7 +2,8 @@
  * Tab menü mesaj rozeti — sohbet listesine girmeden güncelleme (realtime + push).
  */
 import { supabase } from '@/lib/supabase';
-import { guestListConversations, staffListConversations } from '@/lib/messagingApi';
+import { guestListConversations } from '@/lib/messagingApi';
+import { fetchStaffMessagingUnreadCount } from '@/lib/messagingUnreadCount';
 import { useAuthStore } from '@/stores/authStore';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
@@ -72,17 +73,25 @@ export function bumpMessagingUnreadOnPush(payload: Record<string, unknown> | und
   if (token) scheduleGuestMessagingUnreadRefresh(token, 80);
 }
 
+export type MessagingUnreadScope =
+  | { kind: 'staff'; staffId: string }
+  | { kind: 'guest'; guestId: string };
+
 /**
- * messages / conversation_participants değişince tab rozeti güncelle.
- * scopeKey: staff id veya guest app_token (kanal adı için).
+ * Katılımcı satırı değişince tab rozeti güncelle (global messages dinleyicisi yok — pil/ısı).
  */
-export function subscribeMessagingUnreadLive(scopeKey: string, onUpdate: () => void): () => void {
+export function subscribeMessagingUnreadLive(scope: MessagingUnreadScope, onUpdate: () => void): () => void {
+  const participantId = scope.kind === 'staff' ? scope.staffId : scope.guestId;
   const channel = supabase
-    .channel(`messaging_unread_${scopeKey}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => onUpdate())
+    .channel(`messaging_unread_${participantId}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'conversation_participants' },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${participantId}`,
+      },
       () => onUpdate()
     )
     .subscribe();
@@ -93,8 +102,7 @@ export function subscribeMessagingUnreadLive(scopeKey: string, onUpdate: () => v
 
 /** Personel: tam liste yenileme (sohbet listesi ekranı). */
 export async function refreshStaffMessagingUnreadFull(staffId: string): Promise<number> {
-  const list = await staffListConversations(staffId);
-  const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+  const total = await fetchStaffMessagingUnreadCount(staffId);
   useStaffUnreadMessagesStore.getState().setUnreadCount(total);
   return total;
 }

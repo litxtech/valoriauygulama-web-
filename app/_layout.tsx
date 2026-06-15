@@ -1,13 +1,24 @@
 import '@/lib/cryptoPolyfill';
 import '@/lib/weakRefPolyfill';
-import i18n, { LANG_STORAGE_KEY, LANGUAGES } from '../i18n';
+import { registerTransientRejectionFilter } from '@/lib/registerTransientRejectionFilter';
+
+registerTransientRejectionFilter();
+import i18n, { LANG_STORAGE_KEY, LANGUAGES, ensureI18nLanguage, changeAppLanguage, type LangCode } from '../i18n';
 import { getDeviceLanguageCode } from '@/lib/deviceLocale';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { saveLastRoute } from '@/lib/lastRoutePersistence';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState, View, Animated, StyleSheet, Platform, LayoutAnimation, I18nManager, InteractionManager } from 'react-native';
+import {
+  AppState,
+  Platform,
+  LayoutAnimation,
+  I18nManager,
+  View,
+  Animated,
+  StyleSheet,
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
@@ -36,6 +47,7 @@ import {
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
+import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import {
   bumpMessagingUnreadOnPush,
   isMessagePushPayload,
@@ -43,16 +55,24 @@ import {
   scheduleStaffMessagingUnreadRefresh,
 } from '@/lib/messagingUnreadSync';
 import { useStaffBoardStore } from '@/stores/staffBoardStore';
-import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
+import {
+  playForegroundNotificationSound,
+  scheduleStaffNotificationSoundSync,
+} from '@/lib/notificationSoundForeground';
+import { markNotificationEventOpenedFromPayload } from '@/lib/notificationEventLog';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { AppScreenshotPolicyProvider } from '@/components/AppScreenshotPolicyProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PremiumThemeProvider } from '@/contexts/PremiumThemeContext';
 import { useTranslation } from 'react-i18next';
 import { initChatVideoUploadSession } from '@/lib/chatVideoUploadSession';
 import { registerBackgroundNotificationTask } from '@/lib/backgroundNotificationTask';
-import { safeRouterReplace } from '@/lib/safeRouter';
+import { safeRouterReplace, safeRouterPush } from '@/lib/safeRouter';
+import { dismissTipSheetsForPaymentReturn } from '@/stores/staffTipPaymentStore';
 import { enableFreeze } from 'react-native-screens';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import {
   clearPendingNotificationData,
   navigateFromNotificationPush,
@@ -146,10 +166,17 @@ function AppIconBadgeSync() {
   useEffect(() => {
     if (Platform.OS === 'web' || isExpoGo) return;
     storeSyncedRef.current = false;
-    void refreshBadgeCountsFromStores().finally(() => {
-      storeSyncedRef.current = true;
-      pushBadgeFromStores();
-    });
+    const run = () => {
+      void refreshBadgeCountsFromStores().finally(() => {
+        storeSyncedRef.current = true;
+        pushBadgeFromStores();
+      });
+    };
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(run, { delayMs: 900 });
+      return () => task.cancel();
+    }
+    run();
   }, [staff?.id]);
 
   useEffect(() => {
@@ -174,43 +201,21 @@ function AppIconBadgeSync() {
 
 function RootLayoutInner() {
   const { t } = useTranslation();
+  const router = useRouter();
+  const setQR = useGuestFlowStore((s) => s.setQR);
+  const loading = useAuthStore((s) => s.loading);
+  const user = useAuthStore((s) => s.user);
+  const staff = useAuthStore((s) => s.staff);
+  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
+  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
+  const authBootPending =
+    loading || (!!user && !staffCheckComplete && !staffCheckUnavailable);
+
   const [showSplashLogo, setShowSplashLogo] = useState(Platform.OS !== 'web');
   const openingOverlayOpacity = useRef(new Animated.Value(0)).current;
   const dotPhase = useRef(new Animated.Value(0)).current;
   const dotTopY = dotPhase.interpolate({ inputRange: [0, 1], outputRange: [-9, 9] });
   const dotBottomY = dotPhase.interpolate({ inputRange: [0, 1], outputRange: [9, -9] });
-  const router = useRouter();
-  const setQR = useGuestFlowStore((s) => s.setQR);
-  const user = useAuthStore((s) => s.user);
-  const staff = useAuthStore((s) => s.staff);
-  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
-  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
-  const authBootPending = !!user && !staffCheckComplete && !staffCheckUnavailable;
-
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    void initPushNotificationsPresentation();
-    void registerBackgroundNotificationTask();
-  }, []);
-
-  // LayoutAnimation.configureNext native callback sızıntısını önle (yazarken donma / 501 pending callbacks)
-  useEffect(() => {
-    if (typeof LayoutAnimation?.configureNext === 'function') {
-      const noop = () => {};
-      LayoutAnimation.configureNext = noop;
-    }
-  }, []);
-
-  // Web: body arka planı (beyaz ekran önleme) ve splash atla
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      if (typeof document !== 'undefined') document.body.style.backgroundColor = WEB_BG;
-      setShowSplashLogo(false);
-      return () => {
-        if (typeof document !== 'undefined') document.body.style.backgroundColor = '';
-      };
-    }
-  }, []);
   const loopAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   const fadeOutOverlay = useRef(() => {
     if (Platform.OS === 'web') return;
@@ -218,12 +223,11 @@ function RootLayoutInner() {
     loopAnimRef.current = null;
     dotPhase.stopAnimation?.();
     const fadeOutMs = Platform.OS === 'android' ? 32 : 40;
-    Animated.timing(openingOverlayOpacity, { toValue: 0, duration: fadeOutMs, useNativeDriver: true }).start(() =>
-      setShowSplashLogo(false)
+    Animated.timing(openingOverlayOpacity, { toValue: 0, duration: fadeOutMs, useNativeDriver: true }).start(
+      () => setShowSplashLogo(false)
     );
   }).current;
 
-  // Açılış: ortada 2 nokta — oturum/personel kontrolü bitene kadar (girişli kullanıcıda) açık kalır
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const isAndroid = Platform.OS === 'android';
@@ -264,21 +268,55 @@ function RootLayoutInner() {
       return;
     }
     const quickMs = user ? 0 : 120;
-    const t = setTimeout(() => fadeOutOverlay(), quickMs);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => fadeOutOverlay(), quickMs);
+    return () => clearTimeout(timer);
   }, [authBootPending, user, fadeOutOverlay, openingOverlayOpacity, dotPhase]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const run = () => {
+      void initPushNotificationsPresentation();
+      void registerBackgroundNotificationTask();
+    };
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(run, { delayMs: 1200 });
+      return () => task.cancel();
+    }
+    run();
+  }, []);
+
+  // LayoutAnimation.configureNext native callback sızıntısını önle (yazarken donma / 501 pending callbacks)
+  useEffect(() => {
+    if (typeof LayoutAnimation?.configureNext === 'function') {
+      const noop = () => {};
+      LayoutAnimation.configureNext = noop;
+    }
+  }, []);
+
+  // Web: body arka planı (beyaz ekran önleme) ve splash atla
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      if (typeof document !== 'undefined') document.body.style.backgroundColor = WEB_BG;
+      setShowSplashLogo(false);
+      return () => {
+        if (typeof document !== 'undefined') document.body.style.backgroundColor = '';
+      };
+    }
+  }, []);
 
   // Dil: Önce kaydedilmiş tercih, yoksa cihaz dili; böylece uygulama tam seçilen dilde açılır
   // Arapça için RTL: dil değişince yönü güncelle (uygulama yeniden başlatıldığında tam uygulanır)
   useEffect(() => {
     const supportedCodes = new Set(LANGUAGES.map((l) => l.code));
-    AsyncStorage.getItem(LANG_STORAGE_KEY).then((saved) => {
+    AsyncStorage.getItem(LANG_STORAGE_KEY).then(async (saved) => {
       const lang =
         saved && supportedCodes.has(saved as (typeof LANGUAGES)[number]['code'])
-          ? saved
+          ? (saved as LangCode)
           : getDeviceLanguageCode();
-      if (i18n.language !== lang) i18n.changeLanguage(lang);
+      await ensureI18nLanguage(lang);
+      if (i18n.language !== lang) await changeAppLanguage(lang);
       if (!saved) AsyncStorage.setItem(LANG_STORAGE_KEY, lang);
+      void import('@/lib/syncGuestAppLanguage').then(({ syncGuestAppLanguage }) => syncGuestAppLanguage(lang));
       // Arapça RTL: Platform.web'de I18nManager yok
       if (Platform.OS !== 'web' && typeof I18nManager?.forceRTL === 'function') {
         const isRTL = lang === 'ar';
@@ -304,7 +342,13 @@ function RootLayoutInner() {
   }, []);
 
   useEffect(() => {
-    initChatVideoUploadSession();
+    if (Platform.OS === 'web') return;
+    const run = () => initChatVideoUploadSession();
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(run, { delayMs: 2000 });
+      return () => task.cancel();
+    }
+    run();
   }, []);
 
   // iOS: push token listener at app start (SDK 53+ workaround)
@@ -314,21 +358,22 @@ function RootLayoutInner() {
     return cleanup;
   }, []);
 
-  // Staff push token (beğeni/yorum bildirimi)
+  // Staff push token — oturum kontrolü bitince (Supabase 522 dalgasında açılışı yormasın)
   useEffect(() => {
-    if (!staff) return;
+    if (!staff || !staffCheckComplete) return;
     const run = () => {
-      // savePushTokenForStaff içinde: önce local token, yoksa izin iste + yeni token al.
-      // iOS'ta token dinleyiciyle gecikmeli gelebileceği için burada token şartına bağlamıyoruz.
       savePushTokenForStaff(staff.id).catch((e) => log.warn('RootLayout', 'push token kayıt', e));
+      scheduleStaffNotificationSoundSync();
     };
-    run();
-    // iOS: token bazen gecikmeli gelir; uygulama ön plana gelince tekrar dene
+    const bootDelay = setTimeout(run, 1500);
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') run();
     });
-    return () => sub.remove();
-  }, [staff?.id]);
+    return () => {
+      clearTimeout(bootDelay);
+      sub.remove();
+    };
+  }, [staff?.id, staffCheckComplete]);
 
   // iOS: arka planda gelen push rozeti, uygulama açılınca store 0 ile ezilmesin diye son bildirimden tekrar uygula
   useEffect(() => {
@@ -345,6 +390,7 @@ function RootLayoutInner() {
 
   const handleNotificationResponse = (data: Record<string, unknown> | undefined) => {
     if (!data || typeof data !== 'object') return;
+    void markNotificationEventOpenedFromPayload(data);
     stashPendingNotificationData(data);
     void navigateFromNotificationPush(router, data).finally(() => clearPendingNotificationData());
   };
@@ -355,15 +401,22 @@ function RootLayoutInner() {
     if (Platform.OS === 'web') return;
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
-    void getLastNotificationResponseAsync().then((response) => {
-      if (response?.notification) {
-        void applyBadgeFromExpoNotificationPayload(
-          response.notification as import('expo-notifications').Notification
-        );
-      }
-      const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
-      handleNotificationResponse(data);
-    });
+    const run = () => {
+      void getLastNotificationResponseAsync().then((response) => {
+        if (response?.notification) {
+          void applyBadgeFromExpoNotificationPayload(
+            response.notification as import('expo-notifications').Notification
+          );
+        }
+        const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
+        handleNotificationResponse(data);
+      });
+    };
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(run, { delayMs: 700 });
+      return () => task.cancel();
+    }
+    run();
   }, [router]);
 
   useEffect(() => {
@@ -385,10 +438,15 @@ function RootLayoutInner() {
         notification.request.content.data && typeof notification.request.content.data === 'object'
           ? (notification.request.content.data as Record<string, unknown>)
           : undefined;
+      const { staff } = useAuthStore.getState();
+      if (staff?.organization_id) {
+        void playForegroundNotificationSound(payload, staff.organization_id);
+      } else {
+        void playForegroundNotificationSound(payload);
+      }
       if (isMessagePushPayload(payload)) {
         bumpMessagingUnreadOnPush(payload);
       }
-      const { staff } = useAuthStore.getState();
       if (staff) {
         void (async () => {
           await useStaffNotificationStore.getState().refresh();
@@ -431,6 +489,23 @@ function RootLayoutInner() {
   useEffect(() => {
     const handleUrl = async (url: string) => {
       if (!url || typeof url !== 'string') return;
+
+      // Stripe bahşiş / QR ödeme sonrası uygulamaya dönüş
+      if (/valoria:\/\/payment\/(success|cancel)/i.test(url) || /\/payment\/(success|cancel)/i.test(url)) {
+        const parsed = Linking.parse(url);
+        const path = ((parsed.path ?? '') as string).replace(/^\/+/, '') || '';
+        const status = path.startsWith('payment/cancel') || url.includes('/cancel') ? 'cancel' : 'success';
+        const q = (parsed.queryParams ?? {}) as Record<string, string | string[] | undefined>;
+        const id = typeof q.id === 'string' ? q.id : Array.isArray(q.id) ? q.id[0] : '';
+        const token = typeof q.token === 'string' ? q.token : Array.isArray(q.token) ? q.token[0] : '';
+        dismissTipSheetsForPaymentReturn();
+        safeRouterPush(router, {
+          pathname: `/payment/${status}`,
+          params: { id: id ?? '', token: token ?? '' },
+        });
+        return;
+      }
+
       if (url.includes('auth/callback') && url.includes('#')) {
         const hashStart = url.indexOf('#') + 1;
         const hash = url.slice(hashStart);
@@ -603,12 +678,14 @@ function RootLayoutInner() {
       }
     }
 
-    Linking.getInitialURL().then((url) => {
-      if (url) handleUrl(url);
-    });
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url) handleUrl(url);
+      })
+      .catch((e) => log.warn('RootLayout', 'getInitialURL', e));
     const sub = Linking.addEventListener('url', ({ url }) => handleUrl(url));
     return () => sub.remove();
-  }, []);
+  }, [router]);
 
   return (
     <React.Fragment>
@@ -617,6 +694,7 @@ function RootLayoutInner() {
       <LastRouteTracker />
       <AppIconBadgeSync />
       <OfflineBanner />
+      <AppScreenshotPolicyProvider />
       {showSplashLogo ? (
         <Animated.View
           style={[
@@ -633,7 +711,12 @@ function RootLayoutInner() {
           </View>
         </Animated.View>
       ) : null}
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          ...(Platform.OS === 'android' ? { orientation: 'all' as const } : {}),
+        }}
+      >
         <Stack.Screen name="index" />
         <Stack.Screen name="[id]" options={{ headerShown: false }} />
         <Stack.Screen name="room-select" options={{ headerShown: false }} />
@@ -648,6 +731,7 @@ function RootLayoutInner() {
         <Stack.Screen name="sözleşme" options={{ headerShown: false }} />
         <Stack.Screen name="maliye" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
+        <Stack.Screen name="payment" options={{ headerShown: false }} />
         <Stack.Screen
           name="admin"
           options={{
@@ -664,34 +748,6 @@ function RootLayoutInner() {
   );
 }
 
-export default function RootLayout() {
-  const queryClientRef = useRef<QueryClient | null>(null);
-  if (!queryClientRef.current) {
-    queryClientRef.current = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: 1,
-          staleTime: 60_000,
-          gcTime: 10 * 60_000,
-          refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
-          refetchOnMount: false,
-        },
-        mutations: { retry: 0 },
-      },
-    });
-  }
-  return (
-    <ErrorBoundary>
-      <SafeAreaProvider>
-        <QueryClientProvider client={queryClientRef.current}>
-          <RootLayoutInner />
-        </QueryClientProvider>
-      </SafeAreaProvider>
-    </ErrorBoundary>
-  );
-}
-
 const styles = StyleSheet.create({
   splashIntroOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -700,7 +756,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  /** Android: tam ekran mavi yok; rota hemen okunur, noktalar yarı saydam hale üstte */
   splashIntroOverlayAndroid: {
     backgroundColor: 'transparent',
   },
@@ -724,3 +779,33 @@ const styles = StyleSheet.create({
     height: 16,
   },
 });
+
+export default function RootLayout() {
+  const queryClientRef = useRef<QueryClient | null>(null);
+  if (!queryClientRef.current) {
+    queryClientRef.current = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: 1,
+          staleTime: 60_000,
+          gcTime: 10 * 60_000,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+          refetchOnMount: false,
+        },
+        mutations: { retry: 0 },
+      },
+    });
+  }
+  return (
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <QueryClientProvider client={queryClientRef.current}>
+          <PremiumThemeProvider>
+            <RootLayoutInner />
+          </PremiumThemeProvider>
+        </QueryClientProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
+  );
+}

@@ -5,7 +5,10 @@
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import type { BulkGuestTarget, BulkStaffTarget, BulkCategory } from '@/lib/notifications';
 import { log } from '@/lib/logger';
-import { filterStaffIdsByNotificationType } from '@/lib/staffNotificationFilter';
+import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
+import { filterStaffRecipients } from '@/lib/staffNotificationFilter';
+import { enrichNotificationPushData } from '@/lib/notificationSoundPush';
+import { emergencyNotificationCopy } from '@/lib/emergencyNotificationsI18n';
 
 const EDGE_FN_PUSH = 'send-expo-push';
 const EDGE_FN_NOTIFY_ADMINS = 'notify-admins';
@@ -37,14 +40,24 @@ async function sendExpoPushToRecipients(params: {
   title: string;
   body?: string | null;
   data?: Record<string, unknown>;
+  notificationType?: string | null;
+  category?: string | null;
 }): Promise<void> {
-  const { guestIds = [], staffIds = [], title, body, data } = params;
+  const { guestIds = [], staffIds = [], title, body, data, notificationType, category } = params;
   if (guestIds.length === 0 && staffIds.length === 0) return;
+  const enrichedData = enrichNotificationPushData({
+    notificationType:
+      notificationType ??
+      (typeof data?.notificationType === 'string' ? data.notificationType : null) ??
+      (typeof data?.notification_type === 'string' ? data.notification_type : null),
+    category,
+    data,
+  });
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const jwt = sessionData.session?.access_token ?? supabaseAnonKey;
     const { data: result, error } = await supabase.functions.invoke(EDGE_FN_PUSH, {
-      body: { guestIds, staffIds, title, body, data },
+      body: { guestIds, staffIds, title, body, data: enrichedData },
       headers: { Authorization: `Bearer ${jwt}` },
     });
     if (error) {
@@ -113,7 +126,7 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   if (!guestId && !staffId) return { error: 'guestId veya staffId gerekli' };
 
   const originalStaffIds = staffId ? [typeof staffId === 'string' ? staffId : String(staffId)] : [];
-  const staffIds = await filterStaffIdsByNotificationType(originalStaffIds, notificationType);
+  const staffIds = await filterStaffRecipients(originalStaffIds, notificationType);
   const guestIds = guestId ? [typeof guestId === 'string' ? guestId : String(guestId)] : [];
   const resolvedStaffId = staffIds.length > 0 ? staffIds[0] : null;
 
@@ -137,16 +150,14 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   // Push'u insert sonucundan bağımsız dene: RLS/insert hata verse bile (ör. beğeni/yorum) cihaz bildirimi kaybolmasın
   if (staffIds.length > 0 || guestIds.length > 0) {
     try {
-      const pushData: Record<string, unknown> = {
-        ...(data && typeof data === 'object' ? data : {}),
-        ...(notificationType ? { notificationType } : {}),
-      };
       await sendExpoPushToRecipients({
         guestIds: guestIds.length ? guestIds : undefined,
         staffIds: staffIds.length ? staffIds : undefined,
         title,
         body,
-        data: pushData,
+        data,
+        notificationType,
+        category,
       });
     } catch (e) {
       log.warn('notificationService', 'push after sendNotification', e);
@@ -169,8 +180,11 @@ export async function sendBulkToGuests(params: {
   body: string;
   category: BulkCategory;
   createdByStaffId: string;
+  notificationType?: string;
+  data?: Record<string, unknown>;
 }): Promise<{ count: number; error?: string }> {
-  const { target, roomNumbers, organizationId, title, body, category, createdByStaffId } = params;
+  const { target, roomNumbers, organizationId, title, body, category, createdByStaffId, notificationType, data } =
+    params;
 
   const selectFields = target === 'long_stay' ? 'id, check_in_at, check_out_at' : 'id';
   let query = supabase
@@ -218,8 +232,8 @@ export async function sendBulkToGuests(params: {
     title,
     body,
     category: 'bulk',
-    notification_type: `bulk_${category}`,
-    data: {},
+    notification_type: notificationType ?? `bulk_${category}`,
+    data: data ?? {},
     created_by: createdByStaffId,
     sent_via: 'in_app',
     sent_at: new Date().toISOString(),
@@ -228,7 +242,14 @@ export async function sendBulkToGuests(params: {
   const { error: insErr } = await postNotificationsReturnMinimal(rows);
   if (insErr) return { count: 0, error: insErr.message };
   const guestIds = list.map((g: { id: string }) => g.id);
-  sendExpoPushToRecipients({ guestIds, title, body, data: { screen: 'notifications' } }).catch(() => {});
+  sendExpoPushToRecipients({
+    guestIds,
+    title,
+    body,
+    data: data ?? { screen: 'notifications' },
+    notificationType: notificationType ?? `bulk_${category}`,
+    category: 'bulk',
+  }).catch(() => {});
   return { count: rows.length };
 }
 
@@ -252,7 +273,7 @@ export async function notifyStaffBoardAnnouncementPush(params: {
   const { data: staffList, error } = await query;
   if (error || !staffList?.length) return;
 
-  const staffIds = await filterStaffIdsByNotificationType(
+  const staffIds = await filterStaffRecipients(
     staffList.map((s: { id: string }) => s.id),
     'staff_board_announcement'
   );
@@ -280,8 +301,19 @@ export async function sendBulkToStaff(params: {
   notificationType?: string;
   category?: 'emergency' | 'guest' | 'staff' | 'admin' | 'bulk';
   data?: Record<string, unknown>;
+  excludeStaffIds?: string[];
 }): Promise<{ count: number; error?: string }> {
-  const { target, organizationId, title: titleParam, body, createdByStaffId, notificationType, category, data } = params;
+  const {
+    target,
+    organizationId,
+    title: titleParam,
+    body,
+    createdByStaffId,
+    notificationType,
+    category,
+    data,
+    excludeStaffIds,
+  } = params;
   const title = (titleParam && titleParam.trim()) || 'Toplu Duyuru';
   const resolvedNotificationType = (notificationType && notificationType.trim()) || 'bulk_staff';
 
@@ -300,10 +332,11 @@ export async function sendBulkToStaff(params: {
 
   const { data: staffList, error: fetchError } = await query;
   if (fetchError) return { count: 0, error: fetchError.message };
-  const list = staffList ?? [];
+  const excludeSet = new Set((excludeStaffIds ?? []).filter(Boolean));
+  const list = (staffList ?? []).filter((s: { id: string }) => !excludeSet.has(s.id));
   if (list.length === 0) return { count: 0 };
 
-  const filteredStaffIds = await filterStaffIdsByNotificationType(
+  const filteredStaffIds = await filterStaffRecipients(
     list.map((s: { id: string }) => s.id),
     resolvedNotificationType
   );
@@ -356,7 +389,7 @@ export async function sendNotificationToStaffIds(params: {
   if (unique.length === 0) return { count: 0 };
 
   const resolvedNotificationType = (notificationType && notificationType.trim()) || 'staff';
-  const filteredStaffIds = await filterStaffIdsByNotificationType(unique, resolvedNotificationType);
+  const filteredStaffIds = await filterStaffRecipients(unique, resolvedNotificationType);
   if (filteredStaffIds.length === 0) return { count: 0 };
 
   const rows = filteredStaffIds.map((staffId) => ({
@@ -498,8 +531,13 @@ export async function notifyAdmins(params: {
     if (r?.sent != null) log.info('notificationService', 'admin push', { sent: r.sent, failed: r.failed ?? 0 });
     return { sent: r?.sent, failed: r?.failed };
   } catch (e) {
+    const msg = (e as Error).message ?? '';
+    if (isSupabaseUnavailableError(msg)) {
+      log.warn('notificationService', 'notifyAdmins exception skipped (geçici ağ/522)');
+      return { sent: 0, failed: 0 };
+    }
     log.warn('notificationService', 'notifyAdmins exception', e);
-    return { error: (e as Error).message };
+    return { error: msg };
   }
 }
 
@@ -537,7 +575,7 @@ export async function notifyBreakfastUploaded(params: {
 
   if (approverIds.length === 0) return;
 
-  const filteredIds = await filterStaffIdsByNotificationType(approverIds, 'breakfast_confirmation_uploaded');
+  const filteredIds = await filterStaffRecipients(approverIds, 'breakfast_confirmation_uploaded');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({
@@ -586,7 +624,7 @@ export async function notifyBreakfastApproved(params: {
   const title = 'Kahvaltı Teyidi Onaylandı';
   const body = `${recordDate} tarihli kahvaltı teyidiniz ${approverName} tarafından onaylandı.`;
 
-  const filteredIds = await filterStaffIdsByNotificationType([kitchenStaffId], 'breakfast_confirmation_approved');
+  const filteredIds = await filterStaffRecipients([kitchenStaffId], 'breakfast_confirmation_approved');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({
@@ -627,7 +665,7 @@ export async function notifyBreakfastRejected(params: {
   const title = 'Kahvaltı Uygun Görülmedi';
   const body = `${recordDate} tarihli kahvaltı teyidiniz reddedildi. Neden: ${reason.slice(0, 100)}`;
 
-  const filteredIds = await filterStaffIdsByNotificationType([kitchenStaffId], 'breakfast_confirmation_rejected');
+  const filteredIds = await filterStaffRecipients([kitchenStaffId], 'breakfast_confirmation_rejected');
   if (filteredIds.length === 0) return;
 
   const rows = filteredIds.map((staffId) => ({
@@ -656,52 +694,68 @@ export async function notifyBreakfastRejected(params: {
   }).catch(() => {});
 }
 
-/** Acil durum: tüm checked_in misafirlere gönder */
+/** Acil durum: tüm checked_in misafirlere gönder (her misafir kendi contract_lang dilinde) */
 export async function sendEmergencyToAllGuests(params: {
   notificationType: string;
-  title: string;
-  body: string;
+  /** @deprecated Metinler misafir diline göre otomatik üretilir */
+  title?: string;
+  body?: string;
   organizationId?: string | null;
   createdByStaffId?: string | null;
 }): Promise<{ count: number; error?: string }> {
   let query = supabase
     .from('guests')
-    .select('id')
+    .select('id, contract_lang')
     .eq('status', 'checked_in');
   if (params.organizationId) query = query.eq('organization_id', params.organizationId);
   const { data: guests, error: fetchError } = await query;
   if (fetchError) return { count: 0, error: fetchError.message };
-  const list = guests ?? [];
+  const list = (guests ?? []) as { id: string; contract_lang: string | null }[];
   if (list.length === 0) return { count: 0 };
 
-  const rows = list.map((g: { id: string }) => ({
-    guest_id: g.id,
-    staff_id: null,
-    title: params.title,
-    body: params.body,
+  const pushData = {
+    screen: 'notifications',
     category: 'emergency',
-    notification_type: params.notificationType,
-    data: {},
-    created_by: params.createdByStaffId ?? null,
-    sent_via: 'both',
-    sent_at: new Date().toISOString(),
-  }));
+    emergency: true,
+    notificationType: params.notificationType,
+    androidChannelId: 'valoria_emergency_alert',
+    sound: 'emergency_alert.wav',
+  };
+
+  const rows = list.map((g) => {
+    const { title, body } = emergencyNotificationCopy(params.notificationType, g.contract_lang);
+    return {
+      guest_id: g.id,
+      staff_id: null,
+      title,
+      body,
+      category: 'emergency' as const,
+      notification_type: params.notificationType,
+      data: {},
+      created_by: params.createdByStaffId ?? null,
+      sent_via: 'both' as const,
+      sent_at: new Date().toISOString(),
+    };
+  });
 
   const { error: insErr } = await postNotificationsReturnMinimal(rows);
   if (insErr) return { count: 0, error: insErr.message };
-  const guestIds = list.map((g: { id: string }) => g.id);
-  sendExpoPushToRecipients({
-    guestIds,
-    title: params.title,
-    body: params.body,
-    data: {
-      screen: 'notifications',
-      category: 'emergency',
-      emergency: true,
-      notificationType: params.notificationType,
-      androidChannelId: 'valoria_emergency_alert',
-      sound: 'emergency_alert.wav',
-    },
-  }).catch(() => {});
+
+  const byLang = new Map<string, string[]>();
+  for (const g of list) {
+    const lang = (g.contract_lang ?? 'tr').split('-')[0]?.toLowerCase() ?? 'tr';
+    const ids = byLang.get(lang) ?? [];
+    ids.push(g.id);
+    byLang.set(lang, ids);
+  }
+  for (const [lang, guestIds] of byLang) {
+    const { title, body } = emergencyNotificationCopy(params.notificationType, lang);
+    sendExpoPushToRecipients({
+      guestIds,
+      title,
+      body,
+      data: pushData,
+    }).catch(() => {});
+  }
   return { count: rows.length };
 }

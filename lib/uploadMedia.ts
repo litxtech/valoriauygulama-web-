@@ -22,7 +22,7 @@ function dataUriToArrayBuffer(uri: string): ArrayBuffer {
 
 export type UriToArrayBufferOptions = {
   /** Video için base64 okuma yolu kullanılmaz (çok yavaş / bellek); `content://` kopyası .mp4 olur */
-  mediaKind?: 'image' | 'video';
+  mediaKind?: 'image' | 'video' | 'audio';
 };
 
 const LARGE_FOR_BASE64 = 4 * 1024 * 1024;
@@ -68,7 +68,7 @@ export async function uriToArrayBuffer(uri: string, options?: UriToArrayBufferOp
     if (Platform.OS === 'android' && normalized.startsWith('content://')) {
       try {
         /** content://…/video/… çoğu zaman .mp4 içermez; video için her zaman .mp4 kopyala */
-        const ext = mediaKind === 'video' ? '.mp4' : '.jpg';
+        const ext = mediaKind === 'video' ? '.mp4' : mediaKind === 'audio' ? '.m4a' : '.jpg';
         const tempPath = `${FileSystem.cacheDirectory}upload_temp_${Date.now()}${ext}`;
         await FileSystem.copyAsync({ from: normalized, to: tempPath });
         uriToRead = tempPath;
@@ -166,7 +166,7 @@ export async function copyAndroidContentUriToCacheForPreview(uri: string, kind: 
 }
 
 /** Galeri/kamera URI → cache `file://` (iOS ph://, Android content:// dahil). */
-export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'video'): Promise<string> {
+export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'video' | 'audio'): Promise<string> {
   const normalized = (uri || '').trim();
   if (!normalized) return normalized;
   if (normalized.startsWith('file://')) return normalized;
@@ -179,7 +179,7 @@ export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'vide
   if (!base) {
     throw new Error('Önbellek dizini yok. Uygulamayı yeniden başlatıp tekrar deneyin.');
   }
-  const ext = kind === 'video' ? 'mp4' : 'jpg';
+  const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'm4a' : 'jpg';
   const name = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 11)}.${ext}`;
   const dest = `${base}${name}`;
   await FileSystem.copyAsync({ from: normalized, to: dest });
@@ -221,4 +221,23 @@ export function getMimeAndExt(
   if (lower.includes('.png')) return { mime: 'image/png', ext: 'png' };
   if (lower.includes('.webp')) return { mime: 'image/webp', ext: 'webp' };
   return { mime: 'image/jpeg', ext: 'jpg' };
+}
+
+/** Ses kaydı URI'sini güvenilir şekilde okur (file:// normalizasyonu + cache kopyası). */
+export async function readVoiceRecordingBuffer(localUri: string): Promise<ArrayBuffer> {
+  let uri = (localUri || '').trim();
+  if (!uri) throw new Error('Ses dosyası bulunamadı');
+  if (!uri.startsWith('file://') && uri.startsWith('/')) {
+    uri = `file://${uri}`;
+  }
+  if (uri.startsWith('file://')) {
+    const direct = await tryFetchLocalToArrayBuffer(uri);
+    if (direct?.byteLength) return direct;
+  }
+  const cached = await copyUriToCacheForUpload(uri, 'audio');
+  const buffer = await uriToArrayBuffer(cached, { mediaKind: 'audio' });
+  if (!buffer?.byteLength) {
+    throw new Error('Ses dosyası okunamadı');
+  }
+  return buffer;
 }

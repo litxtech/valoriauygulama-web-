@@ -18,8 +18,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
-import { CachedImage } from '@/components/CachedImage';
+import { pickProfileCoverUri } from '@/lib/profileCoverPicker';
+import { ProfileEditMediaSection } from '@/components/modernProfile/ProfileEditMediaSection';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { persistGuestCoverImageUrl, persistGuestPhotoUrl } from '@/lib/syncGuestProfileMedia';
 import { theme } from '@/constants/theme';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { useTranslation } from 'react-i18next';
@@ -147,28 +149,18 @@ export default function CustomerProfileEdit() {
 
   const pickCover = async () => {
     if (!user || uploadingCover) return;
-    const granted = await ensureMediaLibraryPermission({
-      title: t('galleryPermission'),
-      message: t('coverPermissionMessage'),
-      settingsMessage: t('settingsPermissionMessage'),
-    });
-    if (!granted) return;
     try {
+      const uri = await pickProfileCoverUri(t('settingsPermissionMessage'));
+      if (!uri) return;
       setUploadingCover(true);
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [3, 2],
-        quality: 0.7,
-      });
-      if (result.canceled || !result.assets[0]?.uri) return;
       const { publicUrl } = await uploadUriToPublicBucket({
         bucketId: 'profiles',
-        uri: result.assets[0].uri,
+        uri,
         kind: 'image',
         subfolder: 'customer/cover',
       });
       await saveUserMetadata({ cover_url: publicUrl });
+      await persistGuestCoverImageUrl(publicUrl);
       setCoverUri(publicUrl);
     } catch (e) {
       const message = e instanceof Error ? e.message : t('coverUploadError');
@@ -205,7 +197,7 @@ export default function CustomerProfileEdit() {
       setAvatarUri(publicUrl);
       const guest = await getOrCreateGuestForCurrentSession();
       if (guest?.guest_id) {
-        await supabase.rpc('update_my_guest_photo_url', { p_photo_url: publicUrl });
+        await persistGuestPhotoUrl(publicUrl);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : t('avatarUploadError');
@@ -213,6 +205,59 @@ export default function CustomerProfileEdit() {
     } finally {
       setUploadingAvatar(false);
     }
+  };
+
+  const confirmDeleteCover = () => {
+    if (!user || !coverUri || uploadingCover) return;
+    Alert.alert(t('delete'), t('deleteCoverPhotoConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setUploadingCover(true);
+            try {
+              await saveUserMetadata({ cover_url: null });
+              await persistGuestCoverImageUrl(null);
+              setCoverUri(null);
+            } catch (e) {
+              Alert.alert(t('error'), e instanceof Error ? e.message : t('coverUploadError'));
+            } finally {
+              setUploadingCover(false);
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const confirmDeleteAvatar = () => {
+    if (!user || !avatarUri || uploadingAvatar) return;
+    Alert.alert(t('delete'), t('deleteProfilePhotoConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setUploadingAvatar(true);
+            try {
+              await saveUserMetadata({ avatar_url: null });
+              setAvatarUri(null);
+              const guest = await getOrCreateGuestForCurrentSession();
+              if (guest?.guest_id) {
+                await persistGuestPhotoUrl(null);
+              }
+            } catch (e) {
+              Alert.alert(t('error'), e instanceof Error ? e.message : t('avatarUploadError'));
+            } finally {
+              setUploadingAvatar(false);
+            }
+          })();
+        },
+      },
+    ]);
   };
 
   const handleSave = async () => {
@@ -371,61 +416,24 @@ export default function CustomerProfileEdit() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.mediaSection}>
-          <View style={styles.mediaSectionHeader}>
-            <View style={styles.mediaSectionIconWrap}>
-              <Ionicons name="images" size={22} color={theme.colors.primary} />
-            </View>
-            <View style={styles.mediaSectionText}>
-              <Text style={styles.sectionTitle}>{t('customerEditMediaSectionTitle')}</Text>
-              <Text style={styles.sectionHint}>{t('customerEditMediaSectionHint')}</Text>
-            </View>
-          </View>
-          <View style={styles.mediaGrid}>
-            <TouchableOpacity style={styles.mediaCard} onPress={pickCover} activeOpacity={0.86} disabled={uploadingCover || saving}>
-              <View style={styles.mediaPreview}>
-                {coverUri ? (
-                  <CachedImage uri={coverUri} style={styles.coverImage} contentFit="cover" />
-                ) : (
-                  <View style={styles.mediaPlaceholder}>
-                    <Ionicons name="image-outline" size={36} color={theme.colors.textMuted} />
-                    <Text style={styles.mediaPlaceholderText}>Kapak ekle</Text>
-                  </View>
-                )}
-                <View style={styles.mediaEditBadge}>
-                  <Ionicons name="camera" size={16} color={theme.colors.white} />
-                </View>
-                {(uploadingCover || saving) && (
-                  <View style={styles.mediaOverlay}>
-                    <ActivityIndicator color={theme.colors.white} size="small" />
-                  </View>
-                )}
-              </View>
-              <Text style={styles.mediaCardLabel}>{t('customerEditCoverLabel')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.mediaCard} onPress={pickAvatar} activeOpacity={0.86} disabled={uploadingAvatar || saving}>
-              <View style={styles.avatarPreview}>
-                {avatarUri ? (
-                  <CachedImage uri={avatarUri} style={styles.avatarImage} contentFit="cover" />
-                ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarInitial}>{fullName.trim().charAt(0).toUpperCase() || '?'}</Text>
-                  </View>
-                )}
-                <View style={styles.mediaEditBadge}>
-                  <Ionicons name="camera" size={14} color={theme.colors.white} />
-                </View>
-                {(uploadingAvatar || saving) && (
-                  <View style={styles.mediaOverlay}>
-                    <ActivityIndicator color={theme.colors.white} size="small" />
-                  </View>
-                )}
-              </View>
-              <Text style={styles.mediaCardLabel}>{t('customerEditProfilePhotoLabel')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <ProfileEditMediaSection
+          coverUri={coverUri}
+          avatarUri={avatarUri}
+          displayName={fullName}
+          sectionTitle={t('customerEditMediaSectionTitle')}
+          sectionHint={t('customerEditMediaSectionHint')}
+          coverLabel={t('customerEditCoverLabel')}
+          avatarLabel={t('customerEditProfilePhotoLabel')}
+          addCoverText={t('profileAddCover')}
+          deleteAvatarLabel={t('delete')}
+          onPickCover={pickCover}
+          onPickAvatar={pickAvatar}
+          onDeleteCover={coverUri ? confirmDeleteCover : undefined}
+          onDeleteAvatar={avatarUri ? confirmDeleteAvatar : undefined}
+          uploadingCover={uploadingCover}
+          uploadingAvatar={uploadingAvatar}
+          disabled={saving}
+        />
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -658,32 +666,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   content: { padding: theme.spacing.lg },
-  mediaSection: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 20,
-    padding: theme.spacing.xl,
-    marginBottom: theme.spacing.xl,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  mediaSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: theme.spacing.lg,
-  },
-  mediaSectionIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: theme.colors.primary + '18',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  mediaSectionText: { flex: 1 },
   section: {
     backgroundColor: theme.colors.surface,
     borderRadius: 20,
@@ -719,95 +701,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     lineHeight: 20,
     marginTop: 4,
-  },
-  mediaGrid: {
-    flexDirection: 'row',
-    gap: 14,
-  },
-  mediaCard: {
-    flex: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-  },
-  mediaPreview: {
-    height: 100,
-    backgroundColor: theme.colors.borderLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  coverImage: {
-    width: '100%',
-    height: '100%',
-  },
-  avatarPreview: {
-    height: 100,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.borderLight,
-    position: 'relative',
-  },
-  mediaPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-  },
-  mediaPlaceholderText: {
-    fontSize: 12,
-    color: theme.colors.textMuted,
-    marginTop: 6,
-  },
-  mediaEditBadge: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 3,
-    borderColor: theme.colors.surface,
-  },
-  avatarPlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: theme.colors.surface,
-  },
-  avatarInitial: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: theme.colors.white,
-  },
-  mediaCardLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: theme.colors.text,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    textAlign: 'center',
-  },
-  mediaOverlay: {
-    position: 'absolute',
-    inset: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   inputGroup: {
     marginBottom: theme.spacing.lg,

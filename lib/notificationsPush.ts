@@ -9,8 +9,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
-import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
+import { isPostgrestSchemaCacheError, isSupabaseUnavailableError, sleepMs, sanitizeSupabaseErrorMessage } from '@/lib/supabaseTransientErrors';
+import { resolveNotificationFeatureKey } from '@/lib/notificationSoundCatalog';
 import { emitPermissionLiveChange } from '@/lib/permissionLive';
+import { shouldMuteSystemNotificationSound } from '@/lib/notificationSoundAndroidCache';
 
 const EXPO_PUSH_TOKEN_KEY = 'valoria_expo_push_token';
 const STAFF_ROOM_CLEANING_SOUND_PREF_KEY = 'staff_notif_room_cleaning_mark_sound_enabled';
@@ -32,7 +34,7 @@ function normalizeRpcError(error: unknown): {
 
   const e = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
   const message = typeof e.message === 'string' && e.message.trim().length > 0
-    ? e.message
+    ? sanitizeSupabaseErrorMessage(e.message)
     : 'RPC returned an empty message';
 
   return {
@@ -67,7 +69,28 @@ function normalizeNotificationType(raw: unknown): string {
   return raw.trim().toLowerCase();
 }
 
-async function shouldMuteByStaffFeaturePreference(notificationType: string): Promise<boolean> {
+async function shouldMuteByStaffFeaturePreference(
+  notificationType: string,
+  featureKey?: string
+): Promise<boolean> {
+  const master = await AsyncStorage.getItem('staff_notif_sounds_master_enabled');
+  if (master === '0') return true;
+
+  const resolvedFeatureKey =
+    featureKey?.trim() ||
+    (notificationType ? resolveNotificationFeatureKey(notificationType) : '');
+
+  if (resolvedFeatureKey) {
+    const def = await import('@/lib/notificationSoundCatalog').then((m) =>
+      m.getNotificationSoundFeatureDef(resolvedFeatureKey)
+    );
+    if (def && !def.userCanMuteSound) return false;
+    const byFeature = await AsyncStorage.getItem(
+      `${STAFF_FEATURE_SOUND_PREF_KEY_PREFIX}${resolvedFeatureKey}`
+    );
+    if (byFeature === '0') return true;
+  }
+
   if (!notificationType || notificationType === 'message' || notificationType === 'admin_announcement') {
     return false;
   }
@@ -96,14 +119,19 @@ export async function initPushNotificationsPresentation(): Promise<void> {
           muteSoundRaw === '1';
         const notificationTypeRaw = data.notificationType ?? data.notification_type;
         const notificationType = normalizeNotificationType(notificationTypeRaw);
+        const featureKeyRaw = typeof data.feature_key === 'string' ? data.feature_key.trim() : '';
         const roomCleaningMarked = notificationType === 'staff_room_cleaning_status';
         const roomCleaningSoundPref = await AsyncStorage.getItem(STAFF_ROOM_CLEANING_SOUND_PREF_KEY);
         const roomCleaningSoundEnabled = roomCleaningSoundPref == null ? true : roomCleaningSoundPref === '1';
         const muteByLocalPref = roomCleaningMarked && !roomCleaningSoundEnabled;
-        const muteByFeaturePref = await shouldMuteByStaffFeaturePreference(notificationType);
+        const muteByFeaturePref = await shouldMuteByStaffFeaturePreference(
+          notificationType,
+          featureKeyRaw || undefined
+        );
         const playSound = !(muteByPayload || muteByLocalPref || muteByFeaturePref);
+        const muteSystemSound = playSound && shouldMuteSystemNotificationSound(data);
         return {
-          shouldPlaySound: playSound,
+          shouldPlaySound: playSound && !muteSystemSound,
           shouldShowAlert: true,
           shouldShowBanner: true,
           shouldShowList: true,
@@ -442,31 +470,30 @@ export async function savePushTokenForStaff(staffId: string): Promise<void> {
         await sleepMs(350 * attempt);
         continue;
       }
+      const normalized = normalizeRpcError(error);
       if (isPostgrestSchemaCacheError(error)) {
-        const normalized = normalizeRpcError(error);
         log.warn('notificationsPush', 'savePushTokenForStaff RPC (geçici şema/PostgREST, sonra tekrar denenecek)', {
           message: normalized.message,
           code: normalized.code,
-          details: normalized.details,
-          hint: normalized.hint,
-          raw: normalized.raw,
+          staffIdPrefix: staffId.slice(0, 8),
+        });
+      } else if (isSupabaseUnavailableError(normalized.message)) {
+        log.warn('notificationsPush', 'savePushTokenForStaff RPC (sunucu geçici kapalı)', {
+          message: normalized.message,
           staffIdPrefix: staffId.slice(0, 8),
         });
       } else {
-        const normalized = normalizeRpcError(error);
-        log.error('notificationsPush', 'savePushTokenForStaff RPC', {
+        log.warn('notificationsPush', 'savePushTokenForStaff RPC', {
           message: normalized.message,
           code: normalized.code,
-          details: normalized.details,
-          hint: normalized.hint,
-          raw: normalized.raw,
           staffIdPrefix: staffId.slice(0, 8),
         });
       }
       return;
     }
   } catch (e) {
-    log.error('notificationsPush', 'savePushTokenForStaff', e);
+    const msg = sanitizeSupabaseErrorMessage((e as Error)?.message);
+    log.warn('notificationsPush', 'savePushTokenForStaff', msg);
   }
 }
 

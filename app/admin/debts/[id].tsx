@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,36 +16,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard } from '@/components/admin';
 import {
   fmtMoneyTry,
-  DEBT_CATEGORY_LABELS,
-  DEBT_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   notifyDebtPaymentParties,
-  type DebtCategory,
-  type DebtStatus,
   type DebtPaymentMethod,
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
-
-type DebtRow = {
-  id: string;
-  organization_id: string;
-  category: DebtCategory;
-  borrower_staff_id: string | null;
-  borrower_is_organization: boolean;
-  lender_staff_id: string | null;
-  lender_is_organization: boolean;
-  description: string;
-  amount_principal: number;
-  amount_remaining: number;
-  status: DebtStatus;
-  due_date: string | null;
-  created_at: string;
-  borrower?: { full_name: string | null } | null;
-  lender?: { full_name: string | null } | null;
-};
+import {
+  DEBT_CATEGORY_META,
+  DEBT_STATUS_META,
+  DEBT_TONE_STYLES,
+  debtPaidPercent,
+  debtPartyBorrow,
+  debtPartyLend,
+  debtRowPerspective,
+  formatDebtPaidLine,
+  isDebtOverdue,
+  type DebtListRow,
+} from '@/lib/debtUi';
 
 type PayRow = {
   id: string;
@@ -62,7 +51,7 @@ export default function AdminDebtDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
-  const [debt, setDebt] = useState<DebtRow | null>(null);
+  const [debt, setDebt] = useState<DebtListRow | null>(null);
   const [payments, setPayments] = useState<PayRow[]>([]);
   const [checks, setChecks] = useState<{ id: string; counterparty_name: string; amount: number }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +93,7 @@ export default function AdminDebtDetail() {
       setLoading(false);
       return;
     }
-    const debtRow = d as unknown as DebtRow;
+    const debtRow = d as unknown as DebtListRow;
     setDebt(debtRow);
 
     const { data: p } = await supabase
@@ -137,8 +126,11 @@ export default function AdminDebtDetail() {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load]),
+    }, [load])
   );
+
+  const perspective = useMemo(() => (debt ? debtRowPerspective(debt) : null), [debt]);
+  const pct = debt ? debtPaidPercent(debt.amount_principal, debt.amount_remaining) : 0;
 
   const submitPayment = async () => {
     if (!id || !me?.id || !debt) return;
@@ -181,7 +173,7 @@ export default function AdminDebtDetail() {
   };
 
   const removeDebt = () => {
-    Alert.alert('Sil', 'Borç kaydı ve ödemeler silinsin mi? (Yönetici)', [
+    Alert.alert('Sil', 'Borç kaydı ve ödemeler silinsin mi?', [
       { text: 'İptal', style: 'cancel' },
       {
         text: 'Sil',
@@ -196,7 +188,7 @@ export default function AdminDebtDetail() {
     ]);
   };
 
-  if (loading || !debt) {
+  if (loading || !debt || !perspective) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={adminTheme.colors.accent} />
@@ -204,72 +196,170 @@ export default function AdminDebtDetail() {
     );
   }
 
+  const catMeta = DEBT_CATEGORY_META[debt.category];
+  const stMeta = DEBT_STATUS_META[debt.status];
+  const toneStyle = DEBT_TONE_STYLES[perspective.tone];
+  const overdue = isDebtOverdue(debt.due_date, debt.status);
+
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-      <AdminCard>
-        <Text style={styles.cat}>{DEBT_CATEGORY_LABELS[debt.category]}</Text>
-        <Text style={styles.parties}>
-          Borçlu: {debt.borrower_is_organization ? 'Şirket / Otel' : debt.borrower?.full_name || '—'}
-        </Text>
-        <Text style={styles.parties}>
-          Alacaklı: {debt.lender_is_organization ? 'Şirket / Otel' : debt.lender?.full_name || '—'}
-        </Text>
-        <Text style={styles.desc}>{debt.description}</Text>
-        <View style={styles.sum}>
-          <Text style={styles.sumLabel}>Kalan</Text>
-          <Text style={styles.sumVal}>{fmtMoneyTry(Number(debt.amount_remaining))}</Text>
-        </View>
-        <Text style={styles.meta}>
-          {DEBT_STATUS_LABELS[debt.status]} · Ana para {fmtMoneyTry(Number(debt.amount_principal))}
-        </Text>
-        {debt.due_date ? <Text style={styles.due}>Vade: {formatDateShort(debt.due_date)}</Text> : null}
-      </AdminCard>
-
-      <TouchableOpacity style={styles.payBtn} onPress={() => setPayOpen(true)} disabled={debt.status === 'closed'}>
-        <Ionicons name="cash-outline" size={22} color="#fff" />
-        <Text style={styles.payBtnText}>Ödeme ekle</Text>
-      </TouchableOpacity>
-
-      <AdminCard>
-        <Text style={styles.secTitle}>Ödemeler</Text>
-        {payments.length === 0 ? (
-          <Text style={styles.empty}>Henüz ödeme yok.</Text>
-        ) : (
-          payments.map((p) => (
-            <View key={p.id} style={styles.payRow}>
-              <Text style={styles.payAmt}>{fmtMoneyTry(Number(p.amount))}</Text>
-              <Text style={styles.payMeta}>
-                {PAYMENT_METHOD_LABELS[p.payment_method]} · {formatDateShort(p.paid_at)}
+    <View style={styles.wrap}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <View style={[styles.hero, { borderLeftColor: toneStyle.stripe }]}>
+          <View style={styles.heroTop}>
+            <View style={[styles.toneBadge, { backgroundColor: toneStyle.pillBg }]}>
+              <Ionicons name={toneStyle.icon} size={18} color={toneStyle.pillFg} />
+              <Text style={[styles.toneBadgeText, { color: toneStyle.pillFg }]}>
+                {perspective.tone === 'receivable'
+                  ? 'Alacak'
+                  : perspective.tone === 'payable'
+                    ? 'Borç'
+                    : 'Personel'}
               </Text>
-              {p.notes ? <Text style={styles.payNote}>{p.notes}</Text> : null}
-              {p.finance_check_id ? (
-                <Text style={styles.payCheck}>Çek kaydına bağlı ödeme</Text>
-              ) : null}
+            </View>
+            <View style={[styles.stBadge, { backgroundColor: stMeta.bg }]}>
+              <Ionicons name={stMeta.icon} size={14} color={stMeta.color} />
+              <Text style={[styles.stBadgeText, { color: stMeta.color }]}>{stMeta.label}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.heroLine}>{perspective.line}</Text>
+
+          <Text style={styles.remLabel}>Kalan</Text>
+          <Text style={styles.remVal}>{fmtMoneyTry(Number(debt.amount_remaining))}</Text>
+
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${pct}%`, backgroundColor: toneStyle.stripe }]} />
+          </View>
+          <Text style={styles.paidMeta}>{formatDebtPaidLine(debt.amount_principal, debt.amount_remaining)}</Text>
+
+          {overdue ? (
+            <View style={styles.overdueBanner}>
+              <Ionicons name="alert-circle" size={16} color="#b45309" />
+              <Text style={styles.overdueText}>Vade geçti · {formatDateShort(debt.due_date!)}</Text>
+            </View>
+          ) : debt.due_date ? (
+            <Text style={styles.dueLine}>Vade: {formatDateShort(debt.due_date)}</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.flowCard}>
+          <View style={styles.flowCol}>
+            <Text style={styles.flowLbl}>Borçlu</Text>
+            <Ionicons name="person-circle-outline" size={28} color={adminTheme.colors.primary} />
+            <Text style={styles.flowName} numberOfLines={2}>
+              {debtPartyBorrow(debt)}
+            </Text>
+          </View>
+          <View style={styles.flowMid}>
+            <Ionicons name="arrow-forward" size={24} color={adminTheme.colors.textMuted} />
+            <Text style={styles.flowAmt}>{fmtMoneyTry(Number(debt.amount_principal))}</Text>
+          </View>
+          <View style={styles.flowCol}>
+            <Text style={styles.flowLbl}>Alacaklı</Text>
+            <Ionicons name="wallet-outline" size={28} color={adminTheme.colors.accent} />
+            <Text style={styles.flowName} numberOfLines={2}>
+              {debtPartyLend(debt)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.metaCard}>
+          <View style={[styles.catRow, { backgroundColor: catMeta.bg }]}>
+            <Ionicons name={catMeta.icon} size={16} color={catMeta.color} />
+            <Text style={[styles.catText, { color: catMeta.color }]}>{catMeta.label}</Text>
+          </View>
+          {debt.description?.trim() ? (
+            <Text style={styles.desc}>{debt.description.trim()}</Text>
+          ) : null}
+          <Text style={styles.createdMeta}>Kayıt · {formatDateShort(debt.created_at)}</Text>
+        </View>
+
+        {debt.status !== 'closed' ? (
+          <TouchableOpacity style={styles.payBtn} onPress={() => setPayOpen(true)} activeOpacity={0.9}>
+            <Ionicons name="add-circle" size={24} color="#fff" />
+            <Text style={styles.payBtnText}>Ödeme ekle</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.closedBanner}>
+            <Ionicons name="checkmark-circle" size={20} color="#15803d" />
+            <Text style={styles.closedText}>Bu kayıt kapatıldı</Text>
+          </View>
+        )}
+
+        <Text style={styles.secTitle}>Ödeme geçmişi</Text>
+        {payments.length === 0 ? (
+          <View style={styles.emptyPay}>
+            <Text style={styles.emptyPayText}>Henüz ödeme yok. Kısmi ödemeler kalanı otomatik düşürür.</Text>
+          </View>
+        ) : (
+          payments.map((p, idx) => (
+            <View key={p.id} style={styles.timelineItem}>
+              <View style={styles.timelineDotCol}>
+                <View style={styles.timelineDot} />
+                {idx < payments.length - 1 ? <View style={styles.timelineLine} /> : null}
+              </View>
+              <View style={styles.timelineBody}>
+                <Text style={styles.payAmt}>−{fmtMoneyTry(Number(p.amount))}</Text>
+                <Text style={styles.payMeta}>
+                  {PAYMENT_METHOD_LABELS[p.payment_method]} · {formatDateShort(p.paid_at)}
+                </Text>
+                {p.notes ? <Text style={styles.payNote}>{p.notes}</Text> : null}
+                {p.finance_check_id ? (
+                  <Text style={styles.payCheck}>Çek kaydına bağlı</Text>
+                ) : null}
+              </View>
             </View>
           ))
         )}
-      </AdminCard>
 
-      {me?.role === 'admin' ? (
-        <TouchableOpacity style={styles.delBtn} onPress={removeDebt}>
-          <Text style={styles.delText}>Kaydı sil</Text>
-        </TouchableOpacity>
-      ) : null}
+        {me?.role === 'admin' ? (
+          <TouchableOpacity style={styles.delBtn} onPress={removeDebt}>
+            <Ionicons name="trash-outline" size={18} color={adminTheme.colors.error} />
+            <Text style={styles.delText}>Kaydı sil</Text>
+          </TouchableOpacity>
+        ) : null}
+      </ScrollView>
 
       <Modal visible={payOpen} transparent animationType="slide">
         <Pressable style={styles.modalBackdrop} onPress={() => !savingPay && setPayOpen(false)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>Ödeme</Text>
-            <Text style={styles.label}>Tutar (kalan {fmtMoneyTry(Number(debt.amount_remaining))})</Text>
-            <TextInput style={styles.input} value={payAmount} onChangeText={setPayAmount} keyboardType="decimal-pad" />
-            <Text style={styles.label}>Yöntem</Text>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Ödeme ekle</Text>
+            <Text style={styles.modalSub}>
+              Kalan {fmtMoneyTry(Number(debt.amount_remaining))} — tutar otomatik düşer
+            </Text>
+
+            <TouchableOpacity
+              style={styles.quickFill}
+              onPress={() => setPayAmount(String(debt.amount_remaining))}
+            >
+              <Text style={styles.quickFillText}>Tamamını öde</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.label}>Tutar (₺)</Text>
+            <TextInput
+              style={styles.input}
+              value={payAmount}
+              onChangeText={setPayAmount}
+              keyboardType="decimal-pad"
+              placeholder="0"
+            />
+
+            <Text style={styles.label}>Ödeme şekli</Text>
             <View style={styles.methods}>
               {PAY_METHODS.map((m) => (
-                <TouchableOpacity key={m} style={[styles.mChip, payMethod === m && styles.mChipOn]} onPress={() => setPayMethod(m)}>
-                  <Text style={[styles.mChipText, payMethod === m && styles.mChipTextOn]}>{PAYMENT_METHOD_LABELS[m]}</Text>
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.mChip, payMethod === m && styles.mChipOn]}
+                  onPress={() => setPayMethod(m)}
+                >
+                  <Text style={[styles.mChipText, payMethod === m && styles.mChipTextOn]}>
+                    {PAYMENT_METHOD_LABELS[m]}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
+
             {payMethod === 'check' && checks.length > 0 ? (
               <>
                 <Text style={styles.label}>Çek kaydı (isteğe bağlı)</Text>
@@ -294,87 +384,252 @@ export default function AdminDebtDetail() {
                 </ScrollView>
               </>
             ) : null}
+
             <Text style={styles.label}>Not</Text>
             <TextInput style={[styles.input, styles.ta]} value={payNote} onChangeText={setPayNote} multiline />
+
             <TouchableOpacity style={styles.savePay} onPress={submitPayment} disabled={savingPay}>
-              {savingPay ? <ActivityIndicator color="#fff" /> : <Text style={styles.savePayText}>Kaydet</Text>}
+              {savingPay ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.savePayText}>Kaydet</Text>
+              )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelPay} onPress={() => setPayOpen(false)} disabled={savingPay}>
-              <Text>İptal</Text>
+              <Text style={styles.cancelPayText}>İptal</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  wrap: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  cat: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.info, marginBottom: 8 },
-  parties: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text, marginBottom: 4 },
-  desc: { fontSize: 14, color: adminTheme.colors.textSecondary, marginTop: 8 },
-  sum: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 },
-  sumLabel: { fontSize: 14, color: adminTheme.colors.textMuted },
-  sumVal: { fontSize: 22, fontWeight: '800', color: adminTheme.colors.accent },
-  meta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 8 },
-  due: { fontSize: 13, color: adminTheme.colors.warning, marginTop: 6 },
+  hero: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderLeftWidth: 5,
+  },
+  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  toneBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  toneBadgeText: { fontSize: 13, fontWeight: '800' },
+  stBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  stBadgeText: { fontSize: 11, fontWeight: '700' },
+  heroLine: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.textMuted, marginTop: 12 },
+  remLabel: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 14, fontWeight: '600' },
+  remVal: { fontSize: 32, fontWeight: '800', color: adminTheme.colors.text, marginTop: 4 },
+  progressTrack: {
+    height: 8,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    borderRadius: 4,
+    marginTop: 14,
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: 4 },
+  paidMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 8, fontWeight: '600' },
+  overdueBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: adminTheme.colors.warningLight,
+  },
+  overdueText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.warning },
+  dueLine: { fontSize: 13, color: adminTheme.colors.info, marginTop: 10, fontWeight: '600' },
+  flowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  flowCol: { flex: 1, alignItems: 'center', gap: 6 },
+  flowLbl: { fontSize: 10, fontWeight: '700', color: adminTheme.colors.textMuted, textTransform: 'uppercase' },
+  flowName: { fontSize: 13, fontWeight: '800', color: adminTheme.colors.text, textAlign: 'center' },
+  flowMid: { alignItems: 'center', paddingHorizontal: 8 },
+  flowAmt: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.accent, marginTop: 4 },
+  metaCard: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  catRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  catText: { fontSize: 12, fontWeight: '700' },
+  desc: { fontSize: 14, color: adminTheme.colors.text, marginTop: 12, lineHeight: 20 },
+  createdMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 10 },
   payBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: adminTheme.colors.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginBottom: 12,
+    gap: 10,
+    backgroundColor: adminTheme.colors.accent,
+    paddingVertical: 16,
+    borderRadius: 14,
+    marginBottom: 16,
   },
-  payBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  secTitle: { fontSize: 16, fontWeight: '700', marginBottom: 10, color: adminTheme.colors.text },
-  empty: { color: adminTheme.colors.textMuted },
-  payRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: adminTheme.colors.border },
-  payAmt: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
-  payMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
-  payCheck: { fontSize: 12, color: adminTheme.colors.info, marginTop: 4, fontWeight: '600' },
-  delBtn: { padding: 16, alignItems: 'center' },
-  delText: { color: adminTheme.colors.error, fontWeight: '600' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  payBtnText: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  closedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#dcfce7',
+    marginBottom: 16,
+  },
+  closedText: { fontSize: 14, fontWeight: '700', color: '#15803d' },
+  secTitle: { fontSize: 15, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 12 },
+  emptyPay: {
+    padding: 16,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  emptyPayText: { fontSize: 13, color: adminTheme.colors.textMuted, textAlign: 'center' },
+  timelineItem: { flexDirection: 'row', marginBottom: 4 },
+  timelineDotCol: { width: 24, alignItems: 'center' },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: adminTheme.colors.accent,
+    marginTop: 6,
+  },
+  timelineLine: { flex: 1, width: 2, backgroundColor: adminTheme.colors.border, marginVertical: 4 },
+  timelineBody: {
+    flex: 1,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  payAmt: { fontSize: 17, fontWeight: '800', color: '#dc2626' },
+  payMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 4 },
+  payNote: { fontSize: 13, color: adminTheme.colors.text, marginTop: 6 },
+  payCheck: { fontSize: 11, color: adminTheme.colors.info, marginTop: 4, fontWeight: '700' },
+  delBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 20,
+    marginTop: 8,
+  },
+  delText: { color: adminTheme.colors.error, fontWeight: '700' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalCard: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    backgroundColor: adminTheme.colors.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     padding: 16,
     paddingBottom: 28,
-    maxHeight: '85%',
+    maxHeight: '88%',
   },
-  modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 12 },
-  label: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textSecondary, marginBottom: 6, marginTop: 8 },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: adminTheme.colors.border,
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text },
+  modalSub: { fontSize: 13, color: adminTheme.colors.textMuted, marginTop: 4, marginBottom: 12 },
+  quickFill: {
+    alignSelf: 'flex-start',
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  quickFillText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.primary },
+  label: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted, marginBottom: 6, marginTop: 8 },
   input: {
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: adminTheme.colors.text,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
   },
-  ta: { minHeight: 64, textAlignVertical: 'top' },
+  ta: { minHeight: 72, textAlignVertical: 'top' },
   methods: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  mChip: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: adminTheme.colors.surfaceTertiary },
-  mChipOn: { backgroundColor: adminTheme.colors.primary },
-  mChipText: { fontSize: 12, color: adminTheme.colors.textSecondary },
-  mChipTextOn: { color: '#fff', fontWeight: '600' },
-  checkScroll: { maxHeight: 140 },
-  checkRow: { padding: 10, borderRadius: 8, marginBottom: 6, backgroundColor: adminTheme.colors.surfaceTertiary },
-  checkRowOn: { backgroundColor: adminTheme.colors.infoLight },
-  savePay: {
-    backgroundColor: adminTheme.colors.primary,
-    paddingVertical: 14,
+  mChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderRadius: 10,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  mChipOn: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  mChipText: { fontSize: 12, color: adminTheme.colors.textSecondary, fontWeight: '600' },
+  mChipTextOn: { color: '#fff' },
+  checkScroll: { maxHeight: 120, marginBottom: 8 },
+  checkRow: {
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+  },
+  checkRowOn: { backgroundColor: adminTheme.colors.infoLight, borderWidth: 1, borderColor: adminTheme.colors.info },
+  savePay: {
+    backgroundColor: adminTheme.colors.accent,
+    paddingVertical: 16,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 16,
   },
-  savePayText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  savePayText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   cancelPay: { padding: 14, alignItems: 'center' },
+  cancelPayText: { fontSize: 15, color: adminTheme.colors.textMuted, fontWeight: '600' },
 });

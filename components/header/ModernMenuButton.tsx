@@ -7,6 +7,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Easing,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -89,7 +90,7 @@ function MenuPill({ open, color }: { open: boolean; color: string }) {
   );
 }
 
-/** Android: ripple + anında durum; iOS: spring morph. */
+/** Android: anında menü — header’da X yerine aktif arka plan + hamburger kalır. */
 function AndroidMenuButton({
   onPress,
   accessibilityLabel,
@@ -98,11 +99,12 @@ function AndroidMenuButton({
   style,
   highlightLabel,
 }: Props) {
+  const accent = color ?? pds.indigo;
   return (
     <Pressable
       onPress={onPress}
       unstable_pressDelay={0}
-      android_ripple={{ color: `${color}33`, borderless: false }}
+      android_ripple={{ color: `${accent}33`, borderless: false }}
       style={[styles.hit, style]}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
@@ -116,7 +118,13 @@ function AndroidMenuButton({
           </Text>
         </View>
       ) : null}
-      <MenuPill open={!!open} color={color ?? pds.indigo} />
+      <View style={styles.pillOuter}>
+        <View style={[styles.pillBase, { borderColor: `${accent}40`, backgroundColor: `${accent}12` }]} />
+        {open ? (
+          <View style={[StyleSheet.absoluteFillObject, styles.pillGrad, { backgroundColor: pds.indigo }]} />
+        ) : null}
+        <MenuBars open={false} color={open ? '#ffffff' : accent} />
+      </View>
     </Pressable>
   );
 }
@@ -133,29 +141,28 @@ function IosMenuButton({
   const morph = useRef(new Animated.Value(open ? 1 : 0)).current;
 
   useEffect(() => {
-    Animated.spring(morph, {
+    Animated.timing(morph, {
       toValue: open ? 1 : 0,
+      duration: open ? 160 : 130,
+      easing: open ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
       useNativeDriver: true,
-      speed: 22,
-      bounciness: open ? 4 : 8,
     }).start();
   }, [open, morph]);
 
   const pressIn = () => {
-    Animated.spring(scale, {
-      toValue: 0.88,
+    Animated.timing(scale, {
+      toValue: 0.92,
+      duration: 80,
       useNativeDriver: true,
-      speed: 28,
-      bounciness: 4,
     }).start();
   };
 
   const pressOut = () => {
-    Animated.spring(scale, {
+    Animated.timing(scale, {
       toValue: 1,
+      duration: 120,
+      easing: Easing.out(Easing.quad),
       useNativeDriver: true,
-      speed: 22,
-      bounciness: 10,
     }).start();
   };
 

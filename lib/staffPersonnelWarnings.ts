@@ -21,6 +21,7 @@ export function severityRank(s: StaffPersonnelWarningSeverity): number {
   return SEVERITY_RANK[s] ?? 0;
 }
 
+/** @deprecated Use severityLabel() */
 export const SEVERITY_LABEL_TR: Record<StaffPersonnelWarningSeverity, string> = {
   reminder: 'Hatırlatma',
   verbal: 'Sözlü uyarı',
@@ -29,6 +30,7 @@ export const SEVERITY_LABEL_TR: Record<StaffPersonnelWarningSeverity, string> = 
   final: 'Son uyarı',
 };
 
+/** @deprecated Use severityDesc() */
 export const SEVERITY_DESC_TR: Record<StaffPersonnelWarningSeverity, string> = {
   reminder: 'Bilgilendirme / hafif hatırlatma.',
   verbal: 'Kayıt altına alınan sözlü uyarı.',
@@ -36,6 +38,18 @@ export const SEVERITY_DESC_TR: Record<StaffPersonnelWarningSeverity, string> = {
   severe: 'Disiplin süreci kapsamında ciddi uyarı.',
   final: 'İş ilişiğinin sonlandırılması dahil yaptırımlar gündeme gelebilir.',
 };
+
+export function severityLabel(severity: StaffPersonnelWarningSeverity): string {
+  const k = `personnelWarnSeverity_${severity}`;
+  const v = i18n.t(k);
+  return v !== k ? v : SEVERITY_LABEL_TR[severity];
+}
+
+export function severityDesc(severity: StaffPersonnelWarningSeverity): string {
+  const k = `personnelWarnSeverityDesc_${severity}`;
+  const v = i18n.t(k);
+  return v !== k ? v : SEVERITY_DESC_TR[severity];
+}
 
 export function sortWarningsByUrgency<T extends { severity: StaffPersonnelWarningSeverity; created_at: string }>(
   rows: T[]

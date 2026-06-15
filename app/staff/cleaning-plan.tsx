@@ -1,230 +1,344 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+  RefreshControl,
+  Animated,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
-import { theme } from '@/constants/theme';
 import { sendBulkToStaff } from '@/lib/notificationService';
+import { GlassSurface } from '@/components/premium/GlassSurface';
+import { PressableScale } from '@/components/premium/PressableScale';
+import { CleaningJobCard } from '@/components/staff/CleaningJobCard';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import {
+  ROOM_CLEANING_CHECKLIST_KEYS,
+  cleaningChecklistLabel,
+  emptyCleaningChecklist,
+  isCleaningChecklistComplete,
+  parseCleaningChecklist,
+  type RoomCleaningChecklistKey,
+} from '@/lib/roomCleaningChecklist';
+import {
+  fetchStaffCleaningPlanBundle,
+  type CleaningAssignmentRow,
+  type CleaningPlanRow,
+  type CleaningPlanRoomRow,
+  type CleaningRoomMeta,
+  type CleaningPlanBundle,
+} from '@/lib/cleaningPlanLoad';
+import {
+  getCleaningPlanSessionCacheStale,
+  isCleaningPlanCacheFresh,
+  setCleaningPlanSessionCache,
+  invalidateCleaningPlanSessionCache,
+} from '@/lib/cleaningPlanCache';
 
-type AssignmentRow = {
-  id: string;
-  plan_id: string;
-  staff_note: string | null;
-  viewed_at: string | null;
-  completed_at: string | null;
-};
+const CLEANING_ACCENT = '#0d9488';
 
-type PlanRow = {
-  id: string;
-  target_date: string;
-  note: string | null;
-  created_at: string;
-};
+function formatPlanDate(iso: string | undefined, locale: string): string {
+  if (!iso) return '';
+  try {
+    return new Date(`${iso}T12:00:00`).toLocaleDateString(locale, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'long',
+    });
+  } catch {
+    return iso;
+  }
+}
 
-type PlanRoomRow = {
-  id: string;
-  plan_id: string;
-  room_id: string;
-  note: string | null;
-  is_done: boolean;
-  done_at: string | null;
-  done_by_staff_id?: string | null;
-};
+function LivePulse({ label }: { label: string }) {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <View style={liveStyles.wrap}>
+      <Animated.View style={[liveStyles.dot, { opacity: pulse, transform: [{ scale: pulse }] }]} />
+      <Text style={liveStyles.text}>{label}</Text>
+    </View>
+  );
+}
 
-type RoomRow = { id: string; room_number: string };
-const DONE_GRACE_MS = 60 * 1000;
+function applyBundleToState(
+  bundle: CleaningPlanBundle,
+  setters: {
+    setAssignments: (v: CleaningAssignmentRow[]) => void;
+    setPlansById: (v: Record<string, CleaningPlanRow>) => void;
+    setPlanRoomsByPlanId: (v: Record<string, CleaningPlanRoomRow[]>) => void;
+    setRoomMetaByRoomId: (v: Record<string, CleaningRoomMeta>) => void;
+    setNotesByAssignmentId: (v: Record<string, string>) => void;
+    setChecklistByAssignmentId: (v: Record<string, Record<RoomCleaningChecklistKey, boolean>>) => void;
+  }
+) {
+  setters.setAssignments(bundle.assignments);
+  setters.setPlansById(bundle.plansById);
+  setters.setPlanRoomsByPlanId(bundle.planRoomsByPlanId);
+  setters.setRoomMetaByRoomId(bundle.roomMetaByRoomId);
+  setters.setNotesByAssignmentId(
+    Object.fromEntries(bundle.assignments.map((a) => [a.id, a.staff_note || '']))
+  );
+  setters.setChecklistByAssignmentId(
+    Object.fromEntries(
+      bundle.assignments.map((a) => [
+        a.id,
+        a.completed_at ? parseCleaningChecklist(a.completion_checklist) : emptyCleaningChecklist(),
+      ])
+    )
+  );
+}
 
 export default function StaffCleaningPlanScreen() {
   const router = useRouter();
+  const { t, i18n } = useTranslation();
+  const insets = useSafeAreaInsets();
+  const pds = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
   const staff = useAuthStore((s) => s.staff);
+  const locale = (i18n.language || 'tr').split('-')[0];
+
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
-  const [plansById, setPlansById] = useState<Record<string, PlanRow>>({});
-  const [planRoomsByPlanId, setPlanRoomsByPlanId] = useState<Record<string, PlanRoomRow[]>>({});
-  const [roomNumbersById, setRoomNumbersById] = useState<Record<string, string>>({});
+  const [assignments, setAssignments] = useState<CleaningAssignmentRow[]>([]);
+  const [plansById, setPlansById] = useState<Record<string, CleaningPlanRow>>({});
+  const [planRoomsByPlanId, setPlanRoomsByPlanId] = useState<Record<string, CleaningPlanRoomRow[]>>({});
+  const [roomMetaByRoomId, setRoomMetaByRoomId] = useState<Record<string, CleaningRoomMeta>>({});
   const [notesByAssignmentId, setNotesByAssignmentId] = useState<Record<string, string>>({});
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [checklistByAssignmentId, setChecklistByAssignmentId] = useState<
+    Record<string, Record<RoomCleaningChecklistKey, boolean>>
+  >({});
+  const [liveConnected, setLiveConnected] = useState(false);
 
-  const isConfirmedDone = (room: PlanRoomRow, now: number) => {
-    if (!room.is_done || !room.done_at) return false;
-    const doneAtMs = new Date(room.done_at).getTime();
-    if (Number.isNaN(doneAtMs)) return false;
-    return now - doneAtMs >= DONE_GRACE_MS;
-  };
+  const planIdSet = useMemo(() => new Set(assignments.map((a) => a.plan_id)), [assignments]);
 
-  const getGraceRemainingSeconds = (room: PlanRoomRow, now: number) => {
-    if (!room.is_done || !room.done_at) return 0;
-    const doneAtMs = new Date(room.done_at).getTime();
-    if (Number.isNaN(doneAtMs)) return 0;
-    return Math.max(0, Math.ceil((DONE_GRACE_MS - (now - doneAtMs)) / 1000));
-  };
-
-  async function loadData() {
-    if (!staff?.id) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const { data: aData, error: aErr } = await supabase
-      .from('room_cleaning_plan_assignments')
-      .select('id, plan_id, staff_note, viewed_at, completed_at')
-      .eq('staff_id', staff.id)
-      .order('id', { ascending: false });
-    if (aErr) {
-      setLoading(false);
-      return;
-    }
-    const assignmentRows = (aData as AssignmentRow[] | null) ?? [];
-    setAssignments(assignmentRows);
-    setNotesByAssignmentId(
-      Object.fromEntries(assignmentRows.map((a) => [a.id, a.staff_note || '']))
-    );
-
-    const planIds = [...new Set(assignmentRows.map((a) => a.plan_id))];
-    if (planIds.length === 0) {
-      setPlansById({});
-      setPlanRoomsByPlanId({});
-      setRoomNumbersById({});
-      setLoading(false);
-      return;
-    }
-
-    const [{ data: pData }, { data: prData }] = await Promise.all([
-      supabase.from('room_cleaning_plans').select('id, target_date, note, created_at').in('id', planIds),
-      supabase
-        .from('room_cleaning_plan_rooms')
-        .select('id, plan_id, room_id, note, is_done, done_at, done_by_staff_id')
-        .in('plan_id', planIds)
-        .order('sort_order'),
-    ]);
-    const plans = (pData as PlanRow[] | null) ?? [];
-    const planRooms = (prData as PlanRoomRow[] | null) ?? [];
-    const roomIds = [...new Set(planRooms.map((r) => r.room_id))];
-    const roomNumberMap: Record<string, string> = {};
-    if (roomIds.length > 0) {
-      const { data: roomsData } = await supabase.from('rooms').select('id, room_number').in('id', roomIds);
-      ((roomsData as RoomRow[] | null) ?? []).forEach((r) => {
-        roomNumberMap[r.id] = r.room_number;
-      });
-    }
-    setRoomNumbersById(roomNumberMap);
-    setPlansById(Object.fromEntries(plans.map((p) => [p.id, p])));
-    const grouped: Record<string, PlanRoomRow[]> = {};
-    planRooms.forEach((r) => {
-      if (!grouped[r.plan_id]) grouped[r.plan_id] = [];
-      grouped[r.plan_id].push(r);
+  const applyBundle = useCallback((bundle: CleaningPlanBundle) => {
+    applyBundleToState(bundle, {
+      setAssignments,
+      setPlansById,
+      setPlanRoomsByPlanId,
+      setRoomMetaByRoomId,
+      setNotesByAssignmentId,
+      setChecklistByAssignmentId,
     });
-    setPlanRoomsByPlanId(grouped);
-
-    const notViewedIds = assignmentRows.filter((a) => !a.viewed_at).map((a) => a.id);
-    if (notViewedIds.length > 0) {
-      await supabase.from('room_cleaning_plan_assignments').update({ viewed_at: new Date().toISOString() }).in('id', notViewedIds);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    void loadData();
-  }, [staff?.id]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
   }, []);
 
-  async function toggleRoomDone(planRoom: PlanRoomRow) {
-    const nextDone = !planRoom.is_done;
-    const optimisticDoneAt = nextDone ? new Date().toISOString() : null;
-    const optimisticDoneBy = nextDone ? staff?.id ?? null : null;
+  const loadData = useCallback(
+    async (silent = false) => {
+      if (!staff?.id) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      if (!silent) {
+        const stale = getCleaningPlanSessionCacheStale(staff.id);
+        if (!stale) setLoading(true);
+      }
+      const bundle = await fetchStaffCleaningPlanBundle(staff.id);
+      if (bundle) {
+        applyBundle(bundle);
+        setCleaningPlanSessionCache(staff.id, bundle);
+      }
+      setLoading(false);
+      setRefreshing(false);
+    },
+    [staff?.id, applyBundle]
+  );
 
-    // Odada yukleniyor gostermeden aninda isaretle; kalicilik arka planda tamamlanir.
-    setPlanRoomsByPlanId((prev) => {
-      const list = prev[planRoom.plan_id] ?? [];
-      return {
-        ...prev,
-        [planRoom.plan_id]: list.map((room) =>
-          room.id === planRoom.id
-            ? { ...room, is_done: nextDone, done_at: optimisticDoneAt, done_by_staff_id: optimisticDoneBy }
-            : room
-        ),
-      };
-    });
+  useFocusEffect(
+    useCallback(() => {
+      if (!staff?.id) return;
+      const stale = getCleaningPlanSessionCacheStale(staff.id);
+      if (stale) {
+        applyBundle(stale);
+        setLoading(false);
+      }
+      if (!isCleaningPlanCacheFresh(staff.id)) {
+        void loadData(!!stale);
+      }
+    }, [staff?.id, applyBundle, loadData])
+  );
 
-    const { error } = await supabase
-      .from('room_cleaning_plan_rooms')
-      .update({
-        is_done: nextDone,
-        done_at: optimisticDoneAt,
-        done_by_staff_id: nextDone ? staff?.id ?? null : null,
-      })
-      .eq('id', planRoom.id);
-    if (error) {
-      // Arka plan kaydi basarisizsa gorunumu geri al.
-      setPlanRoomsByPlanId((prev) => {
-        const list = prev[planRoom.plan_id] ?? [];
-        return {
-          ...prev,
-          [planRoom.plan_id]: list.map((room) =>
-            room.id === planRoom.id
-              ? { ...room, is_done: planRoom.is_done, done_at: planRoom.done_at, done_by_staff_id: planRoom.done_by_staff_id ?? null }
-              : room
-          ),
-        };
+  useEffect(() => {
+    if (!staff?.id) return;
+    const channel = supabase
+      .channel(`staff_cleaning_live_${staff.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'room_cleaning_plan_rooms' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as CleaningPlanRoomRow | undefined;
+          if (!row?.plan_id || !planIdSet.has(row.plan_id)) return;
+          if (payload.eventType === 'DELETE') {
+            invalidateCleaningPlanSessionCache();
+            void loadData(true);
+            return;
+          }
+          const updated = payload.new as CleaningPlanRoomRow;
+          setPlanRoomsByPlanId((prev) => {
+            const list = prev[updated.plan_id];
+            if (!list?.some((r) => r.id === updated.id)) return prev;
+            return {
+              ...prev,
+              [updated.plan_id]: list.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)),
+            };
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'room_cleaning_plan_assignments',
+          filter: `staff_id=eq.${staff.id}`,
+        },
+        () => {
+          invalidateCleaningPlanSessionCache();
+          void loadData(true);
+        }
+      )
+      .subscribe((status) => {
+        setLiveConnected(status === 'SUBSCRIBED');
       });
-      Alert.alert('Hata', error.message);
+    return () => {
+      setLiveConnected(false);
+      void supabase.removeChannel(channel);
+    };
+  }, [staff?.id, planIdSet, loadData]);
+
+  const toggleChecklistItem = (assignmentId: string, key: RoomCleaningChecklistKey) => {
+    setChecklistByAssignmentId((prev) => ({
+      ...prev,
+      [assignmentId]: {
+        ...(prev[assignmentId] ?? emptyCleaningChecklist()),
+        [key]: !(prev[assignmentId]?.[key] ?? false),
+      },
+    }));
+  };
+
+  async function submitBulkCompletion(assignment: CleaningAssignmentRow) {
+    if (!staff?.id) {
+      Alert.alert(t('error'), t('assignPage_errSession'));
       return;
     }
-    if (staff?.id) {
-      const roomNumber = roomNumbersById[planRoom.room_id] || '?';
-      void sendBulkToStaff({
-        target: 'all_staff',
-        title: nextDone ? 'Oda temizlendi' : 'Temizlik geri alındı',
-        body: nextDone
-          ? `Oda ${roomNumber} temizlendi olarak işaretlendi.`
-          : `Oda ${roomNumber} için temizlendi işareti geri alındı.`,
-        createdByStaffId: staff.id,
-        notificationType: 'staff_room_cleaning_status',
-        category: 'staff',
-        data: { url: '/staff/cleaning-plan', planRoomId: planRoom.id, roomId: planRoom.room_id, roomNumber, isDone: nextDone },
-      });
+    const checklist = checklistByAssignmentId[assignment.id] ?? emptyCleaningChecklist();
+    if (!isCleaningChecklistComplete(checklist)) {
+      Alert.alert(t('cleaningPage_step2Title'), t('cleaningPage_checklistIncomplete'));
+      return;
     }
-    // Arka plan esitlemesi: UI aninda kaldigi icin bekletmeyelim.
-    void loadData();
+
+    const planRooms = planRoomsByPlanId[assignment.plan_id] ?? [];
+    if (planRooms.length === 0) {
+      Alert.alert(t('error'), t('cleaningPage_emptyActive'));
+      return;
+    }
+
+    Alert.alert(
+      t('cleaningPage_confirmTitle'),
+      t('cleaningPage_confirmBody', { count: planRooms.length }),
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('cleaningPage_confirmYes'),
+          onPress: () => void executeBulkCompletion(assignment, checklist, planRooms),
+        },
+      ]
+    );
   }
 
-  async function saveAssignmentNote(assignment: AssignmentRow) {
-    const nextNote = (notesByAssignmentId[assignment.id] || '').trim();
+  async function executeBulkCompletion(
+    assignment: CleaningAssignmentRow,
+    checklist: Record<RoomCleaningChecklistKey, boolean>,
+    planRooms: CleaningPlanRoomRow[]
+  ) {
+    if (!staff?.id) return;
+
+    const plan = plansById[assignment.plan_id];
     setSavingId(assignment.id);
-    const { error } = await supabase
-      .from('room_cleaning_plan_assignments')
+    const now = new Date().toISOString();
+    const staffNote = (notesByAssignmentId[assignment.id] || '').trim() || null;
+
+    const { error: roomsErr } = await supabase
+      .from('room_cleaning_plan_rooms')
       .update({
-        staff_note: nextNote || null,
-        completed_at: new Date().toISOString(),
+        is_done: true,
+        done_at: now,
+        done_by_staff_id: staff.id,
       })
-      .eq('id', assignment.id);
-    setSavingId(null);
-    if (error) {
-      Alert.alert('Hata', error.message);
+      .eq('plan_id', assignment.plan_id);
+
+    if (roomsErr) {
+      setSavingId(null);
+      Alert.alert(t('error'), roomsErr.message);
       return;
     }
-    const plan = plansById[assignment.plan_id];
-    const completedCount = (planRoomsByPlanId[assignment.plan_id] ?? []).filter((x) => x.is_done).length;
-    const totalCount = (planRoomsByPlanId[assignment.plan_id] ?? []).length;
-    if (staff?.id) {
-      void sendBulkToStaff({
-        target: 'all_staff',
-        title: 'Temizlik listesi güncellendi',
-        body: `${plan?.target_date || 'Bugün'} planı için not kaydedildi (${completedCount}/${totalCount}).`,
-        createdByStaffId: staff.id,
-        notificationType: 'staff_room_cleaning_plan_note_saved',
-        category: 'staff',
-        data: { url: '/staff/cleaning-plan', planId: assignment.plan_id, completedCount, totalCount },
-      });
+
+    const { error: assignErr } = await supabase
+      .from('room_cleaning_plan_assignments')
+      .update({
+        staff_note: staffNote,
+        completed_at: now,
+        completion_checklist: checklist,
+      })
+      .eq('id', assignment.id);
+
+    setSavingId(null);
+    if (assignErr) {
+      Alert.alert(t('error'), assignErr.message);
+      return;
     }
-    Alert.alert('Kaydedildi', 'Notunuz kaydedildi.');
-    await loadData();
+
+    const roomLabels = planRooms
+      .map((r) => roomMetaByRoomId[r.room_id]?.room_number)
+      .filter(Boolean)
+      .join(', ');
+    const dateLabel = plan?.target_date || t('cleaningPage_dateUnknown');
+
+    void sendBulkToStaff({
+      target: 'all_staff',
+      title: t('cleaningPage_bulkNotifyTitle'),
+      body: t('cleaningPage_bulkNotifyBody', {
+        date: dateLabel,
+        count: planRooms.length,
+        rooms: roomLabels,
+      }),
+      createdByStaffId: staff.id,
+      notificationType: 'staff_room_cleaning_plan_completed',
+      category: 'staff',
+      data: {
+        url: '/staff/cleaning-plan',
+        planId: assignment.plan_id,
+        roomCount: planRooms.length,
+        completedAt: now,
+      },
+    });
+
+    invalidateCleaningPlanSessionCache();
+    Alert.alert(
+      t('cleaningPage_bulkSuccessTitle'),
+      t('cleaningPage_bulkSuccessBody', { count: planRooms.length })
+    );
+    await loadData(true);
   }
 
   const sortedAssignments = useMemo(
@@ -237,255 +351,204 @@ export default function StaffCleaningPlanScreen() {
     [assignments, plansById]
   );
 
-  const isAssignmentFullyDone = (assignment: AssignmentRow) => {
+  const isPlanCompleted = (assignment: CleaningAssignmentRow) => {
+    if (!assignment.completed_at) return false;
     const planRooms = planRoomsByPlanId[assignment.plan_id] ?? [];
-    if (planRooms.length === 0) return false;
-    return planRooms.every((room) => isConfirmedDone(room, nowMs));
+    return planRooms.length > 0 && planRooms.every((r) => r.is_done);
   };
 
-  const activeAssignments = sortedAssignments.filter(
-    (assignment) => !(isAssignmentFullyDone(assignment) && !!assignment.completed_at)
-  );
-  const completedAssignments = sortedAssignments.filter(
-    (assignment) => isAssignmentFullyDone(assignment) && !!assignment.completed_at
-  );
+  const activeAssignments = sortedAssignments.filter((a) => !isPlanCompleted(a));
+  const completedAssignments = sortedAssignments.filter((a) => isPlanCompleted(a));
 
-  if (loading) {
+  const pageBg = isNight ? pds.pageBg : '#f0fdfa';
+  const hasContent = assignments.length > 0 || !loading;
+
+  if (loading && !hasContent) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+      <View style={[styles.centered, { backgroundColor: pageBg }]}>
+        <ActivityIndicator size="large" color={CLEANING_ACCENT} />
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Temizlik</Text>
-        <TouchableOpacity style={styles.historyBtn} activeOpacity={0.85} onPress={() => router.push('/staff/cleaning-history' as never)}>
-          <Ionicons name="time-outline" size={16} color="#fff" />
-          <Text style={styles.historyBtnText}>Geçmiş Temizlikler</Text>
-        </TouchableOpacity>
+    <ScrollView
+      style={[styles.container, { backgroundColor: pageBg }]}
+      contentContainerStyle={[styles.content, { paddingBottom: 28 + insets.bottom }]}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            invalidateCleaningPlanSessionCache();
+            void loadData(true);
+          }}
+          tintColor={CLEANING_ACCENT}
+          title={refreshing ? t('cleaningPage_pullRefresh') : undefined}
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View style={styles.heroIconWrap}>
+            <Ionicons name="sparkles" size={20} color="#fff" />
+          </View>
+          <View style={styles.heroTextCol}>
+            <Text style={styles.heroTitle}>{t('staffCleaningNavTitle')}</Text>
+            <Text style={styles.heroSub}>{t('cleaningPage_subtitle')}</Text>
+          </View>
+          <View style={styles.heroActions}>
+            {liveConnected ? <LivePulse label={t('cleaningPage_live')} /> : null}
+            <PressableScale
+              onPress={() => router.push('/staff/cleaning-history' as never)}
+              style={styles.historyChip}
+              haptic
+            >
+              <Ionicons name="time-outline" size={14} color="#fff" />
+            </PressableScale>
+          </View>
+        </View>
       </View>
-      <Text style={styles.subtitle}>Sabah bu listeyi kontrol edin, odaları işaretleyin ve notunuzu kaydedin.</Text>
 
       {activeAssignments.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Ionicons name="checkmark-done-outline" size={38} color={theme.colors.textMuted} />
-          <Text style={styles.emptyText}>Aktif temizlenecek oda listesi yok.</Text>
-        </View>
+        <GlassSurface style={styles.emptyCard} borderRadius={14}>
+          <Ionicons name="checkmark-done-circle-outline" size={36} color={CLEANING_ACCENT} />
+          <Text style={[styles.emptyText, { color: pds.subtext }]}>{t('cleaningPage_emptyActive')}</Text>
+        </GlassSurface>
       ) : (
         activeAssignments.map((a) => {
           const plan = plansById[a.plan_id];
+          if (!plan) return null;
           const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
-          const completedCount = planRooms.filter((x) => isConfirmedDone(x, nowMs)).length;
-          const doneRooms = planRooms.filter((x) => isConfirmedDone(x, nowMs));
-          const activeRooms = planRooms.filter((x) => !isConfirmedDone(x, nowMs));
+          const checklistReady = isCleaningChecklistComplete(checklistByAssignmentId[a.id]);
+
           return (
-            <View key={a.id} style={styles.card}>
-              <Text style={styles.cardTitle}>{plan?.target_date || 'Tarih yok'} planı</Text>
-              {!!plan?.note && <Text style={styles.planNote}>Admin notu: {plan.note}</Text>}
-              <Text style={styles.progressText}>
-                Tamamlanan: {completedCount}/{planRooms.length}
-              </Text>
-
-              {activeRooms.map((pr) => (
-                <TouchableOpacity key={pr.id} style={[styles.roomRow, pr.is_done && styles.roomRowDone]} onPress={() => void toggleRoomDone(pr)} activeOpacity={0.85}>
-                  <Ionicons
-                    name={pr.is_done ? 'checkbox' : 'square-outline'}
-                    size={18}
-                    color={pr.is_done ? theme.colors.success : theme.colors.textMuted}
-                  />
-                  <Text style={[styles.roomText, pr.is_done && styles.roomTextDone]}>
-                    Oda {roomNumbersById[pr.room_id] || '-'}
-                  </Text>
-                  {pr.is_done && !isConfirmedDone(pr, nowMs) ? (
-                    <Text style={styles.pendingDoneText}>{getGraceRemainingSeconds(pr, nowMs)} sn</Text>
-                  ) : null}
-                  {savingId === pr.id ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
-                </TouchableOpacity>
-              ))}
-
-              {doneRooms.length > 0 ? (
-                <View style={styles.doneListWrap}>
-                  <Text style={styles.doneListTitle}>Temizlenen odalar ({doneRooms.length})</Text>
-                  <Text style={styles.doneListText}>
-                    {doneRooms.map((r) => roomNumbersById[r.room_id] || '-').join(', ')}
-                  </Text>
-                </View>
-              ) : null}
-
-              {planRooms.length > 0 && completedCount === planRooms.length ? (
-                <View style={styles.infoBox}>
-                  <Ionicons name="information-circle-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.infoBoxText}>
-                    Tum odalar tamamlandi. Listeyi "Temizlenen Odalar" bolumune tasimak icin notu kaydet.
-                  </Text>
-                </View>
-              ) : null}
-
-              <TextInput
-                style={styles.noteInput}
-                placeholder="Gün sonu notu (opsiyonel)"
-                value={notesByAssignmentId[a.id] ?? ''}
-                onChangeText={(v) => setNotesByAssignmentId((prev) => ({ ...prev, [a.id]: v }))}
-                multiline
-              />
-              <TouchableOpacity style={styles.saveBtn} onPress={() => void saveAssignmentNote(a)} disabled={savingId === a.id}>
-                {savingId === a.id ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveBtnText}>Notu kaydet</Text>}
-              </TouchableOpacity>
-            </View>
+            <CleaningJobCard
+              key={a.id}
+              plan={plan}
+              planRooms={planRooms}
+              roomMetaByRoomId={roomMetaByRoomId}
+              checklist={checklistByAssignmentId[a.id] ?? emptyCleaningChecklist()}
+              note={notesByAssignmentId[a.id] ?? ''}
+              onNoteChange={(v) => setNotesByAssignmentId((prev) => ({ ...prev, [a.id]: v }))}
+              onToggleCheck={(key) => toggleChecklistItem(a.id, key)}
+              onSubmit={() => void submitBulkCompletion(a)}
+              saving={savingId === a.id}
+              checklistReady={checklistReady}
+              locale={locale}
+              t={t}
+              pds={pds}
+              isNight={isNight}
+            />
           );
         })
       )}
 
-      <View style={styles.completedSection}>
-        <Text style={styles.completedSectionTitle}>Temizlenen Odalar</Text>
-        {completedAssignments.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="archive-outline" size={34} color={theme.colors.textMuted} />
-            <Text style={styles.emptyText}>Notu kaydedilmis tamamlanmis liste yok.</Text>
-          </View>
-        ) : (
-          completedAssignments.map((a) => {
-            const plan = plansById[a.plan_id];
-            const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
-            const doneRooms = planRooms.filter((x) => isConfirmedDone(x, nowMs));
-            return (
-              <View key={`completed-${a.id}`} style={styles.completedCard}>
-                <Text style={styles.cardTitle}>{plan?.target_date || 'Tarih yok'} plani</Text>
-                <Text style={styles.progressText}>Tamamlanan: {doneRooms.length}/{planRooms.length}</Text>
-                <View style={styles.doneListWrap}>
-                  <Text style={styles.doneListTitle}>Temizlenen odalar ({doneRooms.length})</Text>
-                  <Text style={styles.doneListText}>
-                    {doneRooms.map((r) => roomNumbersById[r.room_id] || '-').join(', ')}
-                  </Text>
-                </View>
-                <View style={styles.savedNoteWrap}>
-                  <Text style={styles.savedNoteTitle}>Kaydedilen not</Text>
-                  <Text style={styles.savedNoteText}>{(a.staff_note || '').trim() || 'Not girilmedi.'}</Text>
-                </View>
+      <Text style={[styles.completedSectionTitle, { color: pds.text }]}>{t('cleaningPage_completedSection')}</Text>
+      {completedAssignments.length === 0 ? (
+        <GlassSurface style={styles.emptyCard} borderRadius={14}>
+          <Ionicons name="archive-outline" size={32} color={pds.muted} />
+          <Text style={[styles.emptyText, { color: pds.subtext }]}>{t('cleaningPage_noCompleted')}</Text>
+        </GlassSurface>
+      ) : (
+        completedAssignments.map((a) => {
+          const plan = plansById[a.plan_id];
+          const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
+          const dateLabel = formatPlanDate(plan?.target_date, locale) || t('cleaningPage_dateUnknown');
+          const savedChecklist = parseCleaningChecklist(a.completion_checklist);
+          return (
+            <GlassSurface key={`completed-${a.id}`} style={styles.completedCard} borderRadius={14}>
+              <Text style={[styles.completedCardTitle, { color: pds.text }]}>
+                {t('cleaningPage_planTitle', { date: dateLabel })}
+              </Text>
+              <Text style={[styles.completedCardSub, { color: pds.subtext }]}>
+                {t('cleaningPage_progress', { done: planRooms.length, total: planRooms.length })}
+              </Text>
+              <View style={[styles.doneStrip, { backgroundColor: isNight ? 'rgba(34,197,94,0.12)' : '#ecfdf5' }]}>
+                <Text style={styles.doneStripText}>
+                  {planRooms.map((r) => roomMetaByRoomId[r.room_id]?.room_number || '-').join(' · ')}
+                </Text>
               </View>
-            );
-          })
-        )}
-      </View>
+              <View style={styles.checklistDone}>
+                {ROOM_CLEANING_CHECKLIST_KEYS.filter((k) => savedChecklist[k]).map((k) => (
+                  <View key={k} style={styles.checklistDoneRow}>
+                    <Ionicons name="checkmark" size={14} color="#16a34a" />
+                    <Text style={[styles.checklistDoneText, { color: pds.text }]}>{cleaningChecklistLabel(k)}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={[styles.savedNoteWrap, { borderColor: pds.cardBorder }]}>
+                <Text style={[styles.savedNoteTitle, { color: pds.subtext }]}>{t('cleaningPage_savedNote')}</Text>
+                <Text style={[styles.savedNoteText, { color: pds.text }]}>
+                  {(a.staff_note || '').trim() || t('cleaningPage_noNote')}
+                </Text>
+              </View>
+            </GlassSurface>
+          );
+        })
+      )}
     </ScrollView>
   );
 }
 
+const liveStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ade80' },
+  text: { fontSize: 9, fontWeight: '700', color: '#ecfdf5', letterSpacing: 0.4 },
+});
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  content: { padding: 16, paddingBottom: 36 },
+  container: { flex: 1 },
+  content: { padding: 14, gap: 2 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  title: { fontSize: 22, fontWeight: '800', color: theme.colors.text },
-  historyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: theme.colors.primary,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  historyBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  subtitle: { marginTop: 6, marginBottom: 14, fontSize: 14, color: theme.colors.textSecondary },
-  emptyCard: {
+  hero: {
     borderRadius: 14,
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    alignItems: 'center',
-    paddingVertical: 28,
-    gap: 8,
-  },
-  emptyText: { fontSize: 14, color: theme.colors.textMuted },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    padding: 14,
     marginBottom: 12,
-    padding: 12,
+    backgroundColor: CLEANING_ACCENT,
   },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
-  planNote: { marginTop: 4, fontSize: 13, color: theme.colors.textSecondary },
-  progressText: { marginTop: 6, marginBottom: 8, fontSize: 12, color: theme.colors.textMuted, fontWeight: '700' },
-  roomRow: {
-    flexDirection: 'row',
+  heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  heroActions: { alignItems: 'flex-end', gap: 6 },
+  heroIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.borderLight,
+    justifyContent: 'center',
   },
-  roomRowDone: { backgroundColor: '#ecfdf3' },
-  roomText: { fontSize: 14, color: theme.colors.text, flex: 1 },
-  roomTextDone: { color: theme.colors.success, fontWeight: '700' },
-  pendingDoneText: { fontSize: 11, fontWeight: '700', color: theme.colors.warning },
-  doneListWrap: {
-    marginTop: 8,
+  heroTextCol: { flex: 1, minWidth: 0 },
+  heroTitle: { fontSize: 18, fontWeight: '800', color: '#fff', letterSpacing: -0.2 },
+  heroSub: { fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.82)', marginTop: 3 },
+  historyChip: {
+    width: 32,
+    height: 32,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    backgroundColor: theme.colors.backgroundSecondary,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  doneListTitle: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 4 },
-  doneListText: { fontSize: 13, color: theme.colors.text },
-  infoBox: {
-    marginTop: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
   },
-  infoBoxText: { flex: 1, fontSize: 12, color: '#1e3a8a', fontWeight: '600' },
-  noteInput: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    minHeight: 70,
-    color: theme.colors.text,
-    backgroundColor: theme.colors.background,
-    textAlignVertical: 'top',
-  },
-  saveBtn: {
-    marginTop: 10,
-    borderRadius: 10,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    paddingVertical: 11,
-  },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  completedSection: { marginTop: 14, gap: 10 },
-  completedSectionTitle: { fontSize: 18, fontWeight: '800', color: theme.colors.text },
-  completedCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    padding: 12,
-  },
-  savedNoteWrap: {
-    marginTop: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    backgroundColor: theme.colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  savedNoteTitle: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 4 },
-  savedNoteText: { fontSize: 13, color: theme.colors.text },
+  emptyCard: { alignItems: 'center', paddingVertical: 24, gap: 8, marginBottom: 10 },
+  emptyText: { fontSize: 13, textAlign: 'center', paddingHorizontal: 16 },
+  doneStrip: { borderRadius: 8, padding: 8, marginTop: 6 },
+  doneStripText: { fontSize: 12, color: '#166534', fontWeight: '600', lineHeight: 16 },
+  checklistDone: { marginTop: 8, gap: 4 },
+  checklistDoneRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  checklistDoneText: { fontSize: 12, flex: 1 },
+  completedSectionTitle: { fontSize: 16, fontWeight: '700', marginTop: 6, marginBottom: 8 },
+  completedCard: { padding: 12, marginBottom: 8, gap: 4 },
+  completedCardTitle: { fontSize: 14, fontWeight: '700' },
+  completedCardSub: { fontSize: 12 },
+  savedNoteWrap: { marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
+  savedNoteTitle: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
+  savedNoteText: { fontSize: 13, lineHeight: 18 },
 });

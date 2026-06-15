@@ -34,6 +34,7 @@ import {
   type MenuSectionFilter,
 } from '@/lib/hotelKitchenMenuFilters';
 import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMenuUpdatedToast';
+import { PublicKitchenMenuWebLayout } from '@/components/hotelKitchenMenu/PublicKitchenMenuWebLayout';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
 
@@ -129,8 +130,12 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   );
 
   useEffect(() => {
+    if (!slugKey) {
+      setLoading(false);
+      return;
+    }
     void bootstrap({ silent: !!cachedBoot });
-  }, [bootstrap]);
+  }, [bootstrap, slugKey, cachedBoot]);
 
   const onRealtime = useCallback(() => {
     setUpdateToast(true);
@@ -185,6 +190,23 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   }, []);
 
   if (loading) {
+    if (isWeb) {
+      return (
+        <View style={styles.webLoading}>
+          <LinearGradient colors={[...menuUi.webHeroGradient]} style={styles.webLoadingHero}>
+            <View style={styles.webLoadingHeroInner}>
+              <View style={styles.skeletonLineLg} />
+              <View style={styles.skeletonLineMd} />
+              <View style={styles.skeletonSearch} />
+            </View>
+          </LinearGradient>
+          <View style={styles.webLoadingBody}>
+            <ActivityIndicator size="large" color={menuUi.accent} />
+            <Text style={styles.loadingHint}>{t('loading')}</Text>
+          </View>
+        </View>
+      );
+    }
     return (
       <View style={[styles.centered, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={menuUi.accent} />
@@ -193,13 +215,40 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     );
   }
 
-  if (notFound || !org) {
+  if (!slugKey || notFound || !org) {
     return (
       <View style={[styles.centered, { paddingTop: insets.top }]}>
         <Ionicons name="qr-code-outline" size={48} color={menuUi.navyMid} />
         <Text style={styles.notFoundTitle}>{t('publicKitchenMenuNotFoundTitle')}</Text>
         <Text style={styles.notFoundBody}>{t('publicKitchenMenuNotFoundBody')}</Text>
       </View>
+    );
+  }
+
+  if (isWeb) {
+    return (
+      <PublicKitchenMenuWebLayout
+        org={org}
+        items={items}
+        filtered={filtered}
+        grouped={grouped}
+        section={section}
+        setSection={setSection}
+        categoryFilter={categoryFilter}
+        pickCategory={pickCategory}
+        categoryChips={categoryChips}
+        productFilter={productFilter}
+        setProductFilter={setProductFilter}
+        productChips={productChips}
+        tagFilter={tagFilter}
+        setTagFilter={setTagFilter}
+        nameTagChips={nameTagChips}
+        search={search}
+        setSearch={setSearch}
+        hasActiveFilters={hasActiveFilters}
+        updateToast={updateToast}
+        onUpdateToastHidden={() => setUpdateToast(false)}
+      />
     );
   }
 
@@ -673,4 +722,27 @@ const styles = StyleSheet.create({
   },
   footerText: { fontSize: 14, fontWeight: '800', color: menuUi.navy },
   footerSub: { fontSize: 12, color: '#64748b', marginTop: 4 },
+  webLoading: { flex: 1, backgroundColor: menuUi.webSurface },
+  webLoadingHero: { height: 280, width: '100%' },
+  webLoadingHeroInner: { padding: 28, paddingTop: 48, gap: 14, maxWidth: 640 },
+  skeletonLineLg: {
+    height: 36,
+    width: '70%',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  skeletonLineMd: {
+    height: 18,
+    width: '45%',
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  skeletonSearch: {
+    height: 52,
+    width: '100%',
+    borderRadius: 14,
+    marginTop: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  webLoadingBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 40 },
 });

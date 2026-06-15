@@ -1,12 +1,29 @@
 import { useMemo, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
-import { adminTheme } from '@/constants/adminTheme';
+import { adminTheme as T } from '@/constants/adminTheme';
 import { useTranslation } from 'react-i18next';
 import { sendNotification } from '@/lib/notificationService';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  adminStatusLabel,
+  attendanceStatusVisual,
+  formatAttendanceTime,
+} from '@/lib/attendancePresentation';
+import type { AttendanceDayStatus } from '@/lib/staffAttendance';
 
 type AttendanceRow = {
   work_date: string;
@@ -16,21 +33,34 @@ type AttendanceRow = {
   check_out_at: string | null;
   late_minutes: number | null;
   total_hours: number | null;
-  day_status: 'zamaninda' | 'gec_geldi' | 'devamsiz' | 'erken_cikti' | 'eksik_kayit';
+  day_status: AttendanceDayStatus;
 };
+
+type FilterKey = 'all' | 'on_time' | 'late' | 'no_check_in';
 
 export default function AdminAttendanceIndexScreen() {
   const router = useRouter();
   const { i18n } = useTranslation();
   const staff = useAuthStore((s) => s.staff);
   const [qText, setQText] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'on_time' | 'late' | 'no_check_in'>('all');
+  const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [manualNote, setManualNote] = useState('');
   const [sendingNoCheckIn, setSendingNoCheckIn] = useState(false);
+
   const today = new Date().toISOString().slice(0, 10);
   const isTr = i18n.language?.toLowerCase().startsWith('tr');
   const localeCode = isTr ? 'tr-TR' : 'en-US';
   const monthStart = `${today.slice(0, 8)}01`;
+
+  const todayPretty = useMemo(
+    () =>
+      new Date(`${today}T12:00:00`).toLocaleDateString(localeCode, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      }),
+    [localeCode, today]
+  );
 
   const dailyQuery = useQuery({
     queryKey: ['admin-attendance', 'day', today],
@@ -73,11 +103,12 @@ export default function AdminAttendanceIndexScreen() {
 
   const dailyStats = useMemo(() => {
     const data = dailyQuery.data ?? [];
-    const total = data.length;
-    const onTime = data.filter((r) => r.day_status === 'zamaninda').length;
-    const late = data.filter((r) => r.day_status === 'gec_geldi').length;
-    const noCheckIn = data.filter((r) => !r.check_in_at).length;
-    return { total, onTime, late, noCheckIn };
+    return {
+      total: data.length,
+      onTime: data.filter((r) => r.day_status === 'zamaninda').length,
+      late: data.filter((r) => r.day_status === 'gec_geldi').length,
+      noCheckIn: data.filter((r) => !r.check_in_at).length,
+    };
   }, [dailyQuery.data]);
 
   const monthlyRanking = useMemo(() => {
@@ -106,9 +137,7 @@ export default function AdminAttendanceIndexScreen() {
         totalLateMinutes: 0,
       };
       current.totalDays += 1;
-      if (row.check_in_at) {
-        current.checkInDays += 1;
-      }
+      if (row.check_in_at) current.checkInDays += 1;
       if (row.day_status === 'zamaninda') current.onTimeDays += 1;
       if (row.day_status === 'gec_geldi') {
         current.lateDays += 1;
@@ -130,30 +159,14 @@ export default function AdminAttendanceIndexScreen() {
       });
   }, [monthlyQuery.data]);
 
-  const statusLabel = (status: AttendanceRow['day_status']) => {
-    const labels: Record<AttendanceRow['day_status'], string> = isTr
-      ? {
-          zamaninda: 'Zamanında',
-          gec_geldi: 'Geç geldi',
-          devamsiz: 'Devamsız',
-          erken_cikti: 'Erken çıktı',
-          eksik_kayit: 'Eksik kayıt',
-        }
-      : {
-          zamaninda: 'On time',
-          gec_geldi: 'Late check-in',
-          devamsiz: 'Absent',
-          erken_cikti: 'Early check-out',
-          eksik_kayit: 'Missing record',
-        };
-    return labels[status];
-  };
-
   const refreshAll = async () => {
     await Promise.all([dailyQuery.refetch(), monthlyQuery.refetch()]);
   };
 
-  const noCheckInRows = useMemo(() => (dailyQuery.data ?? []).filter((r) => !r.check_in_at), [dailyQuery.data]);
+  const noCheckInRows = useMemo(
+    () => (dailyQuery.data ?? []).filter((r) => !r.check_in_at),
+    [dailyQuery.data]
+  );
 
   const sendNoCheckInNotification = async () => {
     if (noCheckInRows.length === 0) {
@@ -168,7 +181,9 @@ export default function AdminAttendanceIndexScreen() {
       setSendingNoCheckIn(true);
       const bodyText =
         manualNote.trim() ||
-        (isTr ? 'Bugün neden giriş yapmadınız? Lütfen bilgi notu bırakın.' : 'Why did you not check in today? Please leave an information note.');
+        (isTr
+          ? 'Bugün neden giriş yapmadınız? Lütfen mesai ekranından bilgi notu bırakın.'
+          : 'Why did you not check in today? Please leave a note on the attendance screen.');
       const titleText = isTr ? 'Mesai Giriş Hatırlatması' : 'Attendance Check-in Reminder';
 
       const results = await Promise.all(
@@ -193,11 +208,21 @@ export default function AdminAttendanceIndexScreen() {
           : `Sent to ${okCount} staff${failedCount > 0 ? `, ${failedCount} failed.` : '.'}`
       );
     } catch (error) {
-      Alert.alert(isTr ? 'Hata' : 'Error', error instanceof Error ? error.message : isTr ? 'Bilinmeyen hata' : 'Unknown error');
+      Alert.alert(
+        isTr ? 'Hata' : 'Error',
+        error instanceof Error ? error.message : isTr ? 'Bilinmeyen hata' : 'Unknown error'
+      );
     } finally {
       setSendingNoCheckIn(false);
     }
   };
+
+  const filters: { key: FilterKey; label: string; value: number; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
+    { key: 'all', label: isTr ? 'Toplam' : 'Total', value: dailyStats.total, icon: 'people-outline', color: '#6366f1' },
+    { key: 'on_time', label: isTr ? 'Zamanında' : 'On time', value: dailyStats.onTime, icon: 'checkmark-circle-outline', color: '#16a34a' },
+    { key: 'late', label: isTr ? 'Geç' : 'Late', value: dailyStats.late, icon: 'time-outline', color: '#ea580c' },
+    { key: 'no_check_in', label: isTr ? 'Giriş yok' : 'No check-in', value: dailyStats.noCheckIn, icon: 'alert-circle-outline', color: '#dc2626' },
+  ];
 
   return (
     <ScrollView
@@ -207,241 +232,340 @@ export default function AdminAttendanceIndexScreen() {
         <RefreshControl
           refreshing={dailyQuery.isFetching || monthlyQuery.isFetching}
           onRefresh={refreshAll}
+          tintColor={T.colors.accent}
         />
       }
+      showsVerticalScrollIndicator={false}
     >
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>{isTr ? 'Mesai Takibi' : 'Attendance Tracking'}</Text>
-          <Text style={styles.subtitle}>{isTr ? 'Aylık giriş performansı ve günlük detaylar' : 'Monthly check-in performance and daily details'}</Text>
+      <LinearGradient colors={['#1e3a8a', '#2563eb', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        <View style={styles.heroDecor} pointerEvents="none" />
+        <View style={styles.heroTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroEyebrow}>{isTr ? 'Mesai Takibi' : 'Attendance'}</Text>
+            <Text style={styles.heroDate}>{todayPretty}</Text>
+          </View>
+          <TouchableOpacity style={styles.heroRefresh} onPress={refreshAll} disabled={dailyQuery.isFetching}>
+            <Ionicons name="refresh" size={20} color="#fff" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.refreshBtn} onPress={refreshAll} disabled={dailyQuery.isFetching || monthlyQuery.isFetching}>
-          <Text style={styles.refreshText}>{isTr ? 'Yenile' : 'Refresh'}</Text>
-        </TouchableOpacity>
-      </View>
+        <Text style={styles.heroSub}>
+          {isTr ? 'Günlük durum, aylık performans ve personel bildirimleri' : 'Daily status, monthly performance and staff notifications'}
+        </Text>
+      </LinearGradient>
 
-      <View style={styles.statsRow}>
-        <TouchableOpacity style={[styles.statCard, activeFilter === 'all' && styles.statCardActive]} onPress={() => setActiveFilter('all')}>
-          <Text style={styles.statValue}>{dailyStats.total}</Text>
-          <Text style={styles.statLabel}>{isTr ? 'Personel' : 'Staff'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.statCard, activeFilter === 'on_time' && styles.statCardActive]} onPress={() => setActiveFilter('on_time')}>
-          <Text style={styles.statValue}>{dailyStats.onTime}</Text>
-          <Text style={styles.statLabel}>{isTr ? 'Zamanında giriş' : 'On-time check-ins'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.statCard, activeFilter === 'late' && styles.statCardActive]} onPress={() => setActiveFilter('late')}>
-          <Text style={styles.statValue}>{dailyStats.late}</Text>
-          <Text style={styles.statLabel}>{isTr ? 'Geç giriş' : 'Late check-ins'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.statCard, activeFilter === 'no_check_in' && styles.statCardActive]} onPress={() => setActiveFilter('no_check_in')}>
-          <Text style={styles.statValue}>{dailyStats.noCheckIn}</Text>
-          <Text style={styles.statLabel}>{isTr ? 'Giriş yok (tıkla)' : 'No check-in (tap)'}</Text>
-        </TouchableOpacity>
+      <View style={styles.filterRow}>
+        {filters.map((f) => {
+          const active = activeFilter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.filterChip, active && { borderColor: f.color, backgroundColor: `${f.color}14` }]}
+              onPress={() => setActiveFilter(f.key)}
+            >
+              <Ionicons name={f.icon} size={16} color={active ? f.color : T.colors.textMuted} />
+              <Text style={[styles.filterValue, active && { color: f.color }]}>{f.value}</Text>
+              <Text style={styles.filterLabel} numberOfLines={2}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <View style={styles.notifyCard}>
-        <Text style={styles.notifyTitle}>{isTr ? 'Giriş yapmayanlara manuel bildirim' : 'Manual notification to no check-ins'}</Text>
+        <View style={styles.notifyHead}>
+          <Ionicons name="megaphone-outline" size={20} color="#1d4ed8" />
+          <Text style={styles.notifyTitle}>
+            {isTr ? 'Giriş yapmayan personele bildirim' : 'Notify staff without check-in'}
+          </Text>
+        </View>
+        <Text style={styles.notifyHint}>
+          {isTr
+            ? 'Özel mesaj yazın; personel mesai ekranına yönlendirilir. Boş bırakırsanız varsayılan hatırlatma gider.'
+            : 'Write a custom message; staff are directed to the attendance screen. Leave empty for the default reminder.'}
+        </Text>
         <TextInput
           value={manualNote}
           onChangeText={setManualNote}
           multiline
           placeholder={
-            isTr
-              ? 'Neden giriş yapmadın? gibi not yazabilir veya özel bir mesaj girebilirsiniz.'
-              : 'You can write a custom note such as "Why did you not check in?"'
+            isTr ? 'Örn: Lütfen giriş yapın ve gecikme sebebini not olarak yazın.' : 'E.g. Please check in and add a delay note.'
           }
-          placeholderTextColor={adminTheme.colors.textSecondary}
+          placeholderTextColor={T.colors.textMuted}
           style={styles.noteInput}
         />
-        <TouchableOpacity style={[styles.notifyBtn, sendingNoCheckIn && styles.notifyBtnDisabled]} onPress={sendNoCheckInNotification} disabled={sendingNoCheckIn}>
+        <TouchableOpacity
+          style={[styles.notifyBtn, sendingNoCheckIn && styles.notifyBtnDisabled]}
+          onPress={sendNoCheckInNotification}
+          disabled={sendingNoCheckIn}
+        >
+          <Ionicons name="send" size={16} color="#fff" />
           <Text style={styles.notifyBtnText}>
             {sendingNoCheckIn
               ? isTr
-                ? 'Gönderiliyor...'
-                : 'Sending...'
+                ? 'Gönderiliyor…'
+                : 'Sending…'
               : isTr
-                ? `Giriş yapmayanlara gönder (${noCheckInRows.length})`
-                : `Send to no check-ins (${noCheckInRows.length})`}
+                ? `Gönder (${noCheckInRows.length} kişi)`
+                : `Send (${noCheckInRows.length})`}
           </Text>
         </TouchableOpacity>
       </View>
 
-      <TextInput
-        value={qText}
-        onChangeText={setQText}
-        placeholder={isTr ? 'Personel ara...' : 'Search staff...'}
-        placeholderTextColor={adminTheme.colors.textSecondary}
-        style={styles.search}
-      />
-
-      <Text style={styles.sectionTitle}>{isTr ? 'Aylık giriş sıralaması (en iyi → kötü)' : 'Monthly check-in ranking (best → worst)'}</Text>
-      <View style={styles.rankingCard}>
-        {monthlyRanking.slice(0, 10).map((item, idx) => (
-          <TouchableOpacity
-            key={item.staffId}
-            style={styles.rankingRow}
-            onPress={() => router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: item.staffId } })}
-          >
-            <Text style={styles.rankNo}>#{idx + 1}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rankName}>{item.fullName}</Text>
-              <Text style={styles.rankMeta}>
-                {isTr ? 'Zamanında giriş oranı' : 'On-time rate'}: %{item.punctualityRate.toFixed(0)} · {isTr ? 'Ortalama geç kalma' : 'Avg late'}:{' '}
-                {item.avgLateMinutes.toFixed(0)} {isTr ? 'dk' : 'min'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.searchWrap}>
+        <Ionicons name="search-outline" size={18} color={T.colors.textMuted} />
+        <TextInput
+          value={qText}
+          onChangeText={setQText}
+          placeholder={isTr ? 'Personel ara…' : 'Search staff…'}
+          placeholderTextColor={T.colors.textMuted}
+          style={styles.searchInput}
+        />
       </View>
 
       <Text style={styles.sectionTitle}>
-        {isTr ? 'Bugün detay listesi' : 'Today detail list'} ({new Date(`${today}T00:00:00`).toLocaleDateString(localeCode)})
+        {isTr ? 'Aylık performans sıralaması' : 'Monthly performance ranking'}
       </Text>
-      {(rows ?? []).map((row) => (
-        <TouchableOpacity
-          key={`${row.staff_id}-${row.work_date}`}
-          style={styles.card}
-          onPress={() => router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: row.staff_id } })}
-        >
-          <View style={styles.cardTopRow}>
-            <Text style={styles.name}>{row.full_name ?? '-'}</Text>
-            <Text style={[styles.statusBadge, row.day_status === 'zamaninda' ? styles.statusGood : styles.statusWarn]}>{statusLabel(row.day_status)}</Text>
-          </View>
-          <View style={styles.timeRow}>
-            <View style={[styles.timeBox, styles.timeIn]}>
-              <Text style={styles.timeLabel}>{isTr ? 'Giriş' : 'Check-in'}</Text>
-              <Text style={styles.timeValue}>
-                {row.check_in_at ? new Date(row.check_in_at).toLocaleTimeString(localeCode, { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-              </Text>
-            </View>
-            <View style={[styles.timeBox, styles.timeOut]}>
-              <Text style={styles.timeLabel}>{isTr ? 'Çıkış' : 'Check-out'}</Text>
-              <Text style={styles.timeValue}>
-                {row.check_out_at ? new Date(row.check_out_at).toLocaleTimeString(localeCode, { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.metaRow}>
-            <Text style={styles.meta}>{isTr ? 'Geç kalma' : 'Late by'}: {row.late_minutes ?? 0} {isTr ? 'dk' : 'min'}</Text>
-            <Text style={styles.meta}>{isTr ? 'Toplam süre' : 'Total'}: {row.total_hours ? row.total_hours.toFixed(2) : '-'} {isTr ? 'saat' : 'h'}</Text>
-          </View>
-        </TouchableOpacity>
-      ))}
+      <View style={styles.rankingCard}>
+        {monthlyRanking.slice(0, 8).map((item, idx) => {
+          const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+          return (
+            <TouchableOpacity
+              key={item.staffId}
+              style={[styles.rankingRow, idx === Math.min(7, monthlyRanking.length - 1) && styles.rankingRowLast]}
+              onPress={() => router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: item.staffId } })}
+            >
+              <Text style={styles.rankBadge}>{medal}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rankName}>{item.fullName}</Text>
+                <Text style={styles.rankMeta}>
+                  %{item.punctualityRate.toFixed(0)} {isTr ? 'zamanında' : 'on-time'} ·{' '}
+                  {item.avgLateMinutes.toFixed(0)} {isTr ? 'dk ort. geç' : 'min avg late'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={T.colors.textMuted} />
+            </TouchableOpacity>
+          );
+        })}
+        {monthlyRanking.length === 0 ? (
+          <Text style={styles.emptyInline}>{isTr ? 'Bu ay henüz veri yok' : 'No data this month yet'}</Text>
+        ) : null}
+      </View>
 
-      {!dailyQuery.isFetching && rows.length === 0 ? <Text style={styles.empty}>{isTr ? 'Kayıt bulunamadı' : 'No records found'}</Text> : null}
+      <Text style={styles.sectionTitle}>
+        {isTr ? 'Bugünkü personel listesi' : "Today's staff list"} ({rows.length})
+      </Text>
+
+      {rows.map((row) => {
+        const visual = attendanceStatusVisual(row.day_status);
+        return (
+          <TouchableOpacity
+            key={`${row.staff_id}-${row.work_date}`}
+            style={styles.staffCard}
+            onPress={() => router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: row.staff_id } })}
+            activeOpacity={0.88}
+          >
+            <View style={styles.staffCardHead}>
+              <View style={[styles.avatar, { backgroundColor: visual.bg }]}>
+                <Text style={[styles.avatarLetter, { color: visual.color }]}>
+                  {(row.full_name ?? '?').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.staffName}>{row.full_name ?? '—'}</Text>
+                <View style={[styles.statusPill, { backgroundColor: visual.bg }]}>
+                  <Ionicons name={visual.icon} size={12} color={visual.color} />
+                  <Text style={[styles.statusPillText, { color: visual.color }]}>
+                    {adminStatusLabel(row.day_status, isTr)}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={T.colors.textMuted} />
+            </View>
+            <View style={styles.timeRow}>
+              <View style={styles.timeBoxIn}>
+                <Text style={styles.timeBoxLabel}>{isTr ? 'Giriş' : 'In'}</Text>
+                <Text style={styles.timeBoxValue}>{formatAttendanceTime(row.check_in_at, localeCode)}</Text>
+              </View>
+              <View style={styles.timeBoxOut}>
+                <Text style={styles.timeBoxLabel}>{isTr ? 'Çıkış' : 'Out'}</Text>
+                <Text style={styles.timeBoxValue}>{formatAttendanceTime(row.check_out_at, localeCode)}</Text>
+              </View>
+            </View>
+            <View style={styles.metaFoot}>
+              <Text style={styles.metaText}>
+                {isTr ? 'Geç' : 'Late'}: {row.late_minutes ?? 0} {isTr ? 'dk' : 'min'}
+              </Text>
+              <Text style={styles.metaText}>
+                {isTr ? 'Süre' : 'Hours'}: {row.total_hours != null ? `${row.total_hours.toFixed(1)}s` : '—'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+
+      {!dailyQuery.isFetching && rows.length === 0 ? (
+        <View style={styles.emptyBox}>
+          <Ionicons name="document-text-outline" size={36} color={T.colors.textMuted} />
+          <Text style={styles.empty}>{isTr ? 'Kayıt bulunamadı' : 'No records found'}</Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f7f8fa' },
-  content: { padding: 16, gap: 10 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  title: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text },
-  subtitle: { fontSize: 13, color: adminTheme.colors.textSecondary, marginBottom: 6 },
-  sectionTitle: { marginTop: 4, fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
-  statsRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  statCard: {
-    minWidth: '23%',
+  container: { flex: 1, backgroundColor: T.colors.surfaceSecondary },
+  content: { padding: 16, paddingBottom: 32, gap: 14 },
+  hero: { borderRadius: 20, padding: 18, overflow: 'hidden' },
+  heroDecor: {
+    position: 'absolute',
+    bottom: -40,
+    right: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  heroEyebrow: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
+  heroDate: { color: '#fff', fontSize: 20, fontWeight: '900', marginTop: 4 },
+  heroRefresh: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroSub: { color: 'rgba(255,255,255,0.9)', fontSize: 13, lineHeight: 19, marginTop: 12 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: {
+    width: '23%',
+    minWidth: 76,
     flexGrow: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: T.colors.surface,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
     padding: 10,
+    alignItems: 'center',
+    gap: 2,
   },
-  statCardActive: {
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
-  },
-  statValue: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
-  statLabel: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 2 },
-  refreshBtn: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  refreshText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.text },
-  search: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: adminTheme.colors.text,
-  },
+  filterValue: { fontSize: 20, fontWeight: '900', color: T.colors.text },
+  filterLabel: { fontSize: 10, fontWeight: '600', color: T.colors.textMuted, textAlign: 'center' },
   notifyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: T.colors.surface,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    padding: 12,
-    gap: 8,
+    borderColor: T.colors.border,
+    padding: 14,
+    gap: 10,
   },
-  notifyTitle: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
+  notifyHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  notifyTitle: { fontSize: 15, fontWeight: '800', color: T.colors.text, flex: 1 },
+  notifyHint: { fontSize: 12, color: T.colors.textSecondary, lineHeight: 17 },
   noteInput: {
-    minHeight: 72,
+    minHeight: 80,
     textAlignVertical: 'top',
-    backgroundColor: '#f8fafc',
+    backgroundColor: T.colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
-    paddingHorizontal: 10,
+    borderColor: T.colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
     paddingVertical: 10,
-    color: adminTheme.colors.text,
-    fontSize: 13,
+    color: T.colors.text,
+    fontSize: 14,
   },
   notifyBtn: {
-    borderRadius: 10,
-    backgroundColor: '#1d4ed8',
-    paddingVertical: 11,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    backgroundColor: '#1d4ed8',
+    paddingVertical: 13,
   },
   notifyBtnDisabled: { opacity: 0.6 },
-  notifyBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
-  rankingCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+  notifyBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: T.colors.surface,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    minHeight: 48,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: T.colors.text, paddingVertical: 8 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: T.colors.text },
+  rankingCard: {
+    backgroundColor: T.colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: T.colors.border,
     overflow: 'hidden',
   },
   rankingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#edf0f3',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: T.colors.border,
   },
-  rankNo: { width: 34, fontSize: 14, fontWeight: '900', color: '#0f766e' },
-  rankName: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
-  rankMeta: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 1 },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
+  rankingRowLast: { borderBottomWidth: 0 },
+  rankBadge: { width: 36, fontSize: 16, fontWeight: '900', textAlign: 'center' },
+  rankName: { fontSize: 14, fontWeight: '800', color: T.colors.text },
+  rankMeta: { fontSize: 12, color: T.colors.textSecondary, marginTop: 2 },
+  emptyInline: { padding: 16, textAlign: 'center', color: T.colors.textMuted, fontSize: 13 },
+  staffCard: {
+    backgroundColor: T.colors.surface,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#dbe8ff',
-    padding: 12,
-    gap: 8,
+    borderColor: T.colors.border,
+    padding: 14,
+    gap: 12,
   },
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  name: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, fontSize: 12, fontWeight: '800', overflow: 'hidden' },
-  statusGood: { backgroundColor: '#dcfce7', color: '#166534' },
-  statusWarn: { backgroundColor: '#fff7ed', color: '#9a3412' },
-  timeRow: { flexDirection: 'row', gap: 8 },
-  timeBox: { flex: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, borderWidth: 1 },
-  timeIn: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
-  timeOut: { backgroundColor: '#ecfeff', borderColor: '#a5f3fc' },
-  timeLabel: { fontSize: 11, fontWeight: '700', color: '#334155' },
-  timeValue: { fontSize: 18, fontWeight: '900', color: '#0f172a', marginTop: 2 },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  meta: { color: adminTheme.colors.textSecondary, fontSize: 13 },
-  empty: { color: adminTheme.colors.textSecondary, marginTop: 8 },
+  staffCardHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatar: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  avatarLetter: { fontSize: 18, fontWeight: '900' },
+  staffName: { fontSize: 16, fontWeight: '800', color: T.colors.text },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  statusPillText: { fontSize: 11, fontWeight: '700' },
+  timeRow: { flexDirection: 'row', gap: 10 },
+  timeBoxIn: {
+    flex: 1,
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  timeBoxOut: {
+    flex: 1,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  timeBoxLabel: { fontSize: 11, fontWeight: '700', color: '#64748b' },
+  timeBoxValue: { fontSize: 20, fontWeight: '900', color: '#0f172a', marginTop: 2 },
+  metaFoot: { flexDirection: 'row', justifyContent: 'space-between' },
+  metaText: { fontSize: 12, color: T.colors.textSecondary, fontWeight: '600' },
+  emptyBox: { alignItems: 'center', gap: 10, paddingVertical: 24 },
+  empty: { color: T.colors.textMuted, fontSize: 14, fontWeight: '600' },
 });

@@ -7,9 +7,11 @@ export type StaffGuestListItem = {
   phone: string | null;
   email: string | null;
   room_number: string | null;
+  created_at: string | null;
+  status: string | null;
 };
 
-const STORAGE_KEY = 'staff_guests_list_v2';
+const STORAGE_KEY = 'staff_guests_list_v3';
 let memory: StaffGuestListItem[] | null = null;
 
 export function peekStaffGuestsListMemory(): StaffGuestListItem[] | null {

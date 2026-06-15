@@ -150,3 +150,10 @@ export function canBreakfastListMutateUi(staff: StaffPermissionSlice): boolean {
 export function isBreakfastListReadOnlyUi(staff: StaffPermissionSlice): boolean {
   return !canBreakfastListMutateUi(staff);
 }
+
+/** Yazdırma, harici paylaşım (WhatsApp vb.) ve uygulama içi gönderi paylaşımı. */
+export function canBreakfastShareUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_paylas');
+}

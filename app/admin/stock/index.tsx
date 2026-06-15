@@ -28,6 +28,7 @@ import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { useAuthStore } from '@/stores/authStore';
 import { StockProductCard, type StockProductCardData } from '@/components/admin/stock/StockProductCard';
 import { getStockLevel, stockTheme, type StockLevel } from '@/components/admin/stock/stockUi';
+import { buildLatestPhotoProofByProductId } from '@/lib/stockProductImages';
 
 function formatShortDateTime(iso: string): string {
   const d = new Date(iso);
@@ -185,13 +186,11 @@ export default function StockManagement() {
           .order('created_at', { ascending: false });
         if (orgScoped) photoQuery = photoQuery.eq('organization_id', orgScoped);
         const { data: photoData } = await photoQuery;
-        const byProduct: Record<string, string> = {};
-        for (const m of photoData ?? []) {
-          const pid = (m as { product_id: string }).product_id;
-          const url = (m as { photo_proof: string }).photo_proof;
-          if (pid && url && !(pid in byProduct)) byProduct[pid] = url;
-        }
-        setLastPhotoByProductId(byProduct);
+        setLastPhotoByProductId(
+          buildLatestPhotoProofByProductId(
+            (photoData ?? []) as Array<{ product_id: string; photo_proof: string | null }>
+          )
+        );
       } catch {
         setLastPhotoByProductId({});
       }

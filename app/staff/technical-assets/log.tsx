@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityInd
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { fetchTechAssetDetail } from '@/lib/technicalAssets';
+import { notifyTechMaintenanceLog } from '@/lib/technicalAssetNotifications';
 import { canOperateTechnicalAssets, hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -47,6 +48,14 @@ export default function TechnicalAssetLogScreen() {
         setSaving(false);
         return;
       }
+      void notifyTechMaintenanceLog({
+        organizationId: a.organization_id,
+        asset: a,
+        actionType: actionType.trim(),
+        note: note.trim() || null,
+        staffId: staff!.id,
+        staffName: staff?.full_name ?? null,
+      });
       Alert.alert('Kaydedildi', 'Müdahale kaydı oluşturuldu.', [
         { text: 'Tamam', onPress: () => router.replace(`/staff/technical-assets/${assetId}`) },
       ]);

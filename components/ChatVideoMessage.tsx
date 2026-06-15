@@ -54,6 +54,7 @@ type Props = {
   uploadPhase?: ChatVideoUploadPhase;
   uploadFailed?: boolean;
   onRetry?: () => void;
+  onCancelUpload?: () => void;
   /** false = yalnızca poster (Android oda açılışı); true = HLS preload */
   preloadEnabled?: boolean;
 };
@@ -113,6 +114,7 @@ export function ChatVideoMessage({
   uploadPhase,
   uploadFailed = false,
   onRetry,
+  onCancelUpload,
   preloadEnabled = true,
 }: Props) {
   const { t } = useTranslation();
@@ -275,7 +277,11 @@ export function ChatVideoMessage({
   };
 
   const renderFailedOverlay = () => (
-    <View style={styles.uploadOverlay}>
+    <Pressable
+      style={styles.uploadOverlay}
+      onLongPress={onCancelUpload}
+      delayLongPress={400}
+    >
       <Ionicons name="alert-circle" size={36} color="#fca5a5" />
       <Text style={styles.uploadFailText}>{t('chatVideoFailed')}</Text>
       {onRetry ? (
@@ -284,11 +290,11 @@ export function ChatVideoMessage({
           <Text style={styles.retryBtnText}>{t('chatVideoRetry')}</Text>
         </TouchableOpacity>
       ) : null}
-    </View>
+    </Pressable>
   );
 
   const renderActiveUploadOverlay = () => (
-    <View style={styles.uploadOverlay}>
+    <Pressable style={styles.uploadOverlay} onLongPress={onCancelUpload} delayLongPress={400}>
       <ActivityIndicator size="small" color="#fff" />
       <Text style={styles.uploadStatusText}>{statusLabel}</Text>
       {showProgressBar ? (
@@ -299,7 +305,7 @@ export function ChatVideoMessage({
           <Text style={styles.uploadPercent}>{progressPct}%</Text>
         </>
       ) : null}
-    </View>
+    </Pressable>
   );
 
   if (!hls) {

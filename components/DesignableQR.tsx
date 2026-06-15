@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, StyleSheet, ImageSourcePropType, ViewStyle } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import i18n from '@/i18n';
+import { resolveAppLang } from '@/lib/appLang';
 
 export type QRShape = 'square' | 'rounded' | 'dots' | 'circle';
 
@@ -116,11 +118,23 @@ const frameStyles: Record<QRFrameStyle, ViewStyle> = {
   },
 };
 
+export function qrFrameLabel(frame: QRFrameStyle): string {
+  const t = i18n.getFixedT(resolveAppLang());
+  const map: Record<QRFrameStyle, string> = {
+    minimal: t('qrFrameMinimal'),
+    bordered: t('qrFrameBordered'),
+    modern: t('qrFrameModern'),
+    elegant: t('qrFrameElegant'),
+  };
+  return map[frame] ?? frame;
+}
+
+/** @deprecated `qrFrameLabel(frame)` kullanın */
 export const QR_FRAME_LABELS: Record<QRFrameStyle, string> = {
   minimal: 'Minimal',
-  bordered: 'Çerçeveli',
+  bordered: 'Bordered',
   modern: 'Modern',
-  elegant: 'Lüks',
+  elegant: 'Elegant',
 };
 
 type FramedQRProps = DesignableQRProps & { frame?: QRFrameStyle };

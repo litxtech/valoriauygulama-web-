@@ -35,15 +35,25 @@ export async function loadStaffEngagementStats(staffId: string): Promise<StaffEn
     comments = commentsRes.count ?? 0;
   }
 
-  const { count: visitsCount } = await supabase
-    .from('staff_profile_visits')
-    .select('id', { count: 'exact', head: true })
-    .eq('viewed_staff_id', staffId);
+  let visits = 0;
+  const { data: visitsRpc, error: visitsRpcErr } = await supabase.rpc(
+    'count_staff_profile_unique_visits',
+    { p_staff_id: staffId }
+  );
+  if (!visitsRpcErr && typeof visitsRpc === 'number') {
+    visits = visitsRpc;
+  } else {
+    const { count: visitsCount } = await supabase
+      .from('staff_profile_visits')
+      .select('id', { count: 'exact', head: true })
+      .eq('viewed_staff_id', staffId);
+    visits = visitsCount ?? 0;
+  }
 
   return {
     posts: postsCount ?? postIds.length ?? 0,
     likes,
     comments,
-    visits: visitsCount ?? 0,
+    visits,
   };
 }

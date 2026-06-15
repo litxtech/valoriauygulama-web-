@@ -18,8 +18,10 @@ import {
   ActivityIndicator,
   Keyboard,
   FlatList,
+  InteractionManager,
 } from 'react-native';
-import { useRouter, useNavigation } from 'expo-router';
+import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
+import { useRouter, useNavigation, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, Audio, ResizeMode } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -29,13 +31,14 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { formatRelative } from '@/lib/date';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { Skeleton, SkeletonCard } from '@/components/ui/Skeleton';
-import { getOrCreateGuestForCurrentSession, syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
+import { getOrCreateGuestForCurrentSession, syncGuestMessagingAppToken, getGuestFullNameFromUser } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName, isOpaqueGuestDisplayString } from '@/lib/guestDisplayName';
-import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
+import { recordGuestFeedPostViews, getMyGuestFeedPostViewCounts } from '@/lib/feedPostViewers';
 import { notifyAdmins, sendNotification } from '@/lib/notificationService';
 import { CachedImage } from '@/components/CachedImage';
 import { StoryMuxVideo } from '@/components/StoryMuxVideo';
@@ -51,10 +54,14 @@ import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 import { collectFeedPostPrefetchUrls } from '@/lib/feedPrefetchUrls';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
-import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
+import { FeedPostMediaGrid, feedPostMediaGridHeight } from '@/components/FeedPostMediaGrid';
+import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
+import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
+import { CustomerFeedPostCard } from '@/components/customer/CustomerFeedPostCard';
+import { CustomerFeedSectionHeader } from '@/components/customer/CustomerFeedSectionHeader';
+import { CustomerFeedLiveDashboard } from '@/components/customer/CustomerFeedLiveDashboard';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import {
   buildStaffAvatarLookup,
@@ -67,10 +74,16 @@ import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { formatDateTime } from '@/lib/date';
 import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
 import { complaintsText } from '@/lib/complaintsI18n';
+import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { loadActiveStaffStories, markStoryAsViewedForGuest, type StaffStoryGroup } from '@/lib/staffStories';
 import { MentionableText } from '@/components/MentionableText';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
+import { loadFeedRepostSource, repostFeedPostAsGuest } from '@/lib/feedRepost';
+import { createOptimisticCommentId, persistGuestFeedLike } from '@/lib/feedLikeActions';
+import { feedCommentInputRowBottomPad, FEED_COMMENT_MODAL_ANDROID_PROPS } from '@/lib/feedCommentSheetLayout';
+import { useFeedCommentSheetAndroidLayout } from '@/hooks/useFeedCommentSheetAndroidLayout';
+import { FEED_FLASH_LIST_PROPS } from '@/lib/feedFlashListPerf';
 
 type CustomerCommentRow = {
   id: string;
@@ -154,6 +167,9 @@ const WORK_STATUS_COLOR: Record<string, string> = {
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
 const CUSTOMER_HOME_CACHE_KEY = 'customer_home_cache_v1';
+const CUSTOMER_HOME_STAFF_LIMIT = 24;
+const CUSTOMER_FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 12;
+const CUSTOMER_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 16 : 24;
 
 const GLYPH = Ionicons.glyphMap as Record<string, number>;
 
@@ -208,6 +224,7 @@ export default function CustomerHome() {
     [dateLocale]
   );
   const { user } = useAuthStore();
+  const palette = usePersonelDesign();
   const [activeStaff, setActiveStaff] = useState<StaffRow[]>([]);
   const staffAvatarById = useMemo(() => buildStaffAvatarLookup(activeStaff), [activeStaff]);
   const [hotelInfo, setHotelInfo] = useState<HotelInfoRow | null>(null);
@@ -225,6 +242,7 @@ export default function CustomerHome() {
   const [menuPostId, setMenuPostId] = useState<string | null>(null);
   const [myGuestId, setMyGuestId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [repostingPostId, setRepostingPostId] = useState<string | null>(null);
   const [reportPost, setReportPost] = useState<FeedPost | null>(null);
   const [reportReason, setReportReason] = useState('');
   const [reportDetails, setReportDetails] = useState('');
@@ -237,9 +255,22 @@ export default function CustomerHome() {
   const [myGuestViewCounts, setMyGuestViewCounts] = useState<Record<string, number>>({});
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [commentsSheetPostId, setCommentsSheetPostId] = useState<string | null>(null);
-  const [commentSheetKeyboardH, setCommentSheetKeyboardH] = useState(0);
-  const [togglingLike, setTogglingLike] = useState<string | null>(null);
-  const [postingComment, setPostingComment] = useState<string | null>(null);
+  const commentInputBottomPad = useMemo(
+    () => feedCommentInputRowBottomPad(insets.bottom, 0),
+    [insets.bottom]
+  );
+  const CUSTOMER_COMMENT_SHEET_HEIGHT = SCREEN_HEIGHT * 0.72;
+  const commentAndroidLayout = useFeedCommentSheetAndroidLayout({
+    sheetOpen: !!commentsSheetPostId,
+    insetsTop: insets.top,
+    insetsBottom: insets.bottom,
+    initialSheetHeight: CUSTOMER_COMMENT_SHEET_HEIGHT,
+  });
+  const commentSheetPost = useMemo(
+    () => (commentsSheetPostId ? feedPosts.find((p) => p.id === commentsSheetPostId) ?? null : null),
+    [feedPosts, commentsSheetPostId]
+  );
+  const likeOpSeqRef = useRef<Record<string, number>>({});
   const [mentionSuggestions, setMentionSuggestions] = useState<StaffMentionCandidate[]>([]);
   const [mentionDirectory, setMentionDirectory] = useState<StaffMentionCandidate[]>([]);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -251,10 +282,10 @@ export default function CustomerHome() {
   const [storyReplies, setStoryReplies] = useState<{ id: string; content: string; created_at: string; author: string }[]>([]);
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyKeyboardH, setStoryKeyboardH] = useState(0);
-  const [visibleFeedCount, setVisibleFeedCount] = useState(30);
+  const [visibleFeedCount, setVisibleFeedCount] = useState(CUSTOMER_FEED_PAGE_SIZE);
   const fullscreenVideoRef = useRef<Video>(null);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlashList<FeedPost>>(null);
   const setScrollToTop = useScrollToTopStore((s) => s.setScrollToTop);
   const staffOnlineById = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -300,20 +331,21 @@ export default function CustomerHome() {
   }, []);
 
   useEffect(() => {
-    setScrollToTop(() => () => scrollRef.current?.scrollTo({ y: 0, animated: true }));
+    setScrollToTop(() => () => scrollRef.current?.scrollToOffset({ offset: 0, animated: true }));
     return () => setScrollToTop(null);
   }, [setScrollToTop]);
 
-  // Video sesi hoparlörden tam açılsın (Android ses kısık sorunu)
-  useEffect(() => {
-    Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: false,
-      playThroughEarpieceAndroid: false,
-    }).catch(() => {});
-  }, []);
+  // Video sesi — yalnızca bu sekme öndeyken; allowsRecordingIOS:false sohbet kaydını kilitlemesin
+  useFocusEffect(
+    useCallback(() => {
+      Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      }).catch(() => {});
+    }, [])
+  );
 
   // Tam ekran video açıldığında poster overlay sıfırla (yeni video = henüz yüklenmedi)
   useEffect(() => {
@@ -398,7 +430,6 @@ export default function CustomerHome() {
 
   const closeStoryPlayer = useCallback(() => {
     setStoryPlayer(null);
-    setStoryVideoReady(false);
     setStoryReplyText('');
     setStoryReplies([]);
     setStoryKeyboardH(0);
@@ -494,7 +525,8 @@ export default function CustomerHome() {
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('is_online', { ascending: false })
-          .order('last_active', { ascending: false });
+          .order('last_active', { ascending: false })
+          .limit(CUSTOMER_HOME_STAFF_LIMIT);
         const rows = (data ?? []) as (StaffRow & { email?: string | null })[];
         const byKey = new Map<string, StaffRow>();
         rows.forEach((r) => {
@@ -581,57 +613,32 @@ export default function CustomerHome() {
     const ids = postsWithMedia.map((p) => p.id);
     let likeCount: Record<string, number> = {};
     let commentCount: Record<string, number> = {};
-    let byPost: Record<string, CustomerCommentRow[]> = {};
     let myLikeIds: string[] = [];
     if (ids.length > 0) {
       const [reactionsRes, commentsRes, myReactionsRes] = await Promise.all([
         supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-        supabase.from('feed_post_comments').select('post_id, id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
+        supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
         guestId ? supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('guest_id', guestId) : Promise.resolve({ data: [] as { post_id: string }[] }),
       ]);
       const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
-      const comments = (commentsRes.data ?? []) as (CustomerCommentRow & { post_id: string })[];
+      const comments = (commentsRes.data ?? []) as { post_id: string }[];
       const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
       likeCount = {};
       reactions.forEach((r) => { likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1; });
       commentCount = {};
-      byPost = {};
       comments.forEach((c) => {
-        if ((c.staff_id && hidden.hiddenStaffIds.has(c.staff_id)) || (c.guest_id && hidden.hiddenGuestIds.has(c.guest_id))) return;
-        if ((c.staff_id && (c.staff as { deleted_at?: string | null } | null)?.deleted_at) || (c.guest_id && (c.guest as { deleted_at?: string | null } | null)?.deleted_at)) return;
         commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
-        if (!byPost[c.post_id]) byPost[c.post_id] = [];
-        byPost[c.post_id].push({
-          id: c.id,
-          staff_id: c.staff_id ?? null,
-          guest_id: c.guest_id ?? null,
-          content: c.content,
-          created_at: c.created_at,
-          staff: c.staff,
-          guest: c.guest,
-        });
       });
       myLikeIds = myReactions.map((r) => r.post_id);
       setLikeCounts(likeCount);
       setCommentCounts(commentCount);
       setMyLikes(new Set(myLikeIds));
-      setCommentsByPost(byPost);
+      setCommentsByPost({});
       if (guestId) {
         void recordGuestFeedPostViews(ids, guestId);
         const myPostIds = postsWithMedia.filter((p) => p.guest_id === guestId).map((p) => p.id);
         if (myPostIds.length > 0) {
-          const { data: vcRows, error: vcErr } = await supabase.rpc('get_my_guest_feed_post_view_counts', {
-            p_post_ids: myPostIds,
-          });
-          if (!vcErr && vcRows) {
-            const m: Record<string, number> = {};
-            (vcRows as { post_id: string; view_count: number }[]).forEach((r) => {
-              m[r.post_id] = Number(r.view_count) || 0;
-            });
-            setMyGuestViewCounts(m);
-          } else {
-            setMyGuestViewCounts({});
-          }
+          setMyGuestViewCounts(await getMyGuestFeedPostViewCounts(myPostIds));
         } else {
           setMyGuestViewCounts({});
         }
@@ -659,7 +666,7 @@ export default function CustomerHome() {
         ),
         ...activeStaffFiltered.map((s) => s.profile_image),
       ],
-      64
+      CUSTOMER_IMAGE_PREFETCH_CAP
     );
 
     let myRoomValue: MyRoom | null = null;
@@ -708,11 +715,10 @@ export default function CustomerHome() {
         likeCounts: likeCount,
         commentCounts: commentCount,
         myLikePostIds: myLikeIds,
-        commentsByPost: byPost,
         cachedAt: Date.now(),
       })
     ).catch(() => {});
-  }, [user?.email]);
+  }, [user?.email, user]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -722,27 +728,52 @@ export default function CustomerHome() {
   }, [load]);
 
   useEffect(() => {
-    load().then(() => setLoading(false));
+    const task = InteractionManager.runAfterInteractions(() => {
+      load().then(() => setLoading(false));
+    });
+    return () => (task as { cancel?: () => void }).cancel?.();
   }, [load]);
 
-  // Android: yorum modalında klavye açılınca input klavyenin üstünde kalsın (manuel padding)
   useEffect(() => {
-    if (Platform.OS !== 'android' || !commentsSheetPostId) return;
-    const show = Keyboard.addListener('keyboardDidShow', (e) => setCommentSheetKeyboardH(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setCommentSheetKeyboardH(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [commentsSheetPostId]);
-
-  useEffect(() => {
-    if (!commentsSheetPostId) setCommentSheetKeyboardH(0);
-  }, [commentsSheetPostId]);
-
-  useEffect(() => {
-    setVisibleFeedCount(30);
+    setVisibleFeedCount(CUSTOMER_FEED_PAGE_SIZE);
   }, [feedPosts]);
+
+  const refreshCommentsSheet = useCallback(async () => {
+    if (!commentsSheetPostId) return;
+    const guestRow = await getOrCreateGuestForCurrentSession();
+    const hidden = guestRow?.guest_id
+      ? await getHiddenUsersForGuest(guestRow.guest_id)
+      : { hiddenStaffIds: new Set<string>(), hiddenGuestIds: new Set<string>() };
+    const { data: commentsData } = await supabase
+      .from('feed_post_comments')
+      .select('post_id, id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)')
+      .eq('post_id', commentsSheetPostId)
+      .order('created_at', { ascending: true });
+    const list: CustomerCommentRow[] = [];
+    ((commentsData ?? []) as (CustomerCommentRow & { post_id: string })[]).forEach((c) => {
+      if ((c.staff_id && hidden.hiddenStaffIds.has(c.staff_id)) || (c.guest_id && hidden.hiddenGuestIds.has(c.guest_id))) return;
+      if ((c.staff_id && (c.staff as { deleted_at?: string | null } | null)?.deleted_at) || (c.guest_id && (c.guest as { deleted_at?: string | null } | null)?.deleted_at)) return;
+      list.push({
+        id: c.id,
+        staff_id: c.staff_id ?? null,
+        guest_id: c.guest_id ?? null,
+        content: c.content,
+        created_at: c.created_at,
+        staff: c.staff,
+        guest: c.guest,
+      });
+    });
+    setCommentsByPost((prev) => ({ ...prev, [commentsSheetPostId]: list }));
+    setCommentCounts((prev) => ({ ...prev, [commentsSheetPostId]: list.length }));
+  }, [commentsSheetPostId]);
+
+  useEffect(() => {
+    if (!commentsSheetPostId) return;
+    void refreshCommentsSheet();
+    searchStaffMentionCandidates('', 80)
+      .then((rows) => setMentionDirectory(rows))
+      .catch(() => setMentionDirectory([]));
+  }, [commentsSheetPostId, refreshCommentsSheet]);
 
   useEffect(() => {
     if (!activeStory) return;
@@ -753,12 +784,6 @@ export default function CustomerHome() {
       hide.remove();
     };
   }, [activeStory]);
-
-  useEffect(() => {
-    searchStaffMentionCandidates('', 700)
-      .then((rows) => setMentionDirectory(rows))
-      .catch(() => setMentionDirectory([]));
-  }, []);
 
   const mentionHrefMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -826,122 +851,185 @@ export default function CustomerHome() {
     setMentionQuery('');
   }, [mentionSuggestions, commentsSheetPostId]);
 
-  const toggleLike = useCallback(async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert(t('loginRequiredTitle'), t('loginRequiredLikeMessage'));
-      return;
-    }
-    setTogglingLike(postId);
-    try {
-      const liked = myLikes.has(postId);
-      if (liked) {
-        await supabase.from('feed_post_reactions').delete().eq('post_id', postId).eq('guest_id', guestRow.guest_id);
+  const toggleLike = useCallback(
+    async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
+      let guestId = myGuestId;
+      if (!guestId) {
+        const guestRow = await getOrCreateGuestForCurrentSession();
+        if (!guestRow?.guest_id) {
+          Alert.alert(t('loginRequiredTitle'), t('loginRequiredLikeMessage'));
+          return;
+        }
+        guestId = guestRow.guest_id;
+        setMyGuestId(guestId);
+      }
+      const opId = (likeOpSeqRef.current[postId] ?? 0) + 1;
+      likeOpSeqRef.current[postId] = opId;
+
+      let wasLiked = false;
+      setMyLikes((prev) => {
+        wasLiked = prev.has(postId);
+        if (wasLiked) {
+          const next = new Set(prev);
+          next.delete(postId);
+          return next;
+        }
+        return new Set(prev).add(postId);
+      });
+      setLikeCounts((prev) => {
+        const c = prev[postId] ?? 0;
+        return { ...prev, [postId]: wasLiked ? Math.max(0, c - 1) : c + 1 };
+      });
+
+      const wantLiked = !wasLiked;
+      try {
+        const { ok, error } = await persistGuestFeedLike(postId, guestId, wantLiked);
+        if (likeOpSeqRef.current[postId] !== opId) return;
+        if (!ok) throw error ?? new Error('like failed');
+        if (wantLiked) {
+          const displayName = getDisplayName() || t('aGuest');
+          if (authorStaffId) {
+            void sendNotification({
+              staffId: authorStaffId,
+              title: t('notifNewLikeTitle'),
+              body: t('notifNewLikeBody', { name: displayName }),
+              category: 'staff',
+              notificationType: 'feed_like',
+              data: { screen: 'staff_feed', url: '/staff', postId },
+            });
+          } else if (authorGuestId && authorGuestId !== guestId) {
+            void sendNotification({
+              guestId: authorGuestId,
+              title: t('notifNewLikeTitle'),
+              body: t('notifNewLikeBody', { name: displayName }),
+              category: 'guest',
+              notificationType: 'feed_like',
+              data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
+            });
+          }
+        }
+      } catch {
+        if (likeOpSeqRef.current[postId] !== opId) return;
         setMyLikes((prev) => {
+          if (wasLiked) return new Set(prev).add(postId);
           const next = new Set(prev);
           next.delete(postId);
           return next;
         });
-        setLikeCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 1) - 1) }));
-      } else {
-        await supabase.from('feed_post_reactions').insert({ post_id: postId, guest_id: guestRow.guest_id, reaction: 'like' });
-        setMyLikes((prev) => new Set(prev).add(postId));
-        setLikeCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-        const displayName = getDisplayName() || t('aGuest');
-        if (authorStaffId) {
-          await sendNotification({
-            staffId: authorStaffId,
-            title: t('notifNewLikeTitle'),
-            body: t('notifNewLikeBody', { name: displayName }),
-            category: 'staff',
-            notificationType: 'feed_like',
-            data: { screen: 'staff_feed', url: '/staff', postId },
-          });
-        } else if (authorGuestId) {
-          await sendNotification({
-            guestId: authorGuestId,
-            title: t('notifNewLikeTitle'),
-            body: t('notifNewLikeBody', { name: displayName }),
-            category: 'guest',
-            notificationType: 'feed_like',
-            data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
-          });
-        }
+        setLikeCounts((prev) => {
+          const c = prev[postId] ?? 0;
+          return { ...prev, [postId]: wasLiked ? c + 1 : Math.max(0, c - 1) };
+        });
       }
-    } catch (e) {
-      // ignore
-    }
-    setTogglingLike(null);
-  }, [myLikes, t]);
+    },
+    [myGuestId, t]
+  );
 
-  const submitComment = useCallback(async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert(t('loginRequiredTitle'), t('loginRequiredCommentMessage'));
-      return;
-    }
-    const text = (commentText[postId] ?? '').trim();
-    if (!text) return;
-    setPostingComment(postId);
-    try {
-      const { data: inserted } = await supabase
-        .from('feed_post_comments')
-        .insert({ post_id: postId, guest_id: guestRow.guest_id, content: text })
-        .select('id, content, created_at')
-        .single();
-      setCommentText((prev) => ({ ...prev, [postId]: '' }));
-      const displayName = getDisplayName() || t('guestDefaultName');
-      const newComment: CustomerCommentRow = {
-        id: (inserted as { id: string }).id,
-        content: text,
-        created_at: (inserted as { created_at: string }).created_at,
-        staff: null,
-        guest: { full_name: displayName },
+  const submitComment = useCallback(
+    (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
+      const text = (commentText[postId] ?? '').trim();
+      if (!text) return;
+
+      const run = async () => {
+        let guestId = myGuestId;
+        if (!guestId) {
+          const guestRow = await getOrCreateGuestForCurrentSession();
+          if (!guestRow?.guest_id) {
+            Alert.alert(t('loginRequiredTitle'), t('loginRequiredCommentMessage'));
+            return;
+          }
+          guestId = guestRow.guest_id;
+          setMyGuestId(guestId);
+        }
+
+        const displayName = getDisplayName() || t('guestDefaultName');
+        const tempId = createOptimisticCommentId();
+
+        setCommentText((prev) => ({ ...prev, [postId]: '' }));
+        const optimistic: CustomerCommentRow = {
+          id: tempId,
+          guest_id: guestId,
+          content: text,
+          created_at: new Date().toISOString(),
+          staff: null,
+          guest: { full_name: displayName },
+        };
+        setCommentsByPost((prev) => ({
+          ...prev,
+          [postId]: [...(prev[postId] ?? []), optimistic],
+        }));
+        setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+
+        try {
+          const { data: inserted, error } = await supabase
+            .from('feed_post_comments')
+            .insert({ post_id: postId, guest_id: guestId, content: text })
+            .select('id, content, created_at')
+            .single();
+          if (error || !inserted) throw error ?? new Error('comment failed');
+
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [postId]: (prev[postId] ?? []).map((c) =>
+              c.id === tempId
+                ? {
+                    ...c,
+                    id: (inserted as { id: string }).id,
+                    created_at: (inserted as { created_at: string }).created_at,
+                  }
+                : c
+            ),
+          }));
+
+          const notifyBody = `${displayName}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
+          const notifiedStaffIds = new Set<string>();
+          if (authorStaffId) {
+            notifiedStaffIds.add(authorStaffId);
+            void sendNotification({
+              staffId: authorStaffId,
+              title: t('notifNewCommentTitle'),
+              body: notifyBody,
+              category: 'staff',
+              notificationType: 'feed_comment',
+              data: { screen: 'staff_feed', url: '/staff', postId },
+            });
+          } else if (authorGuestId && authorGuestId !== guestId) {
+            void sendNotification({
+              guestId: authorGuestId,
+              title: t('notifNewCommentTitle'),
+              body: notifyBody,
+              category: 'guest',
+              notificationType: 'feed_comment',
+              data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
+            });
+          }
+          const mentionStaffIds = await resolveMentionedStaffIdsFromText(text);
+          for (const sid of mentionStaffIds) {
+            if (notifiedStaffIds.has(sid)) continue;
+            void sendNotification({
+              staffId: sid,
+              title: feedSharedText('notifMentionInCommentTitle'),
+              body: feedSharedText('notifMentionInCommentBody', { name: displayName }),
+              category: 'staff',
+              notificationType: 'staff_mention',
+              data: { screen: 'staff_feed', url: '/staff', postId },
+            });
+          }
+        } catch (e) {
+          setCommentsByPost((prev) => ({
+            ...prev,
+            [postId]: (prev[postId] ?? []).filter((c) => c.id !== tempId),
+          }));
+          setCommentCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 1) - 1) }));
+          setCommentText((prev) => ({ ...prev, [postId]: text }));
+          Alert.alert(t('error'), (e as Error)?.message ?? t('reviewSubmitFailed'));
+        }
       };
-      setCommentsByPost((prev) => ({
-        ...prev,
-        [postId]: [...(prev[postId] ?? []), newComment],
-      }));
-      setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-      const notifyBody = `${displayName}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
-      const notifiedStaffIds = new Set<string>();
-      if (authorStaffId) {
-        notifiedStaffIds.add(authorStaffId);
-        await sendNotification({
-          staffId: authorStaffId,
-          title: t('notifNewCommentTitle'),
-          body: notifyBody,
-          category: 'staff',
-          notificationType: 'feed_comment',
-          data: { screen: 'staff_feed', url: '/staff', postId },
-        });
-      } else if (authorGuestId) {
-        await sendNotification({
-          guestId: authorGuestId,
-          title: t('notifNewCommentTitle'),
-          body: notifyBody,
-          category: 'guest',
-          notificationType: 'feed_comment',
-          data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
-        });
-      }
-      const mentionStaffIds = await resolveMentionedStaffIdsFromText(text);
-      for (const sid of mentionStaffIds) {
-        if (notifiedStaffIds.has(sid)) continue;
-        await sendNotification({
-          staffId: sid,
-          title: feedSharedText('notifMentionInCommentTitle'),
-          body: feedSharedText('notifMentionInCommentBody', { name: displayName }),
-          category: 'staff',
-          notificationType: 'staff_mention',
-          data: { screen: 'staff_feed', url: '/staff', postId },
-        });
-      }
-    } catch (e) {
-      // ignore
-    }
-    setPostingComment(null);
-  }, [commentText, t]);
+
+      void run();
+    },
+    [commentText, myGuestId, t]
+  );
 
   const deleteOwnComment = useCallback(async (postId: string, commentId: string) => {
     const guestRow = await getOrCreateGuestForCurrentSession();
@@ -977,6 +1065,40 @@ export default function CustomerHome() {
     setReportReason('');
     setReportDetails('');
   };
+
+  const handleRepost = useCallback(
+    (post: FeedPost, authorName: string) => {
+      if (!myGuestId || repostingPostId) return;
+      Alert.alert(feedSharedText('feedRepostTitle'), feedSharedText('feedRepostMessage', { name: authorName }), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: feedSharedText('feedRepostConfirm'),
+          onPress: async () => {
+            setRepostingPostId(post.id);
+            try {
+              const source = await loadFeedRepostSource(post.id, authorName);
+              if (!source) {
+                Alert.alert(t('error'), feedSharedText('feedRepostFailed'));
+                return;
+              }
+              const guestRow = await getOrCreateGuestForCurrentSession();
+              const myName = guestDisplayName(guestRow?.full_name ?? null, t('visitorTypeGuest'));
+              const { postId, error } = await repostFeedPostAsGuest(myGuestId, myName, source);
+              if (error || !postId) {
+                Alert.alert(t('error'), error?.message ?? feedSharedText('feedRepostFailed'));
+                return;
+              }
+              Alert.alert(feedSharedText('feedRepostSuccessTitle'), feedSharedText('feedRepostSuccessMessage'));
+              void load();
+            } finally {
+              setRepostingPostId(null);
+            }
+          },
+        },
+      ]);
+    },
+    [myGuestId, repostingPostId, t, load]
+  );
 
   const handleDeleteOwnPost = useCallback(async (post: FeedPost) => {
     const guestRow = await getOrCreateGuestForCurrentSession();
@@ -1112,10 +1234,223 @@ export default function CustomerHome() {
     setSubmittingReport(false);
   };
 
+  const menuPost = useMemo(
+    () => (menuPostId ? feedPosts.find((p) => p.id === menuPostId) ?? null : null),
+    [menuPostId, feedPosts]
+  );
+
+  const feedFlashData = feedPosts.length > 0 ? visibleFeedPosts : [];
+
+  const renderFeedPost = useCallback(
+    ({ item: post }: ListRenderItemInfo<FeedPost>) => {
+      const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
+      const staffInfo = parseFeedStaffEmbed(post.staff);
+      const guestInfo = parseFeedGuestEmbed(post.guest);
+      const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
+      const authorName = staffInfo
+        ? displayStaffNameForViewer(
+            staffInfo.full_name ?? null,
+            staffInfo.profile_hidden_by_admin ?? null,
+            false,
+            t('visitorTypeStaff')
+          )
+        : guestDisplayName(guestInfo?.full_name, t('visitorTypeGuest'));
+      const orgName = staffInfo?.organization?.name?.trim() || null;
+      const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
+      const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
+      const roleLabel = staffInfo
+        ? staffInfo.profile_hidden_by_admin
+          ? null
+          : [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ') || null
+        : null;
+      const authorBadge = staffInfo?.verification_badge ?? null;
+      const authorAvatarUrl = resolveFeedAuthorAvatarUrl({
+        staff: post.staff,
+        guest: post.guest,
+        staffId: post.staff_id,
+        staffAvatarById,
+      });
+      const hasLocation = (post.lat != null && post.lng != null) || (post.location_label && post.location_label.trim());
+      const titlePrefix = hasLocation
+        ? `📍 ${post.location_label?.trim() || feedSharedText('feedMapLineFallback')}\n\n`
+        : '';
+      const mergedTitle = `${titlePrefix}${(post.title ?? '').trim()}`.trim() || null;
+      const postMediaItems =
+        post.media_items && post.media_items.length > 0
+          ? post.media_items
+          : post.media_type !== 'text' && (post.media_url || post.thumbnail_url)
+            ? [
+                {
+                  id: `${post.id}-legacy`,
+                  media_type: post.media_type === 'video' ? ('video' as const) : ('image' as const),
+                  media_url: post.media_url || post.thumbnail_url || '',
+                  thumbnail_url: post.thumbnail_url,
+                  sort_order: 0,
+                },
+              ]
+            : [];
+      const imageUri = postMediaItems.length > 0 ? postMediaItems[0].thumbnail_url || postMediaItems[0].media_url : null;
+      const hasMedia = !!imageUri;
+      const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, postMediaItems.length);
+      const mediaEl = hasMedia ? (
+        <View style={[styles.postImageWrap, { height: feedMediaHeight, borderRadius: 16 }]}>
+          <FeedPostMediaGrid
+            items={postMediaItems.map((m) => ({
+              id: m.id,
+              media_type: m.media_type,
+              media_url: m.media_url,
+              thumbnail_url: m.thumbnail_url,
+            }))}
+            width={feedCardWidth}
+            onPressItem={(item) => {
+              if (item.media_type === 'video') {
+                setFullscreenPostMedia({
+                  uri: item.media_url,
+                  mediaType: 'video',
+                  posterUri: item.thumbnail_url ?? undefined,
+                });
+              } else {
+                setFullscreenPostMedia({
+                  uri: item.media_url || item.thumbnail_url || '',
+                  mediaType: 'image',
+                });
+              }
+            }}
+          />
+        </View>
+      ) : null;
+      const comments = commentsByPost[post.id] ?? [];
+      const commentPreview = comments
+        .slice(-2)
+        .map((c) => ({
+          author: c.staff
+            ? displayStaffNameForViewer(
+                (c.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
+                (c.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
+                false,
+                t('visitorTypeStaff')
+              )
+            : guestDisplayName((c.guest as { full_name?: string | null } | null)?.full_name, t('visitorTypeGuest')),
+          text: (c.content ?? '').trim(),
+        }))
+        .filter((x) => x.text);
+      const isMyGuestPost = !!(myGuestId && post.guest_id === myGuestId);
+      return (
+        <View style={styles.feedListItem}>
+          <CustomerFeedPostCard
+            horizontalInset={0}
+            postTag={post.post_tag ?? null}
+            authorName={authorName}
+            authorAvatarUrl={authorAvatarUrl}
+            authorBadge={authorBadge}
+            isGuestPost={isGuestPost}
+            authorIsOnline={!!(post.staff_id && staffOnlineById.get(post.staff_id))}
+            roleLabel={roleLabel}
+            department={staffInfo?.department}
+            position={staffInfo?.position ?? null}
+            hotelName={orgName}
+            hotelLocation={post.location_label?.trim() || null}
+            isPinned={post.post_tag === 'duyuru'}
+            isUrgent={!!getPostTagVisual(post.post_tag).urgent}
+            timeAgo={formatFeedRelativeTime(post.created_at) || feedSharedText('timeJustNow')}
+            title={mergedTitle}
+            media={mediaEl}
+            hasMedia={!!hasMedia}
+            liked={myLikes.has(post.id)}
+            likeCount={likeCounts[post.id] ?? 0}
+            commentCount={commentCounts[post.id] ?? 0}
+            viewCount={isMyGuestPost ? (myGuestViewCounts[post.id] ?? 0) : 0}
+            showViewStats={isMyGuestPost}
+            viewersListEnabled={false}
+            commentPreview={commentPreview}
+            deletingPost={deletingPostId === post.id}
+            onAuthorPress={
+              post.staff_id ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer') : undefined
+            }
+            onAvatarPress={
+              post.staff_id
+                ? () => {
+                    const gIdx = storyGroupIndexByStaffId.get(post.staff_id);
+                    if (gIdx !== undefined) openStoryAt(gIdx, 0);
+                    else openStaffProfileWithVisit(router, post.staff_id!, 'customer');
+                  }
+                : undefined
+            }
+            onAvatarLongPress={
+              post.staff_id && storyGroupIndexByStaffId.get(post.staff_id) !== undefined
+                ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer')
+                : undefined
+            }
+            onLike={() => toggleLike(post.id, post.staff_id ?? null, post.guest_id ?? null)}
+            onComment={() => setCommentsSheetPostId(commentsSheetPostId === post.id ? null : post.id)}
+            onCardPress={() => setCommentsSheetPostId(commentsSheetPostId === post.id ? null : post.id)}
+            onViewers={() => {}}
+            onRepost={myGuestId ? () => handleRepost(post, authorName) : undefined}
+            reposting={repostingPostId === post.id}
+            onMenu={() => {
+              if (user && myGuestId && post.guest_id === myGuestId) {
+                handleDeleteOwnPost(post);
+                return;
+              }
+              setMenuPostId(menuPostId === post.id ? null : post.id);
+            }}
+          />
+        </View>
+      );
+    },
+    [
+      staffAvatarById,
+      commentsByPost,
+      myGuestId,
+      myLikes,
+      likeCounts,
+      commentCounts,
+      myGuestViewCounts,
+      deletingPostId,
+      repostingPostId,
+      commentsSheetPostId,
+      menuPostId,
+      staffOnlineById,
+      storyGroupIndexByStaffId,
+      user,
+      router,
+      t,
+      toggleLike,
+      handleRepost,
+      handleDeleteOwnPost,
+      openStoryAt,
+    ]
+  );
+
+  const renderFeedListFooter = useCallback(() => {
+    if (feedPosts.length <= visibleFeedCount) return null;
+    return (
+      <TouchableOpacity
+        onPress={() => setVisibleFeedCount((c) => c + CUSTOMER_FEED_PAGE_SIZE)}
+        activeOpacity={0.88}
+        style={styles.showAllBtnWrap}
+      >
+        <LinearGradient colors={['#b8860b18', '#b8860b08']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.showAllBtn}>
+          <Text style={styles.showAllText}>{feedSharedText('guestShowMore')}</Text>
+          <Ionicons name="chevron-down" size={16} color="#b8860b" />
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  }, [feedPosts.length, visibleFeedCount]);
+
+  const feedListExtraData = useMemo(
+    () => ({
+      likes: myLikes.size,
+      counts: visibleFeedCount,
+      sheet: commentsSheetPostId,
+      deleting: deletingPostId,
+    }),
+    [myLikes, visibleFeedCount, commentsSheetPostId, deletingPostId]
+  );
 
   if (loading && activeStaff.length === 0 && !hotelInfo) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={[styles.container, { backgroundColor: palette.pageBg }]} contentContainerStyle={styles.content}>
         <Skeleton height={118} borderRadius={theme.radius.lg} style={{ marginBottom: theme.spacing.md }} />
         <View style={styles.quickActionsRow}>
           {[1, 2, 3, 4].map((i) => (
@@ -1139,16 +1474,26 @@ export default function CustomerHome() {
   }
 
   return (
-    <ScrollView
+    <>
+    <FlashList
       ref={scrollRef}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: palette.pageBg }]}
       contentContainerStyle={styles.content}
+      data={feedFlashData}
+      keyExtractor={(item) => item.id}
+      renderItem={renderFeedPost}
+      ListFooterComponent={renderFeedListFooter}
+      extraData={feedListExtraData}
+      estimatedItemSize={FEED_FLASH_LIST_PROPS.estimatedItemSize}
+      drawDistance={FEED_FLASH_LIST_PROPS.drawDistance}
+      removeClippedSubviews={FEED_FLASH_LIST_PROPS.removeClippedSubviews}
       showsVerticalScrollIndicator={false}
       scrollEnabled={!commentsSheetPostId}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
       }
-    >
+      ListHeaderComponent={
+      <>
       {myRoom ? (
         <>
           <Text style={[styles.sectionTitle, styles.sectionTitleAfterHero]}>{feedSharedText('guestHomeMyRoom')}</Text>
@@ -1181,6 +1526,10 @@ export default function CustomerHome() {
                 )}
               </View>
               <View style={styles.roomActions}>
+                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/hotel-info')} activeOpacity={0.8}>
+                  <Ionicons name="information-circle-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.roomBtnText}>{guestServiceText('hotelInfoTitle')}</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/key')} activeOpacity={0.8}>
                   <Ionicons name="key-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{t('digitalKey')}</Text>
@@ -1199,11 +1548,31 @@ export default function CustomerHome() {
                   activeOpacity={0.8}
                 >
                   <Ionicons name="clipboard-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>Tesis kayıtları</Text>
+                  <Text style={styles.roomBtnText}>{t('customerFacilityJournalTitle')}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/(tabs)/messages')} activeOpacity={0.8}>
+                <TouchableOpacity
+                  style={styles.roomBtn}
+                  onPress={() => router.push('/customer/service-requests/new?type=room_cleaning')}
+                  activeOpacity={0.8}
+                >
                   <Ionicons name="sparkles-outline" size={18} color={theme.colors.primary} />
                   <Text style={styles.roomBtnText}>{feedSharedText('guestRequestCleaning')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.roomBtn}
+                  onPress={() => router.push('/customer/service-requests/new?type=lost_item')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="search-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.roomBtnText}>{guestServiceText('homeLostItem')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.roomBtn}
+                  onPress={() => router.push('/customer/service-requests')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="clipboard-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.roomBtnText}>{guestServiceText('listTitle')}</Text>
                 </TouchableOpacity>
               </View>
               <TouchableOpacity
@@ -1317,228 +1686,67 @@ export default function CustomerHome() {
         })}
       </ScrollView>
 
-      <Text style={styles.feedSectionHeading}>{feedSharedText('guestHomeFeed')}</Text>
+      <CustomerFeedLiveDashboard refreshKey={refreshing ? Date.now() : 0} />
+
+      <CustomerFeedSectionHeader
+        postCount={feedPosts.length}
+        onCreatePost={() => router.push('/customer/feed/new')}
+      />
       {loading && feedPosts.length === 0 ? (
         <View style={{ gap: 14 }}>
-          {[1, 2, 3].map((i) => (
+          {[1, 2].map((i) => (
             <SkeletonCard key={`feed-sk-${i}`} />
           ))}
         </View>
       ) : feedPosts.length === 0 ? (
-        <View style={styles.emptyFeed}>
-          <View style={styles.emptyFeedIconWrap}>
-            <Ionicons name="images-outline" size={40} color={theme.colors.primary} />
-          </View>
-          <Text style={styles.emptyFeedTitle}>{feedSharedText('guestHomeEmptyFeedTitle')}</Text>
-          <Text style={styles.emptyFeedText}>
-            {feedSharedText('guestHomeEmptyFeedSub')}
-          </Text>
-          <TouchableOpacity style={styles.emptyFeedCta} onPress={() => router.push('/customer/feed/new')} activeOpacity={0.85}>
-            <Ionicons name="camera-outline" size={20} color="#fff" />
-            <Text style={styles.emptyFeedCtaText}>{feedSharedText('guestHomeCreatePost')}</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.feedList}>
-          {(() => {
-            const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
-            return visibleFeedPosts.map((post) => {
-            const staffInfo = parseFeedStaffEmbed(post.staff);
-            const guestInfo = parseFeedGuestEmbed(post.guest);
-
-            const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
-            const authorName = staffInfo
-              ? displayStaffNameForViewer(
-                  staffInfo.full_name ?? null,
-                  staffInfo.profile_hidden_by_admin ?? null,
-                  false,
-                  t('visitorTypeStaff')
-                )
-              : guestDisplayName(guestInfo?.full_name, t('visitorTypeGuest'));
-            const orgName = staffInfo?.organization?.name?.trim() || null;
-            const orgKind = staffInfo?.organization?.kind === 'tour_office' ? 'Ofis' : staffInfo?.organization?.kind ? 'Otel' : null;
-            const orgLabel = orgName ? `${orgName}${orgKind ? ` (${orgKind})` : ''}` : null;
-            const roleLabel = staffInfo
-              ? staffInfo.profile_hidden_by_admin
-                ? null
-                : [staffInfo.department ?? null, orgLabel].filter(Boolean).join(' • ') || null
-              : null;
-            const authorBadge = staffInfo?.verification_badge ?? null;
-            const authorAvatarUrl = resolveFeedAuthorAvatarUrl({
-              staff: post.staff,
-              guest: post.guest,
-              staffId: post.staff_id,
-              staffAvatarById,
-            });
-
-            const hasLocation = (post.lat != null && post.lng != null) || (post.location_label && post.location_label.trim());
-            const titlePrefix = hasLocation
-              ? `📍 ${post.location_label?.trim() || feedSharedText('feedMapLineFallback')}\n\n`
-              : '';
-            const mergedTitle = `${titlePrefix}${(post.title ?? '').trim()}`.trim() || null;
-
-            const postMediaItems = (post.media_items && post.media_items.length > 0)
-              ? post.media_items
-              : (post.media_type !== 'text' && (post.media_url || post.thumbnail_url)
-                ? [{ id: `${post.id}-legacy`, media_type: post.media_type === 'video' ? 'video' as const : 'image' as const, media_url: post.media_url || post.thumbnail_url || '', thumbnail_url: post.thumbnail_url, sort_order: 0 }]
-                : []);
-            const imageUri = postMediaItems.length > 0 ? (postMediaItems[0].thumbnail_url || postMediaItems[0].media_url) : null;
-            const hasMedia = !!imageUri;
-            const feedMediaHeight = feedPostMediaHeightForItems(feedCardWidth, postMediaItems);
-
-            const mediaEl =
-              hasMedia ? (
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={() => {
-                    const firstItem = postMediaItems[0];
-                    const isVideo = firstItem?.media_type === 'video';
-                    if (isVideo) {
-                      setFullscreenPostMedia({
-                        uri: firstItem.media_url,
-                        mediaType: 'video',
-                        posterUri: firstItem.thumbnail_url ?? undefined,
-                      });
-                    } else {
-                      setFullscreenPostMedia({
-                        uri: firstItem?.media_url || firstItem?.thumbnail_url || '',
-                        mediaType: 'image',
-                      });
-                    }
-                  }}
-                >
-                  <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
-                    <FeedMediaCarousel
-                      items={postMediaItems.map((m) => ({
-                        id: m.id,
-                        media_type: m.media_type,
-                        media_url: m.media_url,
-                        thumbnail_url: m.thumbnail_url,
-                      }))}
-                      width={feedCardWidth}
-                      height={feedMediaHeight}
-                      videoPosterOnly
-                      onPressItem={(item) => {
-                        if (item.media_type === 'video') {
-                          setFullscreenPostMedia({
-                            uri: item.media_url,
-                            mediaType: 'video',
-                            posterUri: item.thumbnail_url ?? undefined,
-                          });
-                        } else {
-                          setFullscreenPostMedia({
-                            uri: item.media_url || item.thumbnail_url || '',
-                            mediaType: 'image',
-                          });
-                        }
-                      }}
-                    />
-                  </View>
-                </TouchableOpacity>
-              ) : null;
-
-            const comments = commentsByPost[post.id] ?? [];
-            const commentPreview = comments
-              .slice(-2)
-              .map((c) => ({
-                author: c.staff
-                  ? displayStaffNameForViewer(
-                      (c.staff as { full_name?: string | null; profile_hidden_by_admin?: boolean | null } | null)?.full_name ?? null,
-                      (c.staff as { profile_hidden_by_admin?: boolean | null } | null)?.profile_hidden_by_admin ?? null,
-                      false,
-                      t('visitorTypeStaff')
-                    )
-                  : guestDisplayName((c.guest as { full_name?: string | null } | null)?.full_name, t('visitorTypeGuest')),
-                text: (c.content ?? '').trim(),
-              }))
-              .filter((x) => x.text);
-
-            const isMyGuestPost = !!(myGuestId && post.guest_id === myGuestId);
-            return (
-              <View key={post.id}>
-                <StaffFeedPostCard
-                  horizontalInset={0}
-                  postTag={post.post_tag ?? null}
-                  authorName={authorName}
-                  authorAvatarUrl={authorAvatarUrl}
-                  authorBadge={authorBadge}
-                  isGuestPost={isGuestPost}
-                  authorIsOnline={!!(post.staff_id && staffOnlineById.get(post.staff_id))}
-                  roleLabel={roleLabel}
-                  timeAgo={timeAgoFn(post.created_at) || feedSharedText('timeJustNow')}
-                  createdAtLabel={formatDateTime(post.created_at)}
-                  title={mergedTitle}
-                  media={mediaEl}
-                  hasMedia={!!hasMedia}
-                  liked={myLikes.has(post.id)}
-                  likeCount={likeCounts[post.id] ?? 0}
-                  commentCount={commentCounts[post.id] ?? 0}
-                  viewCount={isMyGuestPost ? (myGuestViewCounts[post.id] ?? 0) : 0}
-                  showViewStats={isMyGuestPost}
-                  viewersListEnabled={false}
-                  commentPreview={commentPreview}
-                  togglingLike={togglingLike === post.id}
-                  deletingPost={deletingPostId === post.id}
-                  onAuthorPress={
-                    post.staff_id
-                      ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer')
-                      : undefined
-                  }
-                  onAvatarPress={
-                    post.staff_id
-                      ? () => {
-                          const gIdx = storyGroupIndexByStaffId.get(post.staff_id);
-                          if (gIdx !== undefined) {
-                            openStoryAt(gIdx, 0);
-                          } else {
-                            openStaffProfileWithVisit(router, post.staff_id!, 'customer');
-                          }
-                        }
-                      : undefined
-                  }
-                  onAvatarLongPress={
-                    post.staff_id && storyGroupIndexByStaffId.get(post.staff_id) !== undefined
-                      ? () => openStaffProfileWithVisit(router, post.staff_id!, 'customer')
-                      : undefined
-                  }
-                  onLike={() => toggleLike(post.id, post.staff_id ?? null, post.guest_id ?? null)}
-                  onComment={() => setCommentsSheetPostId(commentsSheetPostId === post.id ? null : post.id)}
-                  onDetailsPress={() => setCommentsSheetPostId(commentsSheetPostId === post.id ? null : post.id)}
-                  onViewers={() => {}}
-                  onMenu={() => {
-                    if (user && myGuestId && post.guest_id === myGuestId) {
-                      handleDeleteOwnPost(post);
-                      return;
-                    }
-                    setMenuPostId(menuPostId === post.id ? null : post.id);
-                  }}
-                />
-
-                <Modal visible={menuPostId === post.id} transparent animationType="fade" onRequestClose={() => setMenuPostId(null)}>
-                  <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
-                    <View style={styles.menuModalBox}>
-                      <TouchableOpacity style={styles.menuModalItem} onPress={() => handleBlockUser(post)} activeOpacity={0.7}>
-                        <Ionicons name="ban-outline" size={22} color={theme.colors.error} />
-                        <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>{t('block')}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.menuModalItem} onPress={() => openReportModal(post)} activeOpacity={0.7}>
-                        <Ionicons name="flag-outline" size={22} color={theme.colors.text} />
-                        <Text style={styles.menuModalItemText}>{feedSharedText('reportVerb')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </Pressable>
-                </Modal>
-              </View>
-            );
-          });
-          })()}
-          {feedPosts.length > visibleFeedCount ? (
-            <TouchableOpacity onPress={() => setVisibleFeedCount((c) => c + 30)} style={styles.showAllBtn}>
-              <Text style={styles.showAllText}>{feedSharedText('guestShowMore')}</Text>
+        <View style={styles.emptyFeedPremium}>
+          <LinearGradient
+            colors={['#b8860b22', '#6366f114', 'transparent']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.emptyFeedPremiumGlow}
+          />
+          <View style={styles.emptyFeedPremiumInner}>
+            <LinearGradient colors={['#b8860b', '#d97706']} style={styles.emptyFeedPremiumIcon}>
+              <Ionicons name="images-outline" size={28} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.emptyFeedPremiumTitle}>{feedSharedText('guestHomeEmptyFeedTitle')}</Text>
+            <Text style={styles.emptyFeedPremiumText}>{feedSharedText('guestHomeEmptyFeedPostsSub')}</Text>
+            <TouchableOpacity onPress={() => router.push('/customer/feed/new')} activeOpacity={0.88}>
+              <LinearGradient colors={['#c9971c', '#b8860b']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.emptyFeedPremiumCta}>
+                <Ionicons name="camera-outline" size={18} color="#fff" />
+                <Text style={styles.emptyFeedPremiumCtaText}>{feedSharedText('guestHomeCreatePost')}</Text>
+              </LinearGradient>
             </TouchableOpacity>
-          ) : null}
+          </View>
         </View>
-      )}
+      ) : null}
+      </>
+      }
+    />
+
+      <Modal visible={!!menuPostId} transparent animationType="fade" onRequestClose={() => setMenuPostId(null)}>
+        <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
+          <View style={styles.menuModalBox}>
+            <TouchableOpacity
+              style={styles.menuModalItem}
+              onPress={() => menuPost && handleBlockUser(menuPost)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="ban-outline" size={22} color={theme.colors.error} />
+              <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>{t('block')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuModalItem}
+              onPress={() => menuPost && openReportModal(menuPost)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="flag-outline" size={22} color={theme.colors.text} />
+              <Text style={styles.menuModalItemText}>{feedSharedText('reportVerb')}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Yorum kartı */}
       <Modal
@@ -1546,16 +1754,28 @@ export default function CustomerHome() {
         animationType="slide"
         transparent
         onRequestClose={() => setCommentsSheetPostId(null)}
+        {...(Platform.OS === 'android' ? FEED_COMMENT_MODAL_ANDROID_PROPS : {})}
       >
         <View style={styles.commentSheetOverlay}>
           <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setCommentsSheetPostId(null)} />
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.commentSheetKeyboard}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
             pointerEvents="box-none"
           >
-            <View
-              style={[styles.commentSheetCard, Platform.OS === 'android' && commentSheetKeyboardH > 0 && { paddingBottom: commentSheetKeyboardH + 24 }]}
+            <View style={styles.commentSheetStage}>
+            <Animated.View
+              style={[
+                styles.commentSheetCard,
+                commentAndroidLayout.enabled
+                  ? {
+                      height: commentAndroidLayout.sheetHeight,
+                      marginBottom: commentAndroidLayout.cardMarginBottom,
+                      maxHeight: SCREEN_HEIGHT * 0.92,
+                    }
+                  : null,
+              ]}
             >
               <View style={styles.commentSheetHeader}>
                 <Text style={styles.commentSheetTitle}>{feedSharedText('guestComments')}</Text>
@@ -1563,10 +1783,9 @@ export default function CustomerHome() {
                   <Ionicons name="close" size={24} color={theme.colors.text} />
                 </TouchableOpacity>
               </View>
-              {commentsSheetPostId && (() => {
-                const post = feedPosts.find((p) => p.id === commentsSheetPostId);
-                const comments = commentsByPost[commentsSheetPostId] ?? [];
-                if (!post) return null;
+              {commentSheetPost && (() => {
+                const post = commentSheetPost;
+                const comments = commentsByPost[post.id] ?? [];
                 return (
                   <>
                     <View style={styles.commentSheetBody}>
@@ -1638,7 +1857,9 @@ export default function CustomerHome() {
                           <Text style={styles.mentionEmptyText}>{feedSharedText('guestMentionNoResults')}</Text>
                         </View>
                       ) : null}
-                      <View style={styles.commentSheetInputRow}>
+                    </View>
+                    {Platform.OS !== 'android' ? (
+                      <View style={[styles.commentSheetInputRow, { paddingBottom: commentInputBottomPad }]}>
                         <TextInput
                           style={styles.commentSheetInput}
                           placeholder={feedSharedText('guestCommentPlaceholder')}
@@ -1647,25 +1868,57 @@ export default function CustomerHome() {
                           onChangeText={(text) => setCommentText((prev) => ({ ...prev, [post.id]: text }))}
                           multiline
                           maxLength={500}
-                          editable={postingComment !== post.id}
                         />
                         <TouchableOpacity
-                          style={[styles.commentSendBtn, (!(commentText[post.id] ?? '').trim() || postingComment === post.id) && styles.commentSendBtnDisabled]}
+                          style={[styles.commentSendBtn, !(commentText[post.id] ?? '').trim() && styles.commentSendBtnDisabled]}
                           onPress={() => submitComment(post.id, post.staff_id ?? null, post.guest_id ?? null)}
-                          disabled={!(commentText[post.id] ?? '').trim() || postingComment === post.id}
+                          disabled={!(commentText[post.id] ?? '').trim()}
                           activeOpacity={0.8}
                         >
-                          {postingComment === post.id ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <Ionicons name="send" size={20} color="#fff" />
-                          )}
+                          <Ionicons name="send" size={20} color="#fff" />
                         </TouchableOpacity>
                       </View>
-                    </View>
+                    ) : null}
                   </>
                 );
               })()}
+            </Animated.View>
+            {commentAndroidLayout.enabled && commentSheetPost ? (
+              <Animated.View
+                onLayout={(e) => commentAndroidLayout.onDockLayout(e.nativeEvent.layout.height)}
+                style={[
+                  styles.commentSheetInputRow,
+                  styles.commentSheetInputDocked,
+                  {
+                    bottom: commentAndroidLayout.keyboardLift,
+                    paddingBottom: commentAndroidLayout.keyboardOpen ? 0 : 12,
+                  },
+                ]}
+              >
+                <TextInput
+                  style={styles.commentSheetInput}
+                  placeholder={feedSharedText('guestCommentPlaceholder')}
+                  placeholderTextColor={theme.colors.textMuted}
+                  value={commentText[commentSheetPost.id] ?? ''}
+                  onChangeText={(text) => setCommentText((prev) => ({ ...prev, [commentSheetPost.id]: text }))}
+                  multiline
+                  maxLength={500}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.commentSendBtn,
+                    !(commentText[commentSheetPost.id] ?? '').trim() && styles.commentSendBtnDisabled,
+                  ]}
+                  onPress={() =>
+                    submitComment(commentSheetPost.id, commentSheetPost.staff_id ?? null, commentSheetPost.guest_id ?? null)
+                  }
+                  disabled={!(commentText[commentSheetPost.id] ?? '').trim()}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="send" size={20} color="#fff" />
+                </TouchableOpacity>
+              </Animated.View>
+            ) : null}
             </View>
           </KeyboardAvoidingView>
         </View>
@@ -1761,7 +2014,7 @@ export default function CustomerHome() {
                 <View style={styles.storyReplyInputRow}>
                   <TextInput
                     style={styles.storyReplyInput}
-                    placeholder="Hikayeye yanit yaz..."
+                    placeholder={t('feedStoryReplyPlaceholder')}
                     placeholderTextColor="rgba(255,255,255,0.55)"
                     value={storyReplyText}
                     onChangeText={setStoryReplyText}
@@ -1899,7 +2152,7 @@ export default function CustomerHome() {
           ) : null}
         </View>
       </Modal>
-    </ScrollView>
+    </>
   );
 }
 
@@ -1986,13 +2239,68 @@ const styles = StyleSheet.create({
   },
   facilityChipName: { fontSize: 11, fontWeight: '600', color: theme.colors.text, textAlign: 'center', lineHeight: 14 },
   sectionTitleAfterHero: { marginTop: theme.spacing.sm },
-  feedSectionHeading: {
+  emptyFeedPremium: {
+    position: 'relative',
+    borderRadius: 22,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#b8860b28',
+    backgroundColor: theme.colors.surface,
+    marginBottom: theme.spacing.md,
+  },
+  emptyFeedPremiumGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  emptyFeedPremiumInner: {
+    alignItems: 'center',
+    padding: theme.spacing.xl,
+    gap: 10,
+  },
+  emptyFeedPremiumIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyFeedPremiumTitle: {
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '900',
     color: theme.colors.text,
-    marginTop: theme.spacing.xl,
-    marginBottom: theme.spacing.sm,
-    letterSpacing: 0.2,
+    textAlign: 'center',
+  },
+  emptyFeedPremiumText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyFeedPremiumCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    paddingHorizontal: 22,
+    borderRadius: 999,
+  },
+  emptyFeedPremiumCtaText: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  showAllBtnWrap: { marginTop: 4 },
+  showAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#b8860b30',
   },
   highlightsBlock: { marginBottom: 6 },
   highlightsHead: { paddingHorizontal: 4, marginBottom: 8 },
@@ -2055,7 +2363,7 @@ const styles = StyleSheet.create({
     paddingRight: theme.spacing.xl,
   },
   staffCard: { width: 80, alignItems: 'center' },
-  staffCardInner: { alignItems: 'center' },
+  staffCardInner: { alignItems: 'center', width: '100%' },
   staffCardRing: {
     width: 72,
     height: 72,
@@ -2252,6 +2560,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   feedList: { gap: pds.cardGap },
+  feedListItem: { marginBottom: pds.cardGap },
   feedItem: {
     flexDirection: 'column',
     backgroundColor: theme.colors.surface,
@@ -2455,14 +2764,24 @@ const styles = StyleSheet.create({
   feedDetailLink: { fontSize: 13, fontWeight: '800', color: theme.colors.primary },
   commentSheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   commentSheetKeyboard: { flex: 1, justifyContent: 'flex-end' },
+  commentSheetStage: { flex: 1, justifyContent: 'flex-end' },
+  commentSheetInputDocked: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    elevation: 12,
+  },
   commentSheetCard: {
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingBottom: 24,
-    height: '72%',
     minHeight: 320,
-    maxHeight: '92%',
+    flexDirection: 'column',
+    ...Platform.select({
+      ios: { height: '72%', maxHeight: '92%' },
+      default: {},
+    }),
   },
   commentSheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.borderLight },
   commentSheetTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text },
@@ -2490,7 +2809,16 @@ const styles = StyleSheet.create({
   commentSheetTime: { fontSize: 11, color: theme.colors.textMuted, marginTop: 2 },
   commentDeleteText: { fontSize: 12, color: theme.colors.error, fontWeight: '700' },
   commentSheetEmpty: { fontSize: 15, color: theme.colors.textMuted, textAlign: 'center', paddingVertical: 24 },
-  commentSheetInputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 20, paddingTop: 12 },
+  commentSheetInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderLight,
+    backgroundColor: theme.colors.surface,
+  },
   commentSheetInput: { flex: 1, borderWidth: 1, borderColor: theme.colors.borderLight, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: theme.colors.text, maxHeight: 100 },
   commentSendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.primary, justifyContent: 'center', alignItems: 'center' },
   commentSendBtnDisabled: { opacity: 0.5 },
@@ -2646,13 +2974,35 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
   },
   emptyFeedCtaText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  emptyFeedCompact: {
+    padding: theme.spacing.lg,
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    marginBottom: theme.spacing.md,
+    gap: 8,
+  },
+  emptyFeedCompactTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.text,
+    textAlign: 'center',
+  },
+  emptyFeedCompactText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
   emptyFeedCtaSecondary: {
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
   emptyFeedCtaSecondaryText: { color: theme.colors.primary, fontWeight: '700', fontSize: 15 },
-  showAllBtn: { padding: theme.spacing.md, alignItems: 'center' },
-  showAllText: { color: theme.colors.primary, fontWeight: '600', fontSize: 14 },
+  showAllText: { color: '#b8860b', fontWeight: '800', fontSize: 14 },
   fullscreenOverlay: {
     flex: 1,
     backgroundColor: '#000',

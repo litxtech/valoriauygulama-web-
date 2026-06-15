@@ -6,7 +6,36 @@
 export type StaffPermissionSlice = {
   role?: string | null;
   app_permissions?: Record<string, boolean> | null;
+  tips_enabled?: boolean | null;
 } | null | undefined;
+
+/** Genel app_permissions kontrolü — admin rolü tüm modüllere erişir. */
+export function hasStaffAppPermission(staff: StaffPermissionSlice, key: string): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const perms = staff.app_permissions ?? {};
+  if (perms[key] === true) return true;
+  if (key === 'tutanaklar' && (perms.incident_reports === true || perms.tutanaklar === true)) return true;
+  return false;
+}
+
+/** Misafir bahşiş butonu — tips_enabled kolonu + bahsis_alabilir izni */
+export function canStaffReceiveGuestTips(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.tips_enabled === false) return false;
+  if (staff.role === 'admin') return true;
+  const v = staff.app_permissions?.bahsis_alabilir;
+  if (v === false) return false;
+  return true;
+}
+
+/** Stripe tahsilat listesi (admin panel ödemeler ekranı). */
+export function canAccessAdminPayments(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (isGorevAtaOnlyUser(staff)) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.stripe_odemeler === true;
+}
 
 /** Tam yönetim paneli shell’i (admin veya görev atama yetkisi). */
 export function canAccessAdminShell(staff: StaffPermissionSlice): boolean {
@@ -25,6 +54,21 @@ export function isGorevAtaOnlyUser(staff: StaffPermissionSlice): boolean {
 /** Görev oluşturma (insert) — admin veya gorev_ata. */
 export function canStaffCreateAssignments(staff: StaffPermissionSlice): boolean {
   return canAccessAdminShell(staff);
+}
+
+/** Eksik Var hazır liste düzenleme (otel / mutfak katalog). */
+export function canManageMissingItemsCatalog(staff: StaffPermissionSlice): boolean {
+  return canAccessAdminShell(staff);
+}
+
+/**
+ * Doluluk / oda operasyonları: giriş-çıkış, oda atama, misafir yönetimi, günlük doluluk.
+ * Admin ve resepsiyon şefi varsayılan; diğer personelde `doluluk_operasyon` yetkisi gerekir.
+ */
+export function canAccessOccupancyOps(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin' || staff.role === 'reception_chief') return true;
+  return staff.app_permissions?.doluluk_operasyon === true;
 }
 
 /** Referanslı satış / komisyon modülü (personel uygulaması + admin listesi için). */
@@ -54,11 +98,18 @@ export function hasBreakfastConfirmCreatePermission(staff: StaffPermissionSlice)
   return staff.app_permissions?.kahvalti_teyit_olustur === true;
 }
 
-/** Tesis günlüğü: kayıt oluşturma ve yetkili kayıtları görüntüleme (admin veya tesis_gunlugu). */
+/** Otel eşyaları kullanımı: yayınlanmış rehber/videoları görüntüleme, kayıt oluşturma (admin veya tesis_gunlugu). */
 export function canAccessFacilityJournal(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
   return staff.app_permissions?.tesis_gunlugu === true;
+}
+
+/** Misafir şikayetleri / önerileri: listeleme ve durum güncelleme (admin veya misafir_sikayetleri). */
+export function canAccessGuestComplaints(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.misafir_sikayetleri === true;
 }
 
 /** Kayıt tipi tanımlama — yalnızca admin. */
@@ -67,7 +118,7 @@ export function canManageFacilityJournalTypes(staff: StaffPermissionSlice): bool
   return staff.role === 'admin';
 }
 
-/** Emanet / buluntu: kayıt oluşturma, liste, teslim (admin veya emanet_buluntu yetkisi). */
+/** Kayıp eşya (buluntu): kayıt oluşturma, liste, teslim (admin veya emanet_buluntu yetkisi). */
 export function canAccessLostFound(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
@@ -77,10 +128,7 @@ export function canAccessLostFound(staff: StaffPermissionSlice): boolean {
 
 /** Tutanak Sistemi: personel olusturma/listeleme, admin tam yonetim */
 export function canAccessIncidentReports(staff: StaffPermissionSlice): boolean {
-  if (!staff) return false;
-  if (staff.role === 'admin') return true;
-  const perms = staff.app_permissions ?? {};
-  return perms.incident_reports === true || perms.tutanaklar === true;
+  return hasStaffAppPermission(staff, 'tutanaklar');
 }
 
 /** Aylık personel yemek listesi oluşturma / düzenleme (mutfak vb.). */
@@ -100,25 +148,23 @@ export function canManageHotelKitchenMenu(staff: StaffPermissionSlice): boolean 
 /** Mutfak operasyon modülü (stok, hasılat, gün sonu) — genel otel stok sisteminden ayrı. */
 export function canAccessKitchenOps(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (canAccessAdminShell(staff)) return true;
-  if (staff.app_permissions?.mutfak_operasyon === true) return true;
+  if (staff.role === 'admin') return true;
+  if (hasStaffAppPermission(staff, 'mutfak_operasyon')) return true;
   const dept = (staff.department ?? '').trim().toLowerCase();
   return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
 }
 
 /** Mutfak operasyon yönetimi (düzeltme, silme, limit, rapor). */
 export function canManageKitchenOps(staff: StaffPermissionSlice): boolean {
-  if (!staff) return false;
-  if (canAccessAdminShell(staff)) return true;
-  return staff.app_permissions?.mutfak_operasyon_yonetim === true;
+  return hasStaffAppPermission(staff, 'mutfak_operasyon_yonetim');
 }
 
 /** Reception mutfak muhasebe kontrolü (POS onay, gün sonu). */
 export function canAccessKitchenReceptionAccounting(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (canAccessAdminShell(staff)) return true;
+  if (staff.role === 'admin') return true;
   if (staff.role === 'reception_chief') return true;
-  return staff.app_permissions?.reception_mutfak_muhasebe === true;
+  return hasStaffAppPermission(staff, 'reception_mutfak_muhasebe');
 }
 
 /** Mutfak personeli (departman veya mutfak_operasyon yetkisi) — menü önceliği için. */
@@ -185,4 +231,63 @@ export function hasTechnicalAssetsReadonlyAccess(staff: StaffPermissionSlice): b
   if (!staff) return false;
   if (canOperateTechnicalAssets(staff)) return false;
   return !!(staff.app_permissions?.teknik_varliklar_okuma);
+}
+
+/** Valoria Sözleşme Yönetimi: oluşturma, düzenleme, onay, arşiv. */
+export function canManageManagedContracts(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const p = staff.app_permissions ?? {};
+  return p.sozlesme_yonetimi === true || p.super_admin === true;
+}
+
+/** Valoria Sözleşme Yönetimi: görüntüleme (atanan veya taraf). */
+export function canViewManagedContracts(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canManageManagedContracts(staff)) return true;
+  if (staff.app_permissions?.sozlesme_goruntuleme === true) return true;
+  return isKitchenStaffMember(staff);
+}
+
+/** Admin stack içinde /admin/managed-contracts* rotaları. */
+export function isManagedContractsAdminPath(pathname: string | null | undefined): boolean {
+  const p = (pathname ?? '').replace(/\/+$/, '');
+  return p === '/admin/managed-contracts' || p.startsWith('/admin/managed-contracts/');
+}
+
+/** Sözleşme hazırlama modülü (admin yönetim paneli şart değil). */
+export function canAccessManagedContractsAdminRoutes(staff: StaffPermissionSlice): boolean {
+  return canAccessAdminShell(staff) || canManageManagedContracts(staff);
+}
+
+/** Bölüm kuralları: oluşturma, düzenleme, yayınlama, arşiv (tam yönetim). */
+export function canManageDepartmentRules(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const p = staff.app_permissions ?? {};
+  return p.bolum_kurallari_yonetim === true || p.super_admin === true;
+}
+
+/** Bölüm kuralı oluşturma — hamburger menü ve /admin/department-rules/new erişimi. */
+export function canCreateDepartmentRules(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (canManageDepartmentRules(staff)) return true;
+  const p = staff.app_permissions ?? {};
+  return p.bolum_kurallari_duzenle === true || p.bolum_kurallari_yonetim === true;
+}
+
+/** Bölüm kuralları: yayınlanmış kuralları görüntüleme (departman / atama). Tüm personel menüyü görür; RLS içeriği filtreler. */
+export function canViewDepartmentRules(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  return true;
+}
+
+/** Admin stack: /admin/department-rules* */
+export function isDepartmentRulesAdminPath(pathname: string | null | undefined): boolean {
+  const p = (pathname ?? '').replace(/\/+$/, '');
+  return p === '/admin/department-rules' || p.startsWith('/admin/department-rules/');
+}
+
+export function canAccessDepartmentRulesAdminRoutes(staff: StaffPermissionSlice): boolean {
+  return canAccessAdminShell(staff) || canManageDepartmentRules(staff) || canCreateDepartmentRules(staff);
 }

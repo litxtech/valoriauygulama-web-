@@ -28,10 +28,12 @@ import {
   TECH_CATEGORY_GROUPS,
   type TechAssetDetail,
   type TechAssetRow,
+  type TechAssetStatus,
   type TechBuildingRow,
   type TechLocationRow,
   type TechRelatedAsset,
 } from '@/lib/technicalAssets';
+import { notifyTechAssetStatusChanged } from '@/lib/technicalAssetNotifications';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 
@@ -246,15 +248,28 @@ export default function AdminTechnicalAssetDetailScreen() {
   };
 
   const cycleStatus = async () => {
-    if (!asset) return;
+    if (!asset || !staff) return;
+    const prev = asset.status as TechAssetStatus;
     const i = STATUSES.indexOf(asset.status as (typeof STATUSES)[number]);
-    const next = STATUSES[(i + 1) % STATUSES.length];
+    const next = STATUSES[(i + 1) % STATUSES.length] as TechAssetStatus;
     const { error } = await supabase
       .from('tech_assets')
-      .update({ status: next, updated_by_staff_id: staff?.id ?? null })
+      .update({ status: next, updated_by_staff_id: staff.id })
       .eq('id', asset.id);
     if (error) Alert.alert('Hata', error.message);
-    else await load();
+    else {
+      const { data: detail } = await fetchTechAssetDetail(asset.id);
+      if (detail) {
+        void notifyTechAssetStatusChanged({
+          organizationId: detail.organization_id,
+          asset: detail,
+          previousStatus: prev,
+          newStatus: next,
+          updatedByStaffId: staff.id,
+        });
+      }
+      await load();
+    }
   };
 
   const saveFields = async () => {

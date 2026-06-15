@@ -263,8 +263,17 @@ export async function createMissingItemReport(params: {
     p_priority: params.priority ?? 'medium',
   });
 
-  if (error) return { error: error.message };
+  if (error) {
+    const msg = error.message ?? '';
+    const pushGlitch = /523|502|504|timeout|edge function|send-expo-push/i.test(msg);
+    return { error: pushGlitch ? 'NOTIFY_PUSH_FAILED' : msg };
+  }
   return { reportId: data as string };
+}
+
+/** Bildirim push hatası; rapor genelde kaydedilmiştir. */
+export function isMissingReportNotifyOnlyError(code: string | undefined): boolean {
+  return code === 'NOTIFY_PUSH_FAILED';
 }
 
 export async function resolveMissingItemReport(reportId: string): Promise<{ error?: string }> {

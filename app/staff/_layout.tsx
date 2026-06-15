@@ -8,18 +8,19 @@ import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
+import { staffTipText } from '@/lib/staffTipsI18n';
 import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
 import { PersonnelWarningGate } from '@/components/staff/PersonnelWarningGate';
-import { canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
-import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
+import { StaffLiveLocationBootstrap } from '@/components/staff/StaffLiveLocationBootstrap';
 import {
   StaffStackBackButton,
-  resolveStaffBackFallback,
-  staffStackCanPop,
+  STAFF_TABS_FALLBACK,
+  navigateStaffBack,
   staffStackGestureForNavigation,
   staffStackScrollSafeGestureOptions,
 } from '@/lib/staffStackBack';
 import { prefetchStaffMealMenuBrowse } from '@/lib/staffMealMenuCache';
+import { StaffHamburgerNavigationHost } from '@/components/header/StaffHamburgerNavigationHost';
 
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
@@ -84,26 +85,18 @@ export default function StaffLayout() {
 
   useStaffPresence(isBanned || isDeleted ? undefined : staff?.id);
 
-  useEffect(() => {
-    if (!staff || !canStaffUseMrzScan(staff)) return;
-    if (Platform.OS === 'android') {
-      const task = InteractionManager.runAfterInteractions(() => {
-        void preloadMrzVisionScanner();
-      });
-      return () => task.cancel();
-    }
-    void preloadMrzVisionScanner();
-  }, [staff?.id]);
+  // MRZ modülü yalnızca KBS ekranlarında lazy yüklenir (staff/kbs/*, scan.tsx).
 
   useEffect(() => {
     if (!staff?.organization_id) return;
     if (Platform.OS === 'android') {
       const task = InteractionManager.runAfterInteractions(() => {
-        setTimeout(() => prefetchStaffMealMenuBrowse(staff.organization_id!), 2000);
+        setTimeout(() => prefetchStaffMealMenuBrowse(staff.organization_id!), 8000);
       });
       return () => task.cancel();
     }
-    prefetchStaffMealMenuBrowse(staff.organization_id);
+    const t = setTimeout(() => prefetchStaffMealMenuBrowse(staff.organization_id!), 4000);
+    return () => clearTimeout(t);
   }, [staff?.organization_id]);
 
   // Root _layout'ta initAuthListener zaten loadSession çağırıyor; burada tekrar çağırmak
@@ -155,11 +148,7 @@ export default function StaffLayout() {
   }, [staff?.id]);
 
   const handleStaffSubScreenBack = useCallback(() => {
-    if (staffStackCanPop(navigation)) {
-      navigation.goBack();
-      return;
-    }
-    router.replace(resolveStaffBackFallback(pathname) as never);
+    navigateStaffBack(router, navigation, pathname, STAFF_TABS_FALLBACK);
   }, [navigation, router, pathname]);
 
   const renderStaffSubScreenBack = useCallback(
@@ -222,6 +211,8 @@ export default function StaffLayout() {
   return (
     <>
       <PersonnelWarningGate staffId={staff.id} subjectDisplayName={staff.full_name} />
+      <StaffLiveLocationBootstrap />
+      <StaffHamburgerNavigationHost />
       <Stack
         screenOptions={({ navigation: nav }) => ({
           headerShown: true,
@@ -249,11 +240,17 @@ export default function StaffLayout() {
       <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="demirbaslar" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ title: t('screenChat'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="new-chat" options={{ title: t('screenNewChat'), headerBackTitle: t('back') }} />
       <Stack.Screen name="new-group" options={{ title: t('screenNewGroup'), headerBackTitle: t('back') }} />
       <Stack.Screen name="feed/new" options={{ title: t('screenNewPost'), headerBackTitle: t('back') }} />
       <Stack.Screen name="expenses" options={{ headerShown: false }} />
       <Stack.Screen name="debts" options={{ headerShown: false }} />
-      <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="payments" options={{ headerShown: false }} />
+      <Stack.Screen name="tips/index" options={{ title: staffTipText('tipStaffTipsScreenTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="profile/[id]"
+        options={{ headerShown: false, ...staffStackScrollSafeGestureOptions }}
+      />
       <Stack.Screen
         name="staff-posts/[id]"
         options={{ title: t('profileFeedPostsSection'), headerBackTitle: t('back') }}
@@ -261,8 +258,8 @@ export default function StaffLayout() {
       <Stack.Screen name="profile/edit" options={{ title: t('screenEditProfile'), headerBackTitle: t('back') }} />
       <Stack.Screen name="profile/blocked-users" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="profile/notifications" options={{ headerBackTitle: t('back') }} />
-      <Stack.Screen name="operations/index" options={{ title: 'Operasyon görevleri', headerBackTitle: t('back') }} />
-      <Stack.Screen name="smart-ops/[id]" options={{ title: 'Görev teyidi', headerBackTitle: t('back') }} />
+      <Stack.Screen name="operations/index" options={{ title: t('staffOperationsTasks'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="smart-ops/[id]" options={{ title: t('staffSmartOpsConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen
         name="profile/app-links"
         options={{ title: t('screenAppsAndWeb'), headerBackTitle: t('back') }}
@@ -293,6 +290,8 @@ export default function StaffLayout() {
       <Stack.Screen name="documents/logs" options={{ title: feedSharedText('staffStackDocLogs'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/settings" options={{ title: feedSharedText('staffStackDocSettings'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/new" options={{ title: feedSharedText('staffStackDocNew'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="managed-contracts" options={{ headerShown: false }} />
+      <Stack.Screen name="department-rules" options={{ headerShown: false }} />
       <Stack.Screen name="incident-reports/index" options={{ title: t('screenIncidentReports'), headerBackTitle: t('back') }} />
       <Stack.Screen name="incident-reports/new" options={{ title: t('screenIncidentReportNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="incident-reports/[id]" options={{ title: t('screenIncidentReportDetail'), headerBackTitle: t('back') }} />
@@ -318,11 +317,13 @@ export default function StaffLayout() {
       <Stack.Screen name="missing-items/history" options={{ title: t('missingItemsHistoryTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/index" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/new" options={{ title: t('lfNewRecord'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="lost-found/[id]" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="facility-journal/index" options={{ title: 'Tesis günlüğü', headerBackTitle: t('back') }} />
-      <Stack.Screen name="facility-journal/new" options={{ title: 'Yeni tesis kaydı', headerBackTitle: t('back') }} />
-      <Stack.Screen name="facility-journal/[id]" options={{ title: 'Kayıt detayı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="lost-found/[id]" options={{ title: t('lfDetailTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/index" options={{ title: t('staffFacilityJournal'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/new" options={{ title: t('staffFacilityJournalNew'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="facility-journal/[id]" options={{ title: t('staffFacilityJournalDetail'), headerBackTitle: t('back') }} />
       <Stack.Screen name="internal-complaints/new" options={{ title: t('profileUiStaffComplaint'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="guest-complaints/index" options={{ title: t('staffGuestComplaints'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="guest-service-requests/index" options={{ title: 'Misafir talepleri', headerBackTitle: t('back') }} />
       <Stack.Screen
         name="documents/[id]"
         options={{ title: t('adminDocumentsDetail'), headerBackTitle: t('back'), headerLeft: renderStaffDocumentDetailBack }}
@@ -356,6 +357,7 @@ export default function StaffLayout() {
       <Stack.Screen name="salary-history" options={{ title: t('salaryHistory'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="breakfast-briefing/index" options={{ title: 'Sabah kahvaltı sayısı', headerBackTitle: t('back') }} />
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />
@@ -364,6 +366,7 @@ export default function StaffLayout() {
       <Stack.Screen name="local-area-guide/index" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="local-area-guide/[id]" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="emergency" options={{ title: t('screenEmergencyButton'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="occupancy" options={{ headerShown: false }} />
       <Stack.Screen name="technical-assets" options={{ headerShown: false }} />
       <Stack.Screen name="warnings" options={{ title: t('staffOfficialWarningsNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="board" options={{ title: t('staffBoardTitle'), headerBackTitle: t('back') }} />

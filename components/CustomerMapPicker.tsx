@@ -30,8 +30,11 @@ export type CustomerMapPickerProps = {
   onPostPress?: (postId: string) => void;
   onDiningPress?: (venueId: string) => void;
   onTransferTourPress?: (serviceId: string) => void;
+  onUserPress?: (marker: MapUserMarker) => void;
   onRegionChangeComplete?: (center: { lat: number; lng: number }) => void;
   onRegionChange?: (center: { lat: number; lng: number }) => void;
+  autoFitUserMarkers?: boolean;
+  showUserNameLabels?: boolean;
   style?: object;
 };
 
@@ -53,6 +56,9 @@ export default function CustomerMapPicker(props: CustomerMapPickerProps) {
         onPostPress={props.onPostPress}
         onDiningPress={props.onDiningPress}
         onRegionChangeComplete={props.onRegionChangeComplete ?? props.onRegionChange}
+        onUserPress={props.onUserPress}
+        autoFitUserMarkers={props.autoFitUserMarkers}
+        showUserNameLabels={props.showUserNameLabels}
         style={props.style}
       />
     );
@@ -74,7 +80,10 @@ export default function CustomerMapPicker(props: CustomerMapPickerProps) {
       onPostPress={props.onPostPress}
       onDiningPress={props.onDiningPress}
       onTransferTourPress={props.onTransferTourPress}
+      onUserPress={props.onUserPress}
       onRegionChange={props.onRegionChange ?? props.onRegionChangeComplete}
+      autoFitUserMarkers={props.autoFitUserMarkers}
+      showUserNameLabels={props.showUserNameLabels}
       style={props.style}
     />
   );

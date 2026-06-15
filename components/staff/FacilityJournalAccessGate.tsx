@@ -7,7 +7,7 @@ import { theme } from '@/constants/theme';
 
 type Props = { children: React.ReactNode };
 
-/** Tesis günlüğü: admin veya tesis_gunlugu yetkili personel. */
+/** Otel eşyaları kullanımı: admin veya tesis_gunlugu yetkili personel. */
 export function FacilityJournalAccessGate({ children }: Props) {
   const router = useRouter();
   const pathname = usePathname();

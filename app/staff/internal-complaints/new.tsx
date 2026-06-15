@@ -22,18 +22,18 @@ import { FastPress } from '@/components/ui/FastPress';
 
 type StaffOption = { id: string; full_name: string | null; department: string | null };
 
-const FREQUENCY_OPTIONS = [
-  { id: 'once', label: 'Bir kez oldu', icon: 'flash-outline' as const },
-  { id: 'sometimes', label: 'Ara ara', icon: 'time-outline' as const },
-  { id: 'often', label: 'Sık sık', icon: 'repeat-outline' as const },
-  { id: 'everyday', label: 'Neredeyse her gün', icon: 'calendar-outline' as const },
+const FREQUENCY_OPTION_IDS = [
+  { id: 'once', labelKey: 'staffInternalNoteFreqOnce', icon: 'flash-outline' as const },
+  { id: 'sometimes', labelKey: 'staffInternalNoteFreqSometimes', icon: 'time-outline' as const },
+  { id: 'often', labelKey: 'staffInternalNoteFreqOften', icon: 'repeat-outline' as const },
+  { id: 'everyday', labelKey: 'staffInternalNoteFreqDaily', icon: 'calendar-outline' as const },
 ];
 
-const TOPIC_OPTIONS = [
-  { id: 'suggestion', label: 'Öneri', icon: 'bulb-outline' as const, tint: '#0d9488' },
-  { id: 'problem', label: 'Sorun', icon: 'alert-circle-outline' as const, tint: '#dc2626' },
-  { id: 'daily', label: 'Günlük', icon: 'today-outline' as const, tint: '#2563eb' },
-  { id: 'memory', label: 'Hatıra', icon: 'bookmark-outline' as const, tint: '#7c3aed' },
+const TOPIC_OPTION_IDS = [
+  { id: 'suggestion', labelKey: 'staffInternalNoteTypeSuggestion', icon: 'bulb-outline' as const, tint: '#0d9488' },
+  { id: 'problem', labelKey: 'staffInternalNoteTypeProblem', icon: 'alert-circle-outline' as const, tint: '#dc2626' },
+  { id: 'daily', labelKey: 'staffInternalNoteTypeDaily', icon: 'today-outline' as const, tint: '#2563eb' },
+  { id: 'memory', labelKey: 'staffInternalNoteTypeMemory', icon: 'bookmark-outline' as const, tint: '#7c3aed' },
 ] as const;
 
 function Section({
@@ -70,7 +70,15 @@ export default function StaffInternalComplaintNewScreen() {
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
   const [targetId, setTargetId] = useState('');
-  const [topicType, setTopicType] = useState<(typeof TOPIC_OPTIONS)[number]['id']>('suggestion');
+  const [topicType, setTopicType] = useState<(typeof TOPIC_OPTION_IDS)[number]['id']>('suggestion');
+  const frequencyOptions = useMemo(
+    () => FREQUENCY_OPTION_IDS.map((o) => ({ ...o, label: t(o.labelKey) })),
+    [t]
+  );
+  const topicOptions = useMemo(
+    () => TOPIC_OPTION_IDS.map((o) => ({ ...o, label: t(o.labelKey) })),
+    [t]
+  );
   const [topicTitle, setTopicTitle] = useState('');
   const [whatHappened, setWhatHappened] = useState('');
   const [frequency, setFrequency] = useState('sometimes');
@@ -131,16 +139,18 @@ export default function StaffInternalComplaintNewScreen() {
       Alert.alert(t('missingInfo'), t('internalComplaintRequiredFields'));
       return;
     }
-    const topicLabel = TOPIC_OPTIONS.find((x) => x.id === topicType)?.label ?? topicType;
-    const frequencyLabel = FREQUENCY_OPTIONS.find((x) => x.id === frequency)?.label ?? frequency;
+    const topicLabel = topicOptions.find((x) => x.id === topicType)?.label ?? topicType;
+    const frequencyLabel = frequencyOptions.find((x) => x.id === frequency)?.label ?? frequency;
     const note = [
-      `Konu tipi: ${topicLabel}`,
-      `Konu başlığı: ${topicTitle.trim()}`,
-      `Detay: ${whatHappened.trim()}`,
-      `Sıklık: ${frequencyLabel}`,
-      `Durum devam ediyor mu?: ${continues === 'yes' ? 'Evet' : 'Hayır'}`,
-      `Etkisi: ${effect.trim() || '-'}`,
-      `Not:`,
+      t('staffInternalNoteTopicLine', { label: topicLabel }),
+      t('staffInternalNoteTitleLine', { title: topicTitle.trim() }),
+      t('staffInternalNoteDetailLine', { detail: whatHappened.trim() }),
+      t('staffInternalNoteFreqLine', { label: frequencyLabel }),
+      t('staffInternalNoteContinuesLine', {
+        answer: continues === 'yes' ? t('staffInternalNoteContinuesYes') : t('staffInternalNoteContinuesNo'),
+      }),
+      t('staffInternalNoteEffectLine', { effect: effect.trim() || '-' }),
+      t('staffInternalNoteNoteLine'),
       detailNote.trim(),
     ].join('\n');
 
@@ -159,8 +169,12 @@ export default function StaffInternalComplaintNewScreen() {
     }
     await sendNotification({
       staffId: targetId,
-      title: 'Yeni personel notu',
-      body: `${staff.full_name ?? 'Personel'}: ${topicTitle.trim()} (${topicLabel})`,
+      title: t('staffInternalNoteNotifyTitle'),
+      body: t('staffInternalNoteNotifyBody', {
+        author: staff.full_name ?? t('staffFeedSomeone'),
+        title: topicTitle.trim(),
+        topic: topicLabel,
+      }),
       notificationType: 'staff_internal_note_new',
       category: 'admin',
       data: {
@@ -198,13 +212,13 @@ export default function StaffInternalComplaintNewScreen() {
           <Text style={styles.heroHint}>{t('internalComplaintHint')}</Text>
           <View style={styles.heroBadge}>
             <Ionicons name="lock-closed" size={12} color={theme.colors.primaryDark} />
-            <Text style={styles.heroBadgeText}>Yalnızca seçilen yönetici görür</Text>
+            <Text style={styles.heroBadgeText}>{t('staffInternalNoteHeroBadge')}</Text>
           </View>
         </View>
 
-        <Section title="Konu tipi" subtitle="Notunuzun amacını seçin" icon="pricetag-outline">
+        <Section title={t('staffInternalNoteTopicType')} subtitle={t('staffInternalNoteTopicTypeSub')} icon="pricetag-outline">
           <View style={styles.topicGrid}>
-            {TOPIC_OPTIONS.map((x) => {
+            {topicOptions.map((x) => {
               const active = topicType === x.id;
               return (
                 <FastPress
@@ -222,12 +236,12 @@ export default function StaffInternalComplaintNewScreen() {
           </View>
         </Section>
 
-        <Section title="Konu başlığı" subtitle="Kısa ve net bir başlık" icon="text-outline">
+        <Section title={t('staffInternalNoteTopicTitle')} subtitle={t('staffInternalNoteTopicTitleSub')} icon="text-outline">
           <TextInput
             style={styles.input}
             value={topicTitle}
             onChangeText={setTopicTitle}
-            placeholder="Örn: Gece vardiyası önerim"
+            placeholder={t('staffInternalNoteTitlePh')}
             placeholderTextColor={theme.colors.textMuted}
             maxLength={120}
           />
@@ -277,12 +291,12 @@ export default function StaffInternalComplaintNewScreen() {
           )}
         </Section>
 
-        <Section title="Ana mesaj" subtitle="Ne paylaşmak istiyorsunuz?" icon="document-text-outline">
+        <Section title={t('staffInternalNoteMessageSection')} subtitle={t('staffInternalNoteMessageSectionSub')} icon="document-text-outline">
           <TextInput
             style={[styles.input, styles.textAreaSm]}
             value={whatHappened}
             onChangeText={setWhatHappened}
-            placeholder="Kısa özet yazın…"
+            placeholder={t('staffInternalNoteMessagePh')}
             placeholderTextColor={theme.colors.textMuted}
             multiline
             textAlignVertical="top"
@@ -291,7 +305,7 @@ export default function StaffInternalComplaintNewScreen() {
 
         <Section title={t('internalComplaintQ2')} icon="pulse-outline">
           <View style={styles.freqRow}>
-            {FREQUENCY_OPTIONS.map((f) => {
+            {frequencyOptions.map((f) => {
               const active = frequency === f.id;
               return (
                 <FastPress
@@ -350,7 +364,7 @@ export default function StaffInternalComplaintNewScreen() {
           />
         </Section>
 
-        <Section title={t('internalComplaintDetailLabel')} subtitle="Tarih, tanık ve somut detaylar" icon="create-outline">
+        <Section title={t('internalComplaintDetailLabel')} subtitle={t('staffInternalNoteDetailSub')} icon="create-outline">
           <TextInput
             style={[styles.input, styles.textArea]}
             value={detailNote}

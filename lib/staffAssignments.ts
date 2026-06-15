@@ -18,7 +18,17 @@ export const ASSIGNMENT_PRIORITY_KEYS = ['low', 'normal', 'high', 'urgent'] as c
 export type AssignmentPriority = (typeof ASSIGNMENT_PRIORITY_KEYS)[number];
 
 /** `staff_assignments.status` */
-export const ASSIGNMENT_STATUS_KEYS = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
+export const ASSIGNMENT_STATUS_KEYS = ['pending', 'in_progress', 'completed', 'cancelled', 'failed'] as const;
+
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUS_KEYS)[number];
+
+export function isAssignmentOpenStatus(status: string): boolean {
+  return status === 'pending' || status === 'in_progress';
+}
+
+export function isAssignmentClosedStatus(status: string): boolean {
+  return status === 'completed' || status === 'cancelled' || status === 'failed';
+}
 
 function label(prefix: string, key: string): string {
   const k = `${prefix}_${key}`;

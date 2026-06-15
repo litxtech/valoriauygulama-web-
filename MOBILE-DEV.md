@@ -9,7 +9,16 @@ Build indirdin (Valoria Hotel / valoriahotel1). **Web tarayıcıda açılmamalı
 
 ## QR ile otomatik açılma (Android)
 
-`npm start` veya `npm run start:dev:lan` ile başlattığında terminaldeki **QR kodu Android'de kamerayla okutunca** link **doğrudan Valoria Hotel uygulamasında** açılır. **iOS'ta dev launcher'da QR seçeneği yok** (aşağıya bak).
+`npm start` ile başlattığında terminaldeki **QR kodu** okutabilirsin.
+
+**Android 13+ bilinen sorun:** Sistem kamerası QR'ı bazen **Chrome'da** açar (Expo'nun kayıtlı davranışı). Bu durumda:
+
+1. Terminalde yazdırılan **`exp://192.168.x.x:8081`** adresini kopyala
+2. **Valoria** uygulamasını aç → **URL gir** → yapıştır → Bağlan
+
+Bu yöntem her zaman çalışır; QR'dan daha güvenilir.
+
+**iOS'ta** dev launcher'da QR seçeneği yok (aşağıya bak).
 
 ## iOS'ta kamera / QR yok
 

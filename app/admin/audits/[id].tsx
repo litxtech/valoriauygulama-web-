@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
@@ -8,6 +8,13 @@ import { AdminCard } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { auditScoreColor, auditScoreLabel, fetchAuditSessionDetail } from '@/lib/audit';
 import { AuditMediaPreviewModal } from '@/components/AuditMediaPreviewModal';
+
+function auditScoreTone(score: number | null | undefined): string {
+  const s = score ?? 0;
+  if (s >= 85) return 'Mükemmel';
+  if (s >= 70) return 'Dikkatli';
+  return 'Kritik';
+}
 
 export default function AuditSessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -46,12 +53,7 @@ export default function AuditSessionDetailScreen() {
     (it) => !!it.criterion?.is_critical && it.points_awarded < it.max_points
   ).length;
   const lostTotal = detail.items.reduce((sum, it) => sum + Math.max(0, it.max_points - it.points_awarded), 0);
-  const scoreTone = useMemo(() => {
-    const score = s.session_score ?? 0;
-    if (score >= 85) return 'Mükemmel';
-    if (score >= 70) return 'Dikkatli';
-    return 'Kritik';
-  }, [s.session_score]);
+  const scoreTone = auditScoreTone(s.session_score);
   for (const m of detail.media) {
     if (!m.session_item_id) continue;
     const list = mediaByItemId.get(m.session_item_id) ?? [];

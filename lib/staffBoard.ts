@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { notifyStaffBoardAnnouncementPush } from '@/lib/notificationService';
+import i18n from '@/i18n';
 
 /** Okunduktan sonra header gözü bu süre boyunca kalır, sonra gizlenir. */
 export const BOARD_EYE_HIDE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -202,16 +203,16 @@ export function isTaskAssignmentBoardRow(row: StaffAnnouncementRow): boolean {
 }
 
 export function priorityLabel(priority: string, row?: StaffAnnouncementRow): string {
-  if (row && isTaskAssignmentBoardRow(row)) return 'Görev';
+  if (row && isTaskAssignmentBoardRow(row)) return i18n.t('staffBoardTypeTask');
   switch (priority) {
     case 'urgent':
-      return 'Acil';
+      return i18n.t('assignPriority_urgent');
     case 'high':
-      return 'Yüksek';
+      return i18n.t('staffBoardPriorityHigh');
     case 'low':
-      return 'Düşük';
+      return i18n.t('staffBoardPriorityLow');
     default:
-      return 'Duyuru';
+      return i18n.t('staffBoardTitle');
   }
 }
 

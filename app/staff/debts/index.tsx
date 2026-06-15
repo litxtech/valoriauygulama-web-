@@ -21,6 +21,7 @@ import {
   type DebtStatus,
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
+import { useTranslation } from 'react-i18next';
 
 type Row = {
   id: string;
@@ -38,6 +39,7 @@ type Row = {
 };
 
 export default function StaffDebtsIndex() {
+  const { t } = useTranslation();
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
   const [rows, setRows] = useState<Row[]>([]);
@@ -115,8 +117,10 @@ export default function StaffDebtsIndex() {
                 <Text style={styles.st}>{DEBT_STATUS_LABELS[r.status]}</Text>
               </View>
               <Text style={styles.parties} numberOfLines={2}>
-                {r.borrower_is_organization ? 'Şirket' : r.borrower?.full_name || '—'} → borçlu ·{' '}
-                {r.lender_is_organization ? 'Şirket' : r.lender?.full_name || '—'} → alacaklı
+                {r.borrower_is_organization ? t('staffDebtsCompanyShort') : r.borrower?.full_name || '—'} →{' '}
+                {t('staffDebtsBorrowerDebtor')} ·{' '}
+                {r.lender_is_organization ? t('staffDebtsCompanyShort') : r.lender?.full_name || '—'} →{' '}
+                {t('staffDebtsLenderCreditor')}
               </Text>
               <Text style={styles.desc} numberOfLines={2}>
                 {r.description?.trim() || '—'}

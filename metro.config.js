@@ -3,6 +3,9 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
+// Windows EMFILE: limit parallel transforms so Metro cache does not exhaust file handles.
+config.maxWorkers = 2;
+
 // @react-native-google-signin: ana index GoogleSigninButton üzerinden statics.js hatası veriyor.
 // Sadece GoogleSignin API'sini yükle (buton yok).
 const googleSigninPackageRoot = path.resolve(

@@ -1,11 +1,18 @@
 import { supabase } from '@/lib/supabase';
+import { loadFeedPostEngagementCounts } from '@/lib/feedPostEngagementCounts';
 
 export type StaffProfileFeedPreview = {
   id: string;
   kind: 'image' | 'video' | 'text';
   thumbUrl: string | null;
   textPreview: string | null;
+  postTag?: string | null;
+  likesCount?: number;
+  commentsCount?: number;
+  viewsCount?: number;
 };
+
+export type StaffProfileFeedFilter = 'all' | 'media';
 
 type PostRow = {
   id: string;
@@ -13,6 +20,7 @@ type PostRow = {
   media_url: string | null;
   thumbnail_url: string | null;
   title: string | null;
+  post_tag?: string | null;
 };
 
 type MediaRow = {
@@ -47,11 +55,12 @@ function buildPreview(post: PostRow, first: MediaRow | null): StaffProfileFeedPr
 /** Profil ekranı ızgarası: RLS ile görüntüleyicinin okuyabildiği bu personelin paylaşımları. */
 export async function loadStaffProfileFeedPreviews(
   staffId: string,
-  limit = 30
+  limit = 30,
+  filter: StaffProfileFeedFilter = 'all'
 ): Promise<{ items: StaffProfileFeedPreview[]; error: Error | null }> {
   const { data: posts, error } = await supabase
     .from('feed_posts')
-    .select('id, media_type, media_url, thumbnail_url, title')
+    .select('id, media_type, media_url, thumbnail_url, title, post_tag')
     .eq('staff_id', staffId)
     .order('created_at', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 50));
@@ -77,6 +86,25 @@ export async function loadStaffProfileFeedPreviews(
     }
   }
 
-  const items = list.map((p) => buildPreview(p, firstByPost.get(p.id) ?? null));
+  let items = list.map((p) => {
+    const preview = buildPreview(p, firstByPost.get(p.id) ?? null);
+    return { ...preview, postTag: p.post_tag ?? null };
+  });
+
+  if (filter === 'media') {
+    items = items.filter((it) => it.kind === 'image' || it.kind === 'video');
+  }
+
+  const counts = await loadFeedPostEngagementCounts(items.map((it) => it.id));
+  items = items.map((it) => {
+    const c = counts.get(it.id);
+    return {
+      ...it,
+      likesCount: c?.likes ?? 0,
+      commentsCount: c?.comments ?? 0,
+      viewsCount: c?.views ?? 0,
+    };
+  });
+
   return { items, error: null };
 }

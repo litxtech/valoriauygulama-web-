@@ -6,6 +6,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminButton, AdminCard } from '@/components/admin';
 import { sendNotification } from '@/lib/notificationService';
+import { localTomorrowIso, localDateIso } from '@/lib/localDateIso';
+import { getPlanDateHighlight } from '@/lib/cleaningPlanLoad';
 
 type RoomRow = { id: string; room_number: string; floor: number | null };
 type StaffRow = { id: string; full_name: string | null };
@@ -16,10 +18,11 @@ const STANDARD_ROOM_NUMBERS = [
   '301', '302', '303', '304', '305', '306',
 ];
 
-function getTomorrowIsoDate(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+function planWhenLabel(targetDate: string): string {
+  const h = getPlanDateHighlight(targetDate);
+  if (h === 'tomorrow') return 'YARIN';
+  if (h === 'today') return 'BUGÜN';
+  return targetDate;
 }
 
 export default function AdminRoomCleaningPlanScreen() {
@@ -32,7 +35,8 @@ export default function AdminRoomCleaningPlanScreen() {
   const [selectedRoomIds, setSelectedRoomIds] = useState<Set<string>>(new Set());
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
-  const [targetDate, setTargetDate] = useState(getTomorrowIsoDate());
+  const [targetDate, setTargetDate] = useState(localTomorrowIso());
+  const whenLabel = useMemo(() => planWhenLabel(targetDate), [targetDate]);
 
   const canCurrentUserManage = useMemo(() => {
     if (!staff) return false;
@@ -117,7 +121,7 @@ export default function AdminRoomCleaningPlanScreen() {
     setSeedSaving(false);
   }
 
-  async function submitPlan() {
+  function requestSubmitPlan() {
     if (!staff?.id) {
       Alert.alert('Hata', 'Oturum bulunamadı.');
       return;
@@ -134,6 +138,27 @@ export default function AdminRoomCleaningPlanScreen() {
       Alert.alert('Eksik', 'En az bir personel seçmelisiniz.');
       return;
     }
+
+    const selectedRoomNumbers = rooms
+      .filter((r) => selectedRoomIds.has(r.id))
+      .map((r) => r.room_number)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const staffNames = assignableStaff
+      .filter((s) => selectedStaffIds.has(s.id))
+      .map((s) => s.full_name || 'İsimsiz')
+      .join(', ');
+
+    Alert.alert(
+      'Listeyi gönder',
+      `${whenLabel} (${targetDate}) temizlik listesi:\n\nOdalar (${selectedRoomNumbers.length}): ${selectedRoomNumbers.join(', ')}\n\nPersonel: ${staffNames}\n\nTemizlikçi odaları görür → temizler → kontrol listesini işaretler → tek onayla tamamlar.`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        { text: 'Gönder', onPress: () => void submitPlan() },
+      ]
+    );
+  }
+
+  async function submitPlan() {
     setSaving(true);
     try {
       const { data: planRow, error: planError } = await supabase
@@ -161,16 +186,18 @@ export default function AdminRoomCleaningPlanScreen() {
         .map((r) => r.room_number)
         .sort();
 
+      const whenLabel = planWhenLabel(targetDate);
+
       await Promise.all(
         Array.from(selectedStaffIds).map((staffId) =>
           sendNotification({
             staffId,
-            title: 'Yarın temizlenecek odalar listesi',
-            body: `${targetDate} için ${selectedRoomNumbers.length} oda planlandı.`,
+            title: `Temizlik listesi — ${whenLabel}`,
+            body: `${whenLabel} temizlenecek ${selectedRoomNumbers.length} oda: ${selectedRoomNumbers.join(', ')}. Temizlik ekranından açın.`,
             notificationType: 'staff_room_cleaning_plan',
             category: 'staff',
             createdByStaffId: staff.id,
-            data: { url: '/staff/cleaning-plan', planId, roomNumbers: selectedRoomNumbers },
+            data: { url: '/staff/cleaning-plan', planId, targetDate, roomNumbers: selectedRoomNumbers },
           })
         )
       );
@@ -179,7 +206,7 @@ export default function AdminRoomCleaningPlanScreen() {
       setSelectedRoomIds(new Set());
       setSelectedStaffIds(new Set());
       setNote('');
-      setTargetDate(getTomorrowIsoDate());
+      setTargetDate(localTomorrowIso());
     } catch (e) {
       Alert.alert('Hata', (e as Error).message || 'Plan gönderilirken hata oluştu.');
     }
@@ -197,9 +224,9 @@ export default function AdminRoomCleaningPlanScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <AdminCard style={styles.card}>
-        <Text style={styles.title}>Yarın temizlenecek odalar</Text>
+        <Text style={styles.title}>Temizlik listesi gönder</Text>
         <Text style={styles.subtitle}>
-          Admin veya yetki verilen personel seçili odaları seçili personele gönderir. Personel sabah listeden kontrol edip not girebilir.
+          Odaları ve temizlikçiyi seçip gönderin. Temizlikçi listedeki tüm odaları görür, temizliği yapar, kontrol maddelerini işaretler ve tek onayla tamamlar.
         </Text>
       </AdminCard>
 
@@ -222,6 +249,25 @@ export default function AdminRoomCleaningPlanScreen() {
 
       <AdminCard style={styles.card}>
         <Text style={styles.sectionTitle}>Tarih ve not</Text>
+        <View style={styles.dateQuickRow}>
+          <TouchableOpacity
+            style={[styles.dateQuickBtn, targetDate === localTomorrowIso() && styles.dateQuickBtnOn]}
+            onPress={() => setTargetDate(localTomorrowIso())}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.dateQuickText, targetDate === localTomorrowIso() && styles.dateQuickTextOn]}>Yarın</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dateQuickBtn, targetDate === localDateIso() && styles.dateQuickBtnOn]}
+            onPress={() => setTargetDate(localDateIso())}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.dateQuickText, targetDate === localDateIso() && styles.dateQuickTextOn]}>Bugün</Text>
+          </TouchableOpacity>
+          <View style={[styles.whenBadge, { backgroundColor: adminTheme.colors.accent + '22' }]}>
+            <Text style={[styles.whenBadgeText, { color: adminTheme.colors.accent }]}>{whenLabel}</Text>
+          </View>
+        </View>
         <TextInput style={styles.input} value={targetDate} onChangeText={setTargetDate} placeholder="YYYY-AA-GG" />
         <TextInput
           style={[styles.input, styles.noteInput]}
@@ -277,7 +323,7 @@ export default function AdminRoomCleaningPlanScreen() {
 
       <AdminButton
         title={saving ? 'Gönderiliyor...' : 'Listeyi personele gönder'}
-        onPress={() => void submitPlan()}
+        onPress={() => requestSubmitPlan()}
         disabled={saving || !canCurrentUserManage}
         variant="accent"
         fullWidth
@@ -308,6 +354,20 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.text,
   },
   noteInput: { minHeight: 90 },
+  dateQuickRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' },
+  dateQuickBtn: {
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: adminTheme.colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  dateQuickBtnOn: { borderColor: adminTheme.colors.accent, backgroundColor: adminTheme.colors.warningLight },
+  dateQuickText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textSecondary },
+  dateQuickTextOn: { color: adminTheme.colors.accent },
+  whenBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  whenBadgeText: { fontSize: 12, fontWeight: '900', letterSpacing: 0.6 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     flexDirection: 'row',

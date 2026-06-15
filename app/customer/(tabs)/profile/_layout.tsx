@@ -66,6 +66,14 @@ export default function ProfileLayout() {
           headerLargeTitle: false,
         }}
       />
+      <Stack.Screen
+        name="settings"
+        options={{
+          title: t('customerProfileSettingsTitle'),
+          headerBackTitle: t('back'),
+          headerLeft: () => <ProfileBackButton />,
+        }}
+      />
     </Stack>
   );
 }

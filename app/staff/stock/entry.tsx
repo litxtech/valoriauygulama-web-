@@ -185,6 +185,7 @@ export default function StaffStockEntryScreen() {
           barcode: barcodeParam,
           unit: 'adet',
           current_stock: 0,
+          image_url: photo,
           organization_id: staff.organization_id,
         })
         .select('id')

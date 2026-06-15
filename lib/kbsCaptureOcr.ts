@@ -3,23 +3,32 @@ import {
   parseIdCardFromOcrLines,
 } from '@/lib/guestScan/idCardOcrParser';
 import { listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
-import {
-  cropMrzBandForKbsOcr,
-  filterKbsOcrLines,
-  filterMrzOnlyOcrLines,
-} from '@/lib/kbsOcrDocumentFocus';
+import { filterKbsOcrLines, filterMrzOnlyOcrLines } from '@/lib/kbsOcrDocumentFocus';
 import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
-import { ocrLinesFromImage, ocrLinesFromImageExpoOnly } from '@/lib/scanner/ocrLinesFromImage';
+import {
+  flattenMrzDocumentOcrLineSets,
+  ocrLinesForKbsDocument,
+  type MrzDocumentOcrLineSet,
+} from '@/lib/scanner/mrzDocumentOcr';
 import { KBS_OCR_ENGINE_AI_FALLBACK, KBS_OCR_ENGINE_FRONT_VISUAL } from '@/lib/kbsOcrEngineLabel';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { formatKbsNationality, formatKbsTrDate, kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
+export type KbsCaptureSide = 'front' | 'mrz_back';
+
 export type KbsOcrResult = {
   parsed: ParsedDocument;
   missingFields: string[];
   engine: string;
+};
+
+export type KbsOcrOptions = {
+  /** Kimlik arkası / pasaport MRZ — MRZ şeridi öncelikli OCR. */
+  captureSide?: KbsCaptureSide;
+  /** Yalnızca expo-text-extractor (AI yedek). */
+  expoOnly?: boolean;
 };
 
 export { listMissingIdFields };
@@ -39,16 +48,38 @@ function tryExtractMrzFromLines(lineSets: string[][]): ReturnType<typeof extract
   return null;
 }
 
-function buildMrzLineSets(mrzBandLines: string[], fullLines: string[]): string[][] {
-  const fromBand = filterMrzOnlyOcrLines(mrzBandLines);
-  const fromFull = filterMrzOnlyOcrLines(fullLines).filter((l) => l.includes('<<'));
+function buildMrzLineSets(
+  lineSets: MrzDocumentOcrLineSet[],
+  mrzFocused: boolean
+): string[][] {
+  const flat = flattenMrzDocumentOcrLineSets(lineSets);
   const sets: string[][] = [];
-  if (fromBand.length >= 2) sets.push(fromBand);
-  if (fromBand.length) sets.push(mrzBandLines.map((l) => l.trim()).filter(Boolean));
-  if (fromFull.length >= 2) sets.push(fromFull);
+
+  const bandLines = lineSets.find((s) => s.pass === 'mrz_band')?.lines ?? [];
+  const docLines = lineSets.find((s) => s.pass === 'document_crop')?.lines ?? [];
+  const fullLines = lineSets.find((s) => s.pass === 'full')?.lines ?? [];
+
+  const fromBand = filterMrzOnlyOcrLines(bandLines);
+  const fromFull = filterMrzOnlyOcrLines(fullLines).filter((l) => l.includes('<<'));
+  const fromDoc = filterMrzOnlyOcrLines(docLines).filter((l) => l.includes('<<'));
+
+  if (mrzFocused) {
+    if (fromBand.length >= 2) sets.push(fromBand);
+    if (fromBand.length) sets.push(bandLines.map((l) => l.trim()).filter(Boolean));
+    if (fromFull.length >= 2) sets.push(fromFull);
+    if (fromDoc.length >= 2) sets.push(fromDoc);
+  } else {
+    if (fromBand.length >= 2) sets.push(fromBand);
+    if (fromFull.length >= 2) sets.push(fromFull);
+    if (fromDoc.length >= 2) sets.push(fromDoc);
+    if (fromBand.length) sets.push(bandLines.map((l) => l.trim()).filter(Boolean));
+  }
+
   if (fromBand.length && fromFull.length) {
     sets.push([...new Set([...fromBand, ...fromFull])]);
   }
+  if (flat.length) sets.push(flat);
+
   return sets;
 }
 
@@ -60,13 +91,15 @@ function tagFrontOnlyRead(parsed: ParsedDocument): ParsedDocument {
   return { ...parsed, warnings };
 }
 
-function parseKbsFromSplitOcr(args: {
-  mrzBandLines: string[];
-  fullImageLines: string[];
+function parseKbsFromDocumentOcr(args: {
+  lineSets: MrzDocumentOcrLineSet[];
   engine: string;
+  mrzFocused: boolean;
 }): KbsOcrResult {
-  const frontFiltered = filterKbsOcrLines(args.fullImageLines);
-  const mrzBest = tryExtractMrzFromLines(buildMrzLineSets(args.mrzBandLines, args.fullImageLines));
+  const allLines = flattenMrzDocumentOcrLineSets(args.lineSets);
+  const frontFiltered = filterKbsOcrLines(allLines);
+  const mrzLineSets = buildMrzLineSets(args.lineSets, args.mrzFocused);
+  const mrzBest = tryExtractMrzFromLines(mrzLineSets);
 
   let parsed: ParsedDocument;
   let engine = args.engine;
@@ -76,8 +109,9 @@ function parseKbsFromSplitOcr(args: {
       ...mrzBest.parsed,
       rawMrz: mrzBest.mrz,
       documentType: mrzBest.parsed.documentType ?? 'passport',
+      confidence: mrzBest.parsed.confidence ?? mrzBest.score / 100,
     };
-    if (parsed.documentType === 'passport') {
+    if (parsed.documentType === 'passport' && !args.mrzFocused) {
       const front = parseIdCardFromOcrLines(frontFiltered);
       parsed = {
         ...parsed,
@@ -87,17 +121,43 @@ function parseKbsFromSplitOcr(args: {
         nationalityCode: parsed.nationalityCode ?? front.nationalityCode,
         expiryDate: parsed.expiryDate ?? front.expiryDate,
       };
-    } else {
+    } else if (!args.mrzFocused) {
       parsed = enrichMrzParsedWithFrontOcr(parsed, frontFiltered);
     }
+  } else if (args.mrzFocused) {
+    engine = KBS_OCR_ENGINE_FRONT_VISUAL;
+    parsed = {
+      documentType: 'other',
+      fullName: null,
+      firstName: null,
+      lastName: null,
+      middleName: null,
+      documentNumber: null,
+      nationalityCode: null,
+      issuingCountryCode: null,
+      birthDate: null,
+      expiryDate: null,
+      gender: null,
+      rawMrz: null,
+      confidence: null,
+      checksumsValid: null,
+      warnings: ['mrz_not_found'],
+    };
   } else {
     engine = KBS_OCR_ENGINE_FRONT_VISUAL;
     parsed = parseIdCardFromOcrLines(frontFiltered);
-    const retry = tryExtractMrzFromLines([filterMrzOnlyOcrLines(frontFiltered).filter((l) => l.includes('<<'))]);
+    const retry = tryExtractMrzFromLines([
+      filterMrzOnlyOcrLines(frontFiltered).filter((l) => l.includes('<<')),
+    ]);
     if (retry) {
       engine = args.engine;
       parsed = enrichMrzParsedWithFrontOcr(
-        { ...retry.parsed, rawMrz: retry.mrz, documentType: retry.parsed.documentType ?? 'passport' },
+        {
+          ...retry.parsed,
+          rawMrz: retry.mrz,
+          documentType: retry.parsed.documentType ?? 'passport',
+          confidence: retry.parsed.confidence ?? retry.score / 100,
+        },
         frontFiltered
       );
     }
@@ -112,44 +172,62 @@ function parseKbsFromSplitOcr(args: {
   };
 }
 
-function mrzSignalInLines(lines: string[]): boolean {
-  return filterMrzOnlyOcrLines(lines).some((l) => l.includes('<<'));
-}
-
-/** Önce tam kare; MRZ şeridi yalnızca << sinyali varsa (2. OCR’ı atlar). */
-async function ocrForKbsCapture(uri: string, expoOnly: boolean) {
-  const ocr = expoOnly ? ocrLinesFromImageExpoOnly : ocrLinesFromImage;
-  const fullOcr = await ocr(uri, { document: true });
-  let mrzBandLines: string[] = [];
-  if (mrzSignalInLines(fullOcr.lines)) {
-    const mrzUri = await cropMrzBandForKbsOcr(uri);
-    const bandOcr = await ocr(mrzUri, { document: true });
-    mrzBandLines = bandOcr.lines;
-  }
-  return { fullOcr, mrzBandLines };
-}
-
 /**
- * Kimlik / pasaport ön yüzü (tam kadraj).
- * T.C. kimlik önünde MRZ yok → yazılı alanlar (Ad, Soyad, TC).
+ * Kimlik / pasaport — çok geçişli MRZ + ön yüz OCR.
  */
-export async function parseIdCardImageUri(uri: string): Promise<KbsOcrResult> {
-  const { fullOcr, mrzBandLines } = await ocrForKbsCapture(uri, false);
-  const engine = pickOcrEngine(fullOcr.engine);
-  return parseKbsFromSplitOcr({
-    mrzBandLines,
-    fullImageLines: fullOcr.lines,
+export async function parseIdCardImageUri(uri: string, options?: KbsOcrOptions): Promise<KbsOcrResult> {
+  const mrzFocused = options?.captureSide === 'mrz_back';
+  const docOcr = await ocrLinesForKbsDocument(uri, {
+    expoOnly: options?.expoOnly,
+    mrzFocused,
+  });
+  const engine = pickOcrEngine(docOcr.engine);
+  return parseKbsFromDocumentOcr({
+    lineSets: docOcr.lineSets,
     engine,
+    mrzFocused,
   });
 }
 
-export async function parseIdCardImageUriAiFallback(uri: string): Promise<KbsOcrResult> {
-  const { fullOcr, mrzBandLines } = await ocrForKbsCapture(uri, true);
-  return parseKbsFromSplitOcr({
-    mrzBandLines,
-    fullImageLines: fullOcr.lines,
-    engine: KBS_OCR_ENGINE_AI_FALLBACK,
-  });
+export async function parseIdCardImageUriAiFallback(
+  uri: string,
+  options?: Pick<KbsOcrOptions, 'captureSide'>
+): Promise<KbsOcrResult> {
+  return parseIdCardImageUri(uri, { expoOnly: true, captureSide: options?.captureSide });
+}
+
+/** Birincil + yedek OCR; daha iyi skorlu sonucu döner. */
+export async function parseIdCardImageUriWithFallback(
+  uri: string,
+  options?: KbsOcrOptions
+): Promise<KbsOcrResult> {
+  const primary = await parseIdCardImageUri(uri, options);
+  const missing = primary.missingFields.length;
+  const hasMrz = !!primary.parsed.rawMrz;
+
+  if (hasMrz && missing <= 1) return primary;
+  if (!hasMrz && missing >= 4) {
+    const fallback = await parseIdCardImageUriAiFallback(uri, options);
+    return pickBetterKbsOcrResult(primary, fallback);
+  }
+  if (!hasMrz || missing >= 2) {
+    const fallback = await parseIdCardImageUriAiFallback(uri, options);
+    return pickBetterKbsOcrResult(primary, fallback);
+  }
+  return primary;
+}
+
+function ocrQualityScore(result: KbsOcrResult): number {
+  const p = result.parsed;
+  let s = (p.confidence ?? 0) * 40;
+  if (p.rawMrz) s += 25;
+  if (p.checksumsValid === true) s += 20;
+  s -= result.missingFields.length * 8;
+  return s;
+}
+
+function pickBetterKbsOcrResult(a: KbsOcrResult, b: KbsOcrResult): KbsOcrResult {
+  return ocrQualityScore(b) > ocrQualityScore(a) ? b : a;
 }
 
 export function formatParsedSummary(parsed: ParsedDocument): string {

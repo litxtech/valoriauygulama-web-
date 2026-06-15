@@ -10,14 +10,19 @@ import {
   Alert,
   TextInput,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { CachedImage } from '@/components/CachedImage';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
-import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import { AdminOrganizationPicker } from '@/components/admin';
+import {
+  fetchAdminGuestComplaints,
+  type AdminGuestComplaintRow,
+} from '@/lib/guestComplaintsAdmin';
 import { useTranslation } from 'react-i18next';
 import {
   complaintsText,
@@ -26,16 +31,11 @@ import {
   complaintTypeLabel,
   complaintsLocaleTag,
   formatGuestComplaintPushBody,
+  GUEST_COMPLAINT_ADMIN_PRESETS,
+  type GuestComplaintAdminPreset,
 } from '@/lib/complaintsI18n';
 
-type ComplaintRow = {
-  id: string;
-  topic_type: 'complaint' | 'suggestion' | 'thanks';
-  category: string;
-  description: string;
-  phone: string | null;
-  room_number: string | null;
-  image_url: string | null;
+type ComplaintRow = AdminGuestComplaintRow & {
   status:
     | 'pending'
     | 'reviewing'
@@ -44,49 +44,47 @@ type ComplaintRow = {
     | 'resolved'
     | 'rejected'
     | 'unresolved';
-  admin_note: string | null;
-  created_at: string;
-  guest_id: string;
-  guests: { id: string; full_name: string | null; photo_url: string | null } | null;
 };
 
 export default function AdminComplaintsIndex() {
   useTranslation();
   const loc = complaintsLocaleTag();
   const { staff } = useAuthStore();
-  const { selectedOrganizationId } = useAdminOrgStore();
+  const { orgScoped, canUseAll } = useAdminOrganizationQueryScope();
   const [list, setList] = useState<ComplaintRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | ComplaintRow['status']>('pending');
+  const [filter, setFilter] = useState<'all' | ComplaintRow['status']>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [noteById, setNoteById] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
-    const orgId = canUseAll ? selectedOrganizationId : staff?.organization_id;
-    let query = supabase
-      .from('guest_complaints')
-      .select('id, topic_type, category, description, phone, room_number, image_url, status, admin_note, created_at, guest_id, guests(id, full_name, photo_url)')
-      .order('created_at', { ascending: false });
-    if (orgId && orgId !== 'all') query = query.eq('organization_id', orgId);
-    if (filter !== 'all') query = query.eq('status', filter);
-    const { data, error } = await query;
+    const { rows, error } = await fetchAdminGuestComplaints({
+      statusFilter: filter,
+      orgScoped,
+    });
     if (error) {
-      Alert.alert(complaintsText('error'), error.message);
+      Alert.alert(complaintsText('error'), error);
+      setList([]);
       return;
     }
-    const rows = (data as ComplaintRow[]) ?? [];
-    setList(rows);
+    const typed = rows as ComplaintRow[];
+    setList(typed);
     const initialNotes: Record<string, string> = {};
-    rows.forEach((row) => {
+    typed.forEach((row) => {
       initialNotes[row.id] = row.admin_note ?? '';
     });
     setNoteById(initialNotes);
-  }, [filter, selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.organization_id]);
+  }, [filter, orgScoped]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load])
+  );
 
   const onRefresh = useCallback(async () => {
     setLoading(true);
@@ -94,10 +92,14 @@ export default function AdminComplaintsIndex() {
     setLoading(false);
   }, [load]);
 
-  const updateStatus = async (item: ComplaintRow, status: ComplaintRow['status']) => {
+  const updateStatus = async (
+    item: ComplaintRow,
+    status: ComplaintRow['status'],
+    noteOverride?: string
+  ) => {
     if (!staff?.id) return;
     setUpdatingId(item.id);
-    const note = (noteById[item.id] ?? '').trim();
+    const note = (noteOverride ?? noteById[item.id] ?? '').trim();
     const { error } = await supabase
       .from('guest_complaints')
       .update({
@@ -113,6 +115,8 @@ export default function AdminComplaintsIndex() {
       return;
     }
 
+    setNoteById((prev) => ({ ...prev, [item.id]: note }));
+
     await sendNotification({
       guestId: item.guest_id,
       title: complaintsText('complaintUpdated'),
@@ -127,6 +131,12 @@ export default function AdminComplaintsIndex() {
     await load();
   };
 
+  const applyPreset = async (item: ComplaintRow, preset: GuestComplaintAdminPreset) => {
+    const note = complaintsText(preset.noteKey);
+    setNoteById((prev) => ({ ...prev, [item.id]: note }));
+    await updateStatus(item, preset.status, note);
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -134,7 +144,7 @@ export default function AdminComplaintsIndex() {
       refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
     >
       <AdminOrganizationPicker
-        canUseAll={staff?.app_permissions?.super_admin === true || staff?.role === 'admin'}
+        canUseAll={canUseAll}
         ownOrganizationId={staff?.organization_id}
       />
       <View style={styles.banner}>
@@ -168,6 +178,11 @@ export default function AdminComplaintsIndex() {
       ) : list.length === 0 ? (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyText}>{complaintsText('noRecords')}</Text>
+          {orgScoped ? (
+            <Text style={styles.emptyHint}>
+              {complaintsText('adminEmptyOrgHint')}
+            </Text>
+          ) : null}
         </View>
       ) : (
         list.map((item) => (
@@ -197,6 +212,21 @@ export default function AdminComplaintsIndex() {
             </Text>
             <Text style={styles.date}>{new Date(item.created_at).toLocaleString(loc)}</Text>
             {item.image_url ? <CachedImage uri={item.image_url} style={styles.image} contentFit="cover" /> : null}
+
+            <Text style={styles.presetsTitle}>{complaintsText('adminPresetsTitle')}</Text>
+            <Text style={styles.presetsHint}>{complaintsText('adminCustomReplyHint')}</Text>
+            <View style={styles.presetRow}>
+              {GUEST_COMPLAINT_ADMIN_PRESETS.map((preset) => (
+                <TouchableOpacity
+                  key={preset.id}
+                  style={styles.presetBtn}
+                  disabled={updatingId === item.id}
+                  onPress={() => applyPreset(item, preset)}
+                >
+                  <Text style={styles.presetBtnText}>{complaintsText(preset.labelKey)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
             <TextInput
               style={styles.noteInput}
@@ -255,6 +285,7 @@ const styles = StyleSheet.create({
   loadingWrap: { paddingVertical: 32, alignItems: 'center' },
   emptyWrap: { paddingVertical: 24, alignItems: 'center' },
   emptyText: { color: adminTheme.colors.textMuted },
+  emptyHint: { color: adminTheme.colors.textSecondary, fontSize: 12, marginTop: 8, textAlign: 'center', lineHeight: 18 },
   card: {
     backgroundColor: adminTheme.colors.surface,
     borderRadius: 14,
@@ -289,6 +320,18 @@ const styles = StyleSheet.create({
   metaRow: { marginTop: 8, fontSize: 12, color: adminTheme.colors.textSecondary },
   date: { marginTop: 4, fontSize: 11, color: adminTheme.colors.textMuted },
   image: { width: '100%', height: 170, borderRadius: 10, marginTop: 10 },
+  presetsTitle: { marginTop: 12, fontSize: 13, fontWeight: '700', color: adminTheme.colors.text },
+  presetsHint: { marginTop: 4, fontSize: 11, color: adminTheme.colors.textMuted, lineHeight: 16 },
+  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  presetBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.accent,
+    backgroundColor: adminTheme.colors.warningLight,
+  },
+  presetBtnText: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.accent },
   noteInput: {
     marginTop: 10,
     borderWidth: 1,

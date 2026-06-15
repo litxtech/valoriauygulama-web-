@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
+import { staffAppPermissionsBySection } from '@/lib/staffAppPermissionsCatalog';
 
 /** Cihaz / uygulama izinleri: Uygulamanın kullanıcıdan veya sistemden aldığı izinler */
 const DEVICE_PERMISSIONS = [
@@ -35,64 +36,6 @@ const DEVICE_PERMISSIONS = [
     reason: 'Anlık bildirimler (mesaj, rezervasyon, acil duyuru).',
     ios: 'Push Notifications',
     android: 'expo-notifications',
-  },
-];
-
-/** Personel uygulama yetkileri: Admin tarafından çalışana verilen yetkiler (staff.app_permissions) */
-const STAFF_APP_PERMISSIONS = [
-  { key: 'stok_giris', label: 'Stok girişi yapabilir', desc: 'Stok giriş/çıkış ve barkod okutma.' },
-  { key: 'mesajlasma', label: 'Müşterilerle mesajlaşabilir', desc: 'Misafirlerle sohbet ve mesaj görüntüleme.' },
-  { key: 'misafir_mesaj_alabilir', label: 'Müşteriden direkt mesaj alabilir', desc: 'Kapalıysa misafir yeni sohbet başlatamaz ve mevcut sohbete yeni mesaj gönderemez.' },
-  { key: 'video_paylasim', label: 'Video/resim paylaşabilir', desc: 'Feed ve sohbetlerde medya paylaşımı.' },
-  { key: 'ekip_sohbet', label: 'Ekip sohbetini görebilir', desc: 'Tüm personel sohbet kanalına erişim.' },
-  { key: 'dokuman_yukle', label: 'Doküman yükleyebilir / yönetebilir', desc: 'Doküman Yönetimi modülünde belge yükleme, versiyon ekleme ve yetki kapsamına göre görüntüleme.' },
-  {
-    key: 'gorev_ata',
-    label: 'Görev atayabilir',
-    desc: 'Admin verdiği sürece diğer personel için görev oluşturur; admin bu kutuyu kapatana kadar yetki devam eder. Tam yönetim paneli değil, sadece görev listesi ve atama ekranı açılır.',
-  },
-  { key: 'satis_komisyon', label: 'Satış/komisyon modülü', desc: 'Referanslı rezervasyon, ödeme yeri ve komisyon hakedişi ekranlarına erişim.' },
-  { key: 'personel_ekle', label: 'Personel ekleyebilir', desc: 'Yeni çalışan hesabı oluşturma (genelde yönetici).' },
-  { key: 'raporlar', label: 'Raporları görebilir', desc: 'Raporlar ve HMB raporlarına erişim.' },
-  { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeleri görüntüleyebilir', desc: 'Tüm müşteri sözleşmelerine tarih filtresiyle erişim; telefon ve WhatsApp iletişim.' },
-  { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturabilir', desc: 'Mutfak/restoran + bu yetki: günlük kahvaltı teyit kaydı (foto, kişi sayısı).' },
-  { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitleri (mutfak) görüntüleme', desc: 'Aynı işletmede mutfak/restoran personelinin tüm kahvaltı kayıtlarını görür ve düzenler.' },
-  { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyitlerini onaylama', desc: 'Kayıtları onaylar (onay zamanı ve onaylayan olarak saklanır).' },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur)', desc: 'İşletmedeki tüm kahvaltı teyit geçmişini görür; onay, red veya puanlama yapamaz. Admin istediği personele verebilir.' },
-  {
-    key: 'yarin_oda_temizlik_listesi',
-    label: 'Yarın temizlenecek odalar listesi',
-    desc: 'Ertesi gün temizlenecek oda listesini seçili personele gönderir ve planı yönetir.',
-  },
-  {
-    key: 'kbs_mrz_scan',
-    label: 'Pasaport / MRZ tarama (KBS)',
-    desc: 'Kimlik ve pasaport MRZ okuma, KBS tarama ekranı ve header MRZ simgesi.',
-  },
-  {
-    key: 'id_capture',
-    label: 'Kimlik / pasaport çekim sistemi',
-    desc: 'Tam ekran belge çekimi, AI tarama, oda atama, çekilen kimlik listesi; feed header kimlik butonu.',
-  },
-  {
-    key: 'teknik_varlik_yonetimi',
-    label: 'Akıllı Tesis Envanteri (yönetim)',
-    desc: 'Bina/lokasyon/varlık tanımlama, QR ve etiket çıktısı; yönetim paneli menüsü.',
-  },
-  {
-    key: 'teknik_varliklar',
-    label: 'Teknik QR (operasyon)',
-    desc: 'QR okutma, talimatlar, müdahale kaydı ve durum güncelleme.',
-  },
-  {
-    key: 'teknik_varliklar_okuma',
-    label: 'Teknik QR (salt okunur)',
-    desc: 'QR okutup talimatları görür; kayıt ve durum değişikliği yapamaz.',
-  },
-  {
-    key: 'tesis_gunlugu',
-    label: 'Tesis günlüğü',
-    desc: 'Değişiklik, zimmet, emanet kayıtları; foto ve video yükleme. Hamburger menüde yeni kayıt butonu görünür.',
   },
 ];
 
@@ -158,10 +101,17 @@ export default function AdminPermissionsScreen() {
       <Text style={styles.sectionDesc}>
         Admin panelinden çalışan düzenlerken atanır (staff.app_permissions). Çalışan ekle / düzenle ekranında checkbox olarak görünür.
       </Text>
-      {STAFF_APP_PERMISSIONS.map((p) => (
-        <View key={p.key} style={styles.staffPermRow}>
-          <Text style={styles.staffPermLabel}>{p.label}</Text>
-          <Text style={styles.staffPermDesc}>{p.desc}</Text>
+      {staffAppPermissionsBySection().map((sec) => (
+        <View key={sec.section}>
+          <Text style={styles.subSectionTitle}>{sec.title}</Text>
+          {sec.items.map((p) => (
+            <View key={p.key} style={styles.staffPermRow}>
+              <Text style={styles.staffPermLabel}>{p.label}</Text>
+              <Text style={styles.staffPermDesc}>
+                {p.description ?? `Anahtar: ${p.key}`}
+              </Text>
+            </View>
+          ))}
         </View>
       ))}
 
@@ -264,6 +214,13 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.textMuted,
     marginTop: 6,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  subSectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: adminTheme.colors.text,
+    marginTop: 12,
+    marginBottom: 8,
   },
   staffPermRow: {
     backgroundColor: adminTheme.colors.surface,

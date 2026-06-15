@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Linking, AppState, ActivityIndicator } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
+import {
+  relaunchAndroidModernBarcodeScanner,
+  useAndroidModernBarcodeScanner,
+} from '@/lib/androidModernBarcodeScan';
 
 /** Sadece sık kullanılan barkod tipleri — hepsini taramak kasılmaya yol açar */
 const BARCODE_TYPES = ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'qr'] as const;
@@ -33,6 +37,7 @@ export function BarcodeScannerView({
   const [requesting, setRequesting] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [lastData, setLastData] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const lastScanTime = useRef(0);
 
   const refreshPermission = useCallback(async () => {
@@ -79,6 +84,12 @@ export function BarcodeScannerView({
       onScan({ type, data });
     },
     [continuous, scanned, lastData, onScan]
+  );
+
+  const usesModernAndroidScanner = useAndroidModernBarcodeScanner(
+    permStatus === 'granted',
+    [...BARCODE_TYPES],
+    handleBarCodeScanned
   );
 
   const resetScan = () => {
@@ -142,14 +153,34 @@ export function BarcodeScannerView({
 
   return (
     <View style={styles.container}>
-      <CameraView
-        style={StyleSheet.absoluteFillObject}
-        facing="back"
-        barcodeScannerSettings={{
-          barcodeTypes: [...BARCODE_TYPES],
-        }}
-        onBarcodeScanned={scanned && !continuous ? undefined : handleBarCodeScanned}
-      />
+      {usesModernAndroidScanner ? (
+        <View style={styles.modernScannerFallback}>
+          <Text style={styles.overlayTitle}>{title}</Text>
+          <Text style={styles.hint}>{hint}</Text>
+          <Text style={styles.modernScannerNote}>
+            Android tarayıcı açıldı. Okuma bitince veya iptal edince aşağıdan tekrar başlatabilirsiniz.
+          </Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => relaunchAndroidModernBarcodeScanner([...BARCODE_TYPES])}
+          >
+            <Text style={styles.retryBtnText}>Tarayıcıyı yeniden aç</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <CameraView
+          style={StyleSheet.absoluteFillObject}
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+          barcodeScannerSettings={{
+            barcodeTypes: [...BARCODE_TYPES],
+          }}
+          onBarcodeScanned={
+            !cameraReady || (scanned && !continuous) ? undefined : handleBarCodeScanned
+          }
+        />
+      )}
+      {!usesModernAndroidScanner ? (
       <View style={styles.overlay}>
         <Text style={styles.overlayTitle}>{title}</Text>
         <View style={styles.frame}>
@@ -170,6 +201,11 @@ export function BarcodeScannerView({
           </TouchableOpacity>
         )}
       </View>
+      ) : showCloseButton && onClose ? (
+        <TouchableOpacity style={styles.closeBtnOverlay} onPress={onClose}>
+          <Text style={styles.closeBtnText}>Kapat</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -314,6 +350,20 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   retryBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  modernScannerFallback: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  modernScannerNote: {
+    marginTop: 12,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   closeBtnOverlay: {
     position: 'absolute',
     bottom: 40,

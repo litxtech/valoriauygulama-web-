@@ -23,6 +23,7 @@ import { CachedImage } from '@/components/CachedImage';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import {
+  buildGuestComplaintAdminPush,
   complaintsText,
   complaintCategoryLabel,
   complaintTypeLabel,
@@ -47,7 +48,7 @@ const CATEGORIES = [
 ] as const;
 
 export default function CustomerComplaintNewScreen() {
-  useTranslation();
+  const { t } = useTranslation();
   const router = useRouter();
   const [topicType, setTopicType] = useState<(typeof TOPIC_TYPES)[number]['value']>('complaint');
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]['value']>('personnel');
@@ -130,25 +131,57 @@ export default function CustomerComplaintNewScreen() {
         uploadedUrl = upload.publicUrl;
       }
 
-      const { error } = await supabase.from('guest_complaints').insert({
+      let guestName: string | null = null;
+      let organizationId: string | null = null;
+      const { data: guestRow } = await supabase
+        .from('guests')
+        .select('full_name, organization_id')
+        .eq('id', guest.guest_id)
+        .maybeSingle();
+      guestName = (guestRow as { full_name?: string | null } | null)?.full_name ?? null;
+      organizationId = (guestRow as { organization_id?: string | null } | null)?.organization_id ?? null;
+
+      const insertPayload = {
         guest_id: guest.guest_id,
+        organization_id: organizationId,
         topic_type: topicType,
         category,
         description: text,
         phone: phone.trim() || null,
         room_number: roomNumber.trim() || null,
         image_url: uploadedUrl,
-      });
+      };
+      let { error } = await supabase.from('guest_complaints').insert(insertPayload);
+      if (error?.message?.includes('organization_id')) {
+        const { organization_id: _org, ...withoutOrg } = insertPayload;
+        ({ error } = await supabase.from('guest_complaints').insert(withoutOrg));
+      }
       if (error) throw error;
 
+      let guestNameOnly: string | null = guestName;
+
+      const push = buildGuestComplaintAdminPush({
+        topicType,
+        category,
+        description: text,
+        guestName: guestNameOnly,
+        roomNumber: roomNumber.trim() || null,
+      });
+
       await notifyAdmins({
-        title: complaintsText('newReport'),
-        body: `${complaintTypeLabel(topicType)} · ${complaintCategoryLabel(category)}`,
-        data: { url: '/admin/complaints', screen: 'admin_complaints' },
+        title: push.title,
+        body: push.body,
+        data: {
+          url: '/admin/complaints',
+          screen: 'admin_complaints',
+          notificationType: 'guest_complaint_new',
+          topicType,
+          category,
+        },
       }).catch(() => {});
 
       Alert.alert(complaintsText('received'), complaintsText('sentToAdmin'), [
-        { text: 'Tamam', onPress: () => router.back() },
+        { text: t('ok'), onPress: () => router.back() },
       ]);
     } catch (e) {
       Alert.alert(complaintsText('error'), (e as Error)?.message || complaintsText('sendFailed'));
@@ -209,7 +242,7 @@ export default function CustomerComplaintNewScreen() {
         style={styles.input}
         value={phone}
         onChangeText={setPhone}
-        placeholder="Orn: 05xx xxx xx xx"
+        placeholder={t('complaintsPhPhone')}
         placeholderTextColor={theme.colors.textMuted}
       />
 
@@ -218,7 +251,7 @@ export default function CustomerComplaintNewScreen() {
         style={styles.input}
         value={roomNumber}
         onChangeText={setRoomNumber}
-        placeholder="Orn: 305"
+        placeholder={t('complaintsPhRoom')}
         placeholderTextColor={theme.colors.textMuted}
       />
 

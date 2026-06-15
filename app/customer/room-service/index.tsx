@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { useTranslation } from 'react-i18next';
+import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
 
 type Category = { id: string; name: string; sort_order: number };
 type MenuItem = {
@@ -153,7 +154,7 @@ export default function RoomServiceScreen() {
       notifyAdmins({
         title: t('roomServiceAdminNotifyTitle'),
         body: t('roomServiceAdminNotifyBody'),
-        data: { url: '/admin' },
+        data: { url: '/admin/room-service' },
       }).catch(() => {});
 
       setCart([]);
@@ -180,7 +181,7 @@ export default function RoomServiceScreen() {
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>🍽️ Oda servisi</Text>
+        <Text style={styles.title}>🍽️ {guestServiceText('roomServiceScreenTitle')}</Text>
         <Text style={styles.subtitle}>{t('roomServiceScreenSubtitle')}</Text>
 
         {byCategory.map(
@@ -209,7 +210,7 @@ export default function RoomServiceScreen() {
                       onPress={() => addToCart(item)}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.addBtnText}>+ Ekle</Text>
+                      <Text style={styles.addBtnText}>+ {guestServiceText('roomServiceAdd')}</Text>
                     </TouchableOpacity>
                   </View>
                 ))}

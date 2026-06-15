@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { insertMovementCategory } from '@/lib/financeCategoriesApi';
 
 type Row = {
   id: string;
@@ -81,25 +82,10 @@ export default function AccountingCategoriesScreen() {
       Alert.alert('Form', 'Kategori adı girin.');
       return;
     }
-    const code =
-      name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_|_$/g, '')
-        .slice(0, 40) || `cat_${Date.now()}`;
-
     setSaving(true);
-    const maxSort = rows.reduce((m, r) => Math.max(m, r.sort_order), 0);
-    const { error } = await supabase.from('finance_movement_categories').insert({
-      organization_id: orgId,
-      code,
-      name: name.trim(),
-      applies_to: appliesTo,
-      sort_order: maxSort + 1,
-    });
+    const res = await insertMovementCategory(orgId, { name, appliesTo });
     setSaving(false);
-    if (error) Alert.alert('Hata', error.message);
+    if ('error' in res) Alert.alert('Hata', res.error);
     else {
       setName('');
       load();

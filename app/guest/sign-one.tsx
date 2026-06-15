@@ -23,6 +23,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { CachedImage } from '@/components/CachedImage';
+import { isoDateToFormDisplay, resolveInAppContractContext, type GuestContractPrefill } from '@/lib/inAppContractFlow';
 import { COUNTRY_PHONE_CODES, type CountryCode } from '@/constants/countryPhoneCodes';
 import { LANGUAGES } from '@/i18n';
 import { FORM_STRINGS, DEFAULT_FORM_FIELDS, type ContractFormLang } from '@/lib/contractFormStrings';
@@ -48,18 +49,8 @@ function toISODate(s: string): string | null {
   return iso ? iso.slice(0, 10) : null;
 }
 
-const ID_TYPES = [
-  { value: 'tc', label: 'TC Kimlik No' },
-  { value: 'passport', label: 'Pasaport No' },
-  { value: 'other', label: 'Sürücü Belgesi No' },
-] as const;
-
-const GENDERS = [
-  { value: 'male', label: 'Erkek' },
-  { value: 'female', label: 'Kadın' },
-] as const;
-
-const ROOM_TYPES = ['Tek kişilik', 'Çift kişilik', 'Üç kişilik', 'Aile', 'Suite', 'Diğer'];
+const ID_TYPE_VALUES = ['tc', 'passport', 'other'] as const;
+const GENDER_VALUES = ['male', 'female'] as const;
 
 // Göz yormayan, okunaklı renk paleti
 const COLORS = {
@@ -81,9 +72,12 @@ export default function GuestSignOneScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ token?: string; lang?: string; t?: string; l?: string }>();
+  const params = useLocalSearchParams<{ token?: string; lang?: string; t?: string; l?: string; inApp?: string; guestId?: string }>();
   const { qrToken, roomId, setQR, setStep, setGuestId, setContractLang: setStoreContractLang, setSignedFormLines } = useGuestFlowStore();
   const { setAppToken } = useGuestMessagingStore();
+
+  const inAppMode = params.inApp === '1' || params.inApp === 'true';
+  const inAppGuestId = (params.guestId ?? '').trim() || null;
 
   const token = (params.token ?? params.t ?? qrToken ?? '').trim();
   const lang = (params.lang ?? params.l ?? i18n.language ?? 'tr').toLowerCase();
@@ -116,6 +110,34 @@ export default function GuestSignOneScreen() {
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [inAppBootstrapping, setInAppBootstrapping] = useState(false);
+  const [inAppBootstrapError, setInAppBootstrapError] = useState<string | null>(null);
+
+  const applyGuestPrefill = useCallback((row: GuestContractPrefill) => {
+    if (row.full_name) setFullName(row.full_name);
+    if (row.id_number) setIdNumber(row.id_number);
+    if (row.id_type === 'tc' || row.id_type === 'passport' || row.id_type === 'other') setIdType(row.id_type);
+    if (row.phone) {
+      const dial = row.phone_country_code ?? '';
+      const match = COUNTRY_PHONE_CODES.find((c) => dial && row.phone?.startsWith(c.dial));
+      if (match) {
+        setPhoneCountry(match);
+        setPhoneNumber(row.phone.replace(match.dial, '').trim());
+      } else {
+        setPhoneNumber(row.phone);
+      }
+    }
+    if (row.email) setEmail(row.email);
+    if (row.nationality) setNationality(row.nationality);
+    if (row.date_of_birth) setDateOfBirth(isoDateToFormDisplay(row.date_of_birth));
+    if (row.gender === 'male' || row.gender === 'female') setGender(row.gender);
+    if (row.address) setAddress(row.address);
+    if (row.check_in_at) setCheckInDate(isoDateToFormDisplay(row.check_in_at));
+    if (row.check_out_at) setCheckOutDate(isoDateToFormDisplay(row.check_out_at));
+    if (row.room_type) setRoomType(row.room_type);
+    if (typeof row.adults === 'number') setAdults(row.adults);
+    if (typeof row.children === 'number') setChildren(row.children);
+  }, []);
 
   const fetchContract = useCallback(async (lng: string) => {
     setLoadingContract(true);
@@ -208,6 +230,37 @@ export default function GuestSignOneScreen() {
   }, []);
 
   useEffect(() => {
+    if (!inAppMode) return;
+    let cancelled = false;
+    (async () => {
+      if (!token || !inAppGuestId) {
+        setInAppBootstrapping(true);
+      }
+      setInAppBootstrapError(null);
+      try {
+        const result = await resolveInAppContractContext();
+        if (cancelled) return;
+        if (!result.ok) {
+          setInAppBootstrapError(result.message);
+          return;
+        }
+        if (result.prefill) applyGuestPrefill(result.prefill);
+        setQR(result.ctx.token, result.ctx.roomId, result.ctx.roomNumber);
+        if (result.ctx.guestId) setGuestId(result.ctx.guestId);
+      } catch (e) {
+        if (!cancelled) {
+          setInAppBootstrapError((e as Error)?.message ?? t('error'));
+        }
+      } finally {
+        if (!cancelled) setInAppBootstrapping(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inAppMode, inAppGuestId, token, applyGuestPrefill, setQR, setGuestId, t]);
+
+  useEffect(() => {
     if (token) {
       supabase
         .from('room_qr_codes')
@@ -258,9 +311,9 @@ export default function GuestSignOneScreen() {
 
   const pickAvatar = async () => {
     const granted = await ensureMediaLibraryPermission({
-      title: 'Galeri izni',
-      message: 'Profil fotoğrafı seçmek için galeri erişimi istiyoruz.',
-      settingsMessage: 'Galeri izni kapalı. Ayarlardan izin verip tekrar deneyin.',
+      title: t('galleryPermission'),
+      message: t('galleryPermissionMessage'),
+      settingsMessage: t('guestGalleryPermSettings'),
     });
     if (!granted) return;
     try {
@@ -273,7 +326,7 @@ export default function GuestSignOneScreen() {
       if (result.canceled || !result.assets[0]?.uri) return;
       setAvatarUri(result.assets[0].uri);
     } catch (e) {
-      Alert.alert(t('error'), (e as Error)?.message ?? 'Fotoğraf seçilemedi.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('guestPhotoSelectFailed'));
     }
   };
 
@@ -297,7 +350,7 @@ export default function GuestSignOneScreen() {
         .maybeSingle();
 
       const guestPayload = {
-        full_name: (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir',
+        full_name: (formFieldsConfig.full_name ? fullName.trim() : '') || t('guestDefaultGuestName'),
         id_number: formFieldsConfig.id_number ? idNumber.trim() || null : null,
         id_type: formFieldsConfig.id_type ? idType : 'tc',
         phone: formFieldsConfig.phone ? fullPhone || null : null,
@@ -315,31 +368,46 @@ export default function GuestSignOneScreen() {
         room_type: formFieldsConfig.room_type ? roomType : null,
         adults: formFieldsConfig.adults ? adults ?? 1 : 0,
         children: formFieldsConfig.children ? children ?? 0 : 0,
-        status: 'pending',
+        status: 'pending' as const,
       };
 
-      const { data: guest, error: guestErr } = await supabase
-        .from('guests')
-        .insert(guestPayload)
-        .select('id')
-        .single();
+      let guestRecordId: string | null = inAppGuestId;
 
-      if (guestErr) throw guestErr;
-      if (guest) {
-        setGuestId(guest.id);
-        const { data: appToken } = await supabase.rpc('get_guest_app_token', { p_guest_id: guest.id });
+      if (inAppGuestId) {
+        const { data: updated, error: guestErr } = await supabase
+          .from('guests')
+          .update(guestPayload)
+          .eq('id', inAppGuestId)
+          .select('id')
+          .single();
+        if (guestErr) throw guestErr;
+        guestRecordId = updated?.id ?? inAppGuestId;
+      } else {
+        const { data: guest, error: guestErr } = await supabase
+          .from('guests')
+          .insert(guestPayload)
+          .select('id')
+          .single();
+
+        if (guestErr) throw guestErr;
+        guestRecordId = guest?.id ?? null;
+      }
+
+      if (guestRecordId) {
+        setGuestId(guestRecordId);
+        const { data: appToken } = await supabase.rpc('get_guest_app_token', { p_guest_id: guestRecordId });
         if (appToken) await setAppToken(appToken);
         if (avatarUri) {
           try {
             const arrayBuffer = await uriToArrayBuffer(avatarUri);
-            const fileName = `guest/${guest.id}/${Date.now()}.jpg`;
+            const fileName = `guest/${guestRecordId}/${Date.now()}.jpg`;
             const { error: uploadErr } = await supabase.storage.from('profiles').upload(fileName, arrayBuffer, {
               contentType: 'image/jpeg',
               upsert: true,
             });
             if (!uploadErr) {
               const { data: { publicUrl } } = supabase.storage.from('profiles').getPublicUrl(fileName);
-              await supabase.from('guests').update({ photo_url: publicUrl }).eq('id', guest.id);
+              await supabase.from('guests').update({ photo_url: publicUrl }).eq('id', guestRecordId);
             }
           } catch {
             /* avatar upload failed, continue */
@@ -347,8 +415,9 @@ export default function GuestSignOneScreen() {
         }
       }
 
-      if (!token?.trim()) {
-        throw new Error('QR bağlantısı geçersiz (token eksik). Lütfen resepsiyondaki QR kodu tekrar okutun.');
+      const acceptanceToken = token.trim() || (guestRecordId ? `app:${guestRecordId}` : '');
+      if (!acceptanceToken) {
+        throw new Error(inAppMode ? t('guestInAppContractSessionFailed') : t('guestInvalidQrToken'));
       }
 
       const allowedLangs = ['tr', 'en', 'ar', 'de', 'fr', 'ru', 'es'] as const;
@@ -357,17 +426,17 @@ export default function GuestSignOneScreen() {
         : 'tr';
 
       const { error: accErr } = await supabase.from('contract_acceptances').insert({
-        token: token.trim(),
+        token: acceptanceToken,
         room_id: roomId || null,
         contract_lang: langForDb,
         contract_version: 2,
         contract_template_id: template?.id ?? null,
         source: Platform.OS === 'web' ? 'web' : 'app',
-        guest_id: guest?.id ?? null,
+        guest_id: guestRecordId,
       });
       if (accErr) throw accErr;
 
-      const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || 'Misafir';
+      const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || t('guestDefaultGuestName');
       void notifyAdmins({
         title: 'Yeni sözleşme onayı',
         body: `${signer} sözleşmeyi onayladı. Sözleşme onayları ekranından kontrol edin.`,
@@ -381,15 +450,20 @@ export default function GuestSignOneScreen() {
       setStoreContractLang(contractLang);
       setSignedFormLines(signerSummary as string[]);
       setStep('done');
-      safeRouterReplace(router, '/guest/success');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (inAppMode) {
+        if (router.canGoBack()) router.back();
+        else safeRouterReplace(router, '/customer/(tabs)/profile');
+      } else {
+        safeRouterReplace(router, '/guest/success');
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && !inAppMode) {
         requestAnimationFrame(() => {
           if (window.location.pathname.includes('/guest/success')) return;
           window.history.replaceState(null, '', '/guest/success');
         });
       }
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? 'Kayıt oluşturulamadı.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('guestRegistrationCreateFailed'));
     } finally {
       setSaving(false);
     }
@@ -433,6 +507,31 @@ export default function GuestSignOneScreen() {
           EXPO_PUBLIC_SUPABASE_URL ve EXPO_PUBLIC_SUPABASE_ANON_KEY ekleyin.{'\n\n'}
           Detay: docs/VERCEL_ENV.md
         </Text>
+      </View>
+    );
+  }
+
+  if (inAppMode && inAppBootstrapError) {
+    return (
+      <View style={[styles.envContainer, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
+        <Text style={styles.envTitle}>{t('error')}</Text>
+        <Text style={[styles.envText, { marginBottom: 20 }]}>{inAppBootstrapError}</Text>
+        <TouchableOpacity
+          style={styles.submitBtn}
+          onPress={() => (router.canGoBack() ? router.back() : safeRouterReplace(router, '/customer/(tabs)/profile'))}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.submitBtnText}>{t('back')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (inAppMode && inAppBootstrapping) {
+    return (
+      <View style={[styles.envContainer, { paddingTop: insets.top + 24 }]}>
+        <ActivityIndicator size="large" color={COLORS.accent} />
+        <Text style={[styles.pageSubtitle, { textAlign: 'center', marginTop: 16 }]}>{t('guestInAppContractLoading')}</Text>
       </View>
     );
   }
@@ -513,13 +612,13 @@ export default function GuestSignOneScreen() {
               <>
                 <Text style={styles.label}>{formStrings.idType}</Text>
                 <View style={styles.chipRow}>
-                  {ID_TYPES.map((opt) => (
+                  {ID_TYPE_VALUES.map((value) => (
                     <TouchableOpacity
-                      key={opt.value}
-                      style={[styles.chip, idType === opt.value && styles.chipActive]}
-                      onPress={() => setIdType(opt.value)}
+                      key={value}
+                      style={[styles.chip, idType === value && styles.chipActive]}
+                      onPress={() => setIdType(value)}
                     >
-                      <Text style={[styles.chipText, idType === opt.value && styles.chipTextActive]}>{idTypeLabels[opt.value]}</Text>
+                      <Text style={[styles.chipText, idType === value && styles.chipTextActive]}>{idTypeLabels[value]}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -597,13 +696,13 @@ export default function GuestSignOneScreen() {
                   <View style={styles.half}>
                     <Text style={styles.label}>{formStrings.gender}</Text>
                     <View style={styles.chipRow}>
-                      {GENDERS.map((opt) => (
+                      {GENDER_VALUES.map((value) => (
                         <TouchableOpacity
-                          key={opt.value}
-                          style={[styles.chip, gender === opt.value && styles.chipActive]}
-                          onPress={() => setGender(opt.value)}
+                          key={value}
+                          style={[styles.chip, gender === value && styles.chipActive]}
+                          onPress={() => setGender(value)}
                         >
-                          <Text style={[styles.chipText, gender === opt.value && styles.chipTextActive]}>{genderLabels[opt.value]}</Text>
+                          <Text style={[styles.chipText, gender === value && styles.chipTextActive]}>{genderLabels[value]}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -762,7 +861,7 @@ export default function GuestSignOneScreen() {
 
       {showCountryPicker &&
         renderPickerModal(
-          'Ülke kodu',
+          t('guestCountryDialCodeTitle'),
           COUNTRY_PHONE_CODES,
           (item) => setPhoneCountry(item as CountryCode),
           () => setShowCountryPicker(false)
@@ -771,7 +870,7 @@ export default function GuestSignOneScreen() {
         <Modal visible transparent animationType="slide">
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowNationalityPicker(false)}>
             <View style={[styles.modalDrawer, { paddingBottom: insets.bottom + 16 }]}>
-              <Text style={styles.modalTitle}>Uyruk</Text>
+              <Text style={styles.modalTitle}>{formStrings.nationality}</Text>
               <FlatList
                 data={COUNTRY_PHONE_CODES.map((c) => c.name)}
                 keyExtractor={(name) => name}

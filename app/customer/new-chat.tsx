@@ -9,9 +9,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { guestGetOrCreateConversationWithStaff } from '@/lib/messagingApi';
+import { guestOpenStaffChat, formatChatMessageSendError } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
 import { syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
+import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { MESSAGING_COLORS } from '@/lib/messaging';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
@@ -48,26 +49,10 @@ export default function NewChatScreen() {
     }
   }, [loading, params.staffId]);
 
-  /** Oturum varsa: mesajlaşma token’ını daima sunucuyla hizala (yalnızca depoda eski app_token varken yönlendirme/oluşturma boş döner). */
+  /** Oturum varsa: mesajlaşma token'ını daima sunucuyla hizala. */
   const loadStaff = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (session) await syncGuestMessagingAppToken();
-    // Giriş yapmış kullanıcı: staff tablosundan çek (verification_badge dahil)
-    if (session) {
-      const { data: directData } = await supabase
-        .from('staff')
-        .select('id, full_name, department, profile_image, is_online, role, verification_badge, profile_hidden_by_admin')
-        .eq('is_active', true)
-        .is('deleted_at', null)
-        .order('full_name');
-      const direct = (directData ?? []) as StaffRow[];
-      setStaff(
-        sortStaffAdminFirst(direct, (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'tr'))
-      );
-      setLoading(false);
-      return;
-    }
-    // Giriş yok: RPC ile personel listesi (anon)
     const { data: rpcData } = await supabase.rpc('messaging_list_staff_for_guest');
     const rows: StaffRow[] = Array.isArray(rpcData) ? rpcData : rpcData ? [rpcData] : [];
     setStaff(sortStaffAdminFirst(rows, (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'tr')));
@@ -75,19 +60,26 @@ export default function NewChatScreen() {
   };
 
   const startChat = async (staffId: string) => {
-    const token = await syncGuestMessagingAppToken();
+    const token =
+      (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
     if (!token) {
+      Alert.alert(t('chatMessageBlockedTitle'), t('authRegisterRequiredMessage'));
       router.replace('/customer/(tabs)/messages');
       return;
     }
     setStartingId(staffId);
-    const convId = await guestGetOrCreateConversationWithStaff(token, staffId);
-    setStartingId(null);
-    if (convId) {
-      router.replace({ pathname: '/customer/chat/[id]', params: { id: convId } });
-      return;
+    try {
+      const { conversationId, error } = await guestOpenStaffChat(token, staffId);
+      if (conversationId) {
+        router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+        return;
+      }
+      Alert.alert(t('messageSendFailedTitle'), error ?? t('unknownError'));
+    } catch (e) {
+      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
+    } finally {
+      setStartingId(null);
     }
-    Alert.alert(t('chatMessageBlockedTitle'), t('chatMessageBlockedBody'));
   };
 
   if (loading) {

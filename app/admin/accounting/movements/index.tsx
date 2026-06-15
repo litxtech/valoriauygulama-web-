@@ -24,6 +24,7 @@ import {
 } from '@/lib/financeLedger';
 import { resolveCategoryLabel } from '@/lib/financeCategoriesApi';
 import { formatDateShort } from '@/lib/date';
+import { FinanceMovementReceiptActionsById } from '@/components/admin/FinanceMovementReceiptActionsById';
 
 type Row = {
   id: string;
@@ -189,14 +190,13 @@ export default function AccountingMovementsIndex() {
         {filtered.map((r) => {
           const hasReceipt = Array.isArray(r.receipt_urls) && r.receipt_urls.length > 0;
           return (
-            <TouchableOpacity
-              key={r.id}
-              onPress={() =>
-                router.push({ pathname: '/admin/accounting/movements/[id]', params: { id: r.id } } as never)
-              }
-              activeOpacity={0.85}
-            >
-              <AdminCard style={styles.card}>
+            <AdminCard key={r.id} style={styles.card}>
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({ pathname: '/admin/accounting/movements/[id]', params: { id: r.id } } as never)
+                }
+                activeOpacity={0.85}
+              >
                 <View style={styles.cardTop}>
                   <View
                     style={[
@@ -224,8 +224,9 @@ export default function AccountingMovementsIndex() {
                     {r.description.trim()}
                   </Text>
                 ) : null}
-              </AdminCard>
-            </TouchableOpacity>
+              </TouchableOpacity>
+              {r.kind === 'expense' ? <FinanceMovementReceiptActionsById movementId={r.id} /> : null}
+            </AdminCard>
           );
         })}
       </ScrollView>

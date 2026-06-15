@@ -18,6 +18,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickProfileCoverUri } from '@/lib/profileCoverPicker';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
@@ -29,6 +30,11 @@ import {
   type StaffSocialKey,
   type StaffSocialLinksState,
 } from '@/lib/staffSocialLinks';
+import { AdminProfileHero } from '@/components/modernProfile/AdminProfileHero';
+import { loadStaffProfileExtendedStats } from '@/lib/staffProfileExtendedStats';
+import { calculateDaysWithUs, formatStatCompact } from '@/lib/modernProfileTenure';
+import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import type { ProfileStatItem } from '@/components/ProfileStatsCard';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
@@ -58,9 +64,12 @@ type AdminProfile = {
   email: string | null;
   phone: string | null;
   profile_image: string | null;
+  cover_image: string | null;
   role: string | null;
   department: string | null;
   position: string | null;
+  hire_date: string | null;
+  created_at: string | null;
   social_links: Record<string, unknown> | null;
 };
 
@@ -70,6 +79,8 @@ export default function AdminProfileScreen() {
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [extendedStats, setExtendedStats] = useState<Awaited<ReturnType<typeof loadStaffProfileExtendedStats>> | null>(null);
   const [roleOther, setRoleOther] = useState(''); // "Diğer" seçiliyken serbest metin
   const [social, setSocial] = useState<StaffSocialLinksState>(() => emptyStaffSocialLinks());
   const profileRef = useRef<AdminProfile | null>(null);
@@ -91,7 +102,7 @@ export default function AdminProfileScreen() {
     const load = async () => {
       const { data } = await supabase
         .from('staff')
-        .select('id, full_name, email, phone, profile_image, role, department, position, social_links')
+        .select('id, full_name, email, phone, profile_image, cover_image, role, department, position, hire_date, created_at, social_links')
         .eq('id', staff.id)
         .single();
       if (data) {
@@ -104,10 +115,35 @@ export default function AdminProfileScreen() {
         socialRef.current = sl;
         const pos = (data as AdminProfile).position;
         if (pos && !PROFILE_ROLE_OPTIONS.includes(pos)) setRoleOther(pos);
+        const joinIso = d.hire_date ?? d.created_at ?? null;
+        const days = joinIso ? calculateDaysWithUs(joinIso, Date.now()) : null;
+        const stats = await loadStaffProfileExtendedStats(d.id, days);
+        setExtendedStats(stats);
       }
     };
     load();
   }, [staff?.id, staff?.role]);
+
+  const pickCover = async () => {
+    if (!profile || uploadingCover) return;
+    try {
+      const uri = await pickProfileCoverUri('Galeri izni kapali.');
+      if (!uri) return;
+      setUploadingCover(true);
+      const { publicUrl } = await uploadUriToPublicBucket({
+        bucketId: 'profiles',
+        uri,
+        kind: 'image',
+        subfolder: `staff/${profile.id}/cover`,
+      });
+      await supabase.from('staff').update({ cover_image: publicUrl }).eq('id', profile.id);
+      setProfile((p) => (p ? { ...p, cover_image: publicUrl } : null));
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Kapak yüklenemedi.');
+    } finally {
+      setUploadingCover(false);
+    }
+  };
 
   const pickImage = async () => {
     if (!profile) return;
@@ -143,6 +179,34 @@ export default function AdminProfileScreen() {
     } finally {
       setUploading(false);
     }
+  };
+
+  const confirmDeleteProfileImage = () => {
+    if (!profile?.profile_image || uploading) return;
+    Alert.alert('Sil', 'Profil resminiz kaldırılacak. Devam edilsin mi?', [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setUploading(true);
+            try {
+              const { error } = await supabase
+                .from('staff')
+                .update({ profile_image: null })
+                .eq('id', profile.id);
+              if (error) throw error;
+              setProfile((p) => (p ? { ...p, profile_image: null } : null));
+            } catch (e) {
+              Alert.alert('Hata', (e as Error)?.message ?? 'Profil resmi silinemedi.');
+            } finally {
+              setUploading(false);
+            }
+          })();
+        },
+      },
+    ]);
   };
 
   const saveSocialLinks = useCallback(async (next: StaffSocialLinksState) => {
@@ -223,6 +287,15 @@ export default function AdminProfileScreen() {
   }
 
   const avatarUri = profile.profile_image || undefined;
+  const positionLine = [profile.position, profile.department].filter(Boolean).join(' · ');
+  const adminStatItems: ProfileStatItem[] = extendedStats
+    ? [
+        { value: formatStatCompact(extendedStats.tasksCompleted, 'tr'), label: 'Görev' },
+        { value: formatStatCompact(extendedStats.visits, 'tr'), label: 'Ziyaret' },
+        { value: formatStatCompact(extendedStats.likes, 'tr'), label: 'Beğeni' },
+        { value: formatStatCompact(extendedStats.thanksCount, 'tr'), label: 'Teşekkür' },
+      ]
+    : [];
 
   return (
     <KeyboardAvoidingView
@@ -236,6 +309,16 @@ export default function AdminProfileScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        <AdminProfileHero
+          staffId={profile.id}
+          fullName={profile.full_name}
+          positionLine={positionLine || null}
+          coverUri={profile.cover_image}
+          avatarUri={avatarUri}
+          statItems={adminStatItems}
+          onPickCover={pickCover}
+          uploadingCover={uploadingCover}
+        />
         <AdminCard>
           <View style={styles.avatarSection}>
             <TouchableOpacity
@@ -257,8 +340,21 @@ export default function AdminProfileScreen() {
                 </View>
               )}
               <View style={styles.avatarEditBadge}>
-                <Ionicons name="camera" size={18} color="#fff" />
+                <Ionicons name="camera" size={14} color="#fff" />
               </View>
+              {avatarUri ? (
+                <TouchableOpacity
+                  style={styles.avatarDeleteBtn}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    confirmDeleteProfileImage();
+                  }}
+                  disabled={uploading}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="trash-outline" size={11} color="#fff" />
+                </TouchableOpacity>
+              ) : null}
             </TouchableOpacity>
             <Text style={styles.roleLabel}>
               {ROLE_LABELS[profile.role ?? ''] ?? profile.role ?? 'Admin'}
@@ -543,12 +639,25 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: adminTheme.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarDeleteBtn: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
   },
   roleLabel: {
     marginTop: 8,

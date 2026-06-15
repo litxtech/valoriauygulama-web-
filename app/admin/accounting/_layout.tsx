@@ -42,9 +42,12 @@ export default function AccountingLayout() {
       <Stack.Screen name="movements/index" options={{ title: 'Gelir / Gider' }} />
       <Stack.Screen name="movements/new" options={{ title: 'Yeni kayıt' }} />
       <Stack.Screen name="movements/[id]" options={{ title: 'Hareket detayı' }} />
-      <Stack.Screen name="counterparties/index" options={{ title: 'Kişi & firmalar' }} />
-      <Stack.Screen name="counterparties/new" options={{ title: 'Yeni cari' }} />
-      <Stack.Screen name="counterparties/[id]" options={{ title: 'Cari detayı' }} />
+      <Stack.Screen name="movements/edit" options={{ title: 'Kayıt düzenle' }} />
+      <Stack.Screen name="quick-pay" options={{ headerShown: false }} />
+      <Stack.Screen name="counterparties/index" options={{ title: 'Kişi ödemeleri' }} />
+      <Stack.Screen name="counterparties/new" options={{ title: 'Yeni kişi' }} />
+      <Stack.Screen name="counterparties/[id]" options={{ title: 'Kişi detayı' }} />
+      <Stack.Screen name="counterparties/edit" options={{ title: 'Kişi düzenle' }} />
       <Stack.Screen name="categories/index" options={{ title: 'Kategoriler' }} />
       <Stack.Screen name="activity/index" options={{ title: 'Son işlemler' }} />
     </Stack>

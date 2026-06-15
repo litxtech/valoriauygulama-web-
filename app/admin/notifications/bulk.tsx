@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { AdminOrganizationPicker } from '@/components/admin';
+import { TemplateStaffRecipientPicker } from '@/components/admin/TemplateStaffRecipientPicker';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import {
   sendBulkToGuests,
@@ -52,9 +53,15 @@ export default function BulkNotifyScreen() {
     category?: BulkCategory | string;
     title?: string;
     body?: string;
+    excludeStaff?: string;
+    guestTarget?: BulkGuestTarget | string;
+    roomNumbers?: string;
   }>();
   const { staff } = useAuthStore();
   const { selectedOrganizationId } = useAdminOrgStore();
+  const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
+  const orgScopedForPicker =
+    canUseAll && selectedOrganizationId !== 'all' ? selectedOrganizationId : staff?.organization_id ?? null;
   const [toStaff, setToStaff] = useState(false);
   const [guestTarget, setGuestTarget] = useState<BulkGuestTarget>('all_guests');
   const [staffTarget, setStaffTarget] = useState<BulkStaffTarget>('all_staff');
@@ -62,7 +69,14 @@ export default function BulkNotifyScreen() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [roomNumbers, setRoomNumbers] = useState('');
+  const [excludedStaffIds, setExcludedStaffIds] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+
+  const toggleExcludedStaff = useCallback((staffId: string) => {
+    setExcludedStaffIds((prev) =>
+      prev.includes(staffId) ? prev.filter((id) => id !== staffId) : [...prev, staffId]
+    );
+  }, []);
 
   useEffect(() => {
     const audience = params.audience;
@@ -74,7 +88,32 @@ export default function BulkNotifyScreen() {
     const b = typeof params.body === 'string' ? params.body : '';
     if (t) setTitle(t);
     if (b) setBody(b);
-  }, [params.audience, params.category, params.title, params.body]);
+    const excludeRaw = typeof params.excludeStaff === 'string' ? params.excludeStaff : '';
+    if (excludeRaw) {
+      setExcludedStaffIds(excludeRaw.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    const gt = params.guestTarget;
+    const allowedGuest: BulkGuestTarget[] = [
+      'all_guests',
+      'checkin_today',
+      'checkout_tomorrow',
+      'specific_rooms',
+      'long_stay',
+    ];
+    if (typeof gt === 'string' && allowedGuest.includes(gt as BulkGuestTarget)) {
+      setGuestTarget(gt as BulkGuestTarget);
+    }
+    const rooms = typeof params.roomNumbers === 'string' ? params.roomNumbers : '';
+    if (rooms) setRoomNumbers(rooms);
+  }, [
+    params.audience,
+    params.category,
+    params.title,
+    params.body,
+    params.excludeStaff,
+    params.guestTarget,
+    params.roomNumbers,
+  ]);
 
   const handleSend = async () => {
     const canUseAll = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
@@ -113,6 +152,7 @@ export default function BulkNotifyScreen() {
           createdByStaffId: staff.id,
           notificationType: 'staff_board_announcement',
           data: { screen: '/staff/board' },
+          excludeStaffIds: staffTarget === 'all_staff' ? excludedStaffIds : undefined,
         });
         if (result.error) {
           Alert.alert('Hata', result.error);
@@ -230,6 +270,13 @@ export default function BulkNotifyScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+          {staffTarget === 'all_staff' ? (
+            <TemplateStaffRecipientPicker
+              organizationId={orgScopedForPicker}
+              excludedStaffIds={excludedStaffIds}
+              onToggleExclude={toggleExcludedStaff}
+            />
+          ) : null}
           <Text style={styles.label}>Başlık</Text>
           <TextInput
             style={styles.input}

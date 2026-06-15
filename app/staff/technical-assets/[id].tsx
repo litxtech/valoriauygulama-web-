@@ -20,8 +20,10 @@ import {
   normalizePhotoUrls,
   type TechAssetDetail,
   type TechParentRelation,
+  type TechAssetStatus,
   type TechRelatedAsset,
 } from '@/lib/technicalAssets';
+import { notifyTechAssetStatusChanged } from '@/lib/technicalAssetNotifications';
 import { canOperateTechnicalAssets, hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
@@ -217,11 +219,21 @@ export default function TechnicalAssetDetailScreen() {
                 key={st}
                 style={[styles.statusChip, asset.status === st && styles.statusChipOn]}
                 onPress={async () => {
+                  const prev = asset.status as TechAssetStatus;
                   const { error: uerr } = await supabase
                     .from('tech_assets')
                     .update({ status: st, updated_by_staff_id: staff?.id ?? null })
                     .eq('id', asset.id);
-                  if (!uerr) await load();
+                  if (!uerr) {
+                    void notifyTechAssetStatusChanged({
+                      organizationId: asset.organization_id,
+                      asset,
+                      previousStatus: prev,
+                      newStatus: st,
+                      updatedByStaffId: staff!.id,
+                    });
+                    await load();
+                  }
                 }}
               >
                 <Text style={[styles.statusChipText, asset.status === st && styles.statusChipTextOn]}>{st}</Text>

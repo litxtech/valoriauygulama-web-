@@ -1,10 +1,18 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Animated, Platform } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, usePathname } from 'expo-router';
+import { occupancyPathsFromPathname } from '@/lib/occupancyOpsPaths';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminButton, AdminCard } from '@/components/admin';
+import {
+  getAdminRoomsListCache,
+  setAdminRoomsListCache,
+  getAdminRoomsListCacheAgeMs,
+  ADMIN_ROOMS_FOCUS_REFRESH_MS,
+} from '@/lib/adminRoomsListCache';
+
 const DONE_GRACE_MS = 60 * 1000;
 
 type Room = {
@@ -16,6 +24,7 @@ type Room = {
   bed_type: string | null;
   price_per_night: number | null;
   previewSignerName?: string | null;
+  liveGuests?: string[];
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -75,6 +84,13 @@ function RoomCard({ item, onPress }: { item: Room; onPress: () => void }) {
             Önizleme (sözleşme): {preview}
           </Text>
         ) : null}
+        {item.liveGuests && item.liveGuests.length > 0 ? (
+          <Text style={styles.liveGuests} numberOfLines={2}>
+            Odada: {item.liveGuests.join(', ')}
+          </Text>
+        ) : (
+          <Text style={styles.vacantHint}>Şu an misafir yok</Text>
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
@@ -82,8 +98,10 @@ function RoomCard({ item, onPress }: { item: Room; onPress: () => void }) {
 
 export default function RoomsList() {
   const router = useRouter();
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [loading, setLoading] = useState(true);
+  const paths = occupancyPathsFromPathname(usePathname());
+  const initialCached = getAdminRoomsListCache(true);
+  const [rooms, setRooms] = useState<Room[]>(initialCached ?? []);
+  const [loading, setLoading] = useState(!(initialCached && initialCached.length > 0));
   const [cleaningPlanLocked, setCleaningPlanLocked] = useState(false);
   const [cleaningPlanApproved, setCleaningPlanApproved] = useState(false);
 
@@ -121,40 +139,88 @@ export default function RoomsList() {
     setCleaningPlanApproved(shouldLock);
   };
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('rooms')
-        .select('id, room_number, floor, status, view_type, bed_type, price_per_night')
-        .order('room_number');
-      const base = (data ?? []) as Room[];
-      const ids = base.map((r) => r.id);
-      const previewByRoom: Record<string, string> = {};
-      if (ids.length > 0) {
-        const { data: cas } = await supabase
-          .from('contract_acceptances')
-          .select('room_id, guests(full_name, status, room_id)')
-          .in('room_id', ids)
-          .not('guest_id', 'is', null);
-        for (const row of cas ?? []) {
-          const rid = row.room_id as string | null;
-          if (!rid || previewByRoom[rid]) continue;
-          const g = Array.isArray(row.guests) ? row.guests[0] : row.guests;
-          if (g && g.status === 'pending' && !g.room_id && g.full_name?.trim()) {
-            previewByRoom[rid] = g.full_name.trim();
-          }
+  const loadRooms = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+    if (!opts?.force) {
+      const age = getAdminRoomsListCacheAgeMs();
+      if (age != null && age < ADMIN_ROOMS_FOCUS_REFRESH_MS) {
+        const hit = getAdminRoomsListCache(true);
+        if (hit) {
+          setRooms(hit);
+          setLoading(false);
+        }
+        return;
+      }
+      if (!opts?.silent) {
+        const stale = getAdminRoomsListCache(true);
+        if (stale?.length) {
+          setRooms(stale);
+          setLoading(false);
         }
       }
-      setRooms(base.map((r) => ({ ...r, previewSignerName: previewByRoom[r.id] ?? null })));
-      await loadCleaningPlanLockState();
-      setLoading(false);
-    })();
+    }
+
+    const { data } = await supabase
+      .from('rooms')
+      .select('id, room_number, floor, status, view_type, bed_type, price_per_night')
+      .order('room_number');
+    const base = (data ?? []) as Room[];
+    const ids = base.map((r) => r.id);
+    const previewByRoom: Record<string, string> = {};
+    const liveGuestsByRoom: Record<string, string[]> = {};
+    if (ids.length > 0) {
+      const { data: cas } = await supabase
+        .from('contract_acceptances')
+        .select('room_id, guests(full_name, status, room_id)')
+        .in('room_id', ids)
+        .not('guest_id', 'is', null);
+      for (const row of cas ?? []) {
+        const rid = row.room_id as string | null;
+        if (!rid || previewByRoom[rid]) continue;
+        const g = Array.isArray(row.guests) ? row.guests[0] : row.guests;
+        if (g && g.status === 'pending' && !g.room_id && g.full_name?.trim()) {
+          previewByRoom[rid] = g.full_name.trim();
+        }
+      }
+
+      const { data: liveRows } = await supabase
+        .from('guests')
+        .select('full_name, room_id')
+        .eq('status', 'checked_in')
+        .in('room_id', ids);
+      for (const row of (liveRows ?? []) as { full_name: string | null; room_id: string | null }[]) {
+        if (!row.room_id || !row.full_name?.trim()) continue;
+        if (!liveGuestsByRoom[row.room_id]) liveGuestsByRoom[row.room_id] = [];
+        liveGuestsByRoom[row.room_id]?.push(row.full_name.trim());
+      }
+    }
+    const list = base.map((r) => ({
+      ...r,
+      previewSignerName: previewByRoom[r.id] ?? null,
+      liveGuests: liveGuestsByRoom[r.id] ?? [],
+    }));
+    setAdminRoomsListCache(list);
+    setRooms(list);
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      await loadRooms({ silent: Boolean(initialCached?.length) });
+      await loadCleaningPlanLockState();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ilk mount
+  }, [loadRooms]);
 
   useFocusEffect(
     useCallback(() => {
+      const stale = getAdminRoomsListCache(true);
+      if (stale?.length) setRooms(stale);
+      const age = getAdminRoomsListCacheAgeMs();
+      if (age == null || age >= ADMIN_ROOMS_FOCUS_REFRESH_MS) {
+        void loadRooms({ silent: Boolean(stale?.length) });
+      }
       void loadCleaningPlanLockState();
-    }, [])
+    }, [loadRooms])
   );
 
   if (loading) {
@@ -170,11 +236,12 @@ export default function RoomsList() {
   return (
     <View style={styles.container}>
       <View style={styles.topBar}>
+        {paths.scope === 'admin' ? (
         <AdminButton
           title={cleaningPlanApproved ? 'Yarın temizlenecek odalar - ONAYLANDI' : 'Yarın temizlenecek odalar'}
           onPress={() => {
             if (cleaningPlanLocked) return;
-            router.push('/admin/rooms/cleaning-plan');
+            router.push(paths.scope === 'admin' ? '/admin/rooms/cleaning-plan' : paths.hub);
           }}
           variant={cleaningPlanApproved ? 'primary' : 'secondary'}
           size="md"
@@ -190,6 +257,8 @@ export default function RoomsList() {
           textStyle={cleaningPlanApproved ? styles.cleaningApprovedBtnText : undefined}
           fullWidth
         />
+        ) : null}
+        {paths.scope === 'admin' ? (
         <AdminButton
           title="Yeni oda ekle"
           onPress={() => router.push('/admin/rooms/new')}
@@ -198,6 +267,9 @@ export default function RoomsList() {
           leftIcon={<Ionicons name="add" size={20} color="#fff" />}
           fullWidth
         />
+        ) : (
+          <Text style={styles.staffRoomsHint}>Odaya dokunun: kim var, giriş/çıkış ve sözleşme işlemleri.</Text>
+        )}
       </View>
       <FlatList
         data={rooms}
@@ -206,17 +278,19 @@ export default function RoomsList() {
         listEmptyComponent={
           <AdminCard>
             <Text style={styles.emptyText}>Henüz oda tanımlı değil.</Text>
-            <AdminButton
-              title="İlk odayı ekle"
-              onPress={() => router.push('/admin/rooms/new')}
-              variant="primary"
-              size="md"
-              style={{ marginTop: 16 }}
-            />
+            {paths.scope === 'admin' ? (
+              <AdminButton
+                title="İlk odayı ekle"
+                onPress={() => router.push('/admin/rooms/new')}
+                variant="primary"
+                size="md"
+                style={{ marginTop: 16 }}
+              />
+            ) : null}
           </AdminCard>
         }
         renderItem={({ item }) => (
-          <RoomCard item={item} onPress={() => router.push(`/admin/rooms/${item.id}`)} />
+          <RoomCard item={item} onPress={() => router.push(paths.room(item.id) as never)} />
         )}
       />
     </View>
@@ -310,10 +384,28 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.info,
     lineHeight: 18,
   },
+  liveGuests: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#0f766e',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  vacantHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+  },
   emptyText: {
     fontSize: 15,
     color: adminTheme.colors.textSecondary,
     textAlign: 'center',
+  },
+  staffRoomsHint: {
+    fontSize: 13,
+    color: adminTheme.colors.textSecondary,
+    marginBottom: 8,
+    lineHeight: 18,
   },
   cleaningApprovedBtn: {
     backgroundColor: adminTheme.colors.success,

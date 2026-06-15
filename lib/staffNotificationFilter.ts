@@ -3,6 +3,23 @@ import { log } from '@/lib/logger';
 
 type StaffRecipientRow = { staff_id: string };
 
+function isFeedOrStoryNotificationType(notificationType?: string | null): boolean {
+  const t = (notificationType ?? '').trim().toLowerCase();
+  return t.startsWith('feed_') || t.startsWith('story_');
+}
+
+/** Profil tercihleri + feed master mute (feed_/story_ türleri). */
+export async function filterStaffRecipients(
+  staffIds: string[],
+  notificationType?: string | null
+): Promise<string[]> {
+  let ids = await filterStaffIdsByNotificationType(staffIds, notificationType);
+  if (isFeedOrStoryNotificationType(notificationType)) {
+    ids = await filterStaffIdsFeedNotMuted(ids);
+  }
+  return ids;
+}
+
 /** Profil → Bildirim tercihleri: staff_notif_<type> kapalı olanları çıkarır. */
 export async function filterStaffIdsByNotificationType(
   staffIds: string[],

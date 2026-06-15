@@ -15,6 +15,7 @@ import { MissingItemsChecklistSheet } from '@/components/MissingItemsChecklistSh
 import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 import {
   createMissingItemReport,
+  isMissingReportNotifyOnlyError,
   listLegacyMissingItems,
   listMissingItemReports,
   resolveLegacyMissingItem,
@@ -23,6 +24,8 @@ import {
   type MissingItemReportRow,
   type MissingItemRow,
 } from '@/lib/missingItems';
+import { useAuthStore } from '@/stores/authStore';
+import { canManageMissingItemsCatalog } from '@/lib/staffPermissions';
 import { cacheMissingItemReport } from '@/lib/missingItemsCache';
 import { formatDateShort, formatTime } from '@/lib/date';
 
@@ -55,6 +58,8 @@ function formatWhen(iso: string | null | undefined): string {
 
 export function KitchenShortagesScreen() {
   const router = useRouter();
+  const { staff } = useAuthStore();
+  const canEditCatalog = canManageMissingItemsCatalog(staff);
   const [tab, setTab] = useState<TabKey>('open');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,17 +106,21 @@ export function KitchenShortagesScreen() {
     setSaving(true);
     const result = await createMissingItemReport({ area: AREA, ...payload });
     setSaving(false);
-    if (result.error) {
+    if (result.error && !isMissingReportNotifyOnlyError(result.error)) {
       Alert.alert('Hata', result.error);
       return;
     }
     setSheetVisible(false);
     setTab('open');
     loadAll();
-    Alert.alert(
-      'Eksik listesi onaylandı',
-      `${payload.items.length} kalem kaydedildi. Mutfak ekibi ve yöneticilere bildirim gönderildi.`
-    );
+    if (isMissingReportNotifyOnlyError(result.error)) {
+      Alert.alert('Eksik listesi onaylandı', 'Kayıt alındı. Anlık bildirim gönderilemedi; ekip uygulama içinden görebilir.');
+    } else {
+      Alert.alert(
+        'Eksik listesi onaylandı',
+        `${payload.items.length} kalem kaydedildi. Mutfak ekibi ve yöneticilere bildirim gönderildi.`
+      );
+    }
   };
 
   const onResolveReport = (id: string, itemCount: number) => {
@@ -225,12 +234,22 @@ export function KitchenShortagesScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.printWrap}>
-        <KitchenPrintBar kinds={printKinds} compact />
+        <KitchenPrintBar kinds={printKinds} compact sectionLabel="Mutfak" />
       </View>
 
       <View style={styles.banner}>
         <Ionicons name="clipboard-outline" size={20} color={ACCENT} />
         <Text style={styles.bannerText}>Mutfak gezinti eksik listesi — onaylayınca ekibe bildirilir</Text>
+        {canEditCatalog ? (
+          <TouchableOpacity
+            style={styles.editListBtn}
+            onPress={() => router.push('/staff/missing-items/catalog/kitchen' as never)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="create-outline" size={16} color={ACCENT} />
+            <Text style={styles.editListBtnText}>Listeyi düzenle</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.tabBar}>
@@ -303,8 +322,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#fed7aa',
+    flexWrap: 'wrap',
   },
-  bannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#9a3412' },
+  bannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#9a3412', minWidth: 160 },
+  editListBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ACCENT,
+    backgroundColor: '#fff',
+  },
+  editListBtnText: { fontSize: 12, fontWeight: '800', color: ACCENT },
   tabBar: {
     flexDirection: 'row',
     gap: 8,

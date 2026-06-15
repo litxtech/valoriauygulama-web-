@@ -32,12 +32,13 @@ export default function AdminOrganizationEditScreen() {
   const [currencyCode, setCurrencyCode] = useState('TRY');
   const [isActive, setIsActive] = useState(true);
   const [kind, setKind] = useState<OrganizationKind>('hotel');
+  const [financeReportBrand, setFinanceReportBrand] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
     const { data, error } = await supabase
       .from('organizations')
-      .select('id,name,slug,kind,city,address,phone,email,currency_code,is_active')
+      .select('id,name,slug,kind,city,address,phone,email,currency_code,is_active,finance_report_brand')
       .eq('id', id)
       .maybeSingle();
     if (error || !data) {
@@ -55,6 +56,7 @@ export default function AdminOrganizationEditScreen() {
     setEmail(row.email ?? '');
     setCurrencyCode(row.currency_code ?? 'TRY');
     setIsActive(row.is_active);
+    setFinanceReportBrand((row as { finance_report_brand?: string | null }).finance_report_brand ?? '');
     setLoading(false);
   }, [id, router]);
 
@@ -79,6 +81,7 @@ export default function AdminOrganizationEditScreen() {
       p_currency_code: currencyCode.trim() || 'TRY',
       p_is_active: isActive,
       p_kind: kind,
+      p_finance_report_brand: financeReportBrand.trim() || null,
     });
     setSaving(false);
     if (error) {
@@ -108,6 +111,18 @@ export default function AdminOrganizationEditScreen() {
       </ScrollView>
       <Text style={styles.label}>İşletme adı</Text>
       <TextInput style={styles.input} value={name} onChangeText={setName} />
+      <Text style={styles.hint}>
+        Muhasebe PDF ve yazdırmada üst başlık. Boş bırakırsanız yukarıdaki işletme adı kullanılır (farklı ünvan /
+        marka için doldurun).
+      </Text>
+      <Text style={styles.label}>Belge başlığı (PDF / yazdır)</Text>
+      <TextInput
+        style={styles.input}
+        value={financeReportBrand}
+        onChangeText={setFinanceReportBrand}
+        placeholder={name.trim() || 'Örn. SEVCAN OTELCİLİK A.Ş.'}
+        placeholderTextColor={adminTheme.colors.textMuted}
+      />
       <Text style={styles.label}>Kod (slug)</Text>
       <TextInput style={styles.input} value={slug} onChangeText={setSlug} autoCapitalize="none" />
       <Text style={styles.label}>Sehir</Text>
@@ -136,6 +151,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
   content: { padding: 16, paddingBottom: 32 },
   label: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.text, marginBottom: 6 },
+  hint: { fontSize: 12, color: adminTheme.colors.textMuted, marginBottom: 8, lineHeight: 17 },
   input: {
     backgroundColor: adminTheme.colors.surface,
     borderWidth: 1,

@@ -18,6 +18,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
+import { ExpenseReceiptThumbnail } from '@/components/expenses/ExpenseReceiptThumbnail';
+import { expenseReceiptPreviewModalStyle } from '@/lib/expenseReceiptPreviewStyles';
 import { formatDateShort } from '@/lib/date';
 
 type CategoryRow = { id: string; name: string; icon: string | null };
@@ -185,14 +187,15 @@ export default function StaffExpensesScreen() {
                 ) : null}
                 <Text style={styles.cardCategory}>{e.category?.name ?? '—'}</Text>
                 {e.description ? <Text style={styles.cardDesc} numberOfLines={2}>{e.description}</Text> : null}
+                {e.receipt_image_url ? (
+                  <ExpenseReceiptThumbnail
+                    uri={e.receipt_image_url}
+                    onPress={() => setReceiptModal(e.receipt_image_url)}
+                    style={styles.receiptPreviewRow}
+                  />
+                ) : null}
                 <View style={styles.cardFooter}>
                   <Text style={styles.cardAmount}>{fmtMoney(Number(e.amount))}</Text>
-                  {e.receipt_image_url ? (
-                    <TouchableOpacity onPress={() => setReceiptModal(e.receipt_image_url)} style={styles.receiptBtn}>
-                      <Ionicons name="image-outline" size={20} color={theme.colors.primary} />
-                      <Text style={styles.receiptBtnText}>Fiş gör</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
               </View>
             ))}
@@ -213,7 +216,7 @@ export default function StaffExpensesScreen() {
         <Pressable style={styles.modalOverlay} onPress={() => setReceiptModal(null)}>
           <View style={styles.modalContent}>
             {receiptModal ? (
-              <CachedImage uri={receiptModal} style={styles.modalImage} contentFit="contain" />
+              <CachedImage uri={receiptModal} style={expenseReceiptPreviewModalStyle} contentFit="contain" />
             ) : null}
             <TouchableOpacity style={styles.modalClose} onPress={() => setReceiptModal(null)}>
               <Text style={styles.modalCloseText}>Kapat</Text>
@@ -289,14 +292,12 @@ const styles = StyleSheet.create({
   cardDesc: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 4 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.borderLight },
   cardAmount: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-  receiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  receiptBtnText: { fontSize: 13, color: theme.colors.primary, fontWeight: '600' },
+  receiptPreviewRow: { marginTop: 10, alignSelf: 'flex-start' },
   exportRow: { marginTop: 20, flexDirection: 'row', justifyContent: 'center' },
   exportBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16 },
   exportBtnText: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalContent: { width: '100%', maxHeight: '85%', alignItems: 'center' },
-  modalImage: { width: '100%', height: 400, borderRadius: 8 },
+  modalContent: { width: '100%', maxWidth: 340, alignItems: 'center' },
   modalClose: { marginTop: 16, paddingVertical: 10, paddingHorizontal: 24, backgroundColor: theme.colors.surface, borderRadius: 8 },
   modalCloseText: { fontSize: 16, fontWeight: '600', color: theme.colors.text },
 });

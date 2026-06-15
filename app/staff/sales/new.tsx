@@ -70,12 +70,13 @@ function StaffPicker({
   onChange: (s: StaffPickRow | null) => void;
   options: StaffPickRow[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
     <>
       <Text style={styles.label}>{title}</Text>
       <TouchableOpacity style={styles.pickerBtn} onPress={() => setOpen(true)} activeOpacity={0.85}>
-        <Text style={styles.pickerBtnText}>{value?.full_name ?? 'Seçiniz'}</Text>
+        <Text style={styles.pickerBtnText}>{value?.full_name ?? t('staffSalesSelect')}</Text>
         <Ionicons name="chevron-down" size={18} color={theme.colors.textMuted} />
       </TouchableOpacity>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -95,7 +96,7 @@ function StaffPicker({
                 }}
                 style={styles.modalRow}
               >
-                <Text style={styles.modalRowText}>Seçilmedi</Text>
+                <Text style={styles.modalRowText}>{t('staffSalesNotSelected')}</Text>
               </TouchableOpacity>
               {options.map((o) => (
                 <TouchableOpacity
@@ -106,7 +107,7 @@ function StaffPicker({
                   }}
                   style={styles.modalRow}
                 >
-                  <Text style={styles.modalRowText}>{o.full_name ?? 'İsimsiz personel'}</Text>
+                  <Text style={styles.modalRowText}>{o.full_name ?? t('staffSalesUnnamedStaff')}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -121,13 +122,16 @@ function PlacePicker({
   title,
   value,
   onChange,
+  places = PAYMENT_PLACES,
 }: {
   title: string;
   value: string;
   onChange: (v: string) => void;
+  places?: { value: string; label: string }[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const label = PAYMENT_PLACES.find((p) => p.value === value)?.label ?? (value ? value : 'Seçiniz');
+  const label = places.find((p) => p.value === value)?.label ?? (value ? value : 'Seçiniz');
   return (
     <>
       <Text style={styles.label}>{title}</Text>
@@ -152,9 +156,9 @@ function PlacePicker({
                 }}
                 style={styles.modalRow}
               >
-                <Text style={styles.modalRowText}>Seçilmedi</Text>
+                <Text style={styles.modalRowText}>{t('staffSalesNotSelected')}</Text>
               </TouchableOpacity>
-              {PAYMENT_PLACES.map((p) => (
+              {places.map((p) => (
                 <TouchableOpacity
                   key={p.value}
                   onPress={() => {
@@ -191,7 +195,34 @@ export default function NewReservationSale() {
   const [sale_amount, setSaleAmount] = useState('0');
   const [discount_amount, setDiscountAmount] = useState('0');
   const [extra_service_amount, setExtraServiceAmount] = useState('0');
-  const [source_type, setSourceType] = useState(SOURCE_TYPES[0]!.value);
+  const [source_type, setSourceType] = useState('personel_kendi');
+
+  const sourceTypesI18n = useMemo(
+    () => [
+      { value: 'personel_kendi', label: t('staffSalesSourceOwn') },
+      { value: 'personel_baglanti', label: t('staffSalesSourceConnection') },
+      { value: 'dis_referans', label: t('staffSalesSourceExternal') },
+      { value: 'firma', label: t('staffSalesSourceCompany') },
+      { value: 'telefon', label: t('staffSalesSourcePhone') },
+      { value: 'tekrar', label: t('staffSalesSourceRepeat') },
+    ],
+    [t]
+  );
+  const commissionTypesI18n = useMemo(
+    () => [{ value: 'percent' as const, label: t('staffSalesCommissionPercent') }],
+    [t]
+  );
+  const paymentPlacesI18n = useMemo(
+    () => [
+      { value: 'otel_kasa', label: t('staffSalesPayHotelCash') },
+      { value: 'otel_banka', label: t('staffSalesPayHotelBank') },
+      { value: 'personel_hesabi', label: t('staffSalesPayStaff') },
+      { value: 'araci_hesabi', label: t('staffSalesPayIntermediary') },
+      { value: 'elden', label: t('staffSalesPayCash') },
+      { value: 'online_link', label: t('staffSalesPayOnline') },
+    ],
+    [t]
+  );
 
   const [broughtBy, setBroughtBy] = useState<StaffPickRow | null>(null);
   const [intermediary, setIntermediary] = useState<StaffPickRow | null>(null);
@@ -206,7 +237,10 @@ export default function NewReservationSale() {
   const [payment_place, setPaymentPlace] = useState('');
   const [paid_amount, setPaidAmount] = useState('0');
 
-  const sourceLabel = useMemo(() => SOURCE_TYPES.find((x) => x.value === source_type)?.label ?? source_type, [source_type]);
+  const sourceLabel = useMemo(
+    () => sourceTypesI18n.find((x) => x.value === source_type)?.label ?? source_type,
+    [source_type, sourceTypesI18n]
+  );
 
   useEffect(() => {
     if (!staff?.organization_id || !canUse) return;
@@ -397,7 +431,7 @@ export default function NewReservationSale() {
         <Text style={styles.pickerInfoText}>{sourceLabel}</Text>
       </View>
       <View style={styles.sourceGrid}>
-        {SOURCE_TYPES.map((s) => {
+        {sourceTypesI18n.map((s) => {
           const active = s.value === source_type;
           return (
             <TouchableOpacity
@@ -412,8 +446,8 @@ export default function NewReservationSale() {
         })}
       </View>
 
-      <StaffPicker title="Getiren kişi" value={broughtBy} onChange={setBroughtBy} options={staffOptions} />
-      <StaffPicker title="Aracı kişi" value={intermediary} onChange={setIntermediary} options={staffOptions} />
+      <StaffPicker title={t('staffSalesBroughtBy')} value={broughtBy} onChange={setBroughtBy} options={staffOptions} />
+      <StaffPicker title={t('staffSalesIntermediaryPerson')} value={intermediary} onChange={setIntermediary} options={staffOptions} />
       <StaffPicker title="Otel sorumlusu" value={hotelResponsible} onChange={setHotelResponsible} options={staffOptions} />
 
       <Text style={styles.sectionTitle}>Fiyat</Text>
@@ -431,7 +465,12 @@ export default function NewReservationSale() {
       <TextInput style={styles.input} value={extra_service_amount} onChangeText={setExtraServiceAmount} keyboardType="decimal-pad" />
 
       <Text style={styles.sectionTitle}>Ödeme</Text>
-      <PlacePicker title="Ödeme yeri (ödeme varsa zorunlu)" value={payment_place} onChange={setPaymentPlace} />
+      <PlacePicker
+        title={t('staffSalesPaymentPlaceRequired')}
+        value={payment_place}
+        onChange={setPaymentPlace}
+        places={paymentPlacesI18n}
+      />
       <Text style={styles.label}>Ödenen tutar</Text>
       <TextInput style={styles.input} value={paid_amount} onChangeText={setPaidAmount} keyboardType="decimal-pad" />
 
@@ -486,7 +525,7 @@ export default function NewReservationSale() {
 
       <TouchableOpacity style={styles.submitBtn} onPress={submit} activeOpacity={0.9} disabled={loading}>
         {loading ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />}
-        <Text style={styles.submitBtnText}>{loading ? 'Kaydediliyor…' : 'Kaydı oluştur'}</Text>
+        <Text style={styles.submitBtnText}>{loading ? t('staffSalesSaving') : t('staffSalesCreateRecord')}</Text>
       </TouchableOpacity>
     </ScrollView>
   );

@@ -16,6 +16,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { organizationKindLabel } from '@/lib/organizationKinds';
+import { defaultStaffAppPermissions } from '@/lib/staffAppPermissionsCatalog';
+import { StaffAppPermissionsEditor } from '@/components/admin/StaffAppPermissionsEditor';
 
 type OrgRow = { id: string; name: string; slug: string; kind: string };
 
@@ -68,30 +70,6 @@ const ROLES = [
   { value: 'security', label: 'Güvenlik' },
 ];
 
-const APP_PERMISSIONS = [
-  { key: 'stok_giris', label: 'Stok girişi' },
-  { key: 'mesajlasma', label: 'Mesajlaşma' },
-  { key: 'misafir_mesaj_alabilir', label: 'Müşteriden direkt mesaj alabilir' },
-  { key: 'video_paylasim', label: 'Video/resim paylaşım' },
-  { key: 'ekip_sohbet', label: 'Ekip sohbeti' },
-  { key: 'dokuman_yukle', label: 'Doküman yükleme/yönetim' },
-  { key: 'gorev_ata', label: 'Görev atama' },
-  { key: 'personel_ekle', label: 'Personel ekle' },
-  { key: 'raporlar', label: 'Raporlar' },
-  { key: 'satis_komisyon', label: 'Satış / komisyon' },
-  { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeler' },
-  { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesi' },
-  { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi oluşturma' },
-  { key: 'yemek_listesi_mutfak_onay', label: 'Mutfak günlük onayı' },
-  { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
-  { key: 'id_capture', label: 'Kimlik / pasaport çekim' },
-  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri yönetimi' },
-  { key: 'teknik_varliklar', label: 'Teknik QR (müdahale kaydı)' },
-  { key: 'teknik_varliklar_okuma', label: 'Teknik QR salt okunur' },
-  { key: 'emanet_buluntu', label: 'Emanet / buluntu kaydı oluşturma' },
-  { key: 'tesis_gunlugu', label: 'Tesis günlüğü kaydı oluşturma' },
-];
-
 export default function ApproveStaffScreen() {
   const { id, organizationId: organizationIdParam } = useLocalSearchParams<{ id: string; organizationId?: string }>();
   const router = useRouter();
@@ -106,29 +84,7 @@ export default function ApproveStaffScreen() {
   const [personnel_no, setPersonnelNo] = useState('');
   const [hire_date, setHireDate] = useState(new Date().toISOString().slice(0, 10));
   const [password, setPassword] = useState('');
-  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>({
-    stok_giris: true,
-    mesajlasma: true,
-    misafir_mesaj_alabilir: true,
-    video_paylasim: true,
-    ekip_sohbet: true,
-    dokuman_yukle: false,
-    gorev_ata: false,
-    personel_ekle: false,
-    raporlar: false,
-    satis_komisyon: false,
-    tum_sozlesmeler: false,
-    yarin_oda_temizlik_listesi: false,
-    yemek_listesi_olustur: false,
-    yemek_listesi_mutfak_onay: false,
-    kbs_mrz_scan: false,
-    id_capture: false,
-    teknik_varlik_yonetimi: false,
-    teknik_varliklar: false,
-    teknik_varliklar_okuma: false,
-    emanet_buluntu: false,
-    tesis_gunlugu: false,
-  });
+  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>(() => defaultStaffAppPermissions());
   const [organizations, setOrganizations] = useState<OrgRow[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [contract_type, setContractType] = useState('');
@@ -187,10 +143,6 @@ export default function ApproveStaffScreen() {
     })().finally(() => setLoading(false));
   }, [id]);
 
-  const togglePermission = (key: string) => {
-    setAppPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const submit = async () => {
     if (!app) return;
     if (!organizationId) {
@@ -229,6 +181,7 @@ export default function ApproveStaffScreen() {
           personnel_no: personnel_no.trim() || undefined,
           hire_date: hire_date || undefined,
           app_permissions,
+          tips_enabled: app_permissions.bahsis_alabilir !== false,
           organization_id: organizationId,
           contract_type: contract_type.trim() || undefined,
           termination_date: termination_date.trim() || undefined,
@@ -399,12 +352,7 @@ export default function ApproveStaffScreen() {
       />
 
       <Text style={styles.sectionTitle}>Uygulama yetkileri</Text>
-      {APP_PERMISSIONS.map((p) => (
-        <TouchableOpacity key={p.key} style={styles.checkRow} onPress={() => togglePermission(p.key)}>
-          <Text style={styles.checkbox}>{app_permissions[p.key] ? '☑' : '☐'}</Text>
-          <Text style={styles.checkLabel}>{p.label}</Text>
-        </TouchableOpacity>
-      ))}
+      <StaffAppPermissionsEditor permissions={app_permissions} onChange={setAppPermissions} variant="checkbox" />
 
       {saving ? (
         <ActivityIndicator size="large" color="#ed8936" style={{ marginTop: 24 }} />

@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
-import { LANGUAGES } from '@/i18n';
+import { LANGUAGES, changeAppLanguage, type LangCode } from '@/i18n';
 import { WebView } from 'react-native-webview';
 
 export default function ContractScreen() {
@@ -90,9 +90,9 @@ export default function ContractScreen() {
     fetchContract(contractLang);
   }, [contractLang, fetchContract]);
 
-  const onSelectLang = (code: string) => {
+  const onSelectLang = async (code: string) => {
     setContractLang(code);
-    i18n.changeLanguage(code);
+    await changeAppLanguage(code as LangCode);
   };
 
   const accept = () => {
@@ -162,7 +162,7 @@ export default function ContractScreen() {
       </ScrollView>
 
       {loading || translating ? (
-        <Text style={styles.loading}>{translating ? (t('loading') + ' / ' + 'Çeviriliyor…') : t('loading')}</Text>
+        <Text style={styles.loading}>{translating ? `${t('loading')} / ${t('guestTranslating')}` : t('loading')}</Text>
       ) : (
         <>
           <View style={[styles.webWrap, { height: height * 0.45 }]}>

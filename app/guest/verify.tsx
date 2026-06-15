@@ -21,7 +21,7 @@ export default function VerifyScreen() {
     try {
       const { data: guest } = await supabase.from('guests').select('phone').eq('id', guestId).single();
       if (!guest?.phone) {
-        Alert.alert(t('error'), 'Telefon numarası bulunamadı.');
+        Alert.alert(t('error'), t('guestPhoneNotFound'));
         setLoading(false);
         return;
       }
@@ -33,9 +33,9 @@ export default function VerifyScreen() {
         channel: 'sms',
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       });
-      Alert.alert('Kod Gönderildi', `Test için kod: ${randomCode}`);
+      Alert.alert(t('guestCodeSentTitle'), t('guestCodeSentTestBody', { code: randomCode }));
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? 'Kod gönderilemedi.');
+      Alert.alert(t('error'), (e as Error)?.message ?? t('guestCodeSendFailed'));
     }
     setLoading(false);
   };

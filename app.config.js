@@ -13,8 +13,8 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.13',
-  /** Play: büyük ekran/tablet — manifest yön kilidi yok (telefonda sistem varsayılanı). */
+  version: '2.2.17',
+  /** Android tablet: döner; iPad kapalı (supportsTablet false). Bkz. withTabletOrientation.js */
   orientation: 'default',
   icon: './assets/icon.png',
   scheme: 'valoria',
@@ -29,14 +29,17 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '20',
+    buildNumber: '24',
     newArchEnabled: true,
     infoPlist: {
+      /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
+      'UISupportedInterfaceOrientations~ipad': ['UIInterfaceOrientationPortrait'],
       UIBackgroundModes: ['remote-notification'],
       NSCameraUsageDescription:
         'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
-      NSLocationWhenInUseUsageDescription: 'Uygulama açıkken oteli haritada göstermek ve size yaklaştığınızda check-in için kolaylık sunmak üzere konum kullanılır.',
+      NSLocationWhenInUseUsageDescription:
+        'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
       NSMicrophoneUsageDescription: 'Sesli mesaj kaydi icin mikrofon erisimi gerekir.',
       NSLocalNetworkUsageDescription: 'Güvenlik kameralarını canlı izlemek ve geliştirme sunucusuna bağlanmak için yerel ağ erişimi gerekir.',
       ITSAppUsesNonExemptEncryption: false,
@@ -50,7 +53,7 @@ const baseConfig = {
     newArchEnabled: true,
     /** SDK 54 / target 35+: edge-to-edge; statusBarColor gibi eski API kullanmayın. */
     edgeToEdgeEnabled: true,
-    versionCode: 21,
+    versionCode: 25,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {
@@ -59,22 +62,35 @@ const baseConfig = {
       backgroundColor: '#0c1222',
     },
     package: 'com.valoria.hotel',
-    permissions: [
-      'android.permission.CAMERA',
-      'android.permission.ACCESS_FINE_LOCATION',
-      'android.permission.RECORD_AUDIO',
-      'android.permission.NFC',
-      // Android 13+ (API 33): bildirim izni manifest’te tanımlı olmalı
-      'android.permission.POST_NOTIFICATIONS',
-    ],
     /**
-     * Play Fotoğraf/Video politikası: galeri için READ_MEDIA_* kullanmıyoruz;
-     * expo-image-picker Android Photo Picker + kamera. expo-screen-capture API 34+ DETECT_SCREEN_CAPTURE.
+     * İzinler çoğunlukla expo-camera / expo-location / expo-image-picker / expo-notifications
+     * plugin’lerinden gelir; burada yalnızca ek paketler (NFC) listelenir.
+     */
+    permissions: ['android.permission.NFC'],
+    /**
+     * Bağımlılıkların manifest’e eklediği gereksiz / riskli izinleri kesin olarak engelle.
+     * Play Console’da görünmeleri bile inceleme ve Data safety sorununa yol açabilir.
      */
     blockedPermissions: [
+      // Galeri — Android Photo Picker; READ_MEDIA_* ve legacy storage yok
       'android.permission.READ_MEDIA_IMAGES',
       'android.permission.READ_MEDIA_VIDEO',
       'android.permission.READ_MEDIA_AUDIO',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+      'android.permission.ACCESS_MEDIA_LOCATION',
+      // Konum — yalnızca uygulama açıkken (foreground)
+      'android.permission.ACCESS_BACKGROUND_LOCATION',
+      'android.permission.FOREGROUND_SERVICE_LOCATION',
+    ],
+    /** Dev client QR (exp+valoria-hotel) — kamera QR okutunca Chrome yerine uygulama açılsın */
+    intentFilters: [
+      {
+        action: 'VIEW',
+        autoVerify: false,
+        data: [{ scheme: 'exp+valoria-hotel' }, { scheme: 'valoria' }],
+        category: ['BROWSABLE', 'DEFAULT'],
+      },
     ],
   },
   plugins: [
@@ -102,7 +118,17 @@ const baseConfig = {
       },
     ],
     './plugins/withVisionCameraMrz.js',
-    'expo-location',
+    './plugins/withTabletOrientation.js',
+    [
+      'expo-location',
+      {
+        locationWhenInUsePermission:
+          'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
+        isIosBackgroundLocationEnabled: false,
+        isAndroidBackgroundLocationEnabled: false,
+        isAndroidForegroundServiceEnabled: false,
+      },
+    ],
     [
       'expo-image-picker',
       {
@@ -141,11 +167,25 @@ const baseConfig = {
     'expo-font',
     'expo-localization',
     [
+      'expo-av',
+      {
+        microphonePermission: 'Sesli mesaj kaydı için mikrofon kullanılır.',
+      },
+    ],
+    [
+      'react-native-share',
+      {
+        ios: ['whatsapp'],
+        android: ['com.whatsapp'],
+      },
+    ],
+    [
       '@react-native-google-signin/google-signin',
       {
         iosUrlScheme: 'com.googleusercontent.apps.47373050426-8men09t0m35sufet2n6nl21r4oq07gfo',
       },
     ],
+    './plugins/withPlaySafeManifest.js',
   ],
   experiments: {
     typedRoutes: true,

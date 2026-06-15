@@ -13,18 +13,24 @@ import {
   KeyboardAvoidingView,
   Platform,
   AppState,
+  ScrollView,
+  Pressable,
+  Dimensions,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { Redirect, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { roomStatusLabel } from '@/lib/i18nLookup';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { shareContractPdf, type GuestForPdf } from '@/lib/contractPdf';
 import { computeStayAmounts } from '@/lib/guestStayFinancials';
 import { sendNotification } from '@/lib/notificationService';
-import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
+import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
 
 type RoomRow = { id: string; room_number: string; floor: number | null; status: string; price_per_night?: number | null };
 
@@ -44,10 +50,163 @@ function formatTry(n: number, locale: string): string {
   return new Intl.NumberFormat(loc, { style: 'currency', currency: 'TRY', maximumFractionDigits: 2 }).format(n);
 }
 
-export default function StaffAcceptancesScreen() {
+const { height: SCREEN_H } = Dimensions.get('window');
+
+function createAcceptancesStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: p.pageBg },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: p.pageBg },
+  loadingText: { marginTop: 8, fontSize: 14, color: p.muted },
+  headerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: p.cardBg,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+    ...theme.shadows.sm,
+  },
+  headerTextWrap: { flex: 1, marginLeft: 12 },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: p.text },
+  headerSub: { fontSize: 13, color: p.subtext, marginTop: 4 },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  emptyTitle: { fontSize: 17, fontWeight: '600', color: p.text, marginTop: 12 },
+  emptySub: { fontSize: 14, color: p.muted, marginTop: 8, textAlign: 'center' },
+  list: { padding: 16, paddingBottom: 32 },
+  card: {
+    backgroundColor: p.cardBg,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+    ...theme.shadows.sm,
+  },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  tokenBadge: { backgroundColor: p.secondaryBtn, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  tokenText: { fontSize: 13, fontWeight: '600', color: p.text },
+  date: { fontSize: 12, color: p.muted },
+  signerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  signerText: { fontSize: 13, color: '#0f766e', fontWeight: '600' },
+  roomRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  roomLabel: { fontSize: 14, color: p.subtext, marginRight: 6 },
+  roomValue: { fontSize: 15, fontWeight: '600', color: p.text },
+  meta: { fontSize: 12, color: p.muted, marginBottom: 12 },
+  cardActions: { flexDirection: 'row', gap: 10 },
+  assignRoomBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  assignRoomBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  pdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#2d3748',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  pdfBtnDisabled: { opacity: 0.6 },
+  pdfBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalDismiss: { ...StyleSheet.absoluteFillObject },
+  modalContentWrap: { width: '100%', maxHeight: SCREEN_H * 0.92 },
+  modalSheet: {
+    backgroundColor: p.cardBg,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: SCREEN_H * 0.92,
+    overflow: 'hidden',
+  },
+  modalHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: p.cardBorder,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  modalScroll: { flexGrow: 0, flexShrink: 1 },
+  modalScrollContent: { paddingHorizontal: 16, paddingBottom: 8 },
+  modalContent: {
+    paddingHorizontal: 0,
+    paddingTop: 4,
+  },
+  roomItemSelected: { backgroundColor: '#b8860b20', borderWidth: 2, borderColor: theme.colors.primary, borderRadius: 8 },
+  priceForm: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: p.cardBorder },
+  priceManualHint: { fontSize: 12, color: p.subtext, lineHeight: 17, marginBottom: 10 },
+  priceFormLabel: { fontSize: 13, fontWeight: '600', color: p.subtext, marginBottom: 6 },
+  priceInput: { borderWidth: 1, borderColor: p.cardBorder, borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 12, color: p.text, backgroundColor: p.secondaryBtn },
+  liveAmountCard: {
+    backgroundColor: p.secondaryBtn,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+  },
+  liveAmountTitle: { fontSize: 13, fontWeight: '700', color: p.text, marginBottom: 10 },
+  liveAmountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  liveAmountLabel: { fontSize: 13, color: p.subtext },
+  liveAmountValue: { fontSize: 13, fontWeight: '600', color: p.text },
+  liveAmountRowTotal: { marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: p.cardBorder, marginBottom: 0 },
+  liveAmountLabelTotal: { fontSize: 14, fontWeight: '700', color: p.text },
+  liveAmountValueTotal: { fontSize: 15, fontWeight: '800', color: theme.colors.primary },
+  confirmAssignBtn: { padding: 14, backgroundColor: theme.colors.primary, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  confirmAssignBtnDisabled: { opacity: 0.7 },
+  confirmAssignBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: p.text, marginBottom: 4 },
+  modalSub: { fontSize: 12, color: p.muted, marginBottom: 12 },
+  clearRoomBtn: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, marginBottom: 12 },
+  clearRoomText: { fontSize: 13, color: theme.colors.error },
+  roomList: {},
+  roomItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: p.cardBorder,
+  },
+  roomItemNum: { fontSize: 16, fontWeight: '600', color: p.text, minWidth: 90 },
+  roomItemFloor: { fontSize: 13, color: p.muted, marginRight: 8 },
+  roomStatusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  roomStatusText: { fontSize: 11, fontWeight: '600', color: '#fff' },
+  modalSpinner: { marginVertical: 8 },
+  modalClose: { marginTop: 12, paddingVertical: 12, alignItems: 'center' },
+  modalCloseText: { fontSize: 15, fontWeight: '600', color: p.muted },
+  });
+}
+
+export function StaffAcceptancesPanel() {
   const { t, i18n } = useTranslation();
   const dateLoc = (i18n.language || 'tr').split('-')[0];
+  const insets = useSafeAreaInsets();
   const staffId = useAuthStore((s) => s.staff?.id);
+  const palette = usePersonelDesign();
+  const styles = useMemo(() => createAcceptancesStyles(palette), [palette]);
   const [rows, setRows] = useState<AcceptanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -230,7 +389,11 @@ export default function StaffAcceptancesScreen() {
         if (errGuest) throw errGuest;
         await supabase.from('rooms').update({ status: 'occupied' }).eq('id', roomId);
         const roomNumber = rooms.find((r) => r.id === roomId)?.room_number;
-        const msg = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.admin_assigned_room]({ roomNumber: roomNumber ?? '' });
+        const msg = guestMessageTemplate(
+          GUEST_TYPES.admin_assigned_room,
+          { roomNumber: roomNumber ?? '' },
+          assignTarget.contract_lang
+        );
         await sendNotification({
           guestId: assignTarget.guest_id,
           title: msg.title,
@@ -414,245 +577,125 @@ export default function StaffAcceptancesScreen() {
         />
       )}
 
-      <Modal visible={roomModalVisible} transparent animationType="fade">
-        <TouchableOpacity
+      <Modal visible={roomModalVisible} transparent animationType="slide" onRequestClose={() => !assigning && setRoomModalVisible(false)}>
+        <KeyboardAvoidingView
           style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => !assigning && setRoomModalVisible(false)}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalContentWrap}
-          >
-            <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-              <Text style={styles.modalTitle}>{t('staffAcceptModalTitle')}</Text>
-              {assignTarget && (
-                <Text style={styles.modalSub}>
-                  {t('staffAcceptModalSub', {
-                    token: assignTarget.token.slice(0, 12),
-                    date: new Date(assignTarget.accepted_at).toLocaleString(dateLoc),
-                  })}
-                </Text>
-              )}
-              <TouchableOpacity style={styles.clearRoomBtn} onPress={() => clearRoom()} disabled={assigning}>
-                <Text style={styles.clearRoomText}>{t('staffAcceptClearRoom')}</Text>
-              </TouchableOpacity>
-              <FlatList
-                data={rooms}
-                keyExtractor={(r) => r.id}
-                style={styles.roomList}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={[styles.roomItem, selectedRoomId === item.id && styles.roomItemSelected]}
-                    onPress={() => selectRoomForAssign(item.id)}
-                    disabled={assigning}
-                  >
-                    <Text style={styles.roomItemNum}>{t('staffAcceptRoomItem', { number: item.room_number })}</Text>
-                    {item.floor != null && (
-                      <Text style={styles.roomItemFloor}>{t('staffAcceptFloor', { floor: item.floor })}</Text>
-                    )}
-                    <View style={[styles.roomStatusBadge, { backgroundColor: item.status === 'available' ? theme.colors.success : theme.colors.textMuted }]}>
-                      <Text style={styles.roomStatusText}>{roomStatusLabel(item.status)}</Text>
-                    </View>
+          <Pressable style={styles.modalDismiss} onPress={() => !assigning && setRoomModalVisible(false)} />
+          <View style={[styles.modalContentWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>{t('staffAcceptModalTitle')}</Text>
+                  {assignTarget && (
+                    <Text style={styles.modalSub}>
+                      {t('staffAcceptModalSub', {
+                        token: assignTarget.token.slice(0, 12),
+                        date: new Date(assignTarget.accepted_at).toLocaleString(dateLoc),
+                      })}
+                    </Text>
+                  )}
+                  <TouchableOpacity style={styles.clearRoomBtn} onPress={() => clearRoom()} disabled={assigning}>
+                    <Text style={styles.clearRoomText}>{t('staffAcceptClearRoom')}</Text>
                   </TouchableOpacity>
-                )}
-              />
-              {selectedRoomId && (
-                <View style={styles.priceForm}>
-                  <Text style={styles.priceManualHint}>{t('staffAcceptPriceHint')}</Text>
-                  <Text style={styles.priceFormLabel}>{t('staffAcceptPricePerNight')}</Text>
-                  <TextInput
-                    style={styles.priceInput}
-                    value={priceInput}
-                    onChangeText={setPriceInput}
-                    keyboardType="decimal-pad"
-                    placeholder={t('staffAcceptPricePlaceholder')}
-                  />
-                  <Text style={styles.priceFormLabel}>{t('staffAcceptNightsLabel')}</Text>
-                  <TextInput
-                    style={styles.priceInput}
-                    value={nightsInput}
-                    onChangeText={setNightsInput}
-                    keyboardType="number-pad"
-                    placeholder={t('staffAcceptNightsPlaceholder')}
-                  />
-                  {stayPreview && (
-                    <View style={styles.liveAmountCard}>
-                      <Text style={styles.liveAmountTitle}>{t('staffAcceptFinanceLive')}</Text>
-                      <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>{t('staffAcceptNetStay')}</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.totalNet, dateLoc)}</Text>
-                      </View>
-                      <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>{t('staffAcceptVat')}</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.vatAmount, dateLoc)}</Text>
-                      </View>
-                      <View style={styles.liveAmountRow}>
-                        <Text style={styles.liveAmountLabel}>{t('staffAcceptAccTax')}</Text>
-                        <Text style={styles.liveAmountValue}>{formatTry(stayPreview.accommodationTaxAmount, dateLoc)}</Text>
-                      </View>
-                      <View style={[styles.liveAmountRow, styles.liveAmountRowTotal]}>
-                        <Text style={styles.liveAmountLabelTotal}>{t('staffAcceptGrandTotal')}</Text>
-                        <Text style={styles.liveAmountValueTotal}>{formatTry(stayPreview.grandTotal, dateLoc)}</Text>
-                      </View>
+                  <View style={styles.roomList}>
+                    {rooms.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[styles.roomItem, selectedRoomId === item.id && styles.roomItemSelected]}
+                        onPress={() => selectRoomForAssign(item.id)}
+                        disabled={assigning}
+                      >
+                        <Text style={styles.roomItemNum}>{t('staffAcceptRoomItem', { number: item.room_number })}</Text>
+                        {item.floor != null && (
+                          <Text style={styles.roomItemFloor}>{t('staffAcceptFloor', { floor: item.floor })}</Text>
+                        )}
+                        <View style={[styles.roomStatusBadge, { backgroundColor: item.status === 'available' ? theme.colors.success : theme.colors.textMuted }]}>
+                          <Text style={styles.roomStatusText}>{roomStatusLabel(item.status)}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {selectedRoomId && (
+                    <View style={styles.priceForm}>
+                      <Text style={styles.priceManualHint}>{t('staffAcceptPriceHint')}</Text>
+                      <Text style={styles.priceFormLabel}>{t('staffAcceptPricePerNight')}</Text>
+                      <TextInput
+                        style={styles.priceInput}
+                        value={priceInput}
+                        onChangeText={setPriceInput}
+                        keyboardType="decimal-pad"
+                        placeholder={t('staffAcceptPricePlaceholder')}
+                      />
+                      <Text style={styles.priceFormLabel}>{t('staffAcceptNightsLabel')}</Text>
+                      <TextInput
+                        style={styles.priceInput}
+                        value={nightsInput}
+                        onChangeText={setNightsInput}
+                        keyboardType="number-pad"
+                        placeholder={t('staffAcceptNightsPlaceholder')}
+                      />
+                      {stayPreview && (
+                        <View style={styles.liveAmountCard}>
+                          <Text style={styles.liveAmountTitle}>{t('staffAcceptFinanceLive')}</Text>
+                          <View style={styles.liveAmountRow}>
+                            <Text style={styles.liveAmountLabel}>{t('staffAcceptNetStay')}</Text>
+                            <Text style={styles.liveAmountValue}>{formatTry(stayPreview.totalNet, dateLoc)}</Text>
+                          </View>
+                          <View style={styles.liveAmountRow}>
+                            <Text style={styles.liveAmountLabel}>{t('staffAcceptVat')}</Text>
+                            <Text style={styles.liveAmountValue}>{formatTry(stayPreview.vatAmount, dateLoc)}</Text>
+                          </View>
+                          <View style={styles.liveAmountRow}>
+                            <Text style={styles.liveAmountLabel}>{t('staffAcceptAccTax')}</Text>
+                            <Text style={styles.liveAmountValue}>{formatTry(stayPreview.accommodationTaxAmount, dateLoc)}</Text>
+                          </View>
+                          <View style={[styles.liveAmountRow, styles.liveAmountRowTotal]}>
+                            <Text style={styles.liveAmountLabelTotal}>{t('staffAcceptGrandTotal')}</Text>
+                            <Text style={styles.liveAmountValueTotal}>{formatTry(stayPreview.grandTotal, dateLoc)}</Text>
+                          </View>
+                        </View>
+                      )}
+                      <TouchableOpacity
+                        style={[styles.confirmAssignBtn, assigning && styles.confirmAssignBtnDisabled]}
+                        onPress={confirmAssignRoom}
+                        disabled={assigning}
+                      >
+                        {assigning ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={styles.confirmAssignBtnText}>{t('staffAcceptConfirmAssign')}</Text>
+                        )}
+                      </TouchableOpacity>
                     </View>
                   )}
+                  {assigning && !selectedRoomId && (
+                    <ActivityIndicator style={styles.modalSpinner} size="small" color={theme.colors.primary} />
+                  )}
                   <TouchableOpacity
-                    style={[styles.confirmAssignBtn, assigning && styles.confirmAssignBtnDisabled]}
-                    onPress={confirmAssignRoom}
-                    disabled={assigning}
+                    style={styles.modalClose}
+                    onPress={() => !assigning && setRoomModalVisible(false)}
                   >
-                    {assigning ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.confirmAssignBtnText}>{t('staffAcceptConfirmAssign')}</Text>
-                    )}
+                    <Text style={styles.modalCloseText}>{t('close')}</Text>
                   </TouchableOpacity>
                 </View>
-              )}
-              {assigning && !selectedRoomId && (
-                <ActivityIndicator style={styles.modalSpinner} size="small" color={theme.colors.primary} />
-              )}
-              <TouchableOpacity
-                style={styles.modalClose}
-                onPress={() => !assigning && setRoomModalVisible(false)}
-              >
-                <Text style={styles.modalCloseText}>{t('close')}</Text>
-              </TouchableOpacity>
+              </ScrollView>
             </View>
-          </KeyboardAvoidingView>
-        </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.backgroundSecondary },
-  loadingText: { marginTop: 8, fontSize: 14, color: theme.colors.textMuted },
-  headerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.sm,
-  },
-  headerTextWrap: { flex: 1, marginLeft: 12 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: theme.colors.text },
-  headerSub: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 4 },
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyTitle: { fontSize: 17, fontWeight: '600', color: theme.colors.text, marginTop: 12 },
-  emptySub: { fontSize: 14, color: theme.colors.textMuted, marginTop: 8, textAlign: 'center' },
-  list: { padding: 16, paddingBottom: 32 },
-  card: {
-    backgroundColor: theme.colors.surface,
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.sm,
-  },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  tokenBadge: { backgroundColor: theme.colors.backgroundSecondary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-  tokenText: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
-  date: { fontSize: 12, color: theme.colors.textMuted },
-  signerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  signerText: { fontSize: 13, color: '#0f766e', fontWeight: '600' },
-  roomRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  roomLabel: { fontSize: 14, color: theme.colors.textSecondary, marginRight: 6 },
-  roomValue: { fontSize: 15, fontWeight: '600', color: theme.colors.text },
-  meta: { fontSize: 12, color: theme.colors.textMuted, marginBottom: 12 },
-  cardActions: { flexDirection: 'row', gap: 10 },
-  assignRoomBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  assignRoomBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  pdfBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#2d3748',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-  },
-  pdfBtnDisabled: { opacity: 0.6 },
-  pdfBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  modalContentWrap: { maxWidth: 400, width: '100%', alignSelf: 'center', maxHeight: '85%' },
-  modalContent: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
-    maxHeight: '85%',
-    padding: 16,
-  },
-  roomItemSelected: { backgroundColor: theme.colors.primary + '20', borderWidth: 2, borderColor: theme.colors.primary, borderRadius: 8 },
-  priceForm: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border },
-  priceManualHint: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 17, marginBottom: 10 },
-  priceFormLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary, marginBottom: 6 },
-  priceInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 12 },
-  liveAmountCard: {
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  liveAmountTitle: { fontSize: 13, fontWeight: '700', color: theme.colors.text, marginBottom: 10 },
-  liveAmountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  liveAmountLabel: { fontSize: 13, color: theme.colors.textSecondary },
-  liveAmountValue: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
-  liveAmountRowTotal: { marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, marginBottom: 0 },
-  liveAmountLabelTotal: { fontSize: 14, fontWeight: '700', color: theme.colors.text },
-  liveAmountValueTotal: { fontSize: 15, fontWeight: '800', color: theme.colors.primary },
-  confirmAssignBtn: { padding: 14, backgroundColor: theme.colors.primary, borderRadius: 12, alignItems: 'center', marginTop: 8 },
-  confirmAssignBtnDisabled: { opacity: 0.7 },
-  confirmAssignBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 4 },
-  modalSub: { fontSize: 12, color: theme.colors.textMuted, marginBottom: 12 },
-  clearRoomBtn: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, marginBottom: 12 },
-  clearRoomText: { fontSize: 13, color: theme.colors.error },
-  roomList: { maxHeight: 280 },
-  roomItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  roomItemNum: { fontSize: 16, fontWeight: '600', color: theme.colors.text, minWidth: 90 },
-  roomItemFloor: { fontSize: 13, color: theme.colors.textMuted, marginRight: 8 },
-  roomStatusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  roomStatusText: { fontSize: 11, fontWeight: '600', color: '#fff' },
-  modalSpinner: { marginVertical: 8 },
-  modalClose: { marginTop: 12, paddingVertical: 12, alignItems: 'center' },
-  modalCloseText: { fontSize: 15, fontWeight: '600', color: theme.colors.textMuted },
-});
+/** Eski sekme rotası — operasyon merkezindeki Onaylar sekmesine yönlendir. */
+export default function StaffAcceptancesTabRedirect() {
+  return <Redirect href="/staff/occupancy/operations?tab=acceptances" />;
+}

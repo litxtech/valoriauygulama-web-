@@ -13,6 +13,7 @@ import {
   type NativeScrollEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from '@/components/CachedImage';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
@@ -23,6 +24,8 @@ type Props = {
   initialIndex?: number;
   onClose: () => void;
   accentColor?: string;
+  title?: string;
+  subtitle?: string;
 };
 
 function LightboxImagePage({
@@ -98,6 +101,8 @@ export function BreakfastPhotoLightbox({
   initialIndex = 0,
   onClose,
   accentColor = '#fff',
+  title,
+  subtitle,
 }: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -192,6 +197,15 @@ export function BreakfastPhotoLightbox({
             </View>
           </TouchableOpacity>
         </View>
+
+        {(title || subtitle) ? (
+          <View pointerEvents="none" style={[styles.footerWrap, { paddingBottom: insets.bottom + 16 }]}>
+            <LinearGradient colors={['transparent', 'rgba(0,0,0,0.88)']} style={styles.footerGradient}>
+              {title ? <Text style={styles.footerTitle}>{title}</Text> : null}
+              {subtitle ? <Text style={styles.footerSubtitle} numberOfLines={3}>{subtitle}</Text> : null}
+            </LinearGradient>
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -232,5 +246,30 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     borderRadius: 24,
     padding: 6,
+  },
+  footerWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 3,
+  },
+  footerGradient: {
+    paddingHorizontal: 22,
+    paddingTop: 48,
+    paddingBottom: 8,
+  },
+  footerTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    marginBottom: 6,
+  },
+  footerSubtitle: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
   },
 });

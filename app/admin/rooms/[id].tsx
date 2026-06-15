@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Platform, Modal, TextInput, KeyboardAvoidingView, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Platform, Modal, TextInput, KeyboardAvoidingView, FlatList, Pressable, Dimensions } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -9,7 +9,7 @@ import { DesignableQR, FramedQR, type QRDesign, type QRCodeRef, type QRFrameStyl
 import { FIXED_CONTRACT_QR_URL } from '@/constants/contractQr';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
-import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
+import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
 import { computeStayAmounts, effectiveNightlyRate } from '@/lib/guestStayFinancials';
 import { moveGuestToRoom, updateGuestStayFinancials } from '@/lib/guestStayRoomOps';
 
@@ -58,6 +58,7 @@ type QrType = 'checkin' | 'contract';
 type CurrentGuest = {
   id: string;
   full_name: string;
+  contract_lang?: string | null;
   total_amount_net?: number | null;
   nights_count?: number | null;
   vat_amount?: number | null;
@@ -122,7 +123,7 @@ export default function RoomDetail() {
       if (data?.status === 'occupied') {
         const { data: guest } = await supabase
           .from('guests')
-          .select('id, full_name, total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
+          .select('id, full_name, contract_lang, total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
           .eq('room_id', id)
           .eq('status', 'checked_in')
           .maybeSingle();
@@ -303,7 +304,7 @@ export default function RoomDetail() {
             return;
           }
           await supabase.from('rooms').update({ status: 'available' }).eq('id', id);
-          const done = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.checkout_done]({});
+          const done = guestMessageTemplate(GUEST_TYPES.checkout_done, {}, currentGuest.contract_lang);
           await sendNotification({
             guestId: currentGuest.id,
             title: done.title,
@@ -360,13 +361,17 @@ export default function RoomDetail() {
     await supabase.from('rooms').update({ status: 'occupied' }).eq('id', id);
     const { data: newGuest } = await supabase
       .from('guests')
-      .select('id, full_name, total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
+      .select('id, full_name, contract_lang, total_amount_net, nights_count, vat_amount, accommodation_tax_amount')
       .eq('id', selectedGuestId)
       .single();
     setCurrentGuest(newGuest ?? null);
     setRoom((prev) => (prev ? { ...prev, status: 'occupied' } : null));
     if (newGuest) {
-      const msg = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.admin_assigned_room]({ roomNumber: room?.room_number ?? '' });
+      const msg = guestMessageTemplate(
+        GUEST_TYPES.admin_assigned_room,
+        { roomNumber: room?.room_number ?? '' },
+        newGuest.contract_lang
+      );
       await sendNotification({
         guestId: newGuest.id,
         title: msg.title,
@@ -427,7 +432,7 @@ export default function RoomDetail() {
         : null
     );
     const summary = `${nights} gece · net ₺${totalNet.toFixed(0)}`;
-    const tmpl = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.stay_financial_updated]({ summary });
+    const tmpl = guestMessageTemplate(GUEST_TYPES.stay_financial_updated, { summary }, currentGuest?.contract_lang);
     await sendNotification({
       guestId: currentGuest.id,
       title: tmpl.title,
@@ -463,7 +468,7 @@ export default function RoomDetail() {
       return;
     }
     const newNum = roomsForMove.find((r) => r.id === selectedNewRoomId)?.room_number ?? '';
-    const tmpl = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.room_reassigned]({ roomNumber: newNum });
+    const tmpl = guestMessageTemplate(GUEST_TYPES.room_reassigned, { roomNumber: newNum }, currentGuest?.contract_lang);
     await sendNotification({
       guestId: currentGuest.id,
       title: tmpl.title,
@@ -638,188 +643,200 @@ export default function RoomDetail() {
         )}
       </View>
 
-      <Modal visible={whoNextModalVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => !actionLoading && setWhoNextModalVisible(false)}
-        >
-          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-            <Text style={styles.modalTitle}>Kimi koymak istersin?</Text>
-            <Text style={styles.modalSub}>Sözleşme onayı yapmış, henüz oda atanmamış misafirler:</Text>
-            {pendingAcceptances.length === 0 ? (
-              <Text style={styles.emptyList}>Listelenecek misafir yok. Yeni sözleşme onayı geldiğinde burada görünür.</Text>
-            ) : (
-              <FlatList
-                data={pendingAcceptances}
-                keyExtractor={(item) => item.guest_id}
-                style={styles.acceptanceList}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.acceptanceItem}
-                    onPress={() => {
-                      setWhoNextModalVisible(false);
-                      openAssignForm(item.guest_id);
-                    }}
-                  >
-                    <Text style={styles.acceptanceName}>{item.signer_name ?? 'Misafir'}</Text>
-                    <Text style={styles.acceptanceDate}>{new Date(item.accepted_at).toLocaleString('tr-TR')}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setWhoNextModalVisible(false)}>
-              <Text style={styles.modalCloseBtnText}>Kapat</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      <Modal visible={assignFormVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => !actionLoading && setAssignFormVisible(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalContentWrap}
-          >
-            <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-              <Text style={styles.modalTitle}>Odaya yerleştir – Maliye bilgileri</Text>
-              <Text style={styles.modalSub}>Oda {room?.room_number}</Text>
-              <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
-              <TextInput
-                style={styles.input}
-                value={priceInput}
-                onChangeText={setPriceInput}
-                keyboardType="decimal-pad"
-                placeholder="Örn. 1500"
-              />
-              <Text style={styles.inputLabel}>Kaç gün kalacak?</Text>
-              <TextInput
-                style={styles.input}
-                value={nightsInput}
-                onChangeText={setNightsInput}
-                keyboardType="number-pad"
-                placeholder="Örn. 3"
-              />
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
-                  onPress={confirmAssignToRoom}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? (
-                    <Text style={styles.confirmAssignText}>Kaydediliyor...</Text>
-                  ) : (
-                    <Text style={styles.confirmAssignText}>Yerleştir</Text>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setAssignFormVisible(false)}>
-                  <Text style={styles.modalCloseBtnText}>İptal</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </TouchableOpacity>
-      </Modal>
-
-      <Modal visible={editStayVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => !actionLoading && setEditStayVisible(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalContentWrap}
-          >
-            <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-              <Text style={styles.modalTitle}>Konaklama tutarları</Text>
-              <Text style={styles.modalSub}>Check-in tarihi değişmez. Misafire bildirim gider.</Text>
-              <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
-              <TextInput
-                style={styles.input}
-                value={stayEditPrice}
-                onChangeText={setStayEditPrice}
-                keyboardType="decimal-pad"
-                placeholder="Örn. 1500"
-              />
-              <Text style={styles.inputLabel}>Gece sayısı</Text>
-              <TextInput
-                style={styles.input}
-                value={stayEditNights}
-                onChangeText={setStayEditNights}
-                keyboardType="number-pad"
-                placeholder="Örn. 3"
-              />
-              {stayPreviewRoom ? (
-                <Text style={styles.previewCalc}>
-                  Net ₺{stayPreviewRoom.totalNet.toFixed(2)} · KDV ₺{stayPreviewRoom.vatAmount.toFixed(2)} · Konaklama vergisi ₺
-                  {stayPreviewRoom.accommodationTaxAmount.toFixed(2)}
-                </Text>
-              ) : null}
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
-                  onPress={applyGuestStayUpdate}
-                  disabled={actionLoading}
-                >
-                  <Text style={styles.confirmAssignText}>{actionLoading ? 'Kaydediliyor…' : 'Kaydet'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setEditStayVisible(false)}>
-                  <Text style={styles.modalCloseBtnText}>İptal</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </TouchableOpacity>
-      </Modal>
-
-      <Modal visible={changeRoomVisible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => !actionLoading && setChangeRoomVisible(false)}
-        >
-          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
-            <Text style={styles.modalTitle}>Misafiri taşı</Text>
-            <Text style={styles.modalSub}>Hedef oda müsait olmalı. Bu oda (şu an dolu) boşalır.</Text>
-            <ScrollView style={styles.roomMoveList} keyboardShouldPersistTaps="handled">
-              {roomsForMove.map((r) => {
-                const isHere = r.id === id;
-                const sel = selectedNewRoomId === r.id;
-                return (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={[styles.roomMoveRow, sel && styles.roomMoveRowSel, isHere && styles.roomMoveRowHere]}
-                    onPress={() => !isHere && setSelectedNewRoomId(r.id)}
-                    disabled={actionLoading || isHere}
-                  >
-                    <Text style={styles.roomMoveTitle}>
-                      Oda {r.room_number}
-                      {isHere ? ' (burası — kaynak)' : ''}
-                    </Text>
-                    <Text style={styles.roomMoveMeta}>{r.status}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
-                onPress={applyGuestRoomChange}
-                disabled={actionLoading}
+      <Modal visible={whoNextModalVisible} transparent animationType="slide" onRequestClose={() => setWhoNextModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalDismiss} onPress={() => !actionLoading && setWhoNextModalVisible(false)} />
+          <View style={[styles.modalContentWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
               >
-                <Text style={styles.confirmAssignText}>{actionLoading ? 'Taşınıyor…' : 'Taşı'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setChangeRoomVisible(false)}>
-                <Text style={styles.modalCloseBtnText}>İptal</Text>
-              </TouchableOpacity>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Kimi koymak istersin?</Text>
+                  <Text style={styles.modalSub}>Sözleşme onayı yapmış, henüz oda atanmamış misafirler:</Text>
+                  {pendingAcceptances.length === 0 ? (
+                    <Text style={styles.emptyList}>Listelenecek misafir yok. Yeni sözleşme onayı geldiğinde burada görünür.</Text>
+                  ) : (
+                    <View style={styles.acceptanceList}>
+                      {pendingAcceptances.map((item) => (
+                        <TouchableOpacity
+                          key={item.guest_id}
+                          style={styles.acceptanceItem}
+                          onPress={() => {
+                            setWhoNextModalVisible(false);
+                            openAssignForm(item.guest_id);
+                          }}
+                        >
+                          <Text style={styles.acceptanceName}>{item.signer_name ?? 'Misafir'}</Text>
+                          <Text style={styles.acceptanceDate}>{new Date(item.accepted_at).toLocaleString('tr-TR')}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setWhoNextModalVisible(false)}>
+                    <Text style={styles.modalCloseBtnText}>Kapat</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <Modal visible={assignFormVisible} transparent animationType="slide" onRequestClose={() => !actionLoading && setAssignFormVisible(false)}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.modalDismiss} onPress={() => !actionLoading && setAssignFormVisible(false)} />
+          <View style={[styles.modalContentWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Odaya yerleştir – Maliye bilgileri</Text>
+                  <Text style={styles.modalSub}>Oda {room?.room_number}</Text>
+                  <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={priceInput}
+                    onChangeText={setPriceInput}
+                    keyboardType="decimal-pad"
+                    placeholder="Örn. 1500"
+                  />
+                  <Text style={styles.inputLabel}>Kaç gün kalacak?</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={nightsInput}
+                    onChangeText={setNightsInput}
+                    keyboardType="number-pad"
+                    placeholder="Örn. 3"
+                  />
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
+                      onPress={confirmAssignToRoom}
+                      disabled={actionLoading}
+                    >
+                      {actionLoading ? (
+                        <Text style={styles.confirmAssignText}>Kaydediliyor...</Text>
+                      ) : (
+                        <Text style={styles.confirmAssignText}>Yerleştir</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setAssignFormVisible(false)}>
+                      <Text style={styles.modalCloseBtnText}>İptal</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={editStayVisible} transparent animationType="slide" onRequestClose={() => !actionLoading && setEditStayVisible(false)}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.modalDismiss} onPress={() => !actionLoading && setEditStayVisible(false)} />
+          <View style={[styles.modalContentWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Konaklama tutarları</Text>
+                  <Text style={styles.modalSub}>Check-in tarihi değişmez. Misafire bildirim gider.</Text>
+                  <Text style={styles.inputLabel}>Gece başı fiyat (₺)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={stayEditPrice}
+                    onChangeText={setStayEditPrice}
+                    keyboardType="decimal-pad"
+                    placeholder="Örn. 1500"
+                  />
+                  <Text style={styles.inputLabel}>Gece sayısı</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={stayEditNights}
+                    onChangeText={setStayEditNights}
+                    keyboardType="number-pad"
+                    placeholder="Örn. 3"
+                  />
+                  {stayPreviewRoom ? (
+                    <Text style={styles.previewCalc}>
+                      Net ₺{stayPreviewRoom.totalNet.toFixed(2)} · KDV ₺{stayPreviewRoom.vatAmount.toFixed(2)} · Konaklama vergisi ₺
+                      {stayPreviewRoom.accommodationTaxAmount.toFixed(2)}
+                    </Text>
+                  ) : null}
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
+                      onPress={applyGuestStayUpdate}
+                      disabled={actionLoading}
+                    >
+                      <Text style={styles.confirmAssignText}>{actionLoading ? 'Kaydediliyor…' : 'Kaydet'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setEditStayVisible(false)}>
+                      <Text style={styles.modalCloseBtnText}>İptal</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={changeRoomVisible} transparent animationType="slide" onRequestClose={() => !actionLoading && setChangeRoomVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalDismiss} onPress={() => !actionLoading && setChangeRoomVisible(false)} />
+          <View style={[styles.modalContentWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Misafiri taşı</Text>
+                  <Text style={styles.modalSub}>Hedef oda müsait olmalı. Bu oda (şu an dolu) boşalır.</Text>
+                  <View style={styles.roomMoveList}>
+                    {roomsForMove.map((r) => {
+                      const isHere = r.id === id;
+                      const sel = selectedNewRoomId === r.id;
+                      return (
+                        <TouchableOpacity
+                          key={r.id}
+                          style={[styles.roomMoveRow, sel && styles.roomMoveRowSel, isHere && styles.roomMoveRowHere]}
+                          onPress={() => !isHere && setSelectedNewRoomId(r.id)}
+                          disabled={actionLoading || isHere}
+                        >
+                          <Text style={styles.roomMoveTitle}>
+                            Oda {r.room_number}
+                            {isHere ? ' (burası — kaynak)' : ''}
+                          </Text>
+                          <Text style={styles.roomMoveMeta}>{r.status}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.confirmAssignBtn, actionLoading && styles.btnDisabled]}
+                      onPress={applyGuestRoomChange}
+                      disabled={actionLoading}
+                    >
+                      <Text style={styles.confirmAssignText}>{actionLoading ? 'Taşınıyor…' : 'Taşı'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalCloseBtn} onPress={() => !actionLoading && setChangeRoomVisible(false)}>
+                      <Text style={styles.modalCloseBtnText}>İptal</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       <Modal visible={qrDrawerVisible} transparent animationType="slide">
@@ -968,13 +985,32 @@ const styles = StyleSheet.create({
   roomMoveRowHere: { opacity: 0.55 },
   roomMoveTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
   roomMoveMeta: { fontSize: 12, color: '#64748b', marginTop: 4 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
-  modalContentWrap: { maxWidth: 400, width: '100%', alignSelf: 'center' },
-  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 20, maxHeight: '80%' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalDismiss: { ...StyleSheet.absoluteFillObject },
+  modalContentWrap: { width: '100%', maxHeight: Dimensions.get('window').height * 0.88 },
+  modalSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: Dimensions.get('window').height * 0.88,
+    overflow: 'hidden',
+  },
+  modalHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#e2e8f0',
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  modalScroll: { flexGrow: 0, flexShrink: 1 },
+  modalScrollContent: { paddingHorizontal: 20, paddingBottom: 12 },
+  modalContent: { paddingTop: 4 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: '#1a202c', marginBottom: 4 },
   modalSub: { fontSize: 14, color: '#718096', marginBottom: 16 },
   emptyList: { fontSize: 14, color: '#64748b', marginBottom: 16 },
-  acceptanceList: { maxHeight: 260, marginBottom: 12 },
+  acceptanceList: { marginBottom: 12 },
   acceptanceItem: { paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
   acceptanceName: { fontSize: 16, fontWeight: '600', color: '#1a202c' },
   acceptanceDate: { fontSize: 12, color: '#718096', marginTop: 4 },

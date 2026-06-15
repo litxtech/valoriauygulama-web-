@@ -17,6 +17,7 @@ import { AdminButton, AdminCard } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { formatDateTime } from '@/lib/date';
+import { resolveStockProductImageUrl } from '@/lib/stockProductImages';
 
 type Product = {
   id: string;
@@ -134,6 +135,11 @@ export default function StockProductDetailScreen() {
       ? `${Number(product.selling_price).toFixed(2)} TL`
       : '—';
 
+  const displayImageUrl = resolveStockProductImageUrl(
+    product.image_url,
+    movements.find((m) => m.photo_proof)?.photo_proof
+  );
+
   return (
     <>
     <ScrollView
@@ -144,9 +150,9 @@ export default function StockProductDetailScreen() {
       {/* Büyük ürün resmi en üstte */}
       <Text style={styles.blockLabel}>🖼️ ÜRÜN RESMİ</Text>
       <View style={styles.heroImageWrap}>
-        {product.image_url ? (
-          <TouchableOpacity onPress={() => setPreviewUri(product.image_url)} activeOpacity={0.8}>
-            <CachedImage uri={product.image_url} style={styles.heroImage} contentFit="cover" />
+        {displayImageUrl ? (
+          <TouchableOpacity onPress={() => setPreviewUri(displayImageUrl)} activeOpacity={0.8}>
+            <CachedImage uri={displayImageUrl} style={styles.heroImage} contentFit="cover" />
           </TouchableOpacity>
         ) : (
           <View style={styles.heroPlaceholder}>

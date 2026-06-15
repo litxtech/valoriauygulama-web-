@@ -33,10 +33,12 @@ import {
 import { canAccessFacilityJournal } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
+import { useTranslation } from 'react-i18next';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
 function FacilityJournalDetailScreen() {
+  const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const navigation = useNavigation();
@@ -105,17 +107,17 @@ function FacilityJournalDetailScreen() {
     setSavingAccess(false);
     if (error) Alert.alert('Hata', error);
     else {
-      Alert.alert('Tamam', 'Personel ve misafir görünürlüğü güncellendi.');
+      Alert.alert(t('ok'), t('staffFjVisibilityUpdated'));
       load();
     }
   };
 
   const handleArchive = () => {
     if (!id) return;
-    Alert.alert('Arşivle', 'Bu kayıt arşivlensin mi?', [
-      { text: 'İptal', style: 'cancel' },
+    Alert.alert(t('staffFjArchiveTitle'), t('staffFjArchiveBody'), [
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'Arşivle',
+        text: t('staffFjArchiveBtn'),
         onPress: async () => {
           await archiveFacilityJournalRecord(id);
           router.replace(base as never);
@@ -126,13 +128,10 @@ function FacilityJournalDetailScreen() {
 
   const handleDelete = () => {
     if (!id) return;
-    Alert.alert(
-      'Kaydı sil',
-      'Bu kayıt ve tüm fotoğraf/videolar kalıcı olarak silinecek. Emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Sil',
+    Alert.alert(t('staffFjDeleteTitle'), t('staffFjDeleteBody'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete'),
           style: 'destructive',
           onPress: async () => {
             setDeleting(true);
@@ -201,7 +200,11 @@ function FacilityJournalDetailScreen() {
             </TouchableOpacity>
           )}
           <Text style={styles.mediaLabel}>
-            {m.label === 'before' ? 'Önce' : m.label === 'after' ? 'Sonra' : 'Genel'}
+            {m.label === 'before'
+              ? t('staffFjMediaBefore')
+              : m.label === 'after'
+                ? t('staffFjMediaAfter')
+                : t('staffFjMediaGeneral')}
           </Text>
         </View>
       ))}

@@ -74,8 +74,8 @@ export function getKbsSheetTileRects(count: KbsSheetCardCount, landscape: boolea
 const CARD_WIDTH_OVER_HEIGHT = 1.58;
 
 /** Tek kimlik çekimi — bu aralıkta asla bölme (telefon portre / yatay tek kart). */
-const SINGLE_CARD_ASPECT_MIN = 0.58;
-const SINGLE_CARD_ASPECT_MAX = 2.12;
+const SINGLE_CARD_ASPECT_MIN = 0.45;
+const SINGLE_CARD_ASPECT_MAX = 2.35;
 
 /** Yan yana çoklu kimlik için minimum kare genişliği. */
 const MULTI_ROW_ASPECT_MIN = 2.2;
@@ -134,6 +134,12 @@ async function splitWithTiles(
 export async function autoSplitKbsSheetImage(uri: string): Promise<string[]> {
   const { width, height } = await imageSize(uri);
   const aspect = width / Math.max(height, 1);
+  const portrait = height > width * 1.05;
+
+  /** Telefon portre tek kimlik — Vision / expo çekim (≈0.5–0.8) yanlışlıkla 2 parçaya bölünmesin. */
+  if (portrait && aspect >= 0.42 && aspect <= 0.92) {
+    return [uri];
+  }
 
   if (aspect >= SINGLE_CARD_ASPECT_MIN && aspect <= SINGLE_CARD_ASPECT_MAX) {
     return [uri];

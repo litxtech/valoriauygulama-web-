@@ -10,8 +10,13 @@ node_modules/
 
 # Expo
 .expo/
+.expo-tmp-bundle-test/
 dist/
 web-build/
+
+# i18n script çıktıları (scripts/list-i18n-gaps.js)
+i18n/_ar_gap_en.json
+i18n/_missing_ar_keys.json
 
 # Firebase / Google services
 google-services.json

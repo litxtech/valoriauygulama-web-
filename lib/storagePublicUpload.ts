@@ -8,12 +8,20 @@
  */
 import { Platform } from 'react-native';
 import { encode as encodeBase64 } from 'base64-arraybuffer';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { getInfoAsync, uploadAsync, FileSystemUploadType } from 'expo-file-system/legacy';
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import { uriToArrayBuffer, getMimeAndExt, isLocalFileUriForUpload, copyUriToCacheForUpload } from '@/lib/uploadMedia';
+import { sanitizeSupabaseErrorMessage } from '@/lib/supabaseTransientErrors';
+
+const EXPENSE_RECEIPT_BUCKET = 'expense-receipts';
+const EXPENSE_RECEIPT_MAX_WIDTH = 1600;
 
 /** `supabase/functions/upload-app-storage` ile uyumlu (yakl. 3MB ham dosya) */
 const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
+
+/** Edge deploy/522 sorunlarında doğrudan Storage yeterli (RLS: authenticated insert). */
+const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'expense-receipts']);
 
 /** `feed-media` bucket `file_size_limit` (155_feed_media_bucket_file_size_limit.sql) ile aynı */
 const FEED_MEDIA_MAX_BYTES = 157286400;
@@ -153,16 +161,71 @@ async function uploadLocalFileToSupabaseStorageNative(params: {
   );
 
   if (result.status < 200 || result.status >= 300) {
+    const bodyPeek = (result.body ?? '').trim();
+    if (
+      result.status === 522 ||
+      result.status === 523 ||
+      result.status === 524 ||
+      result.status === 503 ||
+      bodyPeek.toLowerCase().includes('error code 522')
+    ) {
+      throw new Error('Supabase geçici olarak erişilemiyor (522)');
+    }
     let msg = `Storage yüklemesi başarısız (HTTP ${result.status})`;
     try {
-      const j = JSON.parse(result.body) as { message?: string; error?: string; statusCode?: string };
+      const j = JSON.parse(bodyPeek) as { message?: string; error?: string; statusCode?: string };
       if (typeof j?.message === 'string' && j.message) msg = j.message;
       else if (typeof j?.error === 'string' && j.error) msg = j.error;
     } catch {
-      if (result.body?.trim()) msg = `${msg}: ${result.body.trim().slice(0, 240)}`;
+      if (bodyPeek) msg = `${msg}: ${bodyPeek.slice(0, 240)}`;
     }
     throw new Error(msg);
   }
+}
+
+async function compressExpenseReceiptUri(localUri: string): Promise<string> {
+  try {
+    const out = await ImageManipulator.manipulateAsync(
+      localUri,
+      [{ resize: { width: EXPENSE_RECEIPT_MAX_WIDTH } }],
+      { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    return out?.uri ?? localUri;
+  } catch {
+    return localUri;
+  }
+}
+
+/**
+ * Personel harcama fişi — yalnızca Storage REST (Edge Function yok).
+ * Cloudflare 522 Edge loglarında görünmez; istek doğrudan storage/v1/object gider.
+ */
+export async function uploadExpenseReceiptDirect(localUri: string): Promise<{ publicUrl: string; path: string }> {
+  let uploadUri = localUri;
+  if (!isLocalFileUriForUpload(uploadUri)) {
+    uploadUri = await copyUriToCacheForUpload(uploadUri, 'image');
+  }
+  uploadUri = await compressExpenseReceiptUri(uploadUri);
+
+  const uploadMime = 'image/jpeg';
+  const uid = await requireAuthUid();
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const fileName = `${uid}/receipt/${unique}.jpg`;
+
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('Oturum gerekli.');
+
+  await uploadLocalFileToSupabaseStorageNative({
+    bucketId: EXPENSE_RECEIPT_BUCKET,
+    objectPath: fileName,
+    localUri: uploadUri,
+    contentType: uploadMime,
+    accessToken: token,
+  });
+
+  const { data } = supabase.storage.from(EXPENSE_RECEIPT_BUCKET).getPublicUrl(fileName);
+  return { publicUrl: data.publicUrl, path: fileName };
 }
 
 type EdgeBody = {
@@ -196,7 +259,7 @@ export async function uploadUriToPublicBucket(params: {
   kind?: PublicUploadKind;
   /** auth uid altında alt klasör, örn. "stock", "staff/abc" */
   subfolder?: string;
-  /** Tesis günlüğü vb.: mümkünse belleğe almadan doğrudan Storage REST */
+  /** Otel eşyası kullanım kaydı vb.: mümkünse belleğe almadan doğrudan Storage REST */
   preferStreamUpload?: boolean;
 }): Promise<{ publicUrl: string; path: string }> {
   const kind = params.kind ?? 'image';
@@ -213,7 +276,7 @@ export async function uploadUriToPublicBucket(params: {
     uploadUri = await copyUriToCacheForUpload(uploadUri, 'video');
   }
   if (
-    params.preferStreamUpload &&
+    (params.preferStreamUpload || params.bucketId === 'expense-receipts') &&
     kind === 'image' &&
     !isLocalFileUriForUpload(uploadUri)
   ) {
@@ -232,7 +295,7 @@ export async function uploadUriToPublicBucket(params: {
     isLocalFileUriForUpload(uploadUri) &&
     (kind === 'video' ||
       params.preferStreamUpload === true ||
-      params.bucketId === 'facility-journal');
+      BUCKETS_PREFER_DIRECT_UPLOAD.has(params.bucketId));
 
   if (useStream) {
     const { data: { session } } = await supabase.auth.getSession();
@@ -261,9 +324,9 @@ export async function uploadUriToPublicBucket(params: {
       'Dosya çok büyük (feed için üst sınır ~150 MB). Daha kısa bir video seçin; iOS’ta tekrar seçince sıkıştırılmış dosya kullanılır.'
     );
   }
-  /** Video / tesis günlüğü: Edge/base64 yavaş veya 400; doğrudan Storage. */
+  /** Video / fiş / kullanım kaydı: Edge/base64 yavaş veya 522; doğrudan Storage. */
   const tryEdge =
-    params.bucketId !== 'facility-journal' && arrayBuffer.byteLength <= EDGE_UPLOAD_MAX_BYTES;
+    !BUCKETS_PREFER_DIRECT_UPLOAD.has(params.bucketId) && arrayBuffer.byteLength <= EDGE_UPLOAD_MAX_BYTES;
 
   let edgeErr: unknown = null;
   if (tryEdge) {
@@ -286,8 +349,12 @@ export async function uploadUriToPublicBucket(params: {
     upsert: false,
   });
   if (error) {
-    const a = edgeErr ? ((edgeErr as Error)?.message ?? '') : '';
-    throw new Error(a ? `${a} | Storage: ${error.message}` : error.message);
+    const storageMsg = sanitizeSupabaseErrorMessage(error.message);
+    if (BUCKETS_PREFER_DIRECT_UPLOAD.has(params.bucketId)) {
+      throw new Error(storageMsg);
+    }
+    const a = edgeErr ? sanitizeSupabaseErrorMessage((edgeErr as Error)?.message ?? '') : '';
+    throw new Error(a ? `${a} | Storage: ${storageMsg}` : storageMsg);
   }
   const { data } = supabase.storage.from(params.bucketId).getPublicUrl(fileName);
   return { publicUrl: data.publicUrl, path: fileName };

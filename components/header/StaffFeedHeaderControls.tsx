@@ -1,10 +1,13 @@
-import { StyleSheet, Platform, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { memo } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { pds } from '@/constants/personelDesignSystem';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
+import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintStore';
+import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
+import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActions';
 import { ModernHeaderIconButton } from '@/components/header/ModernHeaderIconButton';
 import { ModernMenuButton } from '@/components/header/ModernMenuButton';
 import { FastPress } from '@/components/ui/FastPress';
@@ -17,9 +20,7 @@ const HEADER_BTN = {
 } as const;
 
 const CTRL = 36;
-/** Gönderi paylaş — dış halka + iç gradient daire */
-const SHARE_OUTER = 38;
-const SHARE_RING = 2.5;
+const SHARE_ACCENT = pds.indigo;
 
 type StaffFeedHeaderLeftProps = {
   menuOpen: boolean;
@@ -37,43 +38,24 @@ function FeedShareHeaderButton({
   onPress: () => void;
   accessibilityLabel: string;
 }) {
-  const innerSize = SHARE_OUTER - SHARE_RING * 2;
-
   return (
     <FastPress
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
-      rippleColor="rgba(255, 60, 172, 0.28)"
-      activeOpacity={0.86}
+      rippleColor={`${SHARE_ACCENT}28`}
+      activeOpacity={0.82}
       style={styles.shareHit}
     >
-      <LinearGradient
-        colors={[...pds.gradientStoryRing, pds.purple]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.shareRing}
-      >
-        <View style={[styles.shareInnerShell, { width: innerSize, height: innerSize, borderRadius: innerSize / 2 }]}>
-          {Platform.OS === 'android' ? (
-            <View style={[styles.shareCore, styles.shareCoreAndroid, { width: innerSize - 4, height: innerSize - 4, borderRadius: (innerSize - 4) / 2 }]}>
-              <Ionicons name="create-outline" size={18} color="#fff" />
-            </View>
-          ) : (
-            <LinearGradient
-              colors={pds.gradientCta}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.shareCore, { width: innerSize - 4, height: innerSize - 4, borderRadius: (innerSize - 4) / 2 }]}
-            >
-              <Ionicons name="create-outline" size={18} color="#fff" />
-            </LinearGradient>
-          )}
-        </View>
-      </LinearGradient>
-      <View style={styles.shareMediaBadge} pointerEvents="none">
-        <Ionicons name="images" size={9} color="#fff" />
+      <View style={styles.sharePill}>
+        <View
+          style={[
+            styles.sharePillBase,
+            { borderColor: `${SHARE_ACCENT}40`, backgroundColor: `${SHARE_ACCENT}12` },
+          ]}
+        />
+        <Ionicons name="add" size={22} color={SHARE_ACCENT} />
       </View>
     </FastPress>
   );
@@ -105,6 +87,35 @@ export function StaffFeedHeaderLeft({
     </View>
   );
 }
+
+type StaffFeedHeaderLeftConnectedProps = {
+  showShare: boolean;
+  onSharePress: () => void;
+  shareAccessibilityLabel: string;
+};
+
+/** Store’a bağlı — menü açılınca tüm tab layout yeniden çizilmez. */
+export const StaffFeedHeaderLeftConnected = memo(function StaffFeedHeaderLeftConnected({
+  showShare,
+  onSharePress,
+  shareAccessibilityLabel,
+}: StaffFeedHeaderLeftConnectedProps) {
+  const { t } = useTranslation();
+  const menuOpen = useStaffHamburgerUiStore((s) => s.visible);
+  const newAssignMenuLabel = useStaffNewAssignmentHintStore((s) => s.showHamburgerLabel);
+  const { toggleMenu } = useStaffHamburgerMenuActions();
+
+  return (
+    <StaffFeedHeaderLeft
+      menuOpen={menuOpen}
+      onMenuPress={toggleMenu}
+      menuHighlightLabel={newAssignMenuLabel ? t('newBtn') : null}
+      showShare={showShare}
+      onSharePress={onSharePress}
+      shareAccessibilityLabel={shareAccessibilityLabel}
+    />
+  );
+});
 
 type StaffFeedHeaderRightProps = {
   showMrz?: boolean;
@@ -156,7 +167,7 @@ export function StaffFeedHeaderRight({
 
 /** Sol kol genişliği (göz ortalaması için) */
 export function feedHeaderLeftMinWidth(showShare: boolean) {
-  const shareW = showShare ? SHARE_OUTER + 6 : 0;
+  const shareW = showShare ? CTRL + 6 : 0;
   return CTRL + shareW + 12;
 }
 
@@ -188,47 +199,22 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   shareHit: {
-    width: SHARE_OUTER,
-    height: SHARE_OUTER,
+    width: CTRL,
+    height: CTRL,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shareRing: {
-    width: SHARE_OUTER,
-    height: SHARE_OUTER,
-    borderRadius: SHARE_OUTER / 2,
-    padding: SHARE_RING,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#ff3cac',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.32,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  shareInnerShell: {
-    backgroundColor: '#fff',
+  sharePill: {
+    width: CTRL,
+    height: CTRL,
+    borderRadius: 12,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shareCore: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shareCoreAndroid: {
-    backgroundColor: pds.pink,
-  },
-  shareMediaBadge: {
-    position: 'absolute',
-    right: -1,
-    bottom: -1,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: pds.indigo,
-    borderWidth: 1.5,
-    borderColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
+  sharePillBase: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 12,
+    borderWidth: 1,
   },
 });

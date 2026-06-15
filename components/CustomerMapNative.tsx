@@ -3,10 +3,10 @@
  * Zoom/pan state'i native tarafta kalır, geri dönmez.
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect, memo } from 'react';
 import { View, StyleSheet, Platform, Image, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_DEFAULT, AnimatedRegion } from 'react-native-maps';
 import type { Poi } from '@/lib/map/pois';
 import type { MapUserMarker, MapPostMarker, MapDiningMarker, MapTransferTourMarker } from '@/lib/map/types';
 
@@ -31,7 +31,12 @@ export type CustomerMapNativeProps = {
   onPostPress?: (postId: string) => void;
   onDiningPress?: (venueId: string) => void;
   onTransferTourPress?: (serviceId: string) => void;
+  onUserPress?: (marker: MapUserMarker) => void;
   onRegionChangeComplete?: (center: { lat: number; lng: number }) => void;
+  /** Tüm kullanıcı işaretçilerini kadraja sığdır */
+  autoFitUserMarkers?: boolean;
+  /** Avatar altında isim etiketi (admin takip) */
+  showUserNameLabels?: boolean;
   style?: object;
 };
 
@@ -43,6 +48,103 @@ const latLngToDelta = (zoom: number) => {
 const POST_AVATAR_SIZE = 36;
 /** Avatar merkezinin marker koordinatında kalması için, altında etiket varken anchor Y */
 const ANCHOR_Y_WITH_LABEL = (POST_AVATAR_SIZE / 2) / (POST_AVATAR_SIZE + 3 + 34);
+
+const AnimatedMapMarker = Marker.Animated;
+
+type UserMarkerProps = {
+  u: MapUserMarker;
+  showUserNameLabels: boolean;
+  onUserPress?: (marker: MapUserMarker) => void;
+};
+
+const UserMapMarker = memo(function UserMapMarker({ u, showUserNameLabels, onUserPress }: UserMarkerProps) {
+  const hasLabel = showUserNameLabels && !!(u.displayName ?? '').trim();
+  const markerAnchor = hasLabel ? { x: 0.5, y: 0.32 } : { x: 0.5, y: 0.5 };
+  const animateMove = u.isLiveGps === true || u.isMe === true;
+  const region = useRef(
+    new AnimatedRegion({
+      latitude: u.lat,
+      longitude: u.lng,
+      latitudeDelta: 0,
+      longitudeDelta: 0,
+    }),
+  ).current;
+
+  useEffect(() => {
+    if (!animateMove) {
+      region.setValue({ latitude: u.lat, longitude: u.lng, latitudeDelta: 0, longitudeDelta: 0 });
+      return;
+    }
+    region
+      .timing({
+        latitude: u.lat,
+        longitude: u.lng,
+        duration: 550,
+        useNativeDriver: false,
+      } as never)
+      .start();
+  }, [animateMove, region, u.lat, u.lng]);
+
+  const avatarEl = u.avatarUrl ? (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.userAvatarWrap,
+        u.isMe && styles.userAvatarMe,
+        u.userType === 'staff' && styles.userAvatarStaff,
+        u.userType === 'guest' && styles.userAvatarGuest,
+        u.isLiveGps && styles.userAvatarLive,
+      ]}
+    >
+      <Image source={{ uri: u.avatarUrl }} style={styles.userAvatar} />
+    </View>
+  ) : (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.userAvatarWrap,
+        styles.userAvatarPlaceholder,
+        u.isMe && styles.userAvatarMe,
+        u.userType === 'staff' && styles.userAvatarStaff,
+        u.userType === 'guest' && styles.userAvatarGuest,
+        u.isLiveGps && styles.userAvatarLive,
+      ]}
+    >
+      <Ionicons name="person" size={20} color="#666" />
+    </View>
+  );
+
+  const markerBody = hasLabel ? (
+    <View pointerEvents="none" style={styles.userMarkerColumn}>
+      {avatarEl}
+      <Text style={styles.userMarkerLabel} numberOfLines={1}>
+        {(u.displayName ?? '').trim()}
+      </Text>
+    </View>
+  ) : (
+    avatarEl
+  );
+
+  const MarkerComponent = animateMove ? AnimatedMapMarker : Marker;
+  const coordinate = animateMove
+    ? (region as unknown as { latitude: number; longitude: number })
+    : { latitude: u.lat, longitude: u.lng };
+
+  return (
+    <MarkerComponent
+      coordinate={coordinate}
+      title={u.displayName ?? undefined}
+      identifier={`user-${u.id}`}
+      tracksViewChanges={false}
+      anchor={markerAnchor}
+      onPress={() => {
+        if (!u.isMe) onUserPress?.(u);
+      }}
+    >
+      {markerBody}
+    </MarkerComponent>
+  );
+});
 
 export default function CustomerMapNative({
   initialLat = DEFAULT_LAT,
@@ -60,12 +162,45 @@ export default function CustomerMapNative({
   onPostPress,
   onDiningPress,
   onTransferTourPress,
+  onUserPress,
   onRegionChangeComplete,
+  autoFitUserMarkers = false,
+  showUserNameLabels = false,
   style,
 }: CustomerMapNativeProps) {
   const mapRef = useRef<MapView>(null);
   const { latitudeDelta, longitudeDelta } = latLngToDelta(initialZoom);
   const hasMeMarker = userMarkers.some((m) => m.isMe);
+
+  useEffect(() => {
+    if (!autoFitUserMarkers || userMarkers.length === 0 || Platform.OS !== 'ios') return;
+    const coords = userMarkers.map((m) => ({ latitude: m.lat, longitude: m.lng }));
+    if (hotelMarker) {
+      coords.push({ latitude: hotelMarker.lat, longitude: hotelMarker.lng });
+    }
+    if (coords.length === 0) return;
+    const t = setTimeout(() => {
+      if (coords.length === 1) {
+        mapRef.current?.animateToRegion(
+          {
+            latitude: coords[0].latitude,
+            longitude: coords[0].longitude,
+            latitudeDelta: 0.012,
+            longitudeDelta: 0.012,
+          },
+          400,
+        );
+        return;
+      }
+      mapRef.current?.fitToCoordinates(coords, {
+        edgePadding: { top: 64, right: 48, bottom: 120, left: 48 },
+        animated: true,
+      });
+    }, 320);
+    return () => clearTimeout(t);
+    // Yalnızca açıkça istendiğinde bir kez kadrajla; marker güncellemelerinde tekrarlama.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- userMarkers bilerek dışarıda
+  }, [autoFitUserMarkers, hotelMarker]);
 
   const initialRegion = {
     latitude: initialLat,
@@ -115,24 +250,7 @@ export default function CustomerMapNative({
           />
         ))}
         {userMarkers.map((u) => (
-          <Marker
-            key={u.id}
-            coordinate={{ latitude: u.lat, longitude: u.lng }}
-            title={u.displayName ?? undefined}
-            identifier={`user-${u.id}`}
-            tracksViewChanges={false}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            {u.avatarUrl ? (
-              <View style={[styles.userAvatarWrap, u.isMe && styles.userAvatarMe]}>
-                <Image source={{ uri: u.avatarUrl }} style={styles.userAvatar} />
-              </View>
-            ) : (
-              <View style={[styles.userAvatarWrap, styles.userAvatarPlaceholder, u.isMe && styles.userAvatarMe]}>
-                <Ionicons name="person" size={20} color="#666" />
-              </View>
-            )}
-          </Marker>
+          <UserMapMarker key={u.id} u={u} showUserNameLabels={showUserNameLabels} onUserPress={onUserPress} />
         ))}
         {postMarkers.map((p) => (
           <Marker
@@ -226,6 +344,26 @@ const styles = StyleSheet.create({
     borderColor: '#b8860b',
     borderWidth: 4,
   },
+  userAvatarStaff: {
+    borderColor: '#6366f1',
+    borderWidth: 3,
+  },
+  userAvatarGuest: {
+    borderColor: '#10b981',
+    borderWidth: 3,
+  },
+  userAvatarLive: {
+    borderColor: '#22c55e',
+    borderWidth: 3,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#22c55e',
+        shadowOffset: { width: 0, height: 0 },
+        shadowRadius: 6,
+        shadowOpacity: 0.55,
+      },
+    }),
+  },
   userAvatar: {
     width: '100%',
     height: '100%',
@@ -233,6 +371,21 @@ const styles = StyleSheet.create({
   userAvatarPlaceholder: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  userMarkerColumn: {
+    alignItems: 'center',
+    maxWidth: 96,
+  },
+  userMarkerLabel: {
+    marginTop: 2,
+    maxWidth: 96,
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    textAlign: 'center',
+    textShadowColor: 'rgba(255,255,255,0.95)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 3,
   },
   postAvatarWrap: {
     width: POST_AVATAR_SIZE,

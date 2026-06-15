@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { sendNotificationToStaffIds } from '@/lib/notificationService';
 
 export type IncidentReportStatus =
   | 'draft'
@@ -52,6 +53,15 @@ export type IncidentReportTypeRow = {
   is_system: boolean;
   is_active: boolean;
   sort_order: number;
+};
+
+export type IncidentReportRecipientRow = {
+  id: string;
+  report_id: string;
+  staff_id: string;
+  notified_at: string | null;
+  created_at: string;
+  staff?: { id: string; full_name: string | null; role: string | null; department: string | null } | null;
 };
 
 export type IncidentReportMediaRow = {
@@ -122,10 +132,11 @@ export async function getIncidentReportDetail(reportId: string) {
       signaturesRes: null as any,
       internalNotesRes: null as any,
       auditRes: null as any,
+      recipientsRes: null as any,
     };
   }
 
-  const [mediaRes, peopleRes, signaturesRes, internalNotesRes, auditRes] = await Promise.all([
+  const [mediaRes, peopleRes, signaturesRes, internalNotesRes, auditRes, recipientsRes] = await Promise.all([
     supabase
       .from('incident_report_media')
       .select('id, report_id, file_path, thumbnail_path, caption, sort_order, is_primary, created_at')
@@ -152,9 +163,14 @@ export async function getIncidentReportDetail(reportId: string) {
       .select('id, report_id, event_type, event_payload, actor_staff_id, created_at')
       .eq('report_id', reportId)
       .order('created_at', { ascending: false }),
+    supabase
+      .from('incident_report_recipients')
+      .select('id, report_id, staff_id, notified_at, created_at, staff:staff_id (id, full_name, role, department)')
+      .eq('report_id', reportId)
+      .order('created_at', { ascending: true }),
   ]);
 
-  return { reportRes, mediaRes, peopleRes, signaturesRes, internalNotesRes, auditRes };
+  return { reportRes, mediaRes, peopleRes, signaturesRes, internalNotesRes, auditRes, recipientsRes };
 }
 
 export async function createIncidentReport(payload: {
@@ -222,16 +238,12 @@ export async function approveIncidentReport(reportId: string, approverStaffId: s
 }
 
 export async function markIncidentReportPdfGenerated(reportId: string, args: { filePath: string; generatedByStaffId: string }) {
+  void args.generatedByStaffId;
   return await supabase
-    .from('incident_reports')
-    .update({
-      status: 'pdf_generated',
-      pdf_file_path: args.filePath,
-      pdf_generated_by_staff_id: args.generatedByStaffId,
-      pdf_generated_at: new Date().toISOString(),
+    .rpc('mark_incident_report_pdf_generated', {
+      p_report_id: reportId,
+      p_file_path: args.filePath,
     })
-    .eq('id', reportId)
-    .select('id, status, pdf_file_path')
     .single();
 }
 
@@ -269,6 +281,115 @@ export async function addIncidentReportMedia(payload: {
   created_by_staff_id: string;
 }) {
   return await supabase.from('incident_report_media').insert(payload).select('id').single();
+}
+
+export async function listIncidentReportRecipients(reportId: string) {
+  return await supabase
+    .from('incident_report_recipients')
+    .select('id, report_id, staff_id, notified_at, created_at, staff:staff_id (id, full_name, role, department)')
+    .eq('report_id', reportId)
+    .order('created_at', { ascending: true });
+}
+
+export async function syncIncidentReportRecipients(args: {
+  organizationId: string;
+  reportId: string;
+  staffIds: string[];
+  createdByStaffId: string;
+}) {
+  const unique = [...new Set(args.staffIds.filter(Boolean))];
+  const existing = await supabase
+    .from('incident_report_recipients')
+    .select('id, staff_id')
+    .eq('report_id', args.reportId);
+
+  if (existing.error) return { error: existing.error };
+
+  const existingIds = new Set((existing.data ?? []).map((r) => r.staff_id as string));
+  const toRemove = (existing.data ?? []).filter((r) => !unique.includes(r.staff_id as string));
+  const toAdd = unique.filter((id) => !existingIds.has(id));
+
+  if (toRemove.length > 0) {
+    const del = await supabase
+      .from('incident_report_recipients')
+      .delete()
+      .in(
+        'id',
+        toRemove.map((r) => r.id as string)
+      );
+    if (del.error) return { error: del.error };
+  }
+
+  if (toAdd.length > 0) {
+    const ins = await supabase.from('incident_report_recipients').insert(
+      toAdd.map((staffId) => ({
+        organization_id: args.organizationId,
+        report_id: args.reportId,
+        staff_id: staffId,
+        created_by_staff_id: args.createdByStaffId,
+      }))
+    );
+    if (ins.error) return { error: ins.error };
+  }
+
+  const names = unique.length
+    ? (
+        await supabase.from('staff').select('full_name').in('id', unique)
+      ).data
+        ?.map((s) => (s.full_name ?? '').trim())
+        .filter(Boolean)
+        .join(', ') ?? null
+    : null;
+
+  if (names !== null) {
+    await supabase.from('incident_reports').update({ related_staff_name: names || null }).eq('id', args.reportId);
+  }
+
+  return { error: null };
+}
+
+export async function notifyIncidentReportRecipients(args: {
+  report: Pick<IncidentReportRow, 'id' | 'report_no' | 'location_label' | 'room_number' | 'status'>;
+  staffIds: string[];
+  createdByStaffId: string;
+  isStaffRoute?: boolean;
+  message?: string;
+}) {
+  const unique = [...new Set(args.staffIds.filter((id) => id && id !== args.createdByStaffId))];
+  if (unique.length === 0) {
+    return { count: 0, error: 'Bildirim gönderilecek personel seçilmedi.' };
+  }
+
+  const roomPart = args.report.room_number ? `Oda ${args.report.room_number}` : args.report.location_label;
+  const body =
+    args.message?.trim() ||
+    `${args.report.report_no} · ${roomPart} · Durum: ${args.report.status === 'draft' ? 'Taslak' : args.report.status}`;
+
+  const base = args.isStaffRoute ? '/staff/incident-reports' : '/admin/incident-reports';
+  const result = await sendNotificationToStaffIds({
+    staffIds: unique,
+    title: `Tutanak: ${args.report.report_no}`,
+    body,
+    createdByStaffId: args.createdByStaffId,
+    notificationType: 'report_status',
+    category: 'staff',
+    data: {
+      screen: `${base}/${args.report.id}`,
+      url: `${base}/${args.report.id}`,
+      incidentReportId: args.report.id,
+      reportNo: args.report.report_no,
+    },
+  });
+
+  if (!result.error && result.count > 0) {
+    await supabase
+      .from('incident_report_recipients')
+      .update({ notified_at: new Date().toISOString() })
+      .eq('report_id', args.report.id)
+      .in('staff_id', unique);
+  }
+
+  return result;
 }
 
 export async function resendIncidentReportToPrinter(reportId: string) {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,14 @@ import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { CachedImage } from '@/components/CachedImage';
+import { ExpenseReceiptThumbnail } from '@/components/expenses/ExpenseReceiptThumbnail';
+import { expenseReceiptPreviewModalStyle, EXPENSE_RECEIPT_PREVIEW_COMPACT } from '@/lib/expenseReceiptPreviewStyles';
 import { formatDateShort } from '@/lib/date';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import {
+  confirmBulkApproval,
+  pickExpenseRejectReason,
+} from '@/lib/adminExpenseRejectReasons';
 
 type ExpenseRow = {
   id: string;
@@ -157,6 +163,8 @@ export default function AdminExpensesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [selectedPending, setSelectedPending] = useState<Set<string>>(() => new Set());
+  const [bulkActing, setBulkActing] = useState(false);
   const [summary, setSummary] = useState<{
     thisMonthTotal: number;
     lastMonthTotal: number;
@@ -272,30 +280,99 @@ export default function AdminExpensesScreen() {
     load();
   };
 
-  const reject = async (id: string) => {
-    Alert.alert('Harcamayı reddet', 'Personel red gerekçesini daha sonra düzenleyebilirsiniz.', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Reddet',
-        style: 'destructive',
-        onPress: async () => {
-          if (!me?.id) return;
-          setActingId(id);
-          const { error } = await supabase
-            .from('staff_expenses')
-            .update({
-              status: 'rejected',
-              approved_by: me.id,
-              approved_at: new Date().toISOString(),
-              rejection_reason: null,
-            })
-            .eq('id', id);
-          setActingId(null);
-          if (error) Alert.alert('Hata', error.message);
-          else load();
-        },
-      },
-    ]);
+  const rejectWithReason = async (e: ExpenseRow, reason: string) => {
+    if (!me?.id) return false;
+    const { error } = await supabase
+      .from('staff_expenses')
+      .update({
+        status: 'rejected',
+        approved_by: me.id,
+        approved_at: new Date().toISOString(),
+        rejection_reason: reason,
+      })
+      .eq('id', e.id);
+    if (error) {
+      Alert.alert('Hata', error.message);
+      return false;
+    }
+    if (e.staff_id) {
+      await sendNotification({
+        staffId: e.staff_id,
+        title: 'Harcama geri bildirimi',
+        body: `Girdiğiniz harcama: ${getExpenseSummary(e)} — ${reason}`,
+        category: 'admin',
+        data: { screen: '/staff/expenses' },
+        createdByStaffId: me.id,
+      });
+    }
+    return true;
+  };
+
+  const reject = (e: ExpenseRow) => {
+    pickExpenseRejectReason((reason) => void rejectWithReason(e, reason), 'Harcamayı reddet');
+  };
+
+  const pendingSelected = useMemo(
+    () => pending.filter((e) => selectedPending.has(e.id)),
+    [pending, selectedPending]
+  );
+
+  const togglePendingSelect = (id: string) => {
+    setSelectedPending((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkApprovePending = async (rows: ExpenseRow[]) => {
+    if (!me?.id || !rows.length) return;
+    setBulkActing(true);
+    let ok = 0;
+    for (const e of rows) {
+      setActingId(e.id);
+      const { error } = await supabase
+        .from('staff_expenses')
+        .update({
+          status: 'approved',
+          approved_by: me.id,
+          approved_at: new Date().toISOString(),
+          rejection_reason: null,
+        })
+        .eq('id', e.id);
+      if (!error) {
+        ok++;
+        if (e.staff_id) {
+          await sendNotification({
+            staffId: e.staff_id,
+            title: 'Harcama onaylandı',
+            body: `Girdiğiniz harcama onaylandı: ${getExpenseSummary(e)}`,
+            category: 'admin',
+            data: { screen: '/staff/expenses' },
+            createdByStaffId: me.id,
+          });
+        }
+      }
+    }
+    setActingId(null);
+    setBulkActing(false);
+    setSelectedPending(new Set());
+    load();
+    Alert.alert('Tamam', `${ok} harcama onaylandı.`);
+  };
+
+  const bulkRejectPending = async (rows: ExpenseRow[], reason: string) => {
+    if (!rows.length) return;
+    setBulkActing(true);
+    let ok = 0;
+    for (const e of rows) {
+      if (await rejectWithReason(e, reason)) ok++;
+    }
+    setBulkActing(false);
+    setSelectedPending(new Set());
+    load();
+    Alert.alert('Tamam', `${ok} harcama reddedildi.`);
   };
 
   const percentChange =
@@ -381,9 +458,78 @@ export default function AdminExpensesScreen() {
         {pending.length > 0 && (
           <>
             <Text style={styles.sectionTitle}>Onay bekleyen harcamalar ({pending.length})</Text>
+            <View style={styles.bulkRow}>
+              <TouchableOpacity
+                style={styles.bulkBtn}
+                onPress={() => setSelectedPending(new Set(pending.map((e) => e.id)))}
+                disabled={bulkActing}
+              >
+                <Text style={styles.bulkBtnText}>Tümünü seç</Text>
+              </TouchableOpacity>
+              {selectedPending.size > 0 ? (
+                <TouchableOpacity style={styles.bulkBtnMuted} onPress={() => setSelectedPending(new Set())}>
+                  <Text style={styles.bulkBtnMutedText}>Seçimi kaldır</Text>
+                </TouchableOpacity>
+              ) : null}
+              {selectedPending.size > 0 ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.bulkBtn, styles.bulkBtnOk]}
+                    onPress={() =>
+                      confirmBulkApproval(pendingSelected.length, () => void bulkApprovePending(pendingSelected))
+                    }
+                    disabled={bulkActing}
+                  >
+                    <Text style={styles.bulkBtnTextLight}>Onayla ({selectedPending.size})</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.bulkBtn, styles.bulkBtnNo]}
+                    onPress={() =>
+                      pickExpenseRejectReason(
+                        (reason) => void bulkRejectPending(pendingSelected, reason),
+                        'Seçilenleri reddet'
+                      )
+                    }
+                    disabled={bulkActing}
+                  >
+                    <Text style={styles.bulkBtnTextLight}>Reddet</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={[styles.bulkBtn, styles.bulkBtnOk]}
+                    onPress={() => confirmBulkApproval(pending.length, () => void bulkApprovePending(pending), 'Tümünü onayla')}
+                    disabled={bulkActing}
+                  >
+                    <Text style={styles.bulkBtnTextLight}>Tümünü onayla</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.bulkBtn, styles.bulkBtnNo]}
+                    onPress={() =>
+                      pickExpenseRejectReason(
+                        (reason) => void bulkRejectPending(pending, reason),
+                        'Tümünü reddet'
+                      )
+                    }
+                    disabled={bulkActing}
+                  >
+                    <Text style={styles.bulkBtnTextLight}>Tümünü reddet</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
             <View style={styles.cardList}>
               {pending.map((e) => (
-                <View key={e.id} style={styles.card}>
+                <View key={e.id} style={[styles.card, selectedPending.has(e.id) && styles.cardSelected]}>
+                  <TouchableOpacity style={styles.cardCheck} onPress={() => togglePendingSelect(e.id)}>
+                    <Ionicons
+                      name={selectedPending.has(e.id) ? 'checkbox' : 'square-outline'}
+                      size={22}
+                      color={selectedPending.has(e.id) ? adminTheme.colors.accent : adminTheme.colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                  <View style={styles.cardMain}>
                   <View style={styles.cardHeader}>
                     <Text style={styles.cardStaff}>{e.staff?.full_name ?? '—'} · {formatDateShort(e.expense_date)}</Text>
                     <Text style={styles.cardAmount}>{fmtMoney(Number(e.amount))}</Text>
@@ -393,13 +539,14 @@ export default function AdminExpensesScreen() {
                     <Text style={styles.cardOrg}>{e.organization.name}</Text>
                   ) : null}
                   {e.description ? <Text style={styles.cardDesc} numberOfLines={2}>{e.description}</Text> : null}
+                  {e.receipt_image_url ? (
+                    <ExpenseReceiptThumbnail
+                      uri={e.receipt_image_url}
+                      onPress={() => setReceiptModal(e.receipt_image_url!)}
+                      style={styles.receiptPreviewRow}
+                    />
+                  ) : null}
                   <View style={styles.cardActions}>
-                    {e.receipt_image_url ? (
-                      <TouchableOpacity style={styles.receiptBtn} onPress={() => setReceiptModal(e.receipt_image_url!)}>
-                        <Ionicons name="image-outline" size={18} color={adminTheme.colors.accent} />
-                        <Text style={styles.receiptBtnText}>Fiş gör</Text>
-                      </TouchableOpacity>
-                    ) : null}
                     <View style={styles.approveRow}>
                       <TouchableOpacity
                         style={[styles.approveBtn, styles.approveBtnOk]}
@@ -417,13 +564,14 @@ export default function AdminExpensesScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[styles.approveBtn, styles.approveBtnNo]}
-                        onPress={() => reject(e.id)}
-                        disabled={actingId === e.id}
+                        onPress={() => reject(e)}
+                        disabled={actingId === e.id || bulkActing}
                       >
                         <Ionicons name="close" size={18} color="#fff" />
                         <Text style={styles.approveBtnText}>Reddet</Text>
                       </TouchableOpacity>
                     </View>
+                  </View>
                   </View>
                 </View>
               ))}
@@ -451,10 +599,14 @@ export default function AdminExpensesScreen() {
                   <Ionicons name={statusIcon(e.status) as any} size={16} color={e.status === 'approved' ? adminTheme.colors.success : e.status === 'rejected' ? adminTheme.colors.error : adminTheme.colors.warning} />
                 </View>
                 {e.receipt_image_url ? (
-                  <TouchableOpacity onPress={() => setReceiptModal(e.receipt_image_url!)}>
-                    <Ionicons name="image" size={18} color={adminTheme.colors.accent} />
-                  </TouchableOpacity>
-                ) : <View style={{ width: 18 }} />}
+                  <ExpenseReceiptThumbnail
+                    uri={e.receipt_image_url}
+                    onPress={() => setReceiptModal(e.receipt_image_url!)}
+                    compact
+                  />
+                ) : (
+                  <View style={{ width: EXPENSE_RECEIPT_PREVIEW_COMPACT }} />
+                )}
               </View>
             ))}
           </View>
@@ -465,7 +617,7 @@ export default function AdminExpensesScreen() {
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setReceiptModal(null)}>
           <View style={styles.modalContent}>
             {receiptModal ? (
-              <CachedImage uri={receiptModal} style={styles.modalImage} contentFit="contain" />
+              <CachedImage uri={receiptModal} style={expenseReceiptPreviewModalStyle} contentFit="contain" />
             ) : null}
             <TouchableOpacity style={styles.modalClose} onPress={() => setReceiptModal(null)}>
               <Text style={styles.modalCloseText}>Kapat</Text>
@@ -507,16 +659,42 @@ const styles = StyleSheet.create({
   reportBtnText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.accent },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text, marginBottom: 12 },
   cardList: { gap: 12, marginBottom: 20 },
-  card: { backgroundColor: adminTheme.colors.surface, borderRadius: 8, padding: 14, borderWidth: 1, borderColor: adminTheme.colors.border },
+  bulkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12, alignItems: 'center' },
+  bulkBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  bulkBtnMuted: { paddingHorizontal: 10, paddingVertical: 8 },
+  bulkBtnMutedText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  bulkBtnText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.primary },
+  bulkBtnOk: { backgroundColor: adminTheme.colors.success, borderColor: adminTheme.colors.success },
+  bulkBtnNo: { backgroundColor: adminTheme.colors.error, borderColor: adminTheme.colors.error },
+  bulkBtnTextLight: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 8,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  cardSelected: { borderColor: adminTheme.colors.accent, backgroundColor: 'rgba(37,99,235,0.05)' },
+  cardCheck: { paddingTop: 2 },
+  cardMain: { flex: 1, minWidth: 0 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   cardStaff: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.text },
   cardAmount: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
   cardCategory: { fontSize: 13, color: adminTheme.colors.textSecondary },
   cardOrg: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.accent, marginTop: 2 },
   cardDesc: { fontSize: 13, color: adminTheme.colors.textMuted, marginTop: 4 },
-  cardActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: adminTheme.colors.borderLight },
-  receiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  receiptBtnText: { fontSize: 13, color: adminTheme.colors.accent, fontWeight: '600' },
+  cardActions: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: adminTheme.colors.borderLight },
+  receiptPreviewRow: { marginTop: 8, alignSelf: 'flex-start' },
   approveRow: { flexDirection: 'row', gap: 8 },
   approveBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
   approveBtnOk: { backgroundColor: adminTheme.colors.success },
@@ -533,8 +711,7 @@ const styles = StyleSheet.create({
   tableCellAmount: { width: 72, fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
   tableCellStatus: { width: 24, marginRight: 8 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalContent: { width: '100%', maxHeight: '85%', alignItems: 'center' },
-  modalImage: { width: '100%', height: 400, borderRadius: 8 },
+  modalContent: { width: '100%', maxWidth: 340, alignItems: 'center' },
   modalClose: { marginTop: 16, paddingVertical: 10, paddingHorizontal: 24, backgroundColor: adminTheme.colors.surface },
   modalCloseText: { fontSize: 16, fontWeight: '600', color: adminTheme.colors.text },
 });

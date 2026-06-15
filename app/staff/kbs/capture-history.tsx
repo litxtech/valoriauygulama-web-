@@ -49,6 +49,7 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '@/lib/supabase';
+import { useTranslation } from 'react-i18next';
 
 const CAPTURE_ID_ROUTE = '/staff/kbs/capture-id' as Href;
 
@@ -102,18 +103,19 @@ function CaptureCard({
   groupPosition = 'only',
   isNew = false,
 }: CaptureCardProps) {
+  const { t } = useTranslation();
   const parsed = asParsed(item);
   const missing = parsed ? listMissingIdFields(parsed) : [];
   const ocrStatus = kbsOcrStatusLabel(parsed);
   const engineShort = kbsOcrEngineShort(item.ocr_engine);
   const statusLabel =
     ocrStatus === 'ready'
-      ? engineShort ? `Hazır · ${engineShort}` : 'Hazır'
+      ? engineShort ? `${t('kbsStatusReady')} · ${engineShort}` : t('kbsStatusReady')
       : ocrStatus === 'processing'
-        ? 'Okunuyor'
+        ? t('kbsStatusReading')
         : ocrStatus === 'pending'
-          ? 'Sırada'
-          : 'Eksik';
+          ? t('kbsStatusQueued')
+          : t('kbsStatusIncomplete');
 
   const isFirst = groupPosition === 'first' || groupPosition === 'only';
   const isLast = groupPosition === 'last' || groupPosition === 'only';
@@ -139,7 +141,7 @@ function CaptureCard({
       {canSeeImages && item.front_image_url ? (
         <Pressable
           onPress={() => onThumbPress?.(item.front_image_url!)}
-          accessibilityLabel="Kimlik görselini büyüt"
+          accessibilityLabel={t('kbsEnlargeIdA11y')}
         >
           <Image source={{ uri: item.front_image_url }} style={styles.thumb} contentFit="cover" />
         </Pressable>
@@ -200,6 +202,7 @@ function CaptureCard({
 }
 
 export default function KbsCaptureHistoryScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const [filter, setFilter] = useState<FilterKey>('day');
@@ -229,7 +232,7 @@ export default function KbsCaptureHistoryScreen() {
       setRows(data);
       setKbsCaptureHistoryCache(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Liste yüklenemedi');
+      setError(e instanceof Error ? e.message : t('kbsListLoadFailed'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -336,7 +339,7 @@ export default function KbsCaptureHistoryScreen() {
   const retryOcr = (picked: KbsCapturedDocumentRow[]) => {
     const targets = picked.filter((r) => r.front_image_url);
     if (!targets.length) {
-      Alert.alert('Kayıt yok', 'Okunacak kimlik görseli bulunamadı.');
+      Alert.alert(t('kbsNoRecord'), t('kbsNoReadableId'));
       return;
     }
     enqueueKbsCaptureOcrBatch(
@@ -346,19 +349,14 @@ export default function KbsCaptureHistoryScreen() {
         imageUrl: r.front_image_url!,
       }))
     );
-    Alert.alert(
-      'Okuma başlatıldı',
-      `${targets.length} kimlik sırayla okunacak (ön yüz yazıları + varsa alttaki MRZ).`
-    );
+    Alert.alert(t('kbsReadStarted'), t('kbsMrzBatchStarted', { count: targets.length }));
   };
 
   const retryOcrFiltered = () => {
     if (!mrzTargetRows.length) {
       Alert.alert(
-        'Kayıt yok',
-        selectMode
-          ? 'Seçili kimlik bulunamadı.'
-          : 'Bu filtrede son çekilen kimlik yok. “Tümü”nü deneyin veya “Seç” ile kayıt seçin.'
+        t('kbsNoRecord'),
+        selectMode ? t('kbsNoSelectedRecord') : t('kbsNoRecordFilterHint')
       );
       return;
     }
@@ -375,7 +373,7 @@ export default function KbsCaptureHistoryScreen() {
       (r) => r.front_image_url
     );
     if (!picked.length) {
-      Alert.alert('Kayıt yok', 'Okunacak kimlik görseli bulunamadı.');
+      Alert.alert(t('kbsNoRecord'), t('kbsNoReadableId'));
       return;
     }
     let ok = 0;
@@ -383,8 +381,8 @@ export default function KbsCaptureHistoryScreen() {
       try {
         const local = `${FileSystem.cacheDirectory ?? ''}kbs-ai-${row.id}.jpg`;
         const dl = await FileSystem.downloadAsync(row.front_image_url!, local);
-        const { parseIdCardImageUriAiFallback } = await import('@/lib/kbsCaptureOcr');
-        const ocr = await parseIdCardImageUriAiFallback(dl.uri);
+        const { parseIdCardImageUriWithFallback } = await import('@/lib/kbsCaptureOcr');
+        const ocr = await parseIdCardImageUriWithFallback(dl.uri);
         const res = await applyKbsCaptureOcrResult(
           row.id,
           row.guest_id,
@@ -402,8 +400,8 @@ export default function KbsCaptureHistoryScreen() {
   };
 
   const confirmDelete = (row: KbsCapturedDocumentRow) => {
-    Alert.alert('Kimliği sil', 'Bu kayıt kalıcı olarak silinsin mi?', [
-      { text: 'İptal', style: 'cancel' },
+    Alert.alert(t('kbsDeleteIdTitle'), t('kbsDeleteIdBody'), [
+      { text: t('cancel'), style: 'cancel' },
       {
         text: 'Sil',
         style: 'destructive',
@@ -426,7 +424,7 @@ export default function KbsCaptureHistoryScreen() {
   };
 
   const onSharePrint = async () => {
-    if (!combined.length) return Alert.alert('Liste boş', 'Paylaşılacak kayıt yok.');
+    if (!combined.length) return Alert.alert(t('kbsListEmpty'), t('kbsNothingToShare'));
     const html = buildKbsCaptureReportHtml('KBS Kimlik Raporu', combined, canSeeImages);
     const { uri } = await Print.printToFileAsync({ html });
     if (await Sharing.isAvailableAsync()) {
@@ -495,7 +493,9 @@ export default function KbsCaptureHistoryScreen() {
       >
         <Ionicons name="sparkles-outline" size={16} color="#64748b" />
         <Text style={styles.retryAiText}>
-          {selectMode && selected.size > 0 ? `AI yedek okuma (${selected.size})` : 'AI yedek okuma (isteğe bağlı)'}
+          {selectMode && selected.size > 0
+            ? t('kbsAiBackupReadSelected', { count: selected.size })
+            : t('kbsAiBackupRead')}
         </Text>
       </TouchableOpacity>
 
@@ -518,17 +518,19 @@ export default function KbsCaptureHistoryScreen() {
         ) : null}
         {selectMode ? (
           <Text style={styles.selectHint}>
-            {selected.size > 0 ? `${selected.size} seçili · MRZ oku` : 'Kayıt seçin veya tümünü seçin'}
+            {selected.size > 0
+              ? t('kbsMrzReadSelected', { count: selected.size })
+              : t('kbsSelectForMrz')}
           </Text>
         ) : null}
       </View>
 
       <View style={styles.filterRow}>
         {([
-          ['day', 'Günlük'],
-          ['week', 'Haftalık'],
-          ['month', 'Aylık'],
-          ['all', 'Tümü'],
+          ['day', t('kbsFilterDaily')],
+          ['week', t('kbsFilterWeekly')],
+          ['month', t('kbsFilterMonthly')],
+          ['all', t('kbsFilterAll')],
         ] as const).map(([k, l]) => (
           <TouchableOpacity key={k} style={[styles.chip, filter === k && styles.chipOn]} onPress={() => setFilter(k)}>
             <Text style={[styles.chipText, filter === k && styles.chipTextOn]}>{l}</Text>
@@ -553,8 +555,8 @@ export default function KbsCaptureHistoryScreen() {
         ListEmptyComponent={
           <Text style={styles.empty}>
             {filter === 'day'
-              ? 'Bugün çekilen kimlik yok. “Tümü” filtresini deneyin.'
-              : 'Bu aralıkta kayıt yok.'}
+              ? t('kbsEmptyToday')
+              : t('kbsEmptyRange')}
           </Text>
         }
         renderItem={({ item: entry }) => {

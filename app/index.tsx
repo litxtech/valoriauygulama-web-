@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useAuthStore } from '@/stores/authStore';
+import { useAuthStore, completeSignIn } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { startGeofenceWatch, stopGeofenceWatch, type HotelGeofenceConfig } from '@/lib/geofencing';
@@ -29,12 +29,15 @@ import * as Location from 'expo-location';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
+import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
+import { invokeNotifyNewGuestAccount } from '@/lib/notifyNewGuestAccount';
 import { hasPolicyConsent } from '@/lib/policyConsent';
 import { isPublicWebPath } from '@/lib/publicWebRoute';
 import { publicContractHref, publicMenuHref } from '@/lib/publicPortalNav';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
 import { hasPendingNotificationData } from '@/lib/notificationNavigation';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
@@ -152,6 +155,24 @@ function OfflineWelcome({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/** Oturum yüklenirken — yalnızca arka plan; yükleme göstergesi _layout nokta animasyonunda. */
+function BootScreen() {
+  return <View style={styles.bootLoaderRoot} />;
+}
+
+/** Giriş sonrası anında panele yönlendir (staff kontrolü arka planda sürer). */
+async function enterAppAfterSignIn(router: ReturnType<typeof useRouter>, userId: string): Promise<void> {
+  const { staff } = useAuthStore.getState();
+  const accepted = await hasPolicyConsent(userId);
+  const path = staff ? '/staff' : '/customer';
+  const nextParam = staff ? 'staff' : 'customer';
+  if (accepted) {
+    safeRouterReplace(router, path);
+  } else {
+    safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
+  }
+}
+
 export default function HomeScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -178,9 +199,19 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    AsyncStorage.getItem(CHECKIN_PROMPT_CARD_DISMISSED_KEY).then((val) => {
-      if (!cancelled) setShowCheckinPromptCard(val !== '1');
-    });
+    const loadDismissed = () => {
+      AsyncStorage.getItem(CHECKIN_PROMPT_CARD_DISMISSED_KEY).then((val) => {
+        if (!cancelled) setShowCheckinPromptCard(val !== '1');
+      });
+    };
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(loadDismissed, { delayMs: 1500 });
+      return () => {
+        cancelled = true;
+        task.cancel();
+      };
+    }
+    loadDismissed();
     return () => { cancelled = true; };
   }, []);
 
@@ -206,7 +237,14 @@ export default function HomeScreen() {
         if (!cancelled) setNotifStatus('unavailable');
       }
     };
-    loadNotificationStatus();
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(() => void loadNotificationStatus(), { delayMs: 1800 });
+      return () => {
+        cancelled = true;
+        task.cancel();
+      };
+    }
+    void loadNotificationStatus();
     return () => {
       cancelled = true;
     };
@@ -277,7 +315,15 @@ export default function HomeScreen() {
         log.warn('HomeScreen', 'Geofence', (e as Error)?.message);
       }
     };
-    run();
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(() => void run(), { delayMs: 2500 });
+      return () => {
+        cancelled = true;
+        task.cancel();
+        stopGeofenceWatch();
+      };
+    }
+    void run();
     return () => {
       cancelled = true;
       stopGeofenceWatch();
@@ -291,7 +337,6 @@ export default function HomeScreen() {
     if (loading) return;
     if (!user) return;
     if (!staffCheckComplete) return;
-    if (staffCheckUnavailable && !staff) return;
     if (hasPendingNotificationData()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
@@ -339,22 +384,14 @@ export default function HomeScreen() {
       const { data, error } = await supabase.auth.signInWithPassword({ email: e, password });
       if (error) throw error;
       if (data.user) {
-        await useAuthStore.getState().loadSession();
-        await useAuthStore.getState().waitForStaffCheck();
-        const { user, staff } = useAuthStore.getState();
+        await completeSignIn(data.user);
+        const { user } = useAuthStore.getState();
         const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
         if (pendingRoom && user?.email) {
           await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
           clearPendingRoom();
         }
-        const accepted = await hasPolicyConsent(user?.id ?? null);
-        const path = staff ? '/staff' : '/customer';
-        const nextParam = staff ? 'staff' : 'customer';
-        if (accepted) {
-          safeRouterReplace(router, path);
-        } else {
-          safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
-        }
+        await enterAppAfterSignIn(router, data.user.id);
       }
     } catch (err: unknown) {
       const msg = (err as Error)?.message ?? t('signInFailed');
@@ -381,20 +418,14 @@ export default function HomeScreen() {
         setAppleLoading(false);
         return;
       }
-      const { error } = await supabase.auth.signInWithIdToken({
+      const { data: appleData, error } = await supabase.auth.signInWithIdToken({
         provider: 'apple',
         token,
       });
       if (error) throw error;
-      await useAuthStore.getState().loadSession();
-      const { user, staff } = useAuthStore.getState();
-      const accepted = await hasPolicyConsent(user?.id ?? null);
-      const path = staff ? '/staff' : '/customer';
-      const nextParam = staff ? 'staff' : 'customer';
-      if (accepted) {
-        safeRouterReplace(router, path);
-      } else {
-        safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
+      if (appleData.user) {
+        await completeSignIn(appleData.user);
+        await enterAppAfterSignIn(router, appleData.user.id);
       }
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string };
@@ -438,25 +469,20 @@ export default function HomeScreen() {
         setGoogleLoading(false);
         return;
       }
-      const { error } = await supabase.auth.signInWithIdToken({
+      const { data: googleData, error } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
       });
       if (error) throw error;
-      await useAuthStore.getState().loadSession();
-      const { user, staff } = useAuthStore.getState();
-      const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
-      if (pendingRoom && user?.email) {
-        await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
-        clearPendingRoom();
-      }
-      const accepted = await hasPolicyConsent(user?.id ?? null);
-      const path = staff ? '/staff' : '/customer';
-      const nextParam = staff ? 'staff' : 'customer';
-      if (accepted) {
-        safeRouterReplace(router, path);
-      } else {
-        safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
+      if (googleData.user) {
+        await completeSignIn(googleData.user);
+        const { user } = useAuthStore.getState();
+        const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
+        if (pendingRoom && user?.email) {
+          await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
+          clearPendingRoom();
+        }
+        await enterAppAfterSignIn(router, googleData.user.id);
       }
     } catch (err: unknown) {
       log.error('HomeScreen', 'Google sign-in', err);
@@ -478,32 +504,18 @@ export default function HomeScreen() {
         setGuestLoginLoading(false);
         return;
       }
-      await useAuthStore.getState().loadSession();
+      await completeSignIn(anonUser);
       const guestResult = await getOrCreateGuestForCaller(anonUser);
       if (guestResult?.is_new && guestResult.guest_id) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.access_token) {
-            await supabase.functions.invoke('notify-new-guest-account', {
-              body: { guest_id: guestResult.guest_id },
-              headers: { Authorization: `Bearer ${session.access_token}` },
-            });
-          }
-        } catch (e) {
-          log.warn('HomeScreen', 'notify-new-guest-account', (e as Error)?.message);
-        }
+        void invokeNotifyNewGuestAccount(guestResult.guest_id);
       }
-      const accepted = await hasPolicyConsent(anonUser.id);
-      if (accepted) {
-        safeRouterReplace(router, '/customer');
-      } else {
-        safeRouterReplace(router, { pathname: '/policies', params: { next: 'customer' } });
-      }
+      await enterAppAfterSignIn(router, anonUser.id);
     } catch (err: unknown) {
       log.error('HomeScreen', 'signInAsGuest', err);
       const msg = (err as Error)?.message ?? '';
       const isAnonymousDisabled = /anonymous sign-ins are disabled/i.test(msg);
       const isCaptchaFailed = /captcha verification process failed/i.test(msg);
+      const isServerDown = isSupabaseUnavailableError(msg);
       Alert.alert(
         t('error'),
         isAnonymousDisabled
@@ -511,7 +523,9 @@ export default function HomeScreen() {
           : isCaptchaFailed
             ? ((t('guestLoginCaptchaBlocked') as string | undefined) ??
               'Misafir girişi şu an CAPTCHA tarafından engellendi. Supabase Dashboard → Authentication → Settings → CAPTCHA ayarını kapatın (veya mobilde CAPTCHA token entegrasyonu ekleyin).')
-            : (msg || t('signInFailed'))
+            : isServerDown
+              ? 'Sunucuya şu an ulaşılamıyor. Birkaç dakika sonra tekrar deneyin.'
+              : (msg || t('signInFailed'))
       );
     } finally {
       setGuestLoginLoading(false);
@@ -536,8 +550,8 @@ export default function HomeScreen() {
   const cardWidth = width - 24;
   const paddingH = 12;
 
-  if (loading) {
-    return null;
+  if (loading && !user) {
+    return <BootScreen />;
   }
 
   if (isOffline) {
@@ -569,7 +583,7 @@ export default function HomeScreen() {
   }
 
   if (user || staff) {
-    return null;
+    return <BootScreen />;
   }
 
   return (

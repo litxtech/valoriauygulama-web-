@@ -1,12 +1,16 @@
 import React from 'react';
 import { View, StyleSheet, ViewStyle, Platform } from 'react-native';
 import { adminTheme } from '@/constants/adminTheme';
+import { GlassSurface } from '@/components/premium/GlassSurface';
 
 type AdminCardProps = {
   children: React.ReactNode;
   style?: ViewStyle;
   padded?: boolean;
   elevated?: boolean;
+  /** Cam + premium kenar glow */
+  premium?: boolean;
+  auraColor?: string;
 };
 
 export function AdminCard({
@@ -14,7 +18,19 @@ export function AdminCard({
   style,
   padded = true,
   elevated = true,
+  premium = false,
+  auraColor = '#6366f1',
 }: AdminCardProps) {
+  if (premium) {
+    return (
+      <View style={[premium && styles.auraHost, premium && { shadowColor: auraColor }, style]}>
+        <GlassSurface style={[padded && styles.padded, elevated && styles.premiumBorder]} borderRadius={adminTheme.radius.lg} strong>
+          {children}
+        </GlassSurface>
+      </View>
+    );
+  }
+
   return (
     <View
       style={[
@@ -41,4 +57,17 @@ const styles = StyleSheet.create({
   },
   shadow: adminTheme.shadow.md,
   elevation: { elevation: 4 },
+  premiumBorder: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(99,102,241,0.2)',
+  },
+  auraHost: {
+    ...(Platform.OS === 'ios'
+      ? {
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.14,
+          shadowRadius: 12,
+        }
+      : { elevation: 5 }),
+  },
 });

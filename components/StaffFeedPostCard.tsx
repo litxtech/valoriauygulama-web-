@@ -1,4 +1,4 @@
-import { useState, memo, useEffect, useRef } from 'react';
+import { useState, memo, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,12 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  Animated,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
-import { pds } from '@/constants/personelDesignSystem';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
@@ -21,11 +20,11 @@ import type { PostTagValue } from '@/lib/feedPostTags';
 import { feedSharedText } from '@/lib/feedSharedI18n';
 import { useTranslation } from 'react-i18next';
 import { FeedTextTranslate } from '@/components/FeedTextTranslate';
-import { FastPress } from '@/components/ui/FastPress';
+import { PressableScale } from '@/components/premium/PressableScale';
+import { getFeedRoleBadge, detectFeedCelebration, type FeedCelebrationKind } from '@/lib/feedRoleBadge';
 
-const SPACING = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20 } as const;
-
-const SHORT_TITLE_MAX_LEN = 72;
+const SPACING = { xs: 4, sm: 8, md: 12, lg: 16 } as const;
+const BODY_MAX_LINES = 4;
 
 export type StaffFeedPostCardProps = {
   postTag: PostTagValue | string | null | undefined;
@@ -33,12 +32,16 @@ export type StaffFeedPostCardProps = {
   authorAvatarUrl: string | null;
   authorBadge: 'blue' | 'yellow' | null;
   isGuestPost: boolean;
-  /** Personel çevrimiçi (yeşil nabız) */
   authorIsOnline?: boolean;
-  /** Personel departmanı veya gösterilecek rol metni */
   roleLabel: string | null;
+  /** Departman (rol rozeti için) */
+  department?: string | null;
+  position?: string | null;
+  hotelName?: string | null;
+  hotelLocation?: string | null;
   timeAgo: string;
-  createdAtLabel: string;
+  /** @deprecated İkinci tarih satırı kaldırıldı */
+  createdAtLabel?: string;
   title: string | null;
   media: React.ReactNode;
   hasMedia: boolean;
@@ -46,28 +49,40 @@ export type StaffFeedPostCardProps = {
   likeCount: number;
   commentCount: number;
   viewCount: number;
-  /** Görüntülenme satırını göster (misafir: yalnızca kendi paylaşımında) */
   showViewStats?: boolean;
-  /** true: göz satırına basınca görüntüleyen listesi (yalnızca kendi personel paylaşımı) */
   viewersListEnabled?: boolean;
   commentPreview?: { author: string; text: string }[];
-  notifOn?: boolean;
-  togglingLike: boolean;
-  togglingNotif?: boolean;
-  deletingPost: boolean;
+  deletingPost?: boolean;
+  isPinned?: boolean;
+  isUrgent?: boolean;
+  celebrationKind?: FeedCelebrationKind | null;
   onAuthorPress?: () => void;
-  /** Avatar ayrı dokunulduğunda (ör. hikaye); yalnızca `onAuthorPress` ile birlikte anlamlı */
   onAvatarPress?: () => void;
-  /** Hikaye varken uzun basınca profil (parent 1000ms kullanmalı) */
   onAvatarLongPress?: () => void;
   onLike: () => void;
   onComment: () => void;
+  /** Akışa yeniden paylaş (repost) */
+  onRepost?: () => void;
+  reposting?: boolean;
   onViewers: () => void;
-  /** Sağdaki premium “Detayları Gör” (genelde yorum sayfası) */
-  onDetailsPress: () => void;
+  onCardPress: () => void;
   onMenu: () => void;
   horizontalInset?: number;
 };
+
+const CELEBRATION_META: Record<
+  FeedCelebrationKind,
+  { emoji: string; title: string; bg: string; border: string }
+> = {
+  birthday: { emoji: '🎂', title: 'Doğum Günü', bg: '#fdf2f8', border: '#f9a8d4' },
+  employee_of_month: { emoji: '🏆', title: 'Ayın Personeli', bg: '#fffbeb', border: '#fcd34d' },
+  promotion: { emoji: '🎉', title: 'Terfi', bg: '#ecfdf5', border: '#6ee7b7' },
+};
+
+function formatCount(n: number, singular: string, plural: string): string {
+  if (n === 0) return `0 ${singular}`;
+  return `${n} ${n === 1 ? singular : plural}`;
+}
 
 export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   postTag,
@@ -77,8 +92,11 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   isGuestPost,
   authorIsOnline = false,
   roleLabel,
+  department,
+  position,
+  hotelName,
+  hotelLocation,
   timeAgo,
-  createdAtLabel,
   title,
   media,
   hasMedia,
@@ -89,27 +107,36 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   showViewStats = true,
   viewersListEnabled = true,
   commentPreview,
-  togglingLike,
   deletingPost,
+  isPinned = false,
+  isUrgent: isUrgentProp,
+  celebrationKind: celebrationKindProp,
   onAuthorPress,
   onAvatarPress,
   onAvatarLongPress,
   onLike,
   onComment,
+  onRepost,
+  reposting = false,
   onViewers,
-  onDetailsPress,
+  onCardPress,
   onMenu,
   horizontalInset = SPACING.lg,
 }: StaffFeedPostCardProps) {
   const { t } = useTranslation();
+  const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
+  const styles = useMemo(() => createPostCardStyles(palette), [isNight]);
   const [expanded, setExpanded] = useState(false);
-  const introOpacity = useRef(new Animated.Value(0)).current;
-  const introTranslateY = useRef(new Animated.Value(10)).current;
+
   const visual = getPostTagVisual(postTag);
+  const isUrgent = isUrgentProp ?? visual.urgent ?? false;
+  const celebrationKind = celebrationKindProp ?? detectFeedCelebration(title);
+  const celebration = celebrationKind ? CELEBRATION_META[celebrationKind] : null;
+  const roleBadge = getFeedRoleBadge(department, position);
+
   const rawTitle = (title ?? '').trim();
-  const isShort = rawTitle.length > 0 && rawTitle.length <= SHORT_TITLE_MAX_LEN && !rawTitle.includes('\n\n');
-  const showReadMore = rawTitle.length > 140;
-  const showAuthorAvatar = true;
+  const showReadMore = rawTitle.length > 180 || rawTitle.split('\n').length > BODY_MAX_LINES;
 
   const ringGlow = isGuestPost
     ? 'rgba(74,111,138,0.5)'
@@ -119,33 +146,14 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
         ? 'rgba(234,179,8,0.45)'
         : visual.avatarGlow;
 
-  const AuthorWrapper = onAuthorPress && !(showAuthorAvatar && onAvatarPress) ? TouchableOpacity : View;
-  const authorProps =
-    onAuthorPress && !(showAuthorAvatar && onAvatarPress)
-      ? { onPress: onAuthorPress, activeOpacity: 0.75 as const }
-      : {};
-
-  const splitHeader = showAuthorAvatar && onAvatarPress != null && onAuthorPress != null;
-
-  const showRoleChip =
-    !!roleLabel &&
-    roleLabel !== '—' &&
-    roleLabel !== t('visitorTypeGuest') &&
-    roleLabel !== t('visitorTypeStaff');
-
   const avatarUri = (authorAvatarUrl ?? '').trim() || null;
+  const splitHeader = onAvatarPress != null && onAuthorPress != null;
 
-  const avatarBlock = showAuthorAvatar ? (
+  const avatarBlock = (
     <View style={styles.avatarOuter}>
       <View style={[styles.avatarWrap, { shadowColor: ringGlow }]}>
         {avatarUri ? (
-          <CachedImage
-            uri={avatarUri}
-            style={styles.avatarImg}
-            contentFit="cover"
-            transition={0}
-            recyclingKey={avatarUri}
-          />
+          <CachedImage uri={avatarUri} style={styles.avatarImg} contentFit="cover" transition={0} recyclingKey={avatarUri} />
         ) : (
           <View style={[styles.avatarPh, isGuestPost && styles.avatarPhGuest]}>
             <Text style={[styles.avatarLetter, isGuestPost && styles.avatarLetterGuest]}>
@@ -154,398 +162,384 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
           </View>
         )}
       </View>
-      {!isGuestPost && authorIsOnline ? <OnlinePresenceDot online size={11} borderColor={pds.cardBg} /> : null}
+      {!isGuestPost && authorIsOnline ? <OnlinePresenceDot online size={11} borderColor={palette.cardBg} /> : null}
     </View>
-  ) : null;
-
-  const nameAndMeta = (
-    <>
-      <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={styles.name} />
-      <View style={styles.metaRow}>
-        {showRoleChip ? (
-          <View style={styles.roleChip}>
-            <Text style={styles.roleChipText} numberOfLines={1}>
-              {roleLabel}
-            </Text>
-          </View>
-        ) : null}
-        <Text style={styles.time} numberOfLines={1}>
-          {timeAgo || t('feedNow')}
-        </Text>
-      </View>
-      <Text style={styles.dateTime}>{createdAtLabel}</Text>
-    </>
   );
 
-  useEffect(() => {
-    if (Platform.OS === 'android') {
-      introOpacity.setValue(1);
-      introTranslateY.setValue(0);
-      return;
-    }
-    Animated.parallel([
-      Animated.timing(introOpacity, {
-        toValue: 1,
-        duration: 260,
-        useNativeDriver: true,
-      }),
-      Animated.timing(introTranslateY, {
-        toValue: 0,
-        duration: 260,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [introOpacity, introTranslateY]);
-
-  const Outer = Platform.OS === 'android' ? View : Animated.View;
-  const outerAnimStyle =
-    Platform.OS === 'android'
-      ? undefined
-      : { opacity: introOpacity, transform: [{ translateY: introTranslateY }] };
+  const nameBlock = (
+    <View style={styles.headerText}>
+      <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={styles.name} />
+      {roleBadge ? (
+        <View style={styles.roleBadgeRow}>
+          <Text style={styles.roleBadgeEmoji}>{roleBadge.emoji}</Text>
+          <Text style={styles.roleBadgeLabel} numberOfLines={1}>
+            {roleBadge.label}
+          </Text>
+        </View>
+      ) : roleLabel && roleLabel !== '—' ? (
+        <Text style={styles.roleFallback} numberOfLines={1}>
+          {roleLabel}
+        </Text>
+      ) : null}
+      {(hotelName || hotelLocation) ? (
+        <View style={styles.orgRow}>
+          {hotelName ? (
+            <Text style={styles.orgLine} numberOfLines={1}>
+              🏨 {hotelName}
+            </Text>
+          ) : null}
+          {hotelLocation ? (
+            <Text style={styles.orgLine} numberOfLines={1}>
+              📍 {hotelLocation}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
 
   return (
-    <Outer
-      style={[styles.outer, { marginHorizontal: horizontalInset }, outerAnimStyle]}
-    >
-      <View style={styles.pressable}>
-        <View style={styles.surface}>
-          <View style={styles.row}>
-            <View style={styles.inner}>
-              <View style={styles.headerRow}>
-                {splitHeader ? (
-                  <View style={styles.headerLeft}>
-                    <TouchableOpacity
-                      onPress={onAvatarPress}
-                      onLongPress={onAvatarLongPress}
-                      delayLongPress={1000}
-                      activeOpacity={0.75}
-                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                    >
-                      {avatarBlock}
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={onAuthorPress} activeOpacity={0.75} style={styles.headerText}>
-                      {nameAndMeta}
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <AuthorWrapper style={styles.headerLeft} {...authorProps}>
+    <View style={[styles.outer, { marginHorizontal: horizontalInset }]}>
+      <PressableScale onPress={onCardPress} scaleTo={0.985} haptic={false}>
+        <View
+          style={[
+            styles.surface,
+            isUrgent && styles.surfaceUrgent,
+            celebration && { backgroundColor: celebration.bg, borderColor: celebration.border },
+          ]}
+        >
+          {visual.label !== 'Diğer' ? (
+            <View style={[styles.tagStripe, { backgroundColor: visual.bar }]} />
+          ) : null}
+
+          {isPinned ? (
+            <View style={styles.pinnedBar}>
+              <Ionicons name="pin" size={14} color={theme.colors.primary} />
+              <Text style={styles.pinnedText}>Sabitlenmiş gönderi</Text>
+            </View>
+          ) : null}
+
+          {isUrgent ? (
+            <View style={styles.urgentBanner}>
+              <Text style={styles.urgentBannerText}>🚨 ACİL DUYURU</Text>
+            </View>
+          ) : null}
+
+          {celebration ? (
+            <View style={[styles.celebrationBanner, { borderColor: celebration.border }]}>
+              <Text style={styles.celebrationText}>
+                {celebration.emoji} {celebration.title}
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.inner}>
+            <View style={styles.headerRow}>
+              {splitHeader ? (
+                <View style={styles.headerLeft}>
+                  <TouchableOpacity
+                    onPress={onAvatarPress}
+                    onLongPress={onAvatarLongPress}
+                    delayLongPress={1000}
+                    activeOpacity={0.75}
+                  >
                     {avatarBlock}
-                    <View style={styles.headerText}>{nameAndMeta}</View>
-                  </AuthorWrapper>
-                )}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={onAuthorPress} activeOpacity={0.75} style={{ flex: 1, minWidth: 0 }}>
+                    {nameBlock}
+                  </TouchableOpacity>
+                </View>
+              ) : (
                 <TouchableOpacity
-                  style={styles.menuBtn}
-                  onPress={onMenu}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  activeOpacity={0.7}
-                  disabled={!!deletingPost}
+                  style={styles.headerLeft}
+                  onPress={onAuthorPress}
+                  activeOpacity={onAuthorPress ? 0.75 : 1}
+                  disabled={!onAuthorPress}
                 >
-                  {deletingPost ? (
-                    <ActivityIndicator size="small" color={theme.colors.textMuted} />
-                  ) : (
-                    <Ionicons name="ellipsis-vertical" size={20} color={theme.colors.textMuted} style={{ opacity: 0.5 }} />
-                  )}
+                  {avatarBlock}
+                  {nameBlock}
                 </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.menuBtn} onPress={onMenu} disabled={!!deletingPost} hitSlop={12}>
+                {deletingPost ? (
+                  <ActivityIndicator size="small" color={theme.colors.textMuted} />
+                ) : (
+                  <Ionicons name="ellipsis-horizontal" size={22} color={palette.subtext} />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.tagTimeRow}>
+              <View style={[styles.tagPill, { backgroundColor: visual.badgeBg }]}>
+                <Text style={styles.tagEmoji}>{visual.emoji}</Text>
+                <Text style={[styles.tagPillText, { color: visual.badgeText }]}>{visual.label}</Text>
               </View>
+              <Text style={styles.timeAgo}>{timeAgo || t('feedNow')}</Text>
+            </View>
 
-              <View style={styles.tagRow}>
-                <View style={[styles.tagPill, { backgroundColor: visual.badgeBg }]}>
-                  <Text style={[styles.tagPillText, { color: visual.badgeText }]}>{visual.label}</Text>
-                </View>
+            {rawTitle ? (
+              <View style={styles.body}>
+                <Text style={styles.postTitle} numberOfLines={expanded ? undefined : BODY_MAX_LINES}>
+                  {rawTitle}
+                </Text>
+                {showReadMore && !expanded ? (
+                  <TouchableOpacity onPress={() => setExpanded(true)} hitSlop={8}>
+                    <Text style={styles.readMore}>{t('feedReadMore')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {expanded && showReadMore ? (
+                  <TouchableOpacity onPress={() => setExpanded(false)} hitSlop={8}>
+                    <Text style={styles.readMore}>{t('feedReadLess')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <FeedTextTranslate text={rawTitle} />
               </View>
+            ) : null}
 
-              {hasMedia ? <View style={styles.mediaSlot}>{media}</View> : null}
+            {hasMedia ? <View style={styles.mediaSlot}>{media}</View> : null}
 
-              {rawTitle ? (
-                <View style={styles.body}>
-                  <Text
-                    style={[styles.postTitle, isShort && styles.postTitleShort]}
-                    numberOfLines={expanded ? undefined : 3}
-                  >
-                    {rawTitle}
-                  </Text>
-                  {showReadMore && !expanded ? (
-                    <TouchableOpacity onPress={() => setExpanded(true)} hitSlop={8} activeOpacity={0.7}>
-                      <Text style={styles.readMore}>{t('feedReadMore')}</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  {expanded && showReadMore ? (
-                    <TouchableOpacity onPress={() => setExpanded(false)} hitSlop={8} activeOpacity={0.7}>
-                      <Text style={styles.readMore}>{t('feedReadLess')}</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  <FeedTextTranslate text={rawTitle} />
-                </View>
-              ) : null}
+            {commentPreview && commentPreview.length > 0 ? (
+              <Pressable style={styles.commentPreviewWrap} onPress={onComment}>
+                {commentPreview.slice(0, 2).map((c, idx) => (
+                  <View key={`${idx}-${c.author}`} style={styles.commentPreviewRow}>
+                    <Text style={styles.commentPreviewAuthor} numberOfLines={1}>
+                      {c.author}
+                    </Text>
+                    <Text style={styles.commentPreviewText} numberOfLines={1}>
+                      {c.text}
+                    </Text>
+                  </View>
+                ))}
+                <Text style={styles.commentPreviewMore}>
+                  {commentCount > commentPreview.length ? t('feedSeeAllComments') : t('feedViewComments')}
+                </Text>
+              </Pressable>
+            ) : null}
 
-              {commentPreview && commentPreview.length > 0 ? (
-                <FastPress style={styles.commentPreviewWrap} onPress={onComment} activeOpacity={0.85}>
-                  {commentPreview.slice(0, 2).map((c, idx) => (
-                    <View key={`${idx}-${c.author}`} style={styles.commentPreviewRow}>
-                      <Text style={styles.commentPreviewAuthor} numberOfLines={1}>
-                        {c.author}
-                      </Text>
-                      <Text style={styles.commentPreviewText} numberOfLines={1}>
-                        {c.text}
-                      </Text>
-                    </View>
-                  ))}
-                  {commentCount > commentPreview.length ? (
-                    <Text style={styles.commentPreviewMore}>{t('feedSeeAllComments')}</Text>
-                  ) : (
-                    <Text style={styles.commentPreviewMore}>{t('feedViewComments')}</Text>
-                  )}
-                </FastPress>
-              ) : null}
-
-              <View style={styles.actionsRow}>
-                <View style={styles.actionLeft}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.actionPill,
-                      liked && styles.actionPillActive,
-                      pressed && styles.actionPressed,
-                    ]}
-                    onPress={onLike}
-                    disabled={!!togglingLike}
-                  >
-                    <Ionicons
-                      name={liked ? 'heart' : 'heart-outline'}
-                      size={18}
-                      color={liked ? theme.colors.error : pds.subtext}
-                    />
-                    <Text style={[styles.actionPillText, liked && styles.actionPillTextActive]}>{likeCount}</Text>
+            {(likeCount > 0 || commentCount > 0 || (showViewStats && viewCount > 0)) ? (
+              <View style={styles.statsRow}>
+                {likeCount > 0 ? (
+                  <Text style={styles.statText}>❤️ {formatCount(likeCount, 'Beğeni', 'Beğeni')}</Text>
+                ) : null}
+                {commentCount > 0 ? (
+                  <Text style={styles.statText}>💬 {formatCount(commentCount, 'Yorum', 'Yorum')}</Text>
+                ) : null}
+                {showViewStats && viewCount > 0 ? (
+                  <Pressable onPress={viewersListEnabled ? onViewers : undefined} disabled={!viewersListEnabled}>
+                    <Text style={styles.statText}>👁️ {formatCount(viewCount, 'Görüntüleme', 'Görüntüleme')}</Text>
                   </Pressable>
-
-                  <Pressable style={({ pressed }) => [styles.actionPill, pressed && styles.actionPressed]} onPress={onComment}>
-                    <Ionicons name="chatbubble-outline" size={17} color={pds.subtext} />
-                    <Text style={styles.actionPillText}>{commentCount}</Text>
-                  </Pressable>
-
-                  {showViewStats ? (
-                    viewersListEnabled ? (
-                      <Pressable style={({ pressed }) => [styles.actionPill, pressed && styles.actionPressed]} onPress={onViewers}>
-                        <Ionicons name="paper-plane-outline" size={17} color={pds.subtext} />
-                        <Text style={styles.actionPillText}>{viewCount}</Text>
-                      </Pressable>
-                    ) : (
-                      <View style={styles.actionPill}>
-                        <Ionicons name="paper-plane-outline" size={17} color={pds.subtext} />
-                        <Text style={styles.actionPillText}>{viewCount}</Text>
-                      </View>
-                    )
-                  ) : null}
-                </View>
-
-                <FastPress onPress={onDetailsPress} activeOpacity={0.88} style={styles.detailsBtnWrap} rippleColor="rgba(255,255,255,0.2)">
-                  {Platform.OS === 'android' ? (
-                    <View style={[styles.detailsBtn, styles.detailsBtnAndroid]}>
-                      <Text style={styles.detailsBtnText}>{feedSharedText('feedDetailsButton')}</Text>
-                    </View>
-                  ) : (
-                    <LinearGradient colors={pds.gradientPremium} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.detailsBtn}>
-                      <Text style={styles.detailsBtnText}>{feedSharedText('feedDetailsButton')}</Text>
-                    </LinearGradient>
-                  )}
-                </FastPress>
+                ) : null}
               </View>
+            ) : null}
+
+            <View style={styles.quickActions} onStartShouldSetResponder={() => true}>
+              <Pressable
+                style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+                onPress={onLike}
+              >
+                <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? theme.colors.error : palette.subtext} />
+                <Text style={[styles.quickLabel, liked && styles.quickLabelActive]}>
+                  Beğen{likeCount > 0 ? ` · ${likeCount}` : ''}
+                </Text>
+              </Pressable>
+              <Pressable style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]} onPress={onComment}>
+                <Ionicons name="chatbubble-outline" size={21} color={palette.subtext} />
+                <Text style={styles.quickLabel}>Yorum</Text>
+              </Pressable>
+              {viewersListEnabled ? (
+                <Pressable style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]} onPress={onViewers}>
+                  <Ionicons name="eye-outline" size={21} color={palette.subtext} />
+                  <Text style={styles.quickLabel}>Görenler</Text>
+                </Pressable>
+              ) : null}
+              {onRepost ? (
+                <Pressable
+                  style={({ pressed }) => [styles.quickBtn, pressed && styles.quickBtnPressed]}
+                  onPress={onRepost}
+                  disabled={reposting}
+                >
+                  {reposting ? (
+                    <ActivityIndicator size="small" color={palette.subtext} />
+                  ) : (
+                    <Ionicons name="arrow-redo-outline" size={21} color={palette.subtext} />
+                  )}
+                  <Text style={styles.quickLabel}>Paylaş</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.footerRow}>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.detailLink}>{feedSharedText('feedDetailsArrow')}</Text>
             </View>
           </View>
         </View>
-      </View>
-    </Outer>
+      </PressableScale>
+    </View>
   );
 });
 
 StaffFeedPostCard.displayName = 'StaffFeedPostCard';
 
-const styles = StyleSheet.create({
+function createPostCardStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
   outer: {
-    marginTop: pds.cardGap,
-    marginBottom: 0,
-    borderRadius: pds.cardRadius,
-    backgroundColor: pds.cardBg,
-    ...pds.shadowCard,
-  },
-  pressable: {
-    borderRadius: pds.cardRadius,
-    overflow: 'hidden',
+    marginTop: p.cardGap,
+    borderRadius: p.cardRadius,
+    ...p.shadowCard,
   },
   surface: {
-    borderRadius: pds.cardRadius,
+    borderRadius: p.cardRadius,
+    backgroundColor: p.cardBg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#F3F4F6',
-    backgroundColor: pds.cardBg,
+    borderColor: p.cardBorder,
+    overflow: 'hidden',
+    ...(p.cardInnerGlow !== 'transparent'
+      ? { borderTopWidth: 1, borderTopColor: p.cardInnerGlow }
+      : null),
   },
-  row: {
+  surfaceUrgent: {
+    borderWidth: 2,
+    borderColor: '#ef4444',
+  },
+  tagStripe: {
+    height: 3,
+    width: '100%',
+  },
+  pinnedBar: {
     flexDirection: 'row',
-    alignItems: 'stretch',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: p.cardPadding,
+    paddingTop: 10,
+    paddingBottom: 2,
   },
-  inner: {
-    flex: 1,
-    padding: pds.cardPadding,
+  pinnedText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
+  urgentBanner: {
+    marginHorizontal: p.cardPadding,
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(239,68,68,0.1)',
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: SPACING.sm,
+  urgentBannerText: { fontSize: 13, fontWeight: '800', color: '#b91c1c', letterSpacing: 0.4 },
+  celebrationBanner: {
+    marginHorizontal: p.cardPadding,
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
   },
-  headerLeft: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    minWidth: 0,
-  },
-  avatarOuter: {
-    position: 'relative',
-    width: 36,
-    height: 36,
-    flexShrink: 0,
-  },
+  celebrationText: { fontSize: 14, fontWeight: '800', color: p.text },
+  inner: { padding: p.cardPadding },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
+  headerLeft: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 },
+  avatarOuter: { position: 'relative', width: 44, height: 44, flexShrink: 0 },
   avatarWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.55,
+    shadowOpacity: 0.4,
     shadowRadius: 6,
-    elevation: 3,
+    elevation: 2,
   },
-  avatarImg: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.borderLight,
-  },
+  avatarImg: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.borderLight },
   avatarPh: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: theme.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarPhGuest: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.guestAvatarBg,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarLetter: { fontSize: 15, fontWeight: '700', color: theme.colors.white },
-  avatarLetterGuest: { fontSize: 15, fontWeight: '700', color: theme.colors.guestAvatarLetter },
+  avatarPhGuest: { backgroundColor: theme.colors.guestAvatarBg },
+  avatarLetter: { fontSize: 17, fontWeight: '700', color: theme.colors.white },
+  avatarLetterGuest: { color: theme.colors.guestAvatarLetter },
   headerText: { flex: 1, minWidth: 0 },
-  name: { fontSize: 15, fontWeight: '700', color: pds.text },
-  metaRow: {
+  name: { fontSize: 16, fontWeight: '700', color: p.text, lineHeight: 20 },
+  roleBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  roleBadgeEmoji: { fontSize: 13 },
+  roleBadgeLabel: { fontSize: 12, fontWeight: '700', color: p.muted, flexShrink: 1 },
+  roleFallback: { fontSize: 12, fontWeight: '600', color: p.muted, marginTop: 3 },
+  orgRow: { marginTop: 4, gap: 2 },
+  orgLine: { fontSize: 11, fontWeight: '500', color: p.subtext },
+  menuBtn: { padding: 4, marginTop: 2 },
+  tagTimeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: SPACING.sm,
-    marginTop: 4,
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 8,
   },
-  roleChip: {
-    maxWidth: '70%',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: theme.colors.borderLight,
-  },
-  roleChipText: { fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary },
-  time: { fontSize: 12, fontWeight: '500', color: pds.subtext },
-  dateTime: { fontSize: 11, color: pds.subtext, marginTop: 2 },
-  menuBtn: { padding: SPACING.sm, marginTop: -4 },
-  tagRow: { marginTop: 10 },
   tagPill: {
-    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
   },
-  tagPillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
-  mediaSlot: {
-    marginTop: 10,
-    marginLeft: -pds.cardPadding,
-    marginRight: -pds.cardPadding,
-    borderRadius: pds.mediaRadius,
-    overflow: 'hidden',
-  },
+  tagEmoji: { fontSize: 11 },
+  tagPillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
+  timeAgo: { fontSize: 12, fontWeight: '600', color: p.muted },
   body: { marginTop: SPACING.md },
-  postTitle: {
-    fontSize: 16,
-    fontWeight: '400',
-    color: pds.text,
-    lineHeight: 24,
-  },
-  postTitleShort: {
-    fontSize: 18,
-    lineHeight: 1.45 * 18,
-    fontWeight: '500',
-  },
-  readMore: {
-    marginTop: SPACING.sm,
-    fontSize: 14,
-    fontWeight: '700',
-    color: theme.colors.primary,
+  postTitle: { fontSize: 15, fontWeight: '400', color: p.text, lineHeight: 22 },
+  readMore: { marginTop: 6, fontSize: 14, fontWeight: '700', color: theme.colors.primary },
+  mediaSlot: {
+    marginTop: SPACING.md,
+    marginHorizontal: -p.cardPadding,
+    overflow: 'hidden',
   },
   commentPreviewWrap: {
     marginTop: SPACING.md,
     padding: 12,
-    borderRadius: 16,
-    backgroundColor: theme.colors.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderRadius: 12,
+    backgroundColor: p.commentPreviewBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: p.commentPreviewBorder,
   },
-  commentPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  commentPreviewAuthor: { fontSize: 12, fontWeight: '900', color: theme.colors.text, maxWidth: '42%' },
-  commentPreviewText: { flex: 1, fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
-  commentPreviewMore: { marginTop: 2, fontSize: 12, fontWeight: '800', color: theme.colors.primary },
-  actionsRow: {
+  commentPreviewRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  commentPreviewAuthor: { fontSize: 12, fontWeight: '800', color: p.text, maxWidth: '40%' },
+  commentPreviewText: { flex: 1, fontSize: 12, color: p.subtext },
+  commentPreviewMore: { marginTop: 4, fontSize: 12, fontWeight: '700', color: theme.colors.primary },
+  statsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#F3F4F6',
-  },
-  actionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 1,
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 12,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: p.divider,
   },
-  actionPressed: { opacity: 0.75 },
-  actionPill: {
+  statText: { fontSize: 13, fontWeight: '600', color: p.subtext },
+  quickActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 4,
+  },
+  quickBtn: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    minWidth: 64,
+    gap: 2,
+    borderRadius: 12,
+    backgroundColor: p.secondaryBtn,
+  },
+  quickBtnPressed: { opacity: 0.7 },
+  quickLabel: { fontSize: 11, fontWeight: '600', color: p.subtext },
+  quickLabelActive: { color: theme.colors.error },
+  footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: pds.actionBtnRadius,
-    backgroundColor: pds.pageBg,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    marginTop: 6,
+    paddingTop: 4,
   },
-  actionPillActive: {
-    backgroundColor: `${theme.colors.error}10`,
-    borderColor: `${theme.colors.error}33`,
-  },
-  actionPillText: { fontSize: 13, fontWeight: '800', color: pds.subtext, minWidth: 16 },
-  actionPillTextActive: { color: theme.colors.error },
-  detailsBtnWrap: { flexShrink: 0 },
-  detailsBtn: {
-    borderRadius: pds.actionBtnRadius,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  detailsBtnAndroid: {
-    backgroundColor: pds.indigo,
-  },
-  detailsBtnText: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  detailLink: { fontSize: 13, fontWeight: '700', color: theme.colors.primary },
 });
+}

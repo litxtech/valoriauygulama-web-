@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
-import { getMissingAreaMeta, getMissingCatalog, type MissingItemArea } from '@/lib/missingItemsCatalog';
+import { getMissingAreaMeta, getBuiltinMissingCatalog, type MissingItemArea, type ResolvedMissingCatalogCategory } from '@/lib/missingItemsCatalog';
+import { fetchMissingItemCatalog } from '@/lib/missingItemsCatalogDb';
 import type { CreateMissingReportItem, MissingItemPriority } from '@/lib/missingItems';
 
 type Props = {
@@ -41,7 +42,18 @@ function splitDraftLines(text: string): string[] {
 export function MissingItemsChecklistSheet({ visible, area, saving, onClose, onSubmit }: Props) {
   const { t, i18n } = useTranslation();
   const meta = getMissingAreaMeta(area);
-  const catalog = useMemo(() => getMissingCatalog(area), [area, i18n.language]);
+  const [catalog, setCatalog] = useState<ResolvedMissingCatalogCategory[]>(() => getBuiltinMissingCatalog(area));
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void fetchMissingItemCatalog(area).then((res) => {
+      if (!cancelled) setCatalog(res.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, area, i18n.language]);
   const priorityOptions = useMemo(
     (): { value: MissingItemPriority; label: string }[] => [
       { value: 'low', label: t('missingItemsPriorityLow') },

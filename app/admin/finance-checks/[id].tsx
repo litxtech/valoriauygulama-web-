@@ -20,7 +20,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { AdminCard } from '@/components/admin';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
-import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickGalleryImages } from '@/lib/galleryPicker';
 import {
   CHECK_STATUS_LABELS,
   fmtMoneyTry,
@@ -350,10 +350,8 @@ export default function AdminFinanceCheckDetail() {
           <TouchableOpacity
             style={styles.imgBtn}
             onPress={async () => {
-              const ok = await ensureMediaLibraryPermission();
-              if (!ok) return;
-              const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.75 });
-              if (!r.canceled && r.assets[0]?.uri) await addImage(r.assets[0].uri);
+              const uris = await pickGalleryImages({ quality: 0.75, selectionLimit: 8 });
+              for (const uri of uris) await addImage(uri);
             }}
             disabled={uploading}
           >

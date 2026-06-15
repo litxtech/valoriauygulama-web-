@@ -2,7 +2,7 @@
  * Harita içinde gönderi detayı — sayfaya gitmeden sheet ile açılır.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import { CachedImage } from '@/components/CachedImage';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { guestDisplayName, isOpaqueGuestDisplayString } from '@/lib/guestDisplayName';
 import { recordGuestFeedPostViews } from '@/lib/feedPostViewers';
+import { createOptimisticCommentId, persistGuestFeedLike } from '@/lib/feedLikeActions';
 import { useAuthStore } from '@/stores/authStore';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
@@ -100,8 +101,7 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
   const [myLike, setMyLike] = useState(false);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [commentText, setCommentText] = useState('');
-  const [togglingLike, setTogglingLike] = useState(false);
-  const [postingComment, setPostingComment] = useState(false);
+  const likeInFlightRef = useRef(false);
   const [deleting, setDeleting] = useState(false);
   const [mentionDirectory, setMentionDirectory] = useState<StaffMentionCandidate[]>([]);
   /** Mevcut oturumdaki misafir id (sil butonu / kendi gönderisi kontrolü) */
@@ -205,49 +205,94 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
   }, [loadPost]);
 
   const toggleLike = async () => {
-    if (!post) return;
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert('Giriş gerekli', 'Beğenmek için giriş yapın.');
-      return;
-    }
-    setTogglingLike(true);
-    try {
-      if (myLike) {
-        await supabase.from('feed_post_reactions').delete().eq('post_id', post.id).eq('guest_id', guestRow.guest_id);
-        setMyLike(false);
-        setLikeCount((c) => Math.max(0, c - 1));
-      } else {
-        await supabase.from('feed_post_reactions').insert({ post_id: post.id, guest_id: guestRow.guest_id, reaction: 'like' });
-        setMyLike(true);
-        setLikeCount((c) => c + 1);
+    if (!post || likeInFlightRef.current) return;
+    let guestId = myGuestId;
+    if (!guestId) {
+      const guestRow = await getOrCreateGuestForCurrentSession();
+      if (!guestRow?.guest_id) {
+        Alert.alert('Giriş gerekli', 'Beğenmek için giriş yapın.');
+        return;
       }
-    } catch (_) {}
-    setTogglingLike(false);
+      guestId = guestRow.guest_id;
+      setMyGuestId(guestId);
+    }
+
+    let wasLiked = false;
+    setMyLike((prev) => {
+      wasLiked = prev;
+      return !prev;
+    });
+    setLikeCount((c) => (wasLiked ? Math.max(0, c - 1) : c + 1));
+
+    likeInFlightRef.current = true;
+    try {
+      const { ok, error } = await persistGuestFeedLike(post.id, guestId, !wasLiked);
+      if (!ok) throw error;
+    } catch {
+      setMyLike(wasLiked);
+      setLikeCount((c) => (wasLiked ? c + 1 : Math.max(0, c - 1)));
+    } finally {
+      likeInFlightRef.current = false;
+    }
   };
 
-  const submitComment = async () => {
+  const submitComment = () => {
     if (!post) return;
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id) {
-      Alert.alert('Giriş gerekli', 'Yorum yapmak için giriş yapın.');
-      return;
-    }
     const text = commentText.trim();
     if (!text) return;
-    setPostingComment(true);
-    try {
-      const { data: inserted } = await supabase
-        .from('feed_post_comments')
-        .insert({ post_id: post.id, guest_id: guestRow.guest_id, content: text })
-        .select('id, content, created_at')
-        .single();
-    const displayName = getDisplayName();
-    setCommentText('');
-    setComments((prev) => [...prev, { id: (inserted as { id: string }).id, content: text, created_at: (inserted as { created_at: string }).created_at, staff: null, guest: { full_name: displayName } }]);
+
+    void (async () => {
+      let guestId = myGuestId;
+      if (!guestId) {
+        const guestRow = await getOrCreateGuestForCurrentSession();
+        if (!guestRow?.guest_id) {
+          Alert.alert('Giriş gerekli', 'Yorum yapmak için giriş yapın.');
+          return;
+        }
+        guestId = guestRow.guest_id;
+        setMyGuestId(guestId);
+      }
+
+      const displayName = getDisplayName();
+      const tempId = createOptimisticCommentId();
+      setCommentText('');
+      setComments((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          content: text,
+          created_at: new Date().toISOString(),
+          staff: null,
+          guest: { full_name: displayName },
+        },
+      ]);
       setCommentCount((c) => c + 1);
-    } catch (_) {}
-    setPostingComment(false);
+
+      try {
+        const { data: inserted, error } = await supabase
+          .from('feed_post_comments')
+          .insert({ post_id: post.id, guest_id: guestId, content: text })
+          .select('id, content, created_at')
+          .single();
+        if (error || !inserted) throw error;
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === tempId
+              ? {
+                  ...c,
+                  id: (inserted as { id: string }).id,
+                  created_at: (inserted as { created_at: string }).created_at,
+                }
+              : c
+          )
+        );
+      } catch {
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+        setCommentCount((c) => Math.max(0, c - 1));
+        setCommentText(text);
+        Alert.alert('Hata', 'Yorum gönderilemedi.');
+      }
+    })();
   };
 
   const deletePost = async () => {
@@ -407,8 +452,8 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
                 </View>
                 <Text style={styles.date}>{new Date(post.created_at).toLocaleString('tr-TR')}</Text>
                 <View style={styles.actionsRow}>
-                  <TouchableOpacity style={styles.actionBtn} onPress={toggleLike} disabled={togglingLike} activeOpacity={0.7}>
-                    {togglingLike ? <ActivityIndicator size="small" color={theme.colors.textMuted} /> : <Ionicons name={myLike ? 'heart' : 'heart-outline'} size={22} color={myLike ? theme.colors.error : theme.colors.text} />}
+                  <TouchableOpacity style={styles.actionBtn} onPress={toggleLike} activeOpacity={0.7}>
+                    <Ionicons name={myLike ? 'heart' : 'heart-outline'} size={22} color={myLike ? theme.colors.error : theme.colors.text} />
                     <Text style={styles.actionCount}>{likeCount}</Text>
                   </TouchableOpacity>
                   <View style={styles.actionBtn}>
@@ -482,15 +527,14 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
                   onChangeText={setCommentText}
                   multiline
                   maxLength={500}
-                  editable={!postingComment}
                 />
                 <TouchableOpacity
-                  style={[styles.commentSendBtn, (!commentText.trim() || postingComment) && styles.commentSendBtnDisabled]}
+                  style={[styles.commentSendBtn, !commentText.trim() && styles.commentSendBtnDisabled]}
                   onPress={submitComment}
-                  disabled={!commentText.trim() || postingComment}
+                  disabled={!commentText.trim()}
                   activeOpacity={0.8}
                 >
-                  {postingComment ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={20} color="#fff" />}
+                  <Ionicons name="send" size={20} color="#fff" />
                 </TouchableOpacity>
               </KeyboardAvoidingView>
             </ScrollView>

@@ -26,8 +26,10 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { canManageFacilityJournalTypes } from '@/lib/staffPermissions';
 import { theme } from '@/constants/theme';
+import { useTranslation } from 'react-i18next';
 
 function FacilityJournalIndexScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
@@ -66,7 +68,7 @@ function FacilityJournalIndexScreen() {
       const { data, error } = await listFacilityJournalRecords();
       if (error) {
         if (!opts?.silent) {
-          setLoadError(error.message ?? 'Liste yüklenemedi');
+          setLoadError(error.message ?? t('staffFjListLoadFailed'));
         }
         if (!getFacilityJournalListCache()?.length) setItems([]);
       } else {
@@ -80,7 +82,7 @@ function FacilityJournalIndexScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,11 +113,8 @@ function FacilityJournalIndexScreen() {
   );
 
   const emptyHint = useMemo(
-    () =>
-      staff?.role === 'admin'
-        ? 'Henüz kayıt yok. Yeni kayıt veya kayıt tipleri ekleyin.'
-        : 'Size açılan veya sizin oluşturduğunuz kayıtlar burada listelenir.',
-    [staff?.role]
+    () => (staff?.role === 'admin' ? t('staffFjEmptyAdmin') : t('staffFjEmptyStaff')),
+    [staff?.role, t]
   );
 
   const openRecord = useCallback(
@@ -138,7 +137,7 @@ function FacilityJournalIndexScreen() {
     <View style={styles.container}>
       <TouchableOpacity style={styles.newBtn} onPress={() => router.push(`${base}/new` as never)}>
         <Ionicons name="add-circle" size={22} color="#fff" />
-        <Text style={styles.newBtnText}>Yeni kayıt</Text>
+        <Text style={styles.newBtnText}>{t('staffFacilityJournalNew')}</Text>
       </TouchableOpacity>
 
       {loading && !items.length ? (

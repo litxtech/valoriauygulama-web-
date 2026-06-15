@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { staffListConversations } from '@/lib/messagingApi';
+import { fetchStaffMessagingUnreadCount } from '@/lib/messagingUnreadCount';
 
 interface StaffUnreadState {
   unreadCount: number;
@@ -14,8 +14,7 @@ export const useStaffUnreadMessagesStore = create<StaffUnreadState>((set) => ({
   bumpUnread: (delta = 1) =>
     set((s) => ({ unreadCount: Math.min(999, Math.max(0, s.unreadCount + delta)) })),
   refreshUnread: async (staffId) => {
-    const list = await staffListConversations(staffId);
-    const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+    const total = await fetchStaffMessagingUnreadCount(staffId);
     set({ unreadCount: total });
   },
 }));

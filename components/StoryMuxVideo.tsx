@@ -7,6 +7,7 @@ import {
   getMuxThumbnailFromMessage,
   isMuxPendingMediaUrl,
 } from '@/lib/muxChat';
+import { StoryShimmerOverlay } from '@/components/premium/StoryShimmerOverlay';
 
 type Props = {
   mediaUrl: string;
@@ -65,6 +66,7 @@ export function StoryMuxVideo({
             <ActivityIndicator color="#fff" size="large" />
           </View>
         )}
+        <StoryShimmerOverlay />
       </View>
     );
   }
@@ -85,6 +87,7 @@ export function StoryMuxVideo({
       {poster && !ready ? (
         <CachedImage uri={poster} style={[StyleSheet.absoluteFillObject, styles.poster]} contentFit="cover" />
       ) : null}
+      {!ready ? <StoryShimmerOverlay /> : null}
     </View>
   );
 }

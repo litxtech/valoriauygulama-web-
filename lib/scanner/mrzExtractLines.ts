@@ -1,3 +1,4 @@
+import { mrzScoreToConfidence, scoreMrzCandidate } from '@/lib/scanner/mrzCandidateScore';
 import { canLockMrzLiveScan, canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
 import { mrzOcrAmbiguityVariants, normalizeMrzOcrLine, normalizeMrzOcrLines } from '@/lib/scanner/mrzOcrNormalize';
 import { parseMrzToNormalized } from '@/lib/scanner/mrzParser';
@@ -101,21 +102,51 @@ function buildCandidateStrings(lines: string[]): string[] {
   return [...out];
 }
 
-export type MrzExtractResult = { mrz: string; parsed: ParsedDocument } | null;
+export type MrzExtractResult = { mrz: string; parsed: ParsedDocument; score: number } | null;
 
-/** OCR satırlarından en iyi geçerli MRZ (checksum + charset kapısı). */
+type RankedMrz = MrzExtractResult & { strictSave: boolean };
+
+function rankMrzCandidate(raw: string, parsed: ParsedDocument): RankedMrz | null {
+  const gate = canSaveMrzDocument({ rawMrz: raw, parsed });
+  const lockOk = canLockMrzLiveScan({ rawMrz: raw, parsed });
+  if (!gate.allowed && !lockOk) return null;
+  const score = scoreMrzCandidate({ rawMrz: raw, parsed });
+  return {
+    mrz: raw,
+    parsed: {
+      ...parsed,
+      confidence: mrzScoreToConfidence(score),
+    },
+    score,
+    strictSave: gate.allowed,
+  };
+}
+
+/** OCR satırlarından en iyi geçerli MRZ (tüm adaylar puanlanır). */
 export function extractMrzFromLinesBest(lines: string[]): MrzExtractResult | null {
   const candidates = buildCandidateStrings(lines);
+  const ranked: RankedMrz[] = [];
+
   for (const raw of candidates) {
     for (const variant of mrzOcrAmbiguityVariants(raw)) {
       const parsed = parseMrzToNormalized(variant);
-      const gate = canSaveMrzDocument({ rawMrz: variant, parsed });
-      if (gate.allowed || canLockMrzLiveScan({ rawMrz: variant, parsed })) {
-        return { mrz: variant, parsed };
-      }
+      const row = rankMrzCandidate(variant, parsed);
+      if (row) ranked.push(row);
     }
   }
-  return null;
+
+  if (ranked.length === 0) return null;
+
+  ranked.sort((a, b) => {
+    if (a.strictSave !== b.strictSave) return a.strictSave ? -1 : 1;
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.parsed.checksumsValid === true && b.parsed.checksumsValid !== true) return -1;
+    if (b.parsed.checksumsValid === true && a.parsed.checksumsValid !== true) return 1;
+    return 0;
+  });
+
+  const best = ranked[0]!;
+  return { mrz: best.mrz, parsed: best.parsed, score: best.score };
 }
 
 /** @deprecated extractMrzFromLinesBest kullanın */

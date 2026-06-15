@@ -121,6 +121,8 @@ function resolveByNotificationType(
         return { pathname: '/staff/tasks', params: { focusAssignment: assignmentId } };
       }
       return '/staff/tasks';
+    case 'staff_task_done':
+      return '/admin/tasks';
     case 'staff_debt':
       if (debtId) {
         return { pathname: '/staff/debts/[id]', params: { id: debtId } } as Href;
@@ -137,10 +139,49 @@ function resolveByNotificationType(
     case 'breakfast_confirmation_approved':
     case 'breakfast_confirmation_rejected':
       return '/staff/breakfast-confirm';
+    case 'breakfast_morning_briefing':
+      return '/staff/breakfast-briefing';
+    case 'tech_fault_report':
+      return isStaff ? '/staff/technical-assets/faults' : '/admin/technical-assets/faults';
+    case 'tech_asset_status':
+    case 'tech_maintenance_log': {
+      const assetId = pickStr(data, 'assetId', 'asset_id');
+      if (assetId) {
+        if (isStaff) {
+          return { pathname: '/staff/technical-assets/[id]', params: { id: assetId } } as Href;
+        }
+        return { pathname: '/admin/technical-assets/assets/[id]', params: { id: assetId } } as Href;
+      }
+      return isStaff ? '/staff/technical-assets' : '/admin/technical-assets/assets';
+    }
+    case 'hotel_facility_status':
+      return isStaff ? '/admin/hotel-pulse' : '/customer';
+    case 'report_status': {
+      const reportId = pickStr(data, 'incidentReportId', 'incident_report_id', 'reportId', 'report_id');
+      if (reportId) {
+        const adminPath = { pathname: '/admin/incident-reports/[id]', params: { id: reportId } } as Href;
+        const staffPath = { pathname: '/staff/incident-reports/[id]', params: { id: reportId } } as Href;
+        return isStaff ? staffPath : adminPath;
+      }
+      return isStaff ? '/staff/incident-reports' : '/admin/incident-reports';
+    }
+    case 'department_rule':
+    case 'department_rule_reminder': {
+      const ruleId = pickStr(data, 'ruleId', 'rule_id');
+      if (ruleId) {
+        return { pathname: '/staff/department-rules/[id]', params: { id: ruleId } } as Href;
+      }
+      return '/staff/department-rules';
+    }
+    case 'kitchen_revenue_entry':
+    case 'kitchen_expense_entry':
+    case 'kitchen_monthly_market_expense':
+      return '/staff/kitchen-ops/expenses';
     case 'message':
     case 'chat_message':
     case 'chat_mention':
     case 'chat_screenshot':
+    case 'app_screenshot':
       if (conversationId) {
         if (isStaff) {
           return { pathname: '/staff/chat/[id]', params: { id: conversationId } };
@@ -155,6 +196,29 @@ function resolveByNotificationType(
       return '/staff/messages';
     case 'kbs_document_captured':
       return '/staff/kbs/capture-history';
+    case 'payment_received':
+    case 'payment_failed':
+    case 'admin_payment_received':
+    case 'admin_tip_payment': {
+      const payId = pickStr(data, 'paymentRequestId', 'payment_request_id');
+      const screen = pickStr(data, 'screen');
+      const url = pickStr(data, 'url');
+      if (screen === 'staff_payment' || url.startsWith('/staff/payments')) {
+        if (payId) return `/staff/payments/${payId}` as Href;
+        return '/staff/payments';
+      }
+      if (payId) return `/admin/payments/${payId}` as Href;
+      const lane = pickStr(data, 'lane');
+      if (lane === 'tips' || lane === 'kitchen' || lane === 'hotel') {
+        return `/admin/payments?lane=${lane}` as Href;
+      }
+      return isStaff ? '/staff/payments' : '/admin/payments';
+    }
+    case 'staff_tip':
+      return '/staff/tips';
+    case 'guest_tip_paid':
+    case 'staff_tip_thank_you':
+      return '/customer/tips';
     case 'story_like':
     case 'story_reply':
       return isStaff ? '/staff/feed' : '/customer';

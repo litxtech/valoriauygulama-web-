@@ -59,3 +59,29 @@ export async function completeStaffAssignment(params: {
 
   return error ? { error: error.message } : {};
 }
+
+export async function failStaffAssignment(params: {
+  assignmentId: string;
+  staffId: string;
+  reason: string;
+}): Promise<{ error?: string }> {
+  const reason = params.reason.trim();
+  if (reason.length < 3) {
+    return { error: 'Açıklama en az 3 karakter olmalı.' };
+  }
+
+  const { error } = await supabase
+    .from('staff_assignments')
+    .update({
+      status: 'failed',
+      failed_at: new Date().toISOString(),
+      failure_reason: reason,
+      completion_note: null,
+      completion_proof_urls: [],
+    })
+    .eq('id', params.assignmentId)
+    .eq('assigned_staff_id', params.staffId)
+    .in('status', ['pending', 'in_progress']);
+
+  return error ? { error: error.message } : {};
+}

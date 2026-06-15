@@ -9,13 +9,16 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
-import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickGalleryImages } from '@/lib/galleryPicker';
 import { MAX_COMPLETION_PROOF_PHOTOS } from '@/lib/staffAssignmentComplete';
 import { copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
 import { useTranslation } from 'react-i18next';
@@ -30,8 +33,13 @@ type Props = {
 
 export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSubmit }: Props) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
+
+  /** Android edge-to-edge: insets.bottom sık 0 gelir; sistem nav çubuğu butonların üstüne biner. */
+  const footerBottomPad =
+    getEffectiveBottomInset(insets) + theme.spacing.lg + (Platform.OS === 'android' ? 12 : 0);
 
   useEffect(() => {
     if (!visible) {
@@ -91,22 +99,18 @@ export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSub
       );
       return;
     }
-    const ok = await ensureMediaLibraryPermission({
-      title: t('taskSheetGalleryPermTitle'),
-      message: t('taskSheetGalleryPermMsg'),
-      settingsMessage: t('taskSheetGalleryPermSettings'),
-    });
-    if (!ok) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
+    const uris = await pickGalleryImages({
       quality: 0.8,
       selectionLimit: MAX_COMPLETION_PROOF_PHOTOS - photos.length,
+      permission: {
+        title: t('taskSheetGalleryPermTitle'),
+        message: t('taskSheetGalleryPermMsg'),
+        settingsMessage: t('taskSheetGalleryPermSettings'),
+      },
     });
-    if (result.canceled || !result.assets?.length) return;
-    for (const asset of result.assets) {
+    for (const uri of uris) {
       if (photos.length >= MAX_COMPLETION_PROOF_PHOTOS) break;
-      if (asset.uri) await addPhoto(asset.uri);
+      await addPhoto(uri);
     }
   };
 
@@ -115,8 +119,13 @@ export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSub
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
-      <View style={styles.sheet}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+      onRequestClose={close}
+    >
+      <SafeAreaView style={styles.sheet} edges={['top']}>
         <View style={styles.header}>
           <Text style={styles.title}>{t('taskSheetTitle')}</Text>
           <TouchableOpacity onPress={close} hitSlop={12} disabled={saving}>
@@ -124,7 +133,11 @@ export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSub
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.taskName} numberOfLines={3}>
             {taskTitle}
           </Text>
@@ -173,7 +186,7 @@ export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSub
           />
         </ScrollView>
 
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: footerBottomPad }]}>
           <TouchableOpacity style={styles.cancelBtn} onPress={close} disabled={saving}>
             <Text style={styles.cancelBtnText}>{t('cancelAction')}</Text>
           </TouchableOpacity>
@@ -188,13 +201,14 @@ export function TaskCompletionSheet({ visible, taskTitle, saving, onClose, onSub
             )}
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   sheet: { flex: 1, backgroundColor: theme.colors.background },
+  scrollView: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,10 +264,12 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     gap: 10,
-    padding: theme.spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.lg,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
+    ...(Platform.OS === 'android' ? { elevation: 8, zIndex: 10 } : {}),
   },
   cancelBtn: {
     paddingHorizontal: 16,

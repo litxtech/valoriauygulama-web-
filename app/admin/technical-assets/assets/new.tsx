@@ -19,7 +19,7 @@ import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
-import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { pickGalleryImages } from '@/lib/galleryPicker';
 
 const CRIT = [
   { value: 'low', label: 'Düşük' },
@@ -164,24 +164,17 @@ export default function AdminTechnicalAssetNewScreen() {
   };
 
   const pickFromGallery = async () => {
-    const granted = await ensureMediaLibraryPermission({
-      title: 'Galeri izni',
-      message: 'Varlık fotoğrafı seçmek için galeri erişimi gerekiyor.',
-      settingsMessage: 'Galeri izni kapalı. Ayarlardan galeri iznini açın.',
-    });
-    if (!granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
-      selectionLimit: MAX_GALLERY_PICK,
+    const picked = await pickGalleryImages({
       quality: 0.72,
+      selectionLimit: MAX_GALLERY_PICK,
+      permission: {
+        title: 'Galeri izni',
+        message: 'Varlık fotoğrafı seçmek için galeri erişimi gerekiyor.',
+        settingsMessage: 'Galeri izni kapalı. Ayarlardan galeri iznini açın.',
+      },
     });
-    if (result.canceled || result.assets.length === 0) return;
-    const picked = result.assets.map((a) => a.uri).filter(Boolean);
-    setPhotoUris((prev) => {
-      const next = [...prev, ...picked];
-      return next.slice(0, 24);
-    });
+    if (!picked.length) return;
+    setPhotoUris((prev) => [...prev, ...picked].slice(0, 24));
   };
 
   const takePhoto = async () => {

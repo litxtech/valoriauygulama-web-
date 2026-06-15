@@ -1,10 +1,12 @@
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
-import { categoryAccentColor, menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
+import { categoryAccentColor, menuUi, menuWebCardHover } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { coverImageUrl, formatMenuPrice, type HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 
-type Layout = 'grid' | 'list' | 'compact';
+type Layout = 'grid' | 'list' | 'compact' | 'premium' | 'featured';
 
 type Props = {
   item: HotelKitchenMenuItemWithImages;
@@ -16,13 +18,90 @@ type Props = {
 const COMPACT_THUMB = Platform.OS === 'web' ? 88 : 76;
 
 export function PublicKitchenMenuDishCard({ item, onPress, onImagePress, layout = 'grid' }: Props) {
+  const { t } = useTranslation();
   const cover = coverImageUrl(item);
   const catColor = categoryAccentColor(item.category_title);
   const photoCount = item.image_count ?? item.images.length;
+  const isPremium = layout === 'premium';
+  const isFeatured = layout === 'featured';
   const isCompact = layout === 'compact';
-  const isGrid = layout === 'grid' && Platform.OS === 'web' && !isCompact;
-  const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid');
+  const isGrid = layout === 'grid' && Platform.OS === 'web' && !isCompact && !isPremium && !isFeatured;
+  const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid' && !isPremium && !isFeatured);
   const desc = (item.description ?? '').trim();
+
+  if (isFeatured) {
+    return (
+      <Pressable
+        style={({ pressed }) => [styles.featuredCard, menuUi.shadowMd, menuWebCardHover, pressed && styles.cardPressed]}
+        onPress={onPress}
+      >
+        <View style={styles.featuredImageWrap}>
+          {cover ? (
+            <CachedImage uri={cover} style={styles.featuredImage} contentFit="cover" recyclingKey={item.id} priority="high" />
+          ) : (
+            <View style={[styles.featuredImage, styles.imagePh]}>
+              <Ionicons name="restaurant" size={32} color={menuUi.accent} />
+            </View>
+          )}
+          <LinearGradient colors={['transparent', 'rgba(12, 24, 41, 0.82)']} style={styles.featuredGradient} />
+          <View style={[styles.featuredCat, { backgroundColor: catColor }]}>
+            <Text style={styles.featuredCatText} numberOfLines={1}>{item.category_title}</Text>
+          </View>
+          {photoCount > 1 ? (
+            <View style={styles.featuredPhotoBadge}>
+              <Ionicons name="images-outline" size={11} color="#fff" />
+              <Text style={styles.featuredPhotoBadgeText}>{photoCount}</Text>
+            </View>
+          ) : null}
+          <View style={styles.featuredOverlay}>
+            <Text style={styles.featuredName} numberOfLines={2}>{item.name}</Text>
+            <Text style={styles.featuredPrice}>{formatMenuPrice(item.price)}</Text>
+          </View>
+        </View>
+      </Pressable>
+    );
+  }
+
+  if (isPremium) {
+    return (
+      <Pressable
+        style={({ pressed }) => [styles.premiumCard, menuUi.shadowSm, menuWebCardHover, pressed && styles.cardPressed]}
+        onPress={onPress}
+      >
+        <View style={styles.premiumImageWrap}>
+          {cover ? (
+            <CachedImage uri={cover} style={styles.premiumImage} contentFit="cover" recyclingKey={item.id} priority="high" />
+          ) : (
+            <View style={[styles.premiumImage, styles.imagePh]}>
+              <Ionicons name="restaurant" size={36} color={menuUi.accent} />
+            </View>
+          )}
+          <LinearGradient colors={['transparent', 'rgba(12, 24, 41, 0.35)']} style={styles.premiumImageFade} />
+          {photoCount > 1 ? (
+            <View style={styles.premiumPhotoBadge}>
+              <Ionicons name="images-outline" size={11} color="#fff" />
+              <Text style={styles.premiumPhotoBadgeText}>{photoCount}</Text>
+            </View>
+          ) : null}
+          <View style={styles.premiumViewBtn}>
+            <Text style={styles.premiumViewBtnText}>{t('publicKitchenMenuViewDetails')}</Text>
+            <Ionicons name="arrow-forward" size={14} color="#fff" />
+          </View>
+        </View>
+        <View style={styles.premiumBody}>
+          <View style={[styles.premiumCatDot, { backgroundColor: catColor }]} />
+          <View style={styles.premiumTextCol}>
+            <Text style={[styles.premiumCategory, { color: catColor }]} numberOfLines={1}>
+              {item.category_title}
+            </Text>
+            <Text style={styles.premiumName} numberOfLines={2}>{item.name}</Text>
+            {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
+          </View>
+          <Text style={styles.premiumPrice}>{formatMenuPrice(item.price)}</Text>
+        </View>
+      </Pressable>
+    );
+  }
 
   if (isCompact) {
     return (
@@ -229,6 +308,140 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   compactChevron: { marginRight: 12, opacity: 0.7 },
+  cardPressed: { opacity: 0.96, transform: [{ scale: 0.985 }] },
+  featuredCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: menuUi.cardBg,
+    borderWidth: 1,
+    borderColor: menuUi.border,
+    height: 320,
+  },
+  featuredImageWrap: { flex: 1, position: 'relative' },
+  featuredImage: { width: '100%', height: '100%' },
+  featuredGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%' },
+  featuredCat: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    maxWidth: '70%',
+  },
+  featuredCatText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  featuredPhotoBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  featuredPhotoBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  featuredOverlay: { position: 'absolute', left: 16, right: 16, bottom: 16 },
+  featuredName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -0.3,
+    lineHeight: 26,
+  },
+  featuredPrice: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: menuUi.accentLight,
+    marginTop: 6,
+  },
+  premiumCard: {
+    backgroundColor: menuUi.cardBg,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: menuUi.border,
+    height: '100%',
+  },
+  premiumImageWrap: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    position: 'relative',
+    backgroundColor: menuUi.imagePlaceholder,
+  },
+  premiumImage: { width: '100%', height: '100%' },
+  premiumImageFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '45%' },
+  premiumPhotoBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  premiumPhotoBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  premiumViewBtn: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.72)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  premiumViewBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  premiumBody: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 16,
+    gap: 10,
+    flex: 1,
+  },
+  premiumCatDot: { width: 4, height: 44, borderRadius: 2, marginTop: 2 },
+  premiumTextCol: { flex: 1, minWidth: 0 },
+  premiumCategory: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  premiumName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: menuUi.navy,
+    marginTop: 4,
+    lineHeight: 22,
+    letterSpacing: -0.2,
+  },
+  premiumDesc: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: menuUi.webMuted,
+    marginTop: 6,
+  },
+  premiumPrice: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: menuUi.price,
+    marginTop: 2,
+  },
   card: {
     backgroundColor: menuUi.cardBg,
     borderRadius: 16,

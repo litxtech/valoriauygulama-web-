@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState, useRef, useCallback, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, usePathname, type Href } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
-import { appTabBar } from '@/constants/tabBarTheme';
+import { appTabBar, getAppTabBarColors } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,33 +21,24 @@ import { useAdminWarningStore } from '@/stores/adminWarningStore';
 import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintStore';
 import { StaffBoardHeaderEye } from '@/components/header/StaffHeaderActions';
 import {
-  StaffFeedHeaderLeft,
+  StaffFeedHeaderLeftConnected,
   StaffFeedHeaderRight,
   feedHeaderSideMinWidth,
 } from '@/components/header/StaffFeedHeaderControls';
-import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
 import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
-import { buildStaffHamburgerMenuLayout } from '@/lib/staffHamburgerMenu';
-import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { useStaffTabHrefs } from '@/hooks/useStaffTabHrefs';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
-import { staffRoleLabel } from '@/lib/staffAssignments';
+import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
 import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
+import { hapticSelection } from '@/lib/hapticsSafe';
 import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
 import {
   scheduleStaffMessagingUnreadRefresh,
   subscribeMessagingUnreadLive,
 } from '@/lib/messagingUnreadSync';
-import {
-  clearStaffHamburgerReopenPending,
-  isStaffFeedHomePath,
-  shouldReopenStaffHamburgerOnFeedReturn,
-  navigateStaffFromHamburgerMenu,
-  signalStaffNavigatedFromHamburger,
-} from '@/lib/staffHamburgerNavigation';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -59,8 +51,10 @@ function TabBarScaledIcon({ focused, children }: { focused: boolean; children: R
 }
 
 function StaffProfileTabIcon({ color: _c, focused }: { color: string; focused: boolean }) {
+  const { isNight } = usePremiumTheme();
+  const tabBarColors = getAppTabBarColors(isNight);
   const staff = useAuthStore((s) => s.staff);
-  const c = focused ? pds.indigo : appTabBar.inactive;
+  const c = focused ? tabBarColors.fallbackActive : tabBarColors.inactive;
   const avatarUri = staff?.profile_image ?? null;
   if (avatarUri) {
     return (
@@ -90,44 +84,10 @@ function StaffProfileBackToHome() {
 }
 
 const HEADER_CTRL = 34;
-const BADGE_REFRESH_MIN_GAP_MS = Platform.OS === 'android' ? 60_000 : 30_000;
+const BADGE_REFRESH_MIN_GAP_MS = Platform.OS === 'android' ? 90_000 : 60_000;
 const ANDROID_REALTIME_DEFER_MS = 3500;
-const MENU_PREMOUNT_DELAY_MS = Platform.OS === 'android' ? 600 : 300;
 const ANDROID_BADGE_HEAVY_DEFER_MS = 2800;
 const IS_ANDROID = Platform.OS === 'android';
-
-/** pathname değişimlerini ana layout’tan ayır — stack (mutfak vb.) gezinmesinde Tabs yeniden çizilmesin. */
-function StaffFeedHamburgerPathEffects({
-  onCloseMenu,
-  onReopenMenu,
-}: {
-  onCloseMenu: () => void;
-  onReopenMenu: () => void;
-}) {
-  const pathname = usePathname();
-  const prevPathRef = useRef(pathname);
-
-  useEffect(() => {
-    const prev = prevPathRef.current;
-    prevPathRef.current = pathname;
-
-    if (!isStaffFeedHomePath(pathname)) {
-      onCloseMenu();
-      return;
-    }
-
-    if (!shouldReopenStaffHamburgerOnFeedReturn(prev, pathname)) return;
-
-    if (IS_ANDROID) {
-      const task = runAfterUiReady(onReopenMenu, { delayMs: 120 });
-      return () => task.cancel();
-    }
-    onReopenMenu();
-  }, [pathname, onCloseMenu, onReopenMenu]);
-
-  return null;
-}
-
 
 function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['staff']): boolean {
   if (!staff) return false;
@@ -143,15 +103,36 @@ function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['sta
 }
 
 
+function GlassHeaderBackground() {
+  const { colors } = usePremiumTheme();
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: colors.glassStrong,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.glassBorder,
+      }}
+    />
+  );
+}
+
 export default function StaffTabsLayout() {
+  return <StaffTabsLayoutInner />;
+}
+
+function StaffTabsLayoutInner() {
   const { t } = useTranslation();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
+  const tabBarColors = getAppTabBarColors(isNight);
+  const headerTitleColor = isNight ? premiumColors.text : '#111827';
+  const headerFg = isNight ? premiumColors.text : IG_HEADER_FG;
   const insets = useSafeAreaInsets();
   const tabBarHeight = getFloatingTabBarTotalHeight(insets);
   const tabBarInnerHeight = getFloatingTabBarInnerHeight();
   const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
-  const orgUiConfig = useOrganizationUiFeaturesStore((s) => s.config);
   const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
   const tabHrefs = useStaffTabHrefs();
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
@@ -160,15 +141,10 @@ export default function StaffTabsLayout() {
   const refreshUnreadMessages = useStaffUnreadMessagesStore((s) => s.refreshUnread);
   const adminWarningCount = useAdminWarningStore((s) => s.count);
   const refreshAdminWarning = useAdminWarningStore((s) => s.refresh);
-  const newAssignMenuLabel = useStaffNewAssignmentHintStore((s) => s.showHamburgerLabel);
   const refreshNewAssignHint = useStaffNewAssignmentHintStore((s) => s.refresh);
-  const markNewAssignMenuOpened = useStaffNewAssignmentHintStore((s) => s.markHamburgerMenuOpened);
   const bumpNewAssignFromRealtime = useStaffNewAssignmentHintStore((s) => s.bumpFromRealtime);
+  const newTasksTabCount = useStaffNewAssignmentHintStore((s) => s.pendingTasksTabCount);
   const router = useRouter();
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [menuInstant, setMenuInstant] = useState(false);
-  /** İlk açılışa kadar ağır menü ağacını mount etme (Android başlangıç jank’i). */
-  const [menuSheetMounted, setMenuSheetMounted] = useState(false);
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
   const canKbsMrz = canStaffUseMrzScan(staff);
@@ -286,7 +262,7 @@ export default function StaffTabsLayout() {
 
     const start = () => {
       if (cancelled) return;
-      unsub = subscribeMessagingUnreadLive(staffId, () => {
+      unsub = subscribeMessagingUnreadLive({ kind: 'staff', staffId }, () => {
         scheduleStaffMessagingUnreadRefresh(staffId, IS_ANDROID ? 520 : 280);
       });
     };
@@ -341,59 +317,7 @@ export default function StaffTabsLayout() {
     };
   }, [staff?.id, loadBoardList]);
 
-  const menuLayout = useMemo(() => {
-    if (!staff) return null;
-    return buildStaffHamburgerMenuLayout(
-      t,
-      staff
-        ? {
-            role: staff.role,
-            app_permissions: staff.app_permissions,
-            hidden_menu_item_ids: staff.hidden_menu_item_ids,
-            kbs_access_enabled: staff.kbs_access_enabled,
-            department: staff.department,
-          }
-        : null,
-      orgUiConfig
-    );
-  }, [
-    menuSheetMounted,
-    t,
-    staff?.role,
-    staff?.app_permissions,
-    staff?.hidden_menu_item_ids,
-    staff?.kbs_access_enabled,
-    staff?.department,
-    orgUiConfig,
-  ]);
-
-  const menuIdentity = useMemo(
-    () =>
-      staff
-        ? {
-            fullName: staff.full_name,
-            profileImage: staff.profile_image ?? null,
-            roleLabel: staffRoleLabel(staff.role),
-            department: staff.department,
-            organizationName: staff.organization?.name ?? null,
-          }
-        : null,
-    [
-      staff?.full_name,
-      staff?.profile_image,
-      staff?.role,
-      staff?.department,
-      staff?.organization?.name,
-    ]
-  );
-
-  useEffect(() => {
-    if (!staff?.id) return;
-    const interval = setInterval(() => {
-      void refreshTabBadges({ reason: 'interval' });
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [staff?.id, refreshTabBadges]);
+  // Periyodik badge poll kaldırıldı — realtime + ön plan debounce yeterli.
 
   // Android: ön plana gelince tab rozetleri güncellensin (debounce — aynı anda 4 ağ isteği UI’ı kilitlemesin)
   useEffect(() => {
@@ -412,58 +336,15 @@ export default function StaffTabsLayout() {
 
   const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu, canKbsMrz, canIdCapture);
 
-  useEffect(() => {
-    if (!staff?.id) return;
-    const task = runAfterUiReady(() => setMenuSheetMounted(true), { delayMs: MENU_PREMOUNT_DELAY_MS });
-    return () => task.cancel();
-  }, [staff?.id]);
-
-  const closeMenu = useCallback(() => {
-    setMenuInstant(false);
-    setMenuVisible(false);
-    clearStaffHamburgerReopenPending();
-  }, []);
-
-  const navigateFromHamburgerMenu = useCallback(
-    (href: Href | string) => {
-      signalStaffNavigatedFromHamburger();
-      setMenuVisible(false);
-      setMenuInstant(false);
-      navigateStaffFromHamburgerMenu(router, String(href));
-    },
-    [router]
-  );
-
-  const reopenMenuFromNavigation = useCallback(() => {
-    setMenuSheetMounted(true);
-    setMenuInstant(true);
-    setMenuVisible(true);
-  }, []);
-
-  const handleMenuPress = useCallback(() => {
-    if (menuVisible) {
-      closeMenu();
-      return;
-    }
-    setMenuSheetMounted(true);
-    setMenuInstant(IS_ANDROID);
-    setMenuVisible(true);
-    const staffId = staff?.id;
-    if (staffId) void markNewAssignMenuOpened(staffId);
-  }, [menuVisible, closeMenu, staff?.id, markNewAssignMenuOpened]);
-
   const renderFeedHeaderLeft = useCallback(
     () => (
-      <StaffFeedHeaderLeft
-        menuOpen={menuVisible}
-        onMenuPress={handleMenuPress}
-        menuHighlightLabel={newAssignMenuLabel ? t('newBtn') : null}
+      <StaffFeedHeaderLeftConnected
         showShare={showHeaderFabMenu}
         onSharePress={() => setFabVisible(true)}
         shareAccessibilityLabel={shareFabLabel}
       />
     ),
-    [menuVisible, handleMenuPress, newAssignMenuLabel, t, showHeaderFabMenu, shareFabLabel]
+    [showHeaderFabMenu, shareFabLabel]
   );
 
   const renderFeedHeaderRight = useCallback(
@@ -482,36 +363,46 @@ export default function StaffTabsLayout() {
 
   const renderTabBar = useCallback(
     (props: BottomTabBarProps) => (
-      <FloatingIslandTabBar {...props} surfaceColor={pds.cardBg} borderColor={pds.borderLight} />
+      <FloatingIslandTabBar
+        {...props}
+        surfaceColor={isNight ? premiumColors.pageBg : 'transparent'}
+        borderColor={tabBarColors.border}
+        hidden={false}
+      />
     ),
-    []
+    [isNight, premiumColors.pageBg, tabBarColors.border]
   );
 
   return (
     <>
-    <StaffFeedHamburgerPathEffects onCloseMenu={closeMenu} onReopenMenu={reopenMenuFromNavigation} />
     <StaffBoardAnnouncementToast />
     <Tabs
       tabBar={renderTabBar}
       screenListeners={({ route }) => ({
-        tabPress: () => {
+        tabPress: (e) => {
           if (route.name === 'admin') {
+            e.preventDefault();
             clearAdminAutoOpenSuppress();
-          } else {
-            signalStaffExitedAdminPanelFromRoot();
+            router.push('/admin' as Href);
+            hapticSelection();
+            return;
           }
+          hapticSelection();
+          signalStaffExitedAdminPanelFromRoot();
         },
       })}
       screenOptions={({ route }) => {
         const feedTab = isStaffFeedTab(route.name);
+        const adminTab = route.name === 'admin';
         return {
-        /** iOS: tüm sekmeler erken mount (flicker önleme). Android: lazy — aynı anda feed+stok+mesaj mount etmesin. */
-        lazy: Platform.OS === 'android',
+        /** iOS: tüm sekmeler erken mount. Android: lazy — admin sekmesi hariç (dokunuş gecikmesi olmasın). */
+        sceneStyle: { backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg },
+        lazy: Platform.OS === 'android' && !adminTab,
         /** Android: ziyaret edilmeyen sekmeyi bellekten ayır. iOS: feed flicker önleme için tut. */
         detachInactiveScreens: Platform.OS === 'android',
         tabBarHideOnKeyboard: true,
-        tabBarActiveTintColor: pds.indigo,
-        tabBarInactiveTintColor: pds.subtext,
+        tabBarActiveTintColor: tabBarColors.fallbackActive,
+        tabBarInactiveTintColor: tabBarColors.inactive,
         tabBarStyle: {
           backgroundColor: 'transparent',
           borderTopWidth: 0,
@@ -539,18 +430,18 @@ export default function StaffTabsLayout() {
         tabBarInactiveBackgroundColor: 'transparent',
         // Opak header: tüm sekmelerde içerik çubuk altında hizalanır (şeffaf + manuel padding feed’e özel hata yaratıyordu).
         headerStyle: {
-          backgroundColor: 'rgba(255,255,255,0.96)',
+          backgroundColor: 'transparent',
           elevation: 0,
           shadowOpacity: 0,
-          borderBottomWidth: 1,
-          borderBottomColor: '#eee',
+          borderBottomWidth: 0,
         },
+        headerBackground: () => <GlassHeaderBackground />,
         headerTransparent: false,
         headerShadowVisible: false,
         headerTitleAlign: 'center' as const,
-        headerTintColor: IG_HEADER_FG,
-        headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarStyle: 'dark' as const } : null),
+        headerTintColor: headerFg,
+        headerTitleStyle: { fontSize: 19, fontWeight: '800', color: headerTitleColor, letterSpacing: 0.3 },
+        ...(Platform.OS === 'android' ? { statusBarStyle: (isNight ? 'light' : 'dark') as const } : null),
         headerLeftContainerStyle: feedTab
           ? { paddingLeft: 2, minWidth: feedHeaderSideW }
           : { paddingLeft: 0, minWidth: 0 },
@@ -575,14 +466,14 @@ export default function StaffTabsLayout() {
             alignItems: 'center',
             justifyContent: 'center',
           },
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarLabel: t('staffTab'),
           tabBarIcon: ({ focused }) => (
             <TabBarScaledIcon focused={focused}>
               <Ionicons
                 name={focused ? 'people' : 'people-outline'}
                 size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
@@ -594,14 +485,17 @@ export default function StaffTabsLayout() {
           href: tabHrefs.tasks,
           title: t('tasks'),
           headerTitle: t('tasks'),
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarLabel: t('tasks'),
+          tabBarBadge:
+            newTasksTabCount > 0 ? (newTasksTabCount > 99 ? '99+' : newTasksTabCount) : undefined,
+          tabBarBadgeStyle: { backgroundColor: theme.colors.error },
           tabBarIcon: ({ focused }) => (
             <TabBarScaledIcon focused={focused}>
               <Ionicons
                 name={focused ? 'checkbox' : 'checkbox-outline'}
                 size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
@@ -613,14 +507,14 @@ export default function StaffTabsLayout() {
           href: tabHrefs.stock,
           title: t('stockTab'),
           headerTitle: t('stockManagement'),
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarLabel: t('stockTab'),
           tabBarIcon: ({ focused }) => (
             <TabBarScaledIcon focused={focused}>
               <Ionicons
                 name={focused ? 'cube' : 'cube-outline'}
                 size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
@@ -632,7 +526,7 @@ export default function StaffTabsLayout() {
           href: tabHrefs.messages,
           title: t('messages'),
           headerTitle: t('teamChat'),
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarShowLabel: false,
           tabBarIcon: ({ focused }) => (
             <CenterMessageTabBarIcon focused={focused} unreadCount={unreadMessagesCount} />
@@ -644,14 +538,14 @@ export default function StaffTabsLayout() {
         options={{
           title: t('screenEmergency'),
           headerTitle: t('screenEmergency'),
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarLabel: t('screenEmergency'),
           tabBarIcon: ({ focused }) => (
             <TabBarScaledIcon focused={focused}>
               <Ionicons
                 name={focused ? 'warning' : 'warning-outline'}
                 size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
@@ -684,20 +578,8 @@ export default function StaffTabsLayout() {
       <Tabs.Screen
         name="acceptances"
         options={{
-          href: tabHrefs.acceptances,
+          href: null,
           title: t('acceptances'),
-          headerTitle: t('acceptancesHeader'),
-          tabBarActiveTintColor: pds.indigo,
-          tabBarLabel: t('acceptances'),
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'document-text' : 'document-text-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
         }}
       />
       <Tabs.Screen
@@ -718,8 +600,9 @@ export default function StaffTabsLayout() {
         name="admin"
         options={{
           title: t('adminTab'),
-          headerTitle: t('managementPanel'),
-          tabBarActiveTintColor: pds.indigo,
+          headerShown: false,
+          sceneStyle: { backgroundColor: '#f8fafc' },
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           tabBarLabel: t('adminTab'),
           tabBarBadge: staff?.role === 'admin' && adminWarningCount > 0 ? (adminWarningCount > 99 ? '99+' : adminWarningCount) : undefined,
           tabBarBadgeStyle: { backgroundColor: theme.colors.error },
@@ -728,7 +611,7 @@ export default function StaffTabsLayout() {
               <Ionicons
                 name={focused ? 'shield' : 'shield-outline'}
                 size={TAB_ICON_SIZE}
-                color={focused ? pds.indigo : appTabBar.inactive}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
@@ -742,7 +625,7 @@ export default function StaffTabsLayout() {
           title: t('myProfile'),
           headerTitle: '',
           headerShown: true,
-          tabBarActiveTintColor: pds.indigo,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
           headerTransparent: true,
           headerBackground: () => <View style={StyleSheet.absoluteFillObject} />,
           headerStyle: {
@@ -761,20 +644,6 @@ export default function StaffTabsLayout() {
         }}
       />
     </Tabs>
-    {menuSheetMounted ? (
-      <View style={styles.menuOverlay} pointerEvents="box-none">
-      <StaffQuickMenuSheet
-        visible={menuVisible}
-        instant={menuInstant}
-        onClose={closeMenu}
-        closeLabel={t('close')}
-        identity={menuIdentity}
-        onProfilePress={() => navigateFromHamburgerMenu('/staff/profile')}
-        layout={menuLayout}
-        onSelect={(href) => navigateFromHamburgerMenu(href)}
-      />
-      </View>
-    ) : null}
     <StaffFeedShareSheet
       visible={fabVisible}
       onClose={() => setFabVisible(false)}
@@ -798,11 +667,6 @@ export default function StaffTabsLayout() {
 }
 
 const styles = StyleSheet.create({
-  menuOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 200,
-    elevation: 200,
-  },
   profileBackBtn: {
     marginLeft: 4,
     width: 40,

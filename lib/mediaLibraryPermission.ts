@@ -2,20 +2,11 @@ import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { emitPermissionLiveChange } from '@/lib/permissionLive';
 
-type EnsureMediaLibraryPermissionOptions = {
+export type EnsureMediaLibraryPermissionOptions = {
   title?: string;
   message?: string;
   settingsMessage?: string;
 };
-
-function askDisclosure(title: string, message: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: 'Vazgeç', style: 'cancel', onPress: () => resolve(false) },
-      { text: 'İzin ver', onPress: () => resolve(true) },
-    ]);
-  });
-}
 
 /** iOS'ta Alert kapandıktan sonra sistem izin penceresinin düzgün görünmesi için kısa gecikme */
 function deferOnIos<T>(fn: () => Promise<T>): Promise<T> {
@@ -42,6 +33,36 @@ function askOpenSettings(message: string): Promise<boolean> {
   });
 }
 
+/**
+ * Galeriyi gecikmesiz açar: önce izin diyaloğu göstermez (iOS’ta sistem picker ile birlikte istenir).
+ * Kalıcı red durumunda ayarlara yönlendirir.
+ */
+export async function launchImageLibraryFast(
+  pickerOptions: ImagePicker.ImagePickerOptions,
+  settingsMessage?: string
+): Promise<ImagePicker.ImagePickerResult | null> {
+  if (Platform.OS === 'android') {
+    return ImagePicker.launchImageLibraryAsync(pickerOptions);
+  }
+
+  const settingsMsg =
+    settingsMessage ??
+    'Galeri izni kapalı. Devam etmek için ayarlardan galeri iznini açın.';
+
+  const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+  if (current.status === 'granted') {
+    emitPermissionLiveChange();
+    return ImagePicker.launchImageLibraryAsync(pickerOptions);
+  }
+  if (current.canAskAgain === false) {
+    await askOpenSettings(settingsMsg);
+    return null;
+  }
+  const result = await ImagePicker.launchImageLibraryAsync(pickerOptions);
+  emitPermissionLiveChange();
+  return result;
+}
+
 export async function ensureMediaLibraryPermission(
   options?: EnsureMediaLibraryPermissionOptions
 ): Promise<boolean> {
@@ -50,13 +71,9 @@ export async function ensureMediaLibraryPermission(
     return true;
   }
 
-  const title = options?.title ?? 'Galeri izni';
-  const message =
-    options?.message ??
-    'Galeri iznini, uygulamada fotoğraf secip paylasmak/yuklemek icin istiyoruz.';
   const settingsMessage =
     options?.settingsMessage ??
-    'Galeri izni kapali. Devam etmek icin ayarlardan galeri iznini acin.';
+    'Galeri izni kapalı. Devam etmek için ayarlardan galeri iznini açın.';
 
   const current = await ImagePicker.getMediaLibraryPermissionsAsync();
   if (current.status === 'granted') {
@@ -64,13 +81,11 @@ export async function ensureMediaLibraryPermission(
     return true;
   }
 
-  // canAskAgain false ise OS izin penceresi bir daha gösterilmez – ayarlara yönlendir
   if (current.canAskAgain === false) {
     await askOpenSettings(settingsMessage);
     return false;
   }
 
-  // Uygulama içinde doğrudan sistem izin penceresini göster (Ara Alert atlanır)
   const requested = await deferOnIos(() =>
     ImagePicker.requestMediaLibraryPermissionsAsync()
   );

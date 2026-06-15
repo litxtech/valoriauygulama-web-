@@ -29,7 +29,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
@@ -43,6 +43,11 @@ import { formatDateTime } from '@/lib/date';
 import { log } from '@/lib/logger';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
+import { StaffFeedDashboardStrip } from '@/components/premium/StaffFeedDashboardStrip';
+import { StaffFeedStoryAvatarCard } from '@/components/premium/StaffFeedStoryAvatarCard';
+import { resolveStaffPresenceStatus } from '@/lib/workStatusAura';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { StoryMuxVideo } from '@/components/StoryMuxVideo';
 import {
   buildStaffAvatarLookup,
@@ -53,7 +58,17 @@ import {
 } from '@/lib/feedAuthorJoin';
 import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { guestDisplayName } from '@/lib/guestDisplayName';
-import { loadFeedPostViewers, recordStaffFeedPostViews, type FeedPostViewerRow } from '@/lib/feedPostViewers';
+import {
+  loadFeedPostViewers,
+  openFeedPostViewerProfile,
+  recordStaffFeedPostViews,
+  type FeedPostViewerRow,
+} from '@/lib/feedPostViewers';
+import { fetchFeedPostViewersCached, getCachedFeedPostViewers, prefetchFeedPostViewers } from '@/lib/feedViewersCache';
+import { loadFeedRepostSource, repostFeedPostAsStaff } from '@/lib/feedRepost';
+import { createOptimisticCommentId, persistStaffFeedLike } from '@/lib/feedLikeActions';
+import { feedCommentInputRowBottomPad, FEED_COMMENT_MODAL_ANDROID_PROPS } from '@/lib/feedCommentSheetLayout';
+import { useFeedCommentSheetAndroidLayout } from '@/hooks/useFeedCommentSheetAndroidLayout';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
@@ -83,7 +98,9 @@ import { getMuxHlsPlaybackUrl, isMuxPendingMediaUrl } from '@/lib/muxChat';
 import { pollStoryPlaybackReady } from '@/lib/muxStoryUpload';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
+import { FeedPostMediaGrid, feedPostMediaGridHeight } from '@/components/FeedPostMediaGrid';
+import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
+import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import { MentionableText } from '@/components/MentionableText';
 
@@ -92,7 +109,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STAFF_FEED_CACHE_KEY = 'staff_feed_cache_v1';
 const FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 30;
 const FEED_FETCH_LIMIT = Platform.OS === 'android' ? 28 : 50;
-const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 1400 : 350;
+const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 2200 : 800;
 const FEED_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 20 : 64;
 
 function firstName(fullName: string | null | undefined): string {
@@ -147,6 +164,7 @@ type StaffAvatarRow = {
   role?: string | null;
   profile_hidden_by_admin?: boolean | null;
   is_online?: boolean | null;
+  work_status?: string | null;
 };
 
 type StoryPlayerState = {
@@ -172,6 +190,8 @@ export default function StaffHomeScreen() {
     [dateLocale]
   );
   const { staff } = useAuthStore();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
+  const palette = usePersonelDesign();
   const insets = useSafeAreaInsets();
   const [posts, setPosts] = useState<FeedPostRow[]>([]);
   const [staffList, setStaffList] = useState<StaffAvatarRow[]>([]);
@@ -188,9 +208,8 @@ export default function StaffHomeScreen() {
   const [myLikes, setMyLikes] = useState<Set<string>>(new Set());
   const [commentsByPost, setCommentsByPost] = useState<Record<string, CommentRow[]>>({});
   const [commentText, setCommentText] = useState<Record<string, string>>({});
-  const [postingComment, setPostingComment] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<{ postId: string; commentId: string; author: string } | null>(null);
-  const [togglingLike, setTogglingLike] = useState<string | null>(null);
+  const likeOpSeqRef = useRef<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [notificationPrefs, setNotificationPrefs] = useState<Set<string>>(new Set());
@@ -212,10 +231,18 @@ export default function StaffHomeScreen() {
   const [reportDetails, setReportDetails] = useState<string>('');
   const [submittingReport, setSubmittingReport] = useState(false);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [repostingPostId, setRepostingPostId] = useState<string | null>(null);
   const [promotingPostId, setPromotingPostId] = useState<string | null>(null);
   const [commentsSheetPostId, setCommentsSheetPostId] = useState<string | null>(null);
   const [commentsSheetRefreshing, setCommentsSheetRefreshing] = useState(false);
-  const [commentSheetKeyboardH, setCommentSheetKeyboardH] = useState(0);
+  const commentInputBottomPad = useMemo(
+    () => feedCommentInputRowBottomPad(insets.bottom, 0),
+    [insets.bottom]
+  );
+  const commentSheetPost = useMemo(
+    () => (commentsSheetPostId ? posts.find((x) => x.id === commentsSheetPostId) ?? null : null),
+    [posts, commentsSheetPostId]
+  );
   const [mentionSuggestions, setMentionSuggestions] = useState<StaffMentionCandidate[]>([]);
   const [mentionDirectory, setMentionDirectory] = useState<StaffMentionCandidate[]>([]);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -258,15 +285,33 @@ export default function StaffHomeScreen() {
   const COMMENT_SHEET_DRAG_ACTIVATION = Platform.OS === 'android' ? 2 : 4;
   const commentSheetHeight = useRef(new Animated.Value(COMMENT_SHEET_INITIAL)).current;
   const commentSheetCurrentH = useRef(COMMENT_SHEET_INITIAL);
+  const commentKeyboardOpenRef = useRef(false);
+
+  const commentAndroidLayout = useFeedCommentSheetAndroidLayout({
+    sheetOpen: !!commentsSheetPostId,
+    insetsTop: insets.top,
+    insetsBottom: insets.bottom,
+    initialSheetHeight: COMMENT_SHEET_INITIAL,
+    sheetHeightAnim: commentSheetHeight,
+    sheetHeightCurrentRef: commentSheetCurrentH,
+  });
+
+  useEffect(() => {
+    commentKeyboardOpenRef.current = commentAndroidLayout.keyboardOpen;
+  }, [commentAndroidLayout.keyboardOpen]);
 
   const commentSheetPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onStartShouldSetPanResponderCapture: () => false,
-      onMoveShouldSetPanResponder: (_, g) =>
-        Math.abs(g.dy) > COMMENT_SHEET_DRAG_ACTIVATION && Math.abs(g.dy) > Math.abs(g.dx),
-      onMoveShouldSetPanResponderCapture: (_, g) =>
-        Math.abs(g.dy) > COMMENT_SHEET_DRAG_ACTIVATION && Math.abs(g.dy) > Math.abs(g.dx),
+      onMoveShouldSetPanResponder: (_, g) => {
+        if (commentKeyboardOpenRef.current) return false;
+        return Math.abs(g.dy) > COMMENT_SHEET_DRAG_ACTIVATION && Math.abs(g.dy) > Math.abs(g.dx);
+      },
+      onMoveShouldSetPanResponderCapture: (_, g) => {
+        if (commentKeyboardOpenRef.current) return false;
+        return Math.abs(g.dy) > COMMENT_SHEET_DRAG_ACTIVATION && Math.abs(g.dy) > Math.abs(g.dx);
+      },
       onPanResponderMove: (_, g) => {
         const newH = commentSheetCurrentH.current - g.dy;
         const clamped = Math.max(COMMENT_SHEET_INITIAL * 0.5, Math.min(COMMENT_SHEET_MAX, newH));
@@ -298,8 +343,6 @@ export default function StaffHomeScreen() {
     if (commentsSheetPostId) {
       commentSheetCurrentH.current = COMMENT_SHEET_INITIAL;
       commentSheetHeight.setValue(COMMENT_SHEET_INITIAL);
-    } else {
-      setCommentSheetKeyboardH(0);
     }
   }, [commentsSheetPostId]);
 
@@ -339,17 +382,6 @@ export default function StaffHomeScreen() {
       cancelled = true;
     };
   }, []);
-
-  // Android: yorum kartında klavye açılınca titremeyi önlemek için KeyboardAvoidingView behavior kapatıldı, manuel padding
-  useEffect(() => {
-    if (Platform.OS !== 'android' || !commentsSheetPostId) return;
-    const show = Keyboard.addListener('keyboardDidShow', (e) => setCommentSheetKeyboardH(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setCommentSheetKeyboardH(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [commentsSheetPostId]);
 
   useEffect(() => {
     const postId = commentsSheetPostId;
@@ -396,42 +428,10 @@ export default function StaffHomeScreen() {
     }
   }, [params.openPostId, router]);
 
-  useEffect(() => {
-    const id = pendingScrollPostId;
-    if (!id) return;
-    if (!posts.some((p) => p.id === id)) {
-      const t = setTimeout(() => {
-        setPendingScrollPostId((cur) => (cur === id ? null : cur));
-      }, 2500);
-      return () => clearTimeout(t);
-    }
-    const attempt = () => {
-      setPendingScrollPostId((cur) => {
-        if (cur !== id) return cur;
-        const y = postYRef.current[id];
-        if (y != null && scrollRef.current) {
-          scrollRef.current.scrollTo({ y: Math.max(0, y - 20), animated: true });
-          return null;
-        }
-        return cur;
-      });
-    };
-    const raf = requestAnimationFrame(attempt);
-    const t1 = setTimeout(attempt, 80);
-    const t2 = setTimeout(attempt, 250);
-    const t3 = setTimeout(attempt, 600);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [posts, pendingScrollPostId]);
-
   const loadStaffList = useCallback(async (hiddenStaffIds?: Set<string>): Promise<StaffAvatarRow[]> => {
     const { data } = await supabase
       .from('staff')
-      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, organization:organization_id(name, kind)')
+      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, work_status, organization:organization_id(name, kind)')
       .eq('is_active', true)
       .is('deleted_at', null)
       .order('full_name');
@@ -442,7 +442,7 @@ export default function StaffHomeScreen() {
       if (!byKey.has(key)) byKey.set(key, r);
     });
     const mapped = Array.from(byKey.values()).map(
-      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin, is_online }) => ({
+      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin, is_online, work_status }) => ({
         id,
         full_name,
         profile_image,
@@ -453,6 +453,7 @@ export default function StaffHomeScreen() {
         role,
         profile_hidden_by_admin: profile_hidden_by_admin ?? null,
         is_online: is_online ?? null,
+        work_status: work_status ?? null,
       })
     );
     const visible = mapped.filter((s) => !hiddenStaffIds?.has(s.id));
@@ -502,7 +503,7 @@ export default function StaffHomeScreen() {
     }
     const listWithMedia = list.map((p) => ({ ...p, media_items: mediaItemsByPost[p.id] ?? [] }));
     setPosts(listWithMedia);
-    setPlayingPreviewId(listWithMedia.find((p) => p.media_type === 'video')?.id ?? null);
+    setPlayingPreviewId(null);
 
     if (ids.length === 0) {
       setLikeCounts({});
@@ -531,14 +532,14 @@ export default function StaffHomeScreen() {
     }
     const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
       supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-      supabase.from('feed_post_comments').select('post_id, id, parent_comment_id, staff_id, guest_id, content, created_at, staff:staff_id(full_name, verification_badge, profile_image, deleted_at, profile_hidden_by_admin), guest:guest_id(full_name, photo_url, deleted_at)').in('post_id', ids).order('created_at', { ascending: true }),
+      supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
       supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('staff_id', staff.id),
       supabase.rpc('get_feed_post_view_counts', { post_ids: ids }),
       supabase.from('feed_post_notification_prefs').select('post_id').eq('staff_id', staff.id).in('post_id', ids),
     ]);
     if (!mountedRef.current) return;
     const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
-    const comments = (commentsRes.data ?? []) as CommentWithPostId[];
+    const comments = (commentsRes.data ?? []) as { post_id: string }[];
     const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
     if (viewCountsRes.error) {
       log.warn('get_feed_post_view_counts RPC error', viewCountsRes.error);
@@ -556,22 +557,8 @@ export default function StaffHomeScreen() {
       if (pid) viewCount[pid] = Number(cnt) || 0;
     });
     const commentCount: Record<string, number> = {};
-    const byPost: Record<string, CommentRow[]> = {};
     comments.forEach((c) => {
-      if ((c.staff_id && hidden.hiddenStaffIds.has(c.staff_id)) || (c.guest_id && hidden.hiddenGuestIds.has(c.guest_id))) return;
-      if ((c.staff_id && (c.staff as { deleted_at?: string | null } | null)?.deleted_at) || (c.guest_id && (c.guest as { deleted_at?: string | null } | null)?.deleted_at)) return;
       commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
-      if (!byPost[c.post_id]) byPost[c.post_id] = [];
-      byPost[c.post_id].push({
-        id: c.id,
-        staff_id: c.staff_id ?? null,
-        guest_id: c.guest_id ?? null,
-        parent_comment_id: (c as { parent_comment_id?: string | null }).parent_comment_id ?? null,
-        content: c.content,
-        created_at: c.created_at,
-        staff: c.staff,
-        guest: c.guest,
-      });
     });
     setLikeCounts(likeCount);
     setCommentCounts(commentCount);
@@ -580,7 +567,7 @@ export default function StaffHomeScreen() {
     const notificationPostIds = notifPrefs.map((n) => n.post_id);
     setMyLikes(new Set(myLikePostIds));
     setNotificationPrefs(new Set(notificationPostIds));
-    setCommentsByPost(byPost);
+    setCommentsByPost({});
     AsyncStorage.setItem(
       STAFF_FEED_CACHE_KEY,
       JSON.stringify({
@@ -591,7 +578,6 @@ export default function StaffHomeScreen() {
         viewCounts: viewCount,
         myLikePostIds,
         notificationPostIds,
-        commentsByPost: byPost,
         cachedAt: Date.now(),
       })
     ).catch(() => {});
@@ -651,6 +637,14 @@ export default function StaffHomeScreen() {
     }
   }, [staff, commentsSheetPostId]);
 
+  useEffect(() => {
+    if (!commentsSheetPostId) return;
+    void refreshCommentsSheet();
+    searchStaffMentionCandidates('', 80)
+      .then((rows) => setMentionDirectory(rows))
+      .catch(() => setMentionDirectory([]));
+  }, [commentsSheetPostId, refreshCommentsSheet]);
+
   const loadStories = useCallback(async () => {
     if (!staff?.id) return;
     try {
@@ -697,6 +691,7 @@ export default function StaffHomeScreen() {
   }, [fullscreenPostMedia?.uri, fullscreenPostMedia?.mediaType]);
 
   const loadFeedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadStoriesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleLoadFeedFromRealtime = useCallback(() => {
     if (loadFeedDebounceRef.current) clearTimeout(loadFeedDebounceRef.current);
     loadFeedDebounceRef.current = setTimeout(() => {
@@ -704,10 +699,18 @@ export default function StaffHomeScreen() {
       void loadFeed();
     }, FEED_REALTIME_DEBOUNCE_MS);
   }, [loadFeed]);
+  const scheduleLoadStoriesFromRealtime = useCallback(() => {
+    if (loadStoriesDebounceRef.current) clearTimeout(loadStoriesDebounceRef.current);
+    loadStoriesDebounceRef.current = setTimeout(() => {
+      loadStoriesDebounceRef.current = null;
+      void loadStories();
+    }, FEED_REALTIME_DEBOUNCE_MS);
+  }, [loadStories]);
 
   useEffect(() => {
     return () => {
       if (loadFeedDebounceRef.current) clearTimeout(loadFeedDebounceRef.current);
+      if (loadStoriesDebounceRef.current) clearTimeout(loadStoriesDebounceRef.current);
     };
   }, []);
 
@@ -738,16 +741,17 @@ export default function StaffHomeScreen() {
     const channel = supabase
       .channel('feed_stories_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_stories' }, () => {
-        loadStories();
+        scheduleLoadStoriesFromRealtime();
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadStories]);
+  }, [scheduleLoadStoriesFromRealtime]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    setVisibleFeedCount(FEED_PAGE_SIZE);
     await Promise.all([loadFeed(), loadStories()]);
     setRefreshing(false);
   }, [loadFeed, loadStories]);
@@ -769,11 +773,53 @@ export default function StaffHomeScreen() {
     const others = staffList.filter((s) => s.id !== staff.id);
     return me ? [me, ...others] : staffList;
   }, [staffList, staff?.id]);
-  const visiblePosts = useMemo(() => posts.slice(0, visibleFeedCount), [posts, visibleFeedCount]);
+  const visiblePosts = useMemo(() => {
+    const slice = posts.slice(0, visibleFeedCount);
+    return [...slice].sort((a, b) => {
+      const aPin = a.post_tag === 'duyuru' || a.post_tag === 'acil' ? 1 : 0;
+      const bPin = b.post_tag === 'duyuru' || b.post_tag === 'acil' ? 1 : 0;
+      const aUrgent = getPostTagVisual(a.post_tag).urgent ? 2 : aPin;
+      const bUrgent = getPostTagVisual(b.post_tag).urgent ? 2 : bPin;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+  }, [posts, visibleFeedCount]);
 
   useEffect(() => {
-    setVisibleFeedCount(FEED_PAGE_SIZE);
-  }, [posts]);
+    const id = pendingScrollPostId;
+    if (!id) return;
+    if (!posts.some((p) => p.id === id)) {
+      const t = setTimeout(() => {
+        setPendingScrollPostId((cur) => (cur === id ? null : cur));
+      }, 2500);
+      return () => clearTimeout(t);
+    }
+    if (!visiblePosts.some((p) => p.id === id) && visibleFeedCount < posts.length) {
+      setVisibleFeedCount((c) => Math.min(c + FEED_PAGE_SIZE, posts.length));
+      return;
+    }
+    const attempt = () => {
+      setPendingScrollPostId((cur) => {
+        if (cur !== id) return cur;
+        const y = postYRef.current[id];
+        if (y != null && scrollRef.current) {
+          scrollRef.current.scrollTo({ y: Math.max(0, y - 20), animated: true });
+          return null;
+        }
+        return cur;
+      });
+    };
+    const raf = requestAnimationFrame(attempt);
+    const t1 = setTimeout(attempt, 80);
+    const t2 = setTimeout(attempt, 250);
+    const t3 = setTimeout(attempt, 600);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [posts, pendingScrollPostId, visibleFeedCount, visiblePosts]);
 
   const closeStoryPlayer = useCallback((force = false) => {
     if (!force && (storyMenuOpen || storyViewersModal || storyRepliesModal || storyReportOpen)) {
@@ -1086,6 +1132,15 @@ export default function StaffHomeScreen() {
     [router]
   );
 
+  const openFeedViewerProfile = useCallback(
+    (viewer: FeedPostViewerRow) => {
+      if (!viewer.staff_id && !viewer.guest_id) return;
+      setViewersModalPostId(null);
+      openFeedPostViewerProfile(router, viewer, 'staff');
+    },
+    [router]
+  );
+
   useEffect(() => {
     log.info('staff/feed/story', 'storyViewersModal visibility changed', { visible: storyViewersModal });
   }, [storyViewersModal]);
@@ -1173,169 +1228,268 @@ export default function StaffHomeScreen() {
     loadStories,
   ]);
 
-  const toggleLike = async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
-    if (!staff) return;
-    setTogglingLike(postId);
-    try {
-      const liked = myLikes.has(postId);
-      if (liked) {
-        await supabase.from('feed_post_reactions').delete().eq('post_id', postId).eq('staff_id', staff.id);
+  const toggleLike = useCallback(
+    async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
+      if (!staff) return;
+      const opId = (likeOpSeqRef.current[postId] ?? 0) + 1;
+      likeOpSeqRef.current[postId] = opId;
+
+      let wasLiked = false;
+      setMyLikes((prev) => {
+        wasLiked = prev.has(postId);
+        if (wasLiked) {
+          const next = new Set(prev);
+          next.delete(postId);
+          return next;
+        }
+        return new Set(prev).add(postId);
+      });
+      setLikeCounts((prev) => {
+        const c = prev[postId] ?? 0;
+        return { ...prev, [postId]: wasLiked ? Math.max(0, c - 1) : c + 1 };
+      });
+
+      const wantLiked = !wasLiked;
+      try {
+        const { ok, error } = await persistStaffFeedLike(postId, staff.id, wantLiked);
+        if (likeOpSeqRef.current[postId] !== opId) return;
+        if (!ok) throw error ?? new Error('like failed');
+        if (wantLiked) {
+          if (authorStaffId && authorStaffId !== staff.id) {
+            const liker = staff.full_name ?? feedSharedText('staffOneEmployee');
+            void sendNotification({
+              staffId: String(authorStaffId),
+              title: t('notifNewLikeTitle'),
+              body: t('notifNewLikeBody', { name: liker }),
+              category: 'staff',
+              notificationType: 'feed_like',
+              data: { screen: 'staff_feed', url: '/staff', postId },
+            }).then((res) => {
+              if (res?.error) log.warn('StaffFeed', 'Beğeni bildirimi', res.error);
+            });
+          } else if (authorGuestId) {
+            const liker = staff.full_name ?? feedSharedText('staffOneEmployee');
+            void sendNotification({
+              guestId: authorGuestId,
+              title: t('notifNewLikeTitle'),
+              body: t('notifNewLikeBody', { name: liker }),
+              category: 'guest',
+              notificationType: 'feed_like',
+              data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
+            }).then((res) => {
+              if (res?.error) log.warn('StaffFeed', 'Beğeni bildirimi (misafir)', res.error);
+            });
+          }
+        }
+      } catch (e) {
+        if (likeOpSeqRef.current[postId] !== opId) return;
         setMyLikes((prev) => {
+          if (wasLiked) return new Set(prev).add(postId);
           const next = new Set(prev);
           next.delete(postId);
           return next;
         });
-        setLikeCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 1) - 1) }));
-      } else {
-        await supabase.from('feed_post_reactions').insert({ post_id: postId, staff_id: staff.id, reaction: 'like' });
-        setMyLikes((prev) => new Set(prev).add(postId));
-        setLikeCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-        if (authorStaffId && authorStaffId !== staff.id) {
-          const liker = staff.full_name ?? feedSharedText('staffOneEmployee');
-          const res = await sendNotification({
-            staffId: String(authorStaffId),
-            title: t('notifNewLikeTitle'),
-            body: t('notifNewLikeBody', { name: liker }),
-            category: 'staff',
-            notificationType: 'feed_like',
-            data: { screen: 'staff_feed', url: '/staff', postId },
-          });
-          if (res?.error) log.warn('StaffFeed', 'Beğeni bildirimi', res.error);
-        } else if (authorGuestId) {
-          const liker = staff.full_name ?? feedSharedText('staffOneEmployee');
-          const res = await sendNotification({
-            guestId: authorGuestId,
-            title: t('notifNewLikeTitle'),
-            body: t('notifNewLikeBody', { name: liker }),
-            category: 'guest',
-            notificationType: 'feed_like',
-            data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
-          });
-          if (res?.error) log.warn('StaffFeed', 'Beğeni bildirimi (misafir)', res.error);
-        }
+        setLikeCounts((prev) => {
+          const c = prev[postId] ?? 0;
+          return { ...prev, [postId]: wasLiked ? c + 1 : Math.max(0, c - 1) };
+        });
+        log.warn('staff/feed toggleLike', (e as Error)?.message ?? e);
       }
-    } catch (e) {
-      // ignore
-    }
-    setTogglingLike(null);
-  };
+    },
+    [staff, t]
+  );
 
-  const submitComment = async (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
+  const submitComment = (postId: string, authorStaffId: string | null, authorGuestId: string | null) => {
     const text = (commentText[postId] ?? '').trim();
     if (!staff || !text) return;
-    setPostingComment(postId);
+
     const target = replyTarget?.postId === postId ? replyTarget : null;
-    try {
-      const { data: inserted } = await supabase
-        .from('feed_post_comments')
-        .insert({ post_id: postId, staff_id: staff.id, content: text, parent_comment_id: target?.commentId ?? null })
-        .select('id, parent_comment_id, content, created_at, staff_id')
-        .single();
-      setCommentText((prev) => ({ ...prev, [postId]: '' }));
-      setReplyTarget((prev) => (prev?.postId === postId ? null : prev));
-      const newComment: CommentRow = {
-        id: (inserted as { id: string }).id,
-        parent_comment_id: (inserted as { parent_comment_id?: string | null }).parent_comment_id ?? null,
-        content: text,
-        created_at: (inserted as { created_at: string }).created_at,
-        staff: { full_name: staff.full_name },
-        guest: null,
-      };
-      setCommentsByPost((prev) => ({
-        ...prev,
-        [postId]: [...(prev[postId] ?? []), newComment],
-      }));
-      setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-      const notifyBody = `${staff.full_name ?? 'Bir çalışan'}: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
-      const targetComment = target ? (commentsByPost[postId] ?? []).find((c) => c.id === target.commentId) : null;
-      const notifiedStaffIds = new Set<string>();
-      if (targetComment?.staff_id && targetComment.staff_id !== staff.id) {
-        notifiedStaffIds.add(String(targetComment.staff_id));
-        const res = await sendNotification({
-          staffId: String(targetComment.staff_id),
-          title: 'Yorumuna yanit geldi',
-          body: notifyBody,
-          category: 'staff',
-          notificationType: 'feed_comment_reply',
-          data: { screen: 'staff_feed', url: '/staff', postId, parentCommentId: targetComment.id },
+    const parentCommentId = target?.commentId ?? null;
+    const existingComments = commentsByPost[postId] ?? [];
+    const targetComment = parentCommentId
+      ? existingComments.find((c) => c.id === parentCommentId)
+      : null;
+    const tempId = createOptimisticCommentId();
+
+    setCommentText((prev) => ({ ...prev, [postId]: '' }));
+    setReplyTarget((prev) => (prev?.postId === postId ? null : prev));
+
+    const optimistic: CommentRow = {
+      id: tempId,
+      parent_comment_id: parentCommentId,
+      content: text,
+      created_at: new Date().toISOString(),
+      staff_id: staff.id,
+      staff: { full_name: staff.full_name },
+      guest: null,
+    };
+    setCommentsByPost((prev) => ({
+      ...prev,
+      [postId]: [...(prev[postId] ?? []), optimistic],
+    }));
+    setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+
+    void (async () => {
+      try {
+        const { data: inserted, error } = await supabase
+          .from('feed_post_comments')
+          .insert({ post_id: postId, staff_id: staff.id, content: text, parent_comment_id: parentCommentId })
+          .select('id, parent_comment_id, content, created_at, staff_id')
+          .single();
+        if (error || !inserted) throw error ?? new Error('comment insert failed');
+
+        setCommentsByPost((prev) => ({
+          ...prev,
+          [postId]: (prev[postId] ?? []).map((c) =>
+            c.id === tempId
+              ? {
+                  ...c,
+                  id: (inserted as { id: string }).id,
+                  parent_comment_id:
+                    (inserted as { parent_comment_id?: string | null }).parent_comment_id ?? parentCommentId,
+                  created_at: (inserted as { created_at: string }).created_at,
+                  staff_id: staff.id,
+                }
+              : c
+          ),
+        }));
+
+        const notifyBody = t('staffFeedCommentNotifBody', {
+          name: staff.full_name ?? t('staffFeedSomeone'),
+          text: `${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`,
         });
-        if (res?.error) log.warn('StaffFeed', 'Yanit bildirimi', res.error);
-      } else if (targetComment?.guest_id) {
-        const res = await sendNotification({
-          guestId: targetComment.guest_id,
-          title: 'Yorumuna yanit geldi',
-          body: notifyBody,
-          category: 'guest',
-          notificationType: 'feed_comment_reply',
-          data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId, parentCommentId: targetComment.id },
-        });
-        if (res?.error) log.warn('StaffFeed', 'Yanit bildirimi (misafir)', res.error);
-      } else if (authorStaffId && authorStaffId !== staff.id) {
-        notifiedStaffIds.add(String(authorStaffId));
-        const res = await sendNotification({
-          staffId: String(authorStaffId),
-          title: 'Yeni yorum',
-          body: notifyBody,
-          category: 'staff',
-          notificationType: 'feed_comment',
-          data: { screen: 'staff_feed', url: '/staff', postId },
-        });
-        if (res?.error) log.warn('StaffFeed', 'Yorum bildirimi', res.error);
-      } else if (authorGuestId) {
-        const res = await sendNotification({
-          guestId: authorGuestId,
-          title: 'Yeni yorum',
-          body: notifyBody,
-          category: 'guest',
-          notificationType: 'feed_comment',
-          data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
-        });
-        if (res?.error) log.warn('StaffFeed', 'Yorum bildirimi (misafir)', res.error);
+        const notifiedStaffIds = new Set<string>();
+        if (targetComment?.staff_id && targetComment.staff_id !== staff.id) {
+          notifiedStaffIds.add(String(targetComment.staff_id));
+          void sendNotification({
+            staffId: String(targetComment.staff_id),
+            title: t('staffFeedCommentReplyTitle'),
+            body: notifyBody,
+            category: 'staff',
+            notificationType: 'feed_comment_reply',
+            data: { screen: 'staff_feed', url: '/staff', postId, parentCommentId: targetComment.id },
+          });
+        } else if (targetComment?.guest_id) {
+          void sendNotification({
+            guestId: targetComment.guest_id,
+            title: t('staffFeedCommentReplyTitle'),
+            body: notifyBody,
+            category: 'guest',
+            notificationType: 'feed_comment_reply',
+            data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId, parentCommentId: targetComment.id },
+          });
+        } else if (authorStaffId && authorStaffId !== staff.id) {
+          notifiedStaffIds.add(String(authorStaffId));
+          void sendNotification({
+            staffId: String(authorStaffId),
+            title: t('staffFeedNewCommentTitle'),
+            body: notifyBody,
+            category: 'staff',
+            notificationType: 'feed_comment',
+            data: { screen: 'staff_feed', url: '/staff', postId },
+          });
+        } else if (authorGuestId) {
+          void sendNotification({
+            guestId: authorGuestId,
+            title: t('staffFeedNewCommentTitle'),
+            body: notifyBody,
+            category: 'guest',
+            notificationType: 'feed_comment',
+            data: { screen: 'customer_feed', url: '/customer/feed/' + postId, postId },
+          });
+        }
+        let prefQ = supabase.from('feed_post_notification_prefs').select('staff_id').eq('post_id', postId).neq('staff_id', staff.id);
+        if (authorStaffId) prefQ = prefQ.neq('staff_id', authorStaffId);
+        const { data: prefRows } = await prefQ;
+        for (const row of prefRows ?? []) {
+          const sid = (row as { staff_id: string }).staff_id;
+          if (notifiedStaffIds.has(sid)) continue;
+          notifiedStaffIds.add(sid);
+          void sendNotification({
+            staffId: sid,
+            title: t('staffFeedCommentNotifTitle'),
+            body: notifyBody,
+            category: 'staff',
+            notificationType: 'feed_comment',
+            data: { screen: 'staff_feed', url: '/staff', postId },
+          });
+        }
+        const mentionStaffIds = await resolveMentionedStaffIdsFromText(text, { excludeStaffId: staff.id });
+        for (const sid of mentionStaffIds) {
+          if (notifiedStaffIds.has(sid)) continue;
+          void sendNotification({
+            staffId: sid,
+            title: 'Senden bahsedildi',
+            body: `${staff.full_name ?? 'Bir personel'} bir yorumda seni etiketledi.`,
+            category: 'staff',
+            notificationType: 'staff_mention',
+            data: { screen: 'staff_feed', url: '/staff', postId },
+          });
+        }
+      } catch (e) {
+        setCommentsByPost((prev) => ({
+          ...prev,
+          [postId]: (prev[postId] ?? []).filter((c) => c.id !== tempId),
+        }));
+        setCommentCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 1) - 1) }));
+        setCommentText((prev) => ({ ...prev, [postId]: text }));
+        Alert.alert(t('error'), (e as Error)?.message ?? 'Yorum gönderilemedi.');
       }
-      let prefQ = supabase.from('feed_post_notification_prefs').select('staff_id').eq('post_id', postId).neq('staff_id', staff.id);
-      if (authorStaffId) prefQ = prefQ.neq('staff_id', authorStaffId);
-      const { data: prefRows } = await prefQ;
-      const staffIdsToNotify = (prefRows ?? []).map((r: { staff_id: string }) => r.staff_id);
-      for (const sid of staffIdsToNotify) {
-        notifiedStaffIds.add(sid);
-        sendNotification({
-          staffId: sid,
-          title: 'Yeni yorum (takip ettiğin paylaşım)',
-          body: notifyBody,
-          category: 'staff',
-          notificationType: 'feed_comment',
-          data: { screen: 'staff_feed', url: '/staff', postId },
-        }).catch(() => {});
-      }
-      const mentionStaffIds = await resolveMentionedStaffIdsFromText(text, { excludeStaffId: staff.id });
-      for (const sid of mentionStaffIds) {
-        if (notifiedStaffIds.has(sid)) continue;
-        sendNotification({
-          staffId: sid,
-          title: 'Senden bahsedildi',
-          body: `${staff.full_name ?? 'Bir personel'} bir yorumda seni etiketledi.`,
-          category: 'staff',
-          notificationType: 'staff_mention',
-          data: { screen: 'staff_feed', url: '/staff', postId },
-        }).catch(() => {});
-      }
-    } catch (e) {
-      // ignore
-    }
-    setPostingComment(null);
+    })();
   };
 
-  const openViewersModal = async (postId: string) => {
+  const openViewersModal = useCallback((postId: string) => {
     setViewersModalPostId(postId);
-    setLoadingViewers(true);
-    setViewersList([]);
-    const { rows, error } = await loadFeedPostViewers(postId);
-    if (error) {
-      log.warn('staff/feed openViewersModal', error.message);
+    const cached = getCachedFeedPostViewers(postId);
+    if (cached) {
+      setViewersList(cached);
+      setLoadingViewers(false);
+    } else {
+      setLoadingViewers(true);
+      setViewersList([]);
     }
-    setViewersList(rows);
-    setLoadingViewers(false);
-  };
+    void fetchFeedPostViewersCached(postId).then(({ rows, error }) => {
+      setViewersList(rows);
+      setLoadingViewers(false);
+      if (error) log.warn('staff/feed openViewersModal', error.message);
+    });
+  }, []);
+
+  const handleRepost = useCallback(
+    (post: FeedPostRow, authorName: string) => {
+      if (!staff || repostingPostId) return;
+      Alert.alert(feedSharedText('feedRepostTitle'), feedSharedText('feedRepostMessage', { name: authorName }), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: feedSharedText('feedRepostConfirm'),
+          onPress: async () => {
+            setRepostingPostId(post.id);
+            try {
+              const source = await loadFeedRepostSource(post.id, authorName);
+              if (!source) {
+                Alert.alert(t('error'), feedSharedText('feedRepostFailed'));
+                return;
+              }
+              const { postId, error } = await repostFeedPostAsStaff(
+                staff.id,
+                staff.full_name ?? feedSharedText('staffOneEmployee'),
+                source
+              );
+              if (error || !postId) {
+                Alert.alert(t('error'), error?.message ?? feedSharedText('feedRepostFailed'));
+                return;
+              }
+              Alert.alert(feedSharedText('feedRepostSuccessTitle'), feedSharedText('feedRepostSuccessMessage'));
+              void loadFeed();
+            } finally {
+              setRepostingPostId(null);
+            }
+          },
+        },
+      ]);
+    },
+    [staff, repostingPostId, t, loadFeed]
+  );
 
   const toggleNotificationPref = async (postId: string) => {
     if (!staff) return;
@@ -1569,12 +1723,6 @@ export default function StaffHomeScreen() {
     return () => (typeof unsub === 'function' ? unsub() : undefined);
   }, [navigation]);
 
-  useEffect(() => {
-    searchStaffMentionCandidates('', 700)
-      .then((rows) => setMentionDirectory(rows))
-      .catch(() => setMentionDirectory([]));
-  }, []);
-
   const resolveMentionHref = useCallback(
     (token: string) => {
       const normalized = token.trim().toLocaleLowerCase('tr-TR');
@@ -1603,15 +1751,27 @@ export default function StaffHomeScreen() {
       const staffStory = storyGroupByStaffId.get(s.id);
       const hasStory = !!staffStory;
       const isMe = s.id === staff?.id;
-      const ringColors = hasStory
-        ? staffStory?.has_unseen
-          ? [pds.gradientStoryRing[0], '#FF5AD0', pds.gradientStoryRing[1]]
-          : ['#FEC8A8', '#FD9BC2', '#F9A8D4']
-        : ['#e5e7eb', '#d1d5db'];
+      const orgLabel = !s.profile_hidden_by_admin && s.organization?.name
+        ? `${s.organization.name}${s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}`
+        : null;
+
       return (
-        <TouchableOpacity
+        <StaffFeedStoryAvatarCard
           key={s.id}
-          style={styles.staffAvatarCard}
+          id={s.id}
+          name={name}
+          profileImage={s.profile_image}
+          department={s.department}
+          position={s.position}
+          role={s.role}
+          orgLabel={orgLabel}
+          verificationBadge={s.verification_badge ?? null}
+          isOnline={!!s.is_online}
+          isMe={isMe}
+          hasStory={hasStory}
+          hasUnseen={!!staffStory?.has_unseen}
+          profileHidden={!!s.profile_hidden_by_admin && staff?.role !== 'admin'}
+          presenceStatus={resolveStaffPresenceStatus({ isOnline: s.is_online, workStatus: s.work_status })}
           onPress={() => {
             if (hasStory) {
               openStoryByStaffId(s.id);
@@ -1623,56 +1783,7 @@ export default function StaffHomeScreen() {
             }
             router.push(`/staff/profile/${s.id}`);
           }}
-          activeOpacity={0.85}
-        >
-          <View style={styles.staffAvatarCardInner}>
-            <LinearGradient
-              colors={ringColors as [string, string, ...string[]]}
-              start={{ x: 0.1, y: 0.2 }}
-              end={{ x: 0.9, y: 0.8 }}
-              style={styles.staffAvatarRing}
-            >
-              <AvatarWithBadge badge={s.verification_badge ?? null} avatarSize={64} badgeSize={14} showBadge={false}>
-                {s.profile_image ? (
-                  <CachedImage uri={s.profile_image} style={styles.staffAvatarImg} contentFit="cover" />
-                ) : (
-                  <View style={styles.staffAvatarPlaceholder}>
-                    <Text style={styles.staffAvatarLetter}>{name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                )}
-              </AvatarWithBadge>
-              {isMe ? (
-                <View style={styles.storyAddBadge}>
-                  <Ionicons name="add" size={13} color="#fff" />
-                </View>
-              ) : null}
-              {s.is_online ? (
-                <OnlinePresenceDot
-                  online
-                  size={12}
-                  borderColor="#fff"
-                  position={isMe ? 'bottom-left' : 'bottom-right'}
-                />
-              ) : null}
-            </LinearGradient>
-            <StaffNameWithBadge name={name} badge={s.verification_badge ?? null} textStyle={styles.staffAvatarName} />
-            {!s.profile_hidden_by_admin && (s.department || s.position) ? (
-              <Text style={styles.staffAvatarRole} numberOfLines={1}>
-                {s.department || s.position || ''}
-              </Text>
-            ) : s.profile_hidden_by_admin && staff?.role !== 'admin' ? (
-              <Text style={styles.staffAvatarRole} numberOfLines={1}>
-                —
-              </Text>
-            ) : null}
-            {!s.profile_hidden_by_admin && s.organization?.name ? (
-              <Text style={styles.staffAvatarOrg} numberOfLines={2}>
-                {s.organization.name}
-                {s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}
-              </Text>
-            ) : null}
-          </View>
-        </TouchableOpacity>
+        />
       );
     },
     [staff?.id, staff?.role, storyGroupByStaffId, openStoryByStaffId, router]
@@ -1685,7 +1796,7 @@ export default function StaffHomeScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, isNight && { backgroundColor: premiumColors.pageBg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
@@ -1696,18 +1807,28 @@ export default function StaffHomeScreen() {
         contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={Platform.OS === 'android'}
+        nestedScrollEnabled={Platform.OS === 'android'}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.white} />
         }
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.staffAvatarsSection}>
+        <StaffFeedDashboardStrip refreshKey={refreshing ? Date.now() : 0} />
+        <View
+          style={[
+            styles.staffAvatarsSection,
+            isNight && { backgroundColor: 'transparent', borderBottomColor: palette.cardBorder },
+          ]}
+        >
           <View style={styles.staffSectionHead}>
-            <Text style={styles.staffAvatarsSectionLabel}>Aktif Ekip</Text>
-            <Text style={styles.staffSectionSub}>Story: 24 saat</Text>
+            <Text style={[styles.staffAvatarsSectionLabel, isNight && { color: palette.text }]}>
+              Aktif Ekip
+            </Text>
+            <Text style={[styles.staffSectionSub, isNight && { color: palette.muted }]}>Story: 24 saat</Text>
           </View>
           <ScrollView
             horizontal
+            nestedScrollEnabled
             showsHorizontalScrollIndicator={false}
             style={styles.staffAvatarsScroll}
             contentContainerStyle={styles.staffAvatarsScrollContent}
@@ -1729,8 +1850,8 @@ export default function StaffHomeScreen() {
           if (posts.length === 0) {
             return (
               <View style={styles.empty}>
-                <Ionicons name="images-outline" size={64} color={theme.colors.textMuted} />
-                <Text style={styles.emptyText}>Henüz paylaşım yok</Text>
+                <Ionicons name="images-outline" size={64} color={isNight ? palette.subtext : theme.colors.textMuted} />
+                <Text style={[styles.emptyText, isNight && { color: palette.text }]}>Henüz paylaşım yok</Text>
                 <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push('/staff/feed/new')} activeOpacity={0.8}>
                   <Text style={styles.emptyBtnText}>İlk paylaşımı yap</Text>
                 </TouchableOpacity>
@@ -1793,15 +1914,18 @@ export default function StaffHomeScreen() {
                 ? [{ media_type: p.media_type === 'video' ? 'video' : 'image', media_url: p.media_url || p.thumbnail_url || '', thumbnail_url: p.thumbnail_url, sort_order: 0 }]
                 : []);
             const hasMedia = mediaItems.length > 0;
-            const feedMediaHeight = feedPostMediaHeightForItems(feedCardWidth, mediaItems);
+            const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, mediaItems.length);
             const mediaEl =
               hasMedia ? (
                 <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
-                  <FeedMediaCarousel
-                    items={mediaItems.map((m, i) => ({ id: `${p.id}-${i}`, media_type: m.media_type, media_url: m.media_url, thumbnail_url: m.thumbnail_url }))}
+                  <FeedPostMediaGrid
+                    items={mediaItems.map((m, i) => ({
+                      id: `${p.id}-${i}`,
+                      media_type: m.media_type,
+                      media_url: m.media_url,
+                      thumbnail_url: m.thumbnail_url,
+                    }))}
                     width={feedCardWidth}
-                    height={feedMediaHeight}
-                    videoPosterOnly
                     onPressItem={(item) => {
                       if (item.media_type === 'video') {
                         setFullscreenPostMedia({
@@ -1824,6 +1948,7 @@ export default function StaffHomeScreen() {
 
             const isOwnStaffPost = !!(staff?.id && p.staff_id === staff.id);
             const canOpenViewersList = !!(staff?.id && (isOwnStaffPost || isGuestPost));
+            if (canOpenViewersList && viewCount > 0) prefetchFeedPostViewers(p.id);
             return (
               <View
                 key={p.id}
@@ -1844,8 +1969,12 @@ export default function StaffHomeScreen() {
                   isGuestPost={isGuestPost}
                   authorIsOnline={renderPostAuthorIsOnline(p.staff_id)}
                   roleLabel={roleLabel}
-                  timeAgo={timeAgoFn(p.created_at) || feedSharedText('timeJustNow')}
-                  createdAtLabel={formatDateTime(p.created_at)}
+                  department={staffInfo?.department}
+                  position={staffInfo?.position ?? null}
+                  hotelName={orgName || staff?.organization?.name || null}
+                  isPinned={p.post_tag === 'duyuru'}
+                  isUrgent={!!getPostTagVisual(p.post_tag).urgent}
+                  timeAgo={formatFeedRelativeTime(p.created_at) || feedSharedText('timeJustNow')}
                   title={p.title}
                   media={mediaEl}
                   hasMedia={!!hasMedia}
@@ -1856,7 +1985,6 @@ export default function StaffHomeScreen() {
                   showViewStats
                   viewersListEnabled={canOpenViewersList}
                   commentPreview={commentPreview}
-                  togglingLike={togglingLike === p.id}
                   deletingPost={deletingPostId === p.id}
                   onAuthorPress={
                     p.staff_id
@@ -1865,10 +1993,12 @@ export default function StaffHomeScreen() {
                   }
                   onLike={() => toggleLike(p.id, p.staff_id, p.guest_id ?? null)}
                   onComment={() => setCommentsSheetPostId(commentsSheetPostId === p.id ? null : p.id)}
-                  onDetailsPress={() => setCommentsSheetPostId(commentsSheetPostId === p.id ? null : p.id)}
+                  onCardPress={() => setCommentsSheetPostId(commentsSheetPostId === p.id ? null : p.id)}
                   onViewers={() => {
-                    if (canOpenViewersList) void openViewersModal(p.id);
+                    if (canOpenViewersList) openViewersModal(p.id);
                   }}
+                  onRepost={() => handleRepost(p, authorName)}
+                  reposting={repostingPostId === p.id}
                   onMenu={() => setMenuPostId(menuPostId === p.id ? null : p.id)}
                 />
                 {/* Menü modal: Sil / Bildir */}
@@ -1899,7 +2029,7 @@ export default function StaffHomeScreen() {
                           />
                         )}
                         <Text style={styles.menuModalItemText}>
-                          {notifOn ? 'Bu gönderi bildirimlerini kapat' : 'Bu gönderi için bildirim aç'}
+                          {notifOn ? t('staffFeedMuteOn') : t('staffFeedMuteOff')}
                         </Text>
                       </TouchableOpacity>
                       {canDeletePost(p) && (
@@ -2025,29 +2155,29 @@ export default function StaffHomeScreen() {
 
       <Modal
         visible={!!viewersModalPostId}
-        animationType="slide"
+        animationType="fade"
         transparent
         onRequestClose={() => setViewersModalPostId(null)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setViewersModalPostId(null)}
-        >
-          <View style={[styles.viewersModalContent, { height: SCREEN_HEIGHT * 0.5 }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setViewersModalPostId(null)} />
+          <View style={[styles.viewersModalContent, { height: SCREEN_HEIGHT * 0.55 }]}>
             <View style={styles.viewersModalHeader}>
-              <Text style={styles.viewersModalTitle}>Görenler</Text>
+              <Text style={styles.viewersModalTitle}>Görüntüleyenler</Text>
               <TouchableOpacity onPress={() => setViewersModalPostId(null)} hitSlop={16}>
                 <Ionicons name="close" size={28} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
-            {loadingViewers ? (
+            {loadingViewers && viewersList.length === 0 ? (
               <ActivityIndicator size="large" color={theme.colors.primary} style={styles.viewersLoader} />
             ) : (
               <View style={styles.viewersListWrap}>
                 <FlatList
                   data={viewersList}
                   keyExtractor={(item) => item.id}
+                  initialNumToRender={12}
+                  maxToRenderPerBatch={16}
+                  windowSize={7}
                   ListEmptyComponent={<Text style={styles.viewersEmpty}>Henüz görüntüleyen yok</Text>}
                   renderItem={({ item }) => {
                     const v = item as FeedPostViewerRow;
@@ -2057,8 +2187,14 @@ export default function StaffHomeScreen() {
                       : (v.viewer_name?.trim() || '—');
                     const img = v.viewer_avatar?.trim() || null;
                     const badge = v.verification_badge;
+                    const canOpenProfile = !!(v.staff_id || v.guest_id);
                     return (
-                      <View style={styles.viewerRow}>
+                      <TouchableOpacity
+                        style={styles.viewerRow}
+                        activeOpacity={canOpenProfile ? 0.75 : 1}
+                        disabled={!canOpenProfile}
+                        onPress={() => openFeedViewerProfile(v)}
+                      >
                         <AvatarWithBadge badge={badge} avatarSize={44} badgeSize={12} showBadge={false}>
                           {img ? (
                             <CachedImage uri={img} style={styles.viewerAvatar} contentFit="cover" />
@@ -2076,14 +2212,17 @@ export default function StaffHomeScreen() {
                           )}
                           <Text style={styles.viewerTime}>{formatDateTime(v.viewed_at)}</Text>
                         </View>
-                      </View>
+                        {canOpenProfile ? (
+                          <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
+                        ) : null}
+                      </TouchableOpacity>
                     );
                   }}
                 />
               </View>
             )}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Yorum kartı: ekranın yarısına kadar açılır, aşağı yukarı kaydırılabilir; Android'de klavye yüksekliği manuel padding ile (titreme önlenir) */}
@@ -2092,18 +2231,20 @@ export default function StaffHomeScreen() {
         animationType="slide"
         transparent
         onRequestClose={() => setCommentsSheetPostId(null)}
+        {...(Platform.OS === 'android' ? FEED_COMMENT_MODAL_ANDROID_PROPS : {})}
       >
         <KeyboardAvoidingView
           style={styles.commentSheetOverlay}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={0}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setCommentsSheetPostId(null)} />
+          <View style={styles.commentSheetStage}>
           <Animated.View
             style={[
               styles.commentSheetCard,
               { height: commentSheetHeight },
-              Platform.OS === 'android' && commentSheetKeyboardH > 0 && { paddingBottom: commentSheetKeyboardH + 16 },
+              commentAndroidLayout.enabled && { marginBottom: commentAndroidLayout.cardMarginBottom },
             ]}
           >
             <Pressable style={styles.commentSheetHandleWrap} {...commentSheetPanResponder.panHandlers}>
@@ -2115,9 +2256,9 @@ export default function StaffHomeScreen() {
                 <Ionicons name="close" size={24} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
-            {commentsSheetPostId && (() => {
-              const post = posts.find((x) => x.id === commentsSheetPostId);
-              const comments = commentsByPost[commentsSheetPostId] ?? [];
+            {commentSheetPost && (() => {
+              const post = commentSheetPost;
+              const comments = commentsByPost[post.id] ?? [];
               const topLevelComments = comments.filter((c) => !c.parent_comment_id);
               const repliesByParent = comments.reduce<Record<string, CommentRow[]>>((acc, c) => {
                 if (!c.parent_comment_id) return acc;
@@ -2125,9 +2266,9 @@ export default function StaffHomeScreen() {
                 acc[c.parent_comment_id].push(c);
                 return acc;
               }, {});
-              if (!post) return null;
               return (
                 <>
+                  <View style={styles.commentSheetBody}>
                   <ScrollView
                     style={styles.commentSheetScroll}
                     contentContainerStyle={styles.commentSheetScrollContent}
@@ -2279,42 +2420,85 @@ export default function StaffHomeScreen() {
                       <Text style={styles.mentionEmptyText}>Sonuc bulunamadi</Text>
                     </View>
                   ) : null}
-                  <View style={styles.commentSheetInputRow}>
-                    {replyTarget?.postId === post.id ? (
-                      <View style={styles.replyTargetChip}>
-                        <Text style={styles.replyTargetText}>@{replyTarget.author} yanit yaziyorsun...</Text>
-                        <TouchableOpacity onPress={() => setReplyTarget(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                          <Ionicons name="close" size={15} color={theme.colors.textMuted} />
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
-                    <TextInput
-                      style={styles.commentSheetInput}
-                      placeholder={replyTarget?.postId === post.id ? 'Yanit yaz...' : 'Yorum yaz...'}
-                      placeholderTextColor={theme.colors.textMuted}
-                      value={commentText[post.id] ?? ''}
-                      onChangeText={(t) => setCommentText((prev) => ({ ...prev, [post.id]: t }))}
-                      multiline
-                      maxLength={500}
-                      editable={postingComment !== post.id}
-                    />
-                    <TouchableOpacity
-                      style={[styles.commentSendBtn, (!(commentText[post.id] ?? '').trim() || postingComment === post.id) && styles.commentSendBtnDisabled]}
-                      onPress={() => submitComment(post.id, post.staff_id, post.guest_id ?? null)}
-                      disabled={!(commentText[post.id] ?? '').trim() || postingComment === post.id}
-                      activeOpacity={0.8}
-                    >
-                      {postingComment === post.id ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Ionicons name="send" size={20} color="#fff" />
-                      )}
-                    </TouchableOpacity>
                   </View>
+                  {Platform.OS !== 'android' ? (
+                    <View style={[styles.commentSheetInputRow, { paddingBottom: commentInputBottomPad }]}>
+                      {replyTarget?.postId === post.id ? (
+                        <View style={styles.replyTargetChip}>
+                          <Text style={styles.replyTargetText}>@{replyTarget.author} yanit yaziyorsun...</Text>
+                          <TouchableOpacity onPress={() => setReplyTarget(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                            <Ionicons name="close" size={15} color={theme.colors.textMuted} />
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                      <TextInput
+                        style={styles.commentSheetInput}
+                        placeholder={replyTarget?.postId === post.id ? 'Yanit yaz...' : 'Yorum yaz...'}
+                        placeholderTextColor={theme.colors.textMuted}
+                        value={commentText[post.id] ?? ''}
+                        onChangeText={(t) => setCommentText((prev) => ({ ...prev, [post.id]: t }))}
+                        multiline
+                        maxLength={500}
+                      />
+                      <TouchableOpacity
+                        style={[styles.commentSendBtn, !(commentText[post.id] ?? '').trim() && styles.commentSendBtnDisabled]}
+                        onPress={() => submitComment(post.id, post.staff_id, post.guest_id ?? null)}
+                        disabled={!(commentText[post.id] ?? '').trim()}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="send" size={20} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </>
               );
             })()}
           </Animated.View>
+          {commentAndroidLayout.enabled && commentSheetPost ? (
+            <Animated.View
+              onLayout={(e) => commentAndroidLayout.onDockLayout(e.nativeEvent.layout.height)}
+              style={[
+                styles.commentSheetInputRow,
+                styles.commentSheetInputDocked,
+                {
+                  bottom: commentAndroidLayout.keyboardLift,
+                  paddingBottom: commentAndroidLayout.keyboardOpen ? 0 : 12,
+                },
+              ]}
+            >
+              {replyTarget?.postId === commentSheetPost.id ? (
+                <View style={styles.replyTargetChip}>
+                  <Text style={styles.replyTargetText}>@{replyTarget.author} yanit yaziyorsun...</Text>
+                  <TouchableOpacity onPress={() => setReplyTarget(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                    <Ionicons name="close" size={15} color={theme.colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              <TextInput
+                style={styles.commentSheetInput}
+                placeholder={replyTarget?.postId === commentSheetPost.id ? 'Yanit yaz...' : 'Yorum yaz...'}
+                placeholderTextColor={theme.colors.textMuted}
+                value={commentText[commentSheetPost.id] ?? ''}
+                onChangeText={(t) => setCommentText((prev) => ({ ...prev, [commentSheetPost.id]: t }))}
+                multiline
+                maxLength={500}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.commentSendBtn,
+                  !(commentText[commentSheetPost.id] ?? '').trim() && styles.commentSendBtnDisabled,
+                ]}
+                onPress={() =>
+                  submitComment(commentSheetPost.id, commentSheetPost.staff_id, commentSheetPost.guest_id ?? null)
+                }
+                disabled={!(commentText[commentSheetPost.id] ?? '').trim()}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="send" size={20} color="#fff" />
+              </TouchableOpacity>
+            </Animated.View>
+          ) : null}
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -2474,7 +2658,7 @@ export default function StaffHomeScreen() {
                       }}
                       hitSlop={{ top: 16, bottom: 16, left: 16, right: 8 }}
                       style={styles.storyHeaderIconBtn}
-                      accessibilityLabel="Hikaye menüsü"
+                      accessibilityLabel={t('staffFeedStoryMenuA11y')}
                     >
                       <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
                     </TouchableOpacity>
@@ -2592,25 +2776,27 @@ export default function StaffHomeScreen() {
                           const fallback = isGuest ? 'M' : 'P';
                           const canOpenProfile = !!(item.staff_id || item.guest_id);
                           return (
-                            <View style={styles.storyViewerRow}>
-                              <TouchableOpacity
-                                activeOpacity={canOpenProfile ? 0.75 : 1}
-                                disabled={!canOpenProfile}
-                                onPress={() => openStoryPersonProfile(item.staff_id, item.guest_id)}
-                              >
-                                {avatar ? (
-                                  <CachedImage uri={avatar} style={styles.storyViewerAvatar} contentFit="cover" />
-                                ) : (
-                                  <View style={styles.storyViewerAvatarFallback}>
-                                    <Text style={styles.storyViewerAvatarTxt}>{(name || fallback).charAt(0).toUpperCase()}</Text>
-                                  </View>
-                                )}
-                              </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.storyViewerRow}
+                              activeOpacity={canOpenProfile ? 0.75 : 1}
+                              disabled={!canOpenProfile}
+                              onPress={() => openStoryPersonProfile(item.staff_id, item.guest_id)}
+                            >
+                              {avatar ? (
+                                <CachedImage uri={avatar} style={styles.storyViewerAvatar} contentFit="cover" />
+                              ) : (
+                                <View style={styles.storyViewerAvatarFallback}>
+                                  <Text style={styles.storyViewerAvatarTxt}>{(name || fallback).charAt(0).toUpperCase()}</Text>
+                                </View>
+                              )}
                               <View style={{ flex: 1 }}>
                                 <Text style={styles.storyViewerName}>{name}</Text>
                                 <Text style={styles.storyViewerTime}>{formatDateTime(item.viewed_at)}</Text>
                               </View>
-                            </View>
+                              {canOpenProfile ? (
+                                <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
+                              ) : null}
+                            </TouchableOpacity>
                           );
                         }}
                       />
@@ -3073,12 +3259,25 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
+  commentSheetStage: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  commentSheetInputDocked: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    elevation: 12,
+  },
   commentSheetCard: {
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     overflow: 'hidden',
+    flexDirection: 'column',
   },
+  commentSheetBody: { flex: 1, minHeight: 0 },
   commentSheetHandleWrap: {
     paddingVertical: 12,
     alignItems: 'center',

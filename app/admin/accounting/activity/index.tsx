@@ -19,6 +19,7 @@ import {
   fetchAccountingActivityFeed,
   type AccountingActivityItem,
 } from '@/lib/accountingActivityFeed';
+import { FinanceMovementReceiptActionsById } from '@/components/admin/FinanceMovementReceiptActionsById';
 
 type SourceFilter = 'all' | AccountingActivityItem['source'];
 
@@ -151,8 +152,8 @@ export default function AccountingActivityIndex() {
             ) : null}
             {!loading
               ? filtered.map((a) => (
-                  <TouchableOpacity key={a.id} onPress={() => router.push(a.href)} activeOpacity={0.85}>
-                    <AdminCard style={styles.card}>
+                  <AdminCard key={a.id} style={styles.card}>
+                    <TouchableOpacity onPress={() => router.push(a.href)} activeOpacity={0.85}>
                       <View style={styles.cardTop}>
                         <View style={styles.badge}>
                           <Text style={styles.badgeText}>{SOURCE_LABELS[a.source]}</Text>
@@ -169,8 +170,11 @@ export default function AccountingActivityIndex() {
                       <Text style={styles.sub} numberOfLines={3}>
                         {a.subtitle}
                       </Text>
-                    </AdminCard>
-                  </TouchableOpacity>
+                    </TouchableOpacity>
+                    {a.movementId && a.direction === 'out' ? (
+                      <FinanceMovementReceiptActionsById movementId={a.movementId} />
+                    ) : null}
+                  </AdminCard>
                 ))
               : null}
           </>

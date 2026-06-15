@@ -25,6 +25,8 @@ import {
   toggleHotelKitchenMenuFavorite,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import { requestKitchenMenuItemOrder } from '@/lib/kitchenMenuGuestOrder';
+import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 
@@ -40,6 +42,7 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
   const [favorited, setFavorited] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [ordering, setOrdering] = useState(false);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
 
   const load = useCallback(async () => {
@@ -62,6 +65,19 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
     if (!item?.images?.length) return;
     void prefetchImageUrls(item.images.map((im) => im.image_url), 8);
   }, [item?.id, item?.images]);
+
+  const onOrderToKitchen = async () => {
+    if (!item) return;
+    setOrdering(true);
+    try {
+      await requestKitchenMenuItemOrder(item);
+      Alert.alert(guestServiceText('menuOrderTitle'), guestServiceText('menuOrderBody'));
+    } catch (e: unknown) {
+      Alert.alert(t('error'), (e as Error)?.message ?? guestServiceText('menuOrderFail'));
+    } finally {
+      setOrdering(false);
+    }
+  };
 
   const onToggleFavorite = async () => {
     if (mode !== 'guest') return;
@@ -207,6 +223,24 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
             </TouchableOpacity>
           ) : null}
 
+          {mode === 'guest' ? (
+            <TouchableOpacity
+              style={styles.orderBtn}
+              onPress={onOrderToKitchen}
+              disabled={ordering}
+              activeOpacity={0.88}
+            >
+              {ordering ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="restaurant" size={22} color="#fff" />
+                  <Text style={styles.orderBtnText}>{guestServiceText('menuOrderCta')}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : null}
+
           {mode === 'guest' && favorited ? (
             <Text style={styles.favHint}>{t('hotelKitchenMenuFavKitchenHint')}</Text>
           ) : null}
@@ -344,4 +378,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
     lineHeight: 18,
   },
+  orderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 12,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: menuUi.accentDeep,
+  },
+  orderBtnText: { fontSize: 16, fontWeight: '800', color: '#fff' },
 });

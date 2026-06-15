@@ -64,7 +64,7 @@ export type FacilityJournalGuestAccessRow = {
   } | null;
 };
 
-/** Otelde anlık konaklayan / bekleyen misafirler (tesis günlüğü görünürlük seçimi). */
+/** Otelde anlık konaklayan / bekleyen misafirler (eşya kullanım kaydı görünürlük seçimi). */
 export type PresentGuestForFacilityJournal = {
   id: string;
   full_name: string | null;
@@ -116,10 +116,10 @@ function slugify(name: string): string {
 }
 
 export const DEFAULT_FACILITY_JOURNAL_TYPES = [
-  { name: 'Değişiklik', slug: 'degisiklik', icon: 'construct-outline' },
+  { name: 'Kullanım', slug: 'kullanim', icon: 'play-circle-outline' },
+  { name: 'Kurulum', slug: 'kurulum', icon: 'construct-outline' },
+  { name: 'Bakım', slug: 'bakim', icon: 'build-outline' },
   { name: 'Zimmet', slug: 'zimmet', icon: 'clipboard-outline' },
-  { name: 'Emanet', slug: 'emanet', icon: 'briefcase-outline' },
-  { name: 'Devir teslim', slug: 'devir-teslim', icon: 'swap-horizontal-outline' },
 ] as const;
 
 export async function listFacilityJournalRecordTypes(organizationId: string, activeOnly = true) {

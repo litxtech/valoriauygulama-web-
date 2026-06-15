@@ -1,6 +1,7 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
+import { CachedImage } from '@/components/CachedImage';
 import {
   formatStockQty,
   getSimpleStockLevel,
@@ -15,6 +16,7 @@ export type StockInventoryListItem = {
   current_stock: number | null;
   min_stock?: number | null;
   categoryName?: string | null;
+  imageUrl?: string | null;
 };
 
 type Props = {
@@ -63,7 +65,9 @@ export function StockInventoryList({
             style={[styles.row, index > 0 && styles.rowBorder, level !== 'ok' && { backgroundColor: colors.bg }]}
             {...rowProps}
           >
-            {showRowIndex ? (
+            {item.imageUrl ? (
+              <CachedImage uri={item.imageUrl} style={styles.thumb} contentFit="cover" />
+            ) : showRowIndex ? (
               <Text style={styles.index}>{index + 1}</Text>
             ) : (
               <View style={[styles.dot, { backgroundColor: colors.fg }]} />
@@ -115,6 +119,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  thumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: theme.colors.borderLight,
   },
   index: {
     width: 22,

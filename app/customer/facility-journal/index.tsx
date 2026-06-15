@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { FacilityJournalListCard } from '@/components/facilityJournal/FacilityJournalListCard';
 import { listFacilityJournalRecordsForGuest, type FacilityJournalRecordRow } from '@/lib/facilityJournal';
 import { theme } from '@/constants/theme';
 
 export default function CustomerFacilityJournalIndex() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [items, setItems] = useState<FacilityJournalRecordRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,7 +24,7 @@ export default function CustomerFacilityJournalIndex() {
   const load = useCallback(async () => {
     const { data, error: err } = await listFacilityJournalRecordsForGuest();
     if (err) {
-      setError(err.message ?? 'Liste yüklenemedi');
+      setError(err.message ?? t('customerFacilityJournalListError'));
       setItems([]);
     } else {
       setError(null);
@@ -30,7 +32,7 @@ export default function CustomerFacilityJournalIndex() {
     }
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -61,7 +63,7 @@ export default function CustomerFacilityJournalIndex() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.intro}>Otel yönetiminin sizinle paylaştığı tesis kayıtları.</Text>
+      <Text style={styles.intro}>{t('customerFacilityJournalIntro')}</Text>
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
@@ -69,7 +71,7 @@ export default function CustomerFacilityJournalIndex() {
         contentContainerStyle={items.length === 0 ? styles.emptyList : styles.list}
         renderItem={({ item }) => <FacilityJournalListCard item={item} onPress={openRecord} />}
         ListEmptyComponent={
-          <Text style={styles.empty}>{error ?? 'Henüz sizinle paylaşılan kayıt yok.'}</Text>
+          <Text style={styles.empty}>{error ?? t('customerFacilityJournalEmpty')}</Text>
         }
       />
     </View>

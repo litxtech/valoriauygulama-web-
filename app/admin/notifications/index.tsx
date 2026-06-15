@@ -1,5 +1,5 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -87,24 +87,36 @@ export default function AdminNotificationsIndex() {
       />
       <Text style={styles.subtitle}>Toplu bildirim gönder, şablonları yönet, son bildirimlere bakın.</Text>
 
-      <Link href="/admin/notifications/bulk" asChild>
-        <TouchableOpacity style={styles.card}>
-          <Text style={styles.cardTitle}>📢 Toplu Bildirim Gönder</Text>
-          <Text style={styles.cardDesc}>Misafirlere veya personele toplu duyuru gönder</Text>
-        </TouchableOpacity>
-      </Link>
-      <Link href="/admin/notifications/templates" asChild>
-        <TouchableOpacity style={styles.card}>
-          <Text style={styles.cardTitle}>📋 Hazır Şablonlar</Text>
-          <Text style={styles.cardDesc}>Bilgi, uyarı, kampanya şablonları</Text>
-        </TouchableOpacity>
-      </Link>
-      <Link href="/admin/notifications/emergency" asChild>
-        <TouchableOpacity style={[styles.card, styles.cardEmergency]}>
-          <Text style={styles.cardTitle}>🚨 Acil Durum Bildirimi</Text>
-          <Text style={styles.cardDesc}>Tüm misafirlere zorunlu acil duyuru</Text>
-        </TouchableOpacity>
-      </Link>
+      <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/notifications/bulk')}>
+        <Text style={styles.cardTitle}>📢 Toplu Bildirim Gönder</Text>
+        <Text style={styles.cardDesc}>Misafirlere veya personele toplu duyuru gönder</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/notifications/templates')}>
+        <Text style={styles.cardTitle}>📋 Hazır Şablonlar</Text>
+        <Text style={styles.cardDesc}>Bilgi, uyarı, kampanya şablonları</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/notifications/sounds')}>
+        <Text style={styles.cardTitle}>🔊 Bildirim Sesleri</Text>
+        <Text style={styles.cardDesc}>Özellik bazlı ses yükle; varsayılan sistem sesini kapatıp yalnızca özel ses kullan</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/notifications/event-log')}>
+        <Text style={styles.cardTitle}>📊 Bildirim Log & Takip</Text>
+        <Text style={styles.cardDesc}>Kim gördü, kim onayladı, hangi ses çaldı</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.card, styles.cardEmergency]}
+        onPress={() => router.push('/admin/staff-emergency')}
+      >
+        <Text style={styles.cardTitle}>🚨 Personel Toplanma Alarmı</Text>
+        <Text style={styles.cardDesc}>Toplanma alanı seçip tüm personele acil bildirim gönder</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.card, styles.cardEmergency]}
+        onPress={() => router.push('/admin/notifications/emergency')}
+      >
+        <Text style={styles.cardTitle}>🚨 Misafir Acil Bildirimi</Text>
+        <Text style={styles.cardDesc}>Tüm misafirlere zorunlu acil duyuru (tahliye, kesinti vb.)</Text>
+      </TouchableOpacity>
 
       <Text style={styles.sectionTitle}>Son Bildirimler</Text>
       {list.length === 0 && !loading ? (

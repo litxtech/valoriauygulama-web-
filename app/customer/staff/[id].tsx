@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,14 +16,14 @@ import {
   Platform,
   StatusBar,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { getOrCreateGuestForCurrentSession, syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
-import { guestGetOrCreateConversationWithStaff } from '@/lib/messagingApi';
+import { guestOpenStaffChat, formatChatMessageSendError } from '@/lib/messagingApi';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { AvatarWithBadge, StaffNameWithBadge } from '@/components/VerifiedBadge';
@@ -39,15 +39,21 @@ import { recordStaffProfileVisit } from '@/lib/staffProfileVisits';
 import { readStaffProfileViewCache, writeStaffProfileViewCache } from '@/lib/staffProfileViewCache';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
-import { StaffProfileFeedGrid } from '@/components/StaffProfileFeedGrid';
-import { ProfileStatsCard } from '@/components/ProfileStatsCard';
-import { loadStaffEngagementStats, type StaffEngagementStats } from '@/lib/staffEngagementStats';
-import { ProfileCover } from '@/components/ProfileCover';
+import { loadStaffProfileExtendedStats, type StaffProfileExtendedStats } from '@/lib/staffProfileExtendedStats';
+import { calculateDaysWithUs } from '@/lib/modernProfileTenure';
+import { ProfileTenureModal } from '@/components/modernProfile/ProfileTenureModal';
+import {
+  ModernStaffProfileShell,
+  type QuickAction,
+} from '@/components/modernProfile/ModernStaffProfileShell';
+import { ProfileCoverIconButton } from '@/components/tiktokProfile/TikTokProfileUI';
+import type { ModernProfileStaffInput } from '@/lib/modernProfileModel';
 import { getDepartmentLabel } from '@/lib/departmentLabels';
-
-const COVER_HEIGHT = 260;
-const AVATAR_SIZE = 116;
-const HEADER_AVATAR_SIZE = 64;
+import { StaffTipSheet } from '@/components/customer/StaffTipSheet';
+import { resolveStaffTipsEnabledForGuest } from '@/lib/staffTipsEnabled';
+import { useStaffTipPaymentStore } from '@/stores/staffTipPaymentStore';
+import { getGuestFullNameFromUser } from '@/lib/getOrCreateGuestForCaller';
+import { buildStaffProfileContactActions } from '@/lib/staffProfileContactActions';
 
 type StaffDetail = {
   id: string;
@@ -85,6 +91,7 @@ type StaffDetail = {
   social_links?: Record<string, string> | null;
   organization?: { name: string | null; kind: string | null } | null;
   profile_hidden_by_admin?: boolean | null;
+  tips_enabled?: boolean | null;
   profile_visit_restricted?: boolean | null;
 };
 
@@ -123,21 +130,40 @@ export default function StaffProfileScreen() {
   const [rateStayNights, setRateStayNights] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
   const [myReview, setMyReview] = useState<Review | null>(null);
-  const [profileMenuVisible, setProfileMenuVisible] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [languagesModalVisible, setLanguagesModalVisible] = useState(false);
   const [tenureModalVisible, setTenureModalVisible] = useState(false);
-  const [engagement, setEngagement] = useState<StaffEngagementStats>({ posts: 0, likes: 0, comments: 0, visits: 0 });
+  const [tipSheetVisible, setTipSheetVisible] = useState(false);
+  const [guestRoomNumber, setGuestRoomNumber] = useState<string | null>(null);
+  const tipSheetDismissNonce = useStaffTipPaymentStore((s) => s.sheetDismissNonce);
+
+  useEffect(() => {
+    setTipSheetVisible(false);
+  }, [tipSheetDismissNonce]);
+  const [extendedStats, setExtendedStats] = useState<StaffProfileExtendedStats | null>(null);
   const [todayAnchor, setTodayAnchor] = useState(() => Date.now());
+  const profileVisitRecordedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    if (profileVisitRecordedRef.current === id) return;
+    profileVisitRecordedRef.current = id;
+    recordStaffProfileVisit(id).catch(() => {});
+  }, [id]);
+
   const loadStaff = useCallback(async () => {
     if (!id) return;
 
     const cached = await readStaffProfileViewCache<StaffDetail>('guest', id);
     const hadCache = !!cached?.profile;
     if (hadCache) {
-      setStaff(cached.profile);
+      setStaff({
+        ...cached.profile,
+        tips_enabled: cached.profile.tips_enabled === true,
+      });
       if (cached.reviews) setReviews(cached.reviews as Review[]);
       if (cached.myReview !== undefined) setMyReview(cached.myReview as Review | null);
-      if (cached.engagement) setEngagement(cached.engagement);
+      if (cached.engagement) setExtendedStats(cached.engagement as StaffProfileExtendedStats);
       setLoading(false);
     } else {
       setLoading(true);
@@ -154,6 +180,13 @@ export default function StaffProfileScreen() {
           setStaff(null);
           return;
         }
+        const { data: guestMeta } = await supabase
+          .from('guests')
+          .select('rooms(room_number)')
+          .eq('id', guestRow.guest_id)
+          .maybeSingle();
+        const roomNum = (guestMeta as { rooms?: { room_number?: string | null } | null } | null)?.rooms?.room_number;
+        setGuestRoomNumber(roomNum ? String(roomNum) : null);
       }
       const { data: rows, error: e } = profRes;
       const s = Array.isArray(rows) ? rows[0] : rows;
@@ -176,6 +209,7 @@ export default function StaffProfileScreen() {
       const rawSocial = (raw as { social_links?: Record<string, string> | null }).social_links;
       const visitRestricted = !!(raw as { profile_visit_restricted?: boolean }).profile_visit_restricted;
       const profileHiddenByAdmin = !!(raw as { profile_hidden_by_admin?: boolean }).profile_hidden_by_admin;
+      const tipsEnabled = await resolveStaffTipsEnabledForGuest(id, raw as Record<string, unknown>);
       let joinFallback: { created_at: string | null; hire_date: string | null } | null = null;
       if (!visitRestricted && !raw.created_at && !raw.hire_date) {
         const { data: joinRow } = await supabase
@@ -186,7 +220,7 @@ export default function StaffProfileScreen() {
         joinFallback = joinRow as { created_at: string | null; hire_date: string | null } | null;
       }
       const staffData: StaffDetail = {
-        ...raw,
+        ...(raw as StaffDetail),
         shift: cached?.profile?.shift,
         created_at: raw.created_at ?? joinFallback?.created_at ?? null,
         hire_date: raw.hire_date ?? joinFallback?.hire_date ?? null,
@@ -199,6 +233,7 @@ export default function StaffProfileScreen() {
         social_links: rawSocial && typeof rawSocial === 'object' ? rawSocial : null,
         profile_visit_restricted: visitRestricted,
         profile_hidden_by_admin: profileHiddenByAdmin,
+        tips_enabled: tipsEnabled,
         organization: cached?.profile?.organization ?? null,
       };
       if (!visitRestricted && !staffData.organization) {
@@ -214,13 +249,12 @@ export default function StaffProfileScreen() {
       }
       setStaff(staffData);
       setLoading(false);
-      recordStaffProfileVisit(id).catch(() => {});
 
       const loadSecondary = async () => {
         if (visitRestricted) {
           setReviews([]);
           setMyReview(null);
-          setEngagement({ posts: 0, likes: 0, comments: 0, visits: 0 });
+          setExtendedStats(null);
           void writeStaffProfileViewCache('guest', id, {
             profile: staffData,
             reviews: [],
@@ -239,21 +273,23 @@ export default function StaffProfileScreen() {
           }
         }
 
-        const [nextReviews, nextMyReview, nextEngagement] = await Promise.all([
+        const joinIso = staffData.hire_date ?? staffData.created_at ?? null;
+        const days = joinIso ? calculateDaysWithUs(joinIso, Date.now()) : null;
+        const [nextReviews, nextMyReview, nextStats] = await Promise.all([
           loadStaffProfileReviews(id, CUSTOMER_REVIEW_LIMIT),
           loadGuestMyReviewForStaff(id, viewerGuestId),
-          loadStaffEngagementStats(id).catch(() => ({ posts: 0, likes: 0, comments: 0, visits: 0 })),
+          loadStaffProfileExtendedStats(id, days),
         ]);
 
         setReviews(nextReviews as Review[]);
         setMyReview(nextMyReview as Review | null);
-        setEngagement(nextEngagement);
+        setExtendedStats(nextStats);
 
         void writeStaffProfileViewCache('guest', id, {
           profile: staffData,
           reviews: nextReviews,
           myReview: nextMyReview,
-          engagement: nextEngagement,
+          engagement: nextStats,
         });
       };
 
@@ -281,6 +317,15 @@ export default function StaffProfileScreen() {
     loadStaff();
   }, [loadStaff]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return;
+      void resolveStaffTipsEnabledForGuest(id, {}).then((enabled) => {
+        setStaff((prev) => (prev?.id === id ? { ...prev, tips_enabled: enabled } : prev));
+      });
+    }, [id])
+  );
+
   useEffect(() => {
     const now = new Date();
     const nextMidnight = new Date(now);
@@ -299,20 +344,27 @@ export default function StaffProfileScreen() {
 
   const onMessage = async () => {
     if (!id) return;
-    const token = await syncGuestMessagingAppToken();
-    if (!token) {
-      router.push({ pathname: '/customer/new-chat', params: { staffId: id } });
-      return;
-    }
     setStartingChat(true);
     try {
-      const convId = await guestGetOrCreateConversationWithStaff(token, id);
-      if (convId) router.push({ pathname: '/customer/chat/[id]', params: { id: convId } });
-      else router.push({ pathname: '/customer/new-chat', params: { staffId: id } });
-    } catch {
-      router.push({ pathname: '/customer/new-chat', params: { staffId: id } });
+      const token = await syncGuestMessagingAppToken();
+      if (!token) {
+        Alert.alert(t('chatMessageBlockedTitle'), t('authRegisterRequiredMessage'));
+        return;
+      }
+      const { conversationId, error } = await guestOpenStaffChat(token, id);
+      if (conversationId) {
+        router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+        return;
+      }
+      Alert.alert(
+        t('messageSendFailedTitle'),
+        error ?? t('unknownError')
+      );
+    } catch (e) {
+      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
+    } finally {
+      setStartingChat(false);
     }
-    setStartingChat(false);
   };
 
   const openRateModal = () => {
@@ -382,11 +434,6 @@ export default function StaffProfileScreen() {
     setSubmittingReview(false);
   };
 
-  const onCall = () => {
-    const phone = staff?.phone?.trim();
-    if (phone) Linking.openURL(`tel:${phone}`);
-  };
-
   const handleBlockFromProfile = async () => {
     const guestRow = await getOrCreateGuestForCurrentSession();
     if (!guestRow?.guest_id || !id) {
@@ -408,7 +455,7 @@ export default function StaffProfileScreen() {
             Alert.alert(t('error'), error.message || t('blockUserFailed'));
             return;
           }
-          setProfileMenuVisible(false);
+          setProfileMenuOpen(false);
           router.back();
         },
       },
@@ -417,20 +464,6 @@ export default function StaffProfileScreen() {
 
   const joinDateIso = staff?.hire_date ?? staff?.created_at ?? null;
   const daysWithUs = joinDateIso ? calculateDaysWithUs(joinDateIso, todayAnchor) : null;
-  const tenureCopy = useMemo(
-    () => ({
-      title: t('tenureTitle'),
-      badge: t('tenureBadge'),
-      headline: t('tenureHeadline', { days: daysWithUs ?? 0 }),
-      subtitle: t('tenureSubtitle'),
-      timelineTitle: t('tenureTimelineTitle'),
-      startLabel: t('tenureStartLabel'),
-      todayLabel: t('tenureTodayLabel'),
-      monthLabel: t('tenureMonthLabel'),
-      close: t('tenureClose'),
-    }),
-    [t, i18n.language, daysWithUs]
-  );
 
   if (loading) {
     return (
@@ -460,298 +493,95 @@ export default function StaffProfileScreen() {
   const yearsExperience = staff.hire_date
     ? Math.max(0, new Date().getFullYear() - new Date(staff.hire_date).getFullYear())
     : null;
-  const tenureSubtitle = staff.tenure_note?.trim() || tenureCopy.subtitle;
-  const tenureTimeline = joinDateIso ? buildTenureTimeline(joinDateIso, todayAnchor) : [];
-  const statItems = [
-    { value: engagement.posts, label: 'Paylasim' },
-    { value: engagement.likes, label: 'Begeni' },
-    { value: engagement.comments, label: 'Yorum' },
-    { value: engagement.visits, label: 'Ziyaret' },
-  ];
   const profileVisitRestricted = !!staff.profile_visit_restricted;
+
+  const modernInput: ModernProfileStaffInput = {
+    fullName: staff.full_name,
+    role: staff.role,
+    position: staff.position,
+    department: staff.department,
+    organizationName: staff.organization?.name ?? null,
+    officeLocation: staff.office_location,
+    hireDate: staff.hire_date,
+    createdAt: staff.created_at,
+    bio: staff.bio,
+    profileImage: staff.profile_image,
+    coverImage: staff.cover_image,
+    phone: showPhone ? staff.phone : null,
+    email: showEmail ? staff.email : null,
+    verificationBadge: staff.verification_badge ?? null,
+    achievements: staff.achievements,
+    specialties: staff.specialties,
+    languages: staff.languages,
+    isOnline: staff.is_online,
+    shiftLabel: staff.shift ? `${staff.shift.start_time} - ${staff.shift.end_time}` : null,
+    daysWithUs: daysWithUs ?? null,
+    stats: extendedStats,
+  };
+
+  const profileContactActions = buildStaffProfileContactActions({
+    t,
+    mode: 'guest',
+    phone: staff.phone,
+    email: staff.email,
+    whatsapp: staff.whatsapp,
+    showPhone,
+    showEmail,
+    showWhatsApp,
+    onMessage,
+    messageLoading: startingChat,
+    onTips: staff.tips_enabled === true ? () => setTipSheetVisible(true) : undefined,
+  });
+
+  const profileMenuActions: QuickAction[] = [];
 
   return (
     <View style={styles.container}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { width: windowWidth, minWidth: windowWidth }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { width: windowWidth, minWidth: windowWidth, paddingBottom: insets.bottom + 48 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-      <Modal
-        visible={profileMenuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setProfileMenuVisible(false)}
-      >
-        <Pressable style={styles.imageModalOverlay} onPress={() => setProfileMenuVisible(false)}>
-          <View style={styles.profileMenuBox}>
-            <TouchableOpacity style={styles.profileMenuItem} onPress={handleBlockFromProfile} activeOpacity={0.7}>
-              <Ionicons name="ban-outline" size={20} color={theme.colors.error} />
-              <Text style={styles.profileMenuItemText}>{t('block')}</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
-
-      <ProfileCover
-        imageUri={staff.cover_image}
-        height={COVER_HEIGHT}
-        onPress={() => staff.cover_image && setCoverModalVisible(true)}
-        disabled={!staff.cover_image}
-      >
-        <View style={[styles.profileTopBar, { paddingTop: safeTop + 12 }]}>
-          <TouchableOpacity
-            style={styles.coverActionBtn}
-            onPress={() => router.back()}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="chevron-back" size={24} color={theme.colors.white} />
-          </TouchableOpacity>
-          {!profileVisitRestricted ? (
-          <TouchableOpacity
-            style={styles.coverActionBtn}
-            onPress={() => setProfileMenuVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.white} />
-          </TouchableOpacity>
-          ) : <View style={{ width: 40 }} />}
-        </View>
-      </ProfileCover>
-      <View style={styles.heroOverlap}>
-        {profileVisitRestricted ? (
-          <View style={styles.privacyBanner}>
-            <Ionicons name="eye-off-outline" size={22} color="#92400e" />
-            <Text style={styles.privacyBannerText}>{t('staffProfileHiddenByAdminBanner')}</Text>
-          </View>
-        ) : null}
-        <TouchableOpacity activeOpacity={1} onPress={() => staff.profile_image && setAvatarModalVisible(true)}>
-          <View style={styles.avatarPresenceWrap}>
-            <AvatarWithBadge badge={staff.verification_badge ?? null} avatarSize={HEADER_AVATAR_SIZE} badgeSize={18} showBadge={false}>
-              {staff.profile_image ? (
-                <CachedImage uri={staff.profile_image} style={[styles.avatar, styles.avatarSmall]} contentFit="cover" />
-              ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder, styles.avatarSmall]}>
-                  <Text style={styles.avatarLetterSmall}>{(staff.full_name || '?').charAt(0).toUpperCase()}</Text>
-                </View>
-              )}
-            </AvatarWithBadge>
-            <OnlinePresenceDot online={!!staff.is_online} size={16} borderColor={theme.colors.surface} />
-          </View>
-        </TouchableOpacity>
-        <View style={styles.header}>
-          <StaffNameWithBadge name={staff.full_name || t('visitorTypeStaff')} badge={staff.verification_badge ?? null} badgeSize={18} textStyle={styles.name} center />
-          {!profileVisitRestricted ? (
-          <View style={styles.headerMetaRow}>
-            <View style={styles.jobBadge}>
-              <Text style={styles.jobBadgeText}>{getDepartmentLabel(staff.position || staff.department)}</Text>
-            </View>
-            {!!staff.organization?.name && (
-              <View style={styles.orgBadge}>
-                <Ionicons name="business-outline" size={14} color="#0369a1" />
-                <Text style={styles.orgBadgeText}>
-                  {staff.organization.name}
-                  {staff.organization.kind ? ` • ${staff.organization.kind === 'office' ? 'Ofis' : 'Otel'}` : ''}
-                </Text>
-              </View>
-            )}
-            <TouchableOpacity style={styles.reviewToggleBtn} onPress={() => setReviewsModalVisible(true)} activeOpacity={0.85}>
-              <Ionicons name="star-outline" size={14} color={theme.colors.primary} />
-              <Text style={styles.reviewToggleText}>Degerlendirmeler</Text>
-            </TouchableOpacity>
-            {!!staff.languages?.length && (
-              <TouchableOpacity style={styles.langBadgeTop} onPress={() => setLanguagesModalVisible(true)} activeOpacity={0.85}>
-                <Ionicons name="language-outline" size={14} color="#fff" />
-                <Text style={styles.langBadgeTopText}>
-                  {t('guestStaffLanguages', { count: staff.languages.length })}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          ) : null}
-          <View style={styles.onlineRow}>
-            <View style={[styles.dot, staff.is_online ? styles.dotOn : styles.dotOff]} />
-            <Text style={styles.onlineText}>
-              {staff.is_online ? t('staffStatusOnline') : t('staffStatusOffline')}
-            </Text>
-          </View>
-        </View>
-        {!profileVisitRestricted && daysWithUs != null ? (
-          <TouchableOpacity activeOpacity={0.9} style={styles.tenureButtonWrap} onPress={() => setTenureModalVisible(true)}>
-            <LinearGradient
-              colors={['#0f766e', '#0ea5e9']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.tenureButton}
-            >
-              <View style={styles.tenureBadge}>
-                <Ionicons name="ribbon-outline" size={14} color="#fff" />
-                <Text style={styles.tenureBadgeText}>{tenureCopy.badge}</Text>
-              </View>
-              <Text style={styles.tenureButtonText}>{tenureCopy.headline}</Text>
-              <Text style={styles.tenureButtonSubText}>{tenureSubtitle}</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        ) : null}
-        {!profileVisitRestricted ? (
-        <View style={styles.statsWrap}>
-          <ProfileStatsCard items={statItems} />
-        </View>
-        ) : null}
-        {!profileVisitRestricted ? (
-        <View style={styles.headerActionsTop}>
-          {showPhone && (
-            <TouchableOpacity onPress={onCall} style={[styles.pillBtn, styles.pillBtnPhone]} activeOpacity={0.85}>
-              <Ionicons name="call-outline" size={14} color="#fff" />
-              <Text style={styles.pillBtnText}>Telefon</Text>
-            </TouchableOpacity>
-          )}
-          {showWhatsApp && (
-            <TouchableOpacity
-              onPress={() => Linking.openURL(`https://wa.me/${staff.whatsapp!.trim().replace(/\D/g, '')}`)}
-              style={[styles.pillBtn, styles.pillBtnWhatsApp]}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="logo-whatsapp" size={14} color="#fff" />
-              <Text style={styles.pillBtnText}>WhatsApp</Text>
-            </TouchableOpacity>
-          )}
-          {showEmail && (
-            <TouchableOpacity
-              onPress={() => Linking.openURL(`mailto:${staff.email!.trim()}`)}
-              style={[styles.pillBtn, styles.pillBtnMail]}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="mail-outline" size={14} color="#fff" />
-              <Text style={styles.pillBtnText}>Mail</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            onPress={onMessage}
-            style={[styles.pillBtn, styles.pillBtnMessage]}
-            disabled={startingChat}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="chatbubble-ellipses-outline" size={14} color="#fff" />
-            <Text style={styles.pillBtnText}>Mesaj</Text>
-          </TouchableOpacity>
-        </View>
-        ) : null}
-      </View>
-
-      {!profileVisitRestricted ? (
-      <>
-      {staff.bio ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📝 {t('staffProfileAbout')}</Text>
-          <View style={styles.card}>
-            <LinkifiedText text={staff.bio} textStyle={styles.bio} linkStyle={styles.bioLink} />
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.section}>
-        <View style={styles.postsPreviewCard}>
-          <View style={styles.postsHeaderRow}>
-            <Text style={styles.postsHeaderTitle}>{t('profileFeedPostsSection')}</Text>
-            <TouchableOpacity
-              onPress={() => router.push({ pathname: '/customer/staff-posts/[id]', params: { id: staff.id } } as never)}
-              activeOpacity={0.8}
-              style={styles.postsSeeAllBtn}
-            >
-              <Text style={styles.postsSeeAllText}>Tumunu gor</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>📋 {t('staffProfileBasicInfo')}</Text>
-        <View style={styles.quickStats}>
-          {staff.department ? <StatPill label="Departman" value={getDepartmentLabel(staff.department)} /> : null}
-          {staff.position ? <StatPill label="Pozisyon" value={getDepartmentLabel(staff.position)} /> : null}
-          {yearsExperience != null ? <StatPill label="Deneyim" value={`${yearsExperience}+ yil`} /> : null}
-          {staff.hire_date ? (
-            <StatPill
-              label={t('staffHireDateLabel')}
-              value={new Date(staff.hire_date).toLocaleDateString(
-                i18n.language?.startsWith('tr') ? 'tr-TR' : i18n.language || 'en-US'
-              )}
-            />
-          ) : null}
-          {staff.shift ? <StatPill label={t('staffShiftLabel')} value={`${staff.shift.start_time} - ${staff.shift.end_time}`} /> : null}
-          {staff.office_location ? <StatPill label={t('staffLocationLabel')} value={staff.office_location} /> : null}
-        </View>
-      </View>
-
-      {staff.specialties?.length ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔧 {t('staffProfileSpecialties')}</Text>
-          <View style={styles.card}>
-            <View style={styles.chipWrap}>
-              {staff.specialties.map((s, i) => (
-                <View key={i} style={styles.infoChip}>
-                  <Text style={styles.infoChipText}>{s}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
-      ) : null}
-
-      {staff.achievements?.length ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🏆 {t('staffProfileAchievements')}</Text>
-          <View style={styles.card}>
-            {staff.achievements.map((a, i) => (
-              <Text key={i} style={styles.bullet}>• {a}</Text>
-            ))}
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.avatarActionsRow}>
-        {STAFF_SOCIAL_KEYS.map((key) => {
-          const raw = staff.social_links?.[key]?.trim();
-          if (!raw) return null;
-          const href = staffSocialOpenUrl(key as StaffSocialKey, raw);
-          if (!href) return null;
-          const icon =
-            key === 'instagram'
-              ? ('logo-instagram' as const)
-              : key === 'facebook'
-                ? ('logo-facebook' as const)
-                : key === 'linkedin'
-                  ? ('logo-linkedin' as const)
-                  : ('logo-twitter' as const);
-          const circleStyle =
-            key === 'instagram'
-              ? styles.avatarActionInstagram
-              : key === 'facebook'
-                ? styles.avatarActionFacebook
-                : key === 'linkedin'
-                  ? styles.avatarActionLinkedin
-                  : styles.avatarActionX;
-          return (
-            <TouchableOpacity
-              key={key}
-              onPress={() => Linking.openURL(href)}
-              style={[styles.avatarActionCircle, circleStyle]}
-              activeOpacity={0.8}
-            >
-              <Ionicons name={icon} size={20} color={theme.colors.white} />
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      </>
-      ) : null}
-      <View style={styles.igGridSection}>
-        <View style={styles.igGridTabBar}>
-          <Ionicons name="grid-outline" size={22} color={theme.colors.text} />
-        </View>
-        <StaffProfileFeedGrid staffId={staff.id} linkVariant="customer" showEmptyHint={false} edgeToEdge />
-      </View>
+      <ModernStaffProfileShell
+        input={modernInput}
+        mode="guest_viewer"
+        staffId={staff.id}
+        feedLinkVariant="customer"
+        restricted={profileVisitRestricted}
+        menuOpen={profileMenuOpen}
+        onMenuOpenChange={setProfileMenuOpen}
+        topInset={safeTop}
+        onCoverPress={() => staff.cover_image && setCoverModalVisible(true)}
+        onAvatarPress={
+          staff.profile_image ? () => setAvatarModalVisible(true) : undefined
+        }
+        coverLeftAction={
+          <ProfileCoverIconButton icon="chevron-back" size={24} onPress={() => router.back()} />
+        }
+        contactActions={!profileVisitRestricted ? profileContactActions : []}
+        menuActions={!profileVisitRestricted ? profileMenuActions : []}
+        extraMenuItems={
+          !profileVisitRestricted
+            ? [
+                {
+                  id: 'block',
+                  icon: 'ban-outline',
+                  label: t('block'),
+                  destructive: true,
+                  onPress: handleBlockFromProfile,
+                },
+              ]
+            : []
+        }
+        onTenurePress={() => setTenureModalVisible(true)}
+        onReviewsPress={() => setReviewsModalVisible(true)}
+        onLanguagesPress={() => setLanguagesModalVisible(true)}
+        profileLinkViewer="customer"
+        socialLinks={staff.social_links}
+      />
 
       <ImagePreviewModal
         visible={coverModalVisible}
@@ -775,7 +605,7 @@ export default function StaffProfileScreen() {
             {myReview ? (
               <View style={[styles.reviewsModalCloseBtn, styles.reviewsModalRateDone, { flex: 1 }]}>
                 <Ionicons name="star" size={18} color={theme.colors.primary} />
-                <Text style={styles.reviewsModalRateDoneText}>Puan verdiniz</Text>
+                <Text style={styles.reviewsModalRateDoneText}>{t('staffRateDone')}</Text>
               </View>
             ) : (
               <TouchableOpacity
@@ -786,39 +616,21 @@ export default function StaffProfileScreen() {
                 }}
               >
                 <Ionicons name="star-outline" size={18} color={theme.colors.white} />
-                <Text style={styles.reviewsModalRateText}>Puan ver</Text>
+                <Text style={styles.reviewsModalRateText}>{t('staffRateButton')}</Text>
               </TouchableOpacity>
             )}
           </View>
         }
       />
 
-      <Modal
+      <ProfileTenureModal
         visible={tenureModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setTenureModalVisible(false)}
-      >
-        <Pressable style={styles.languagesOverlay} onPress={() => setTenureModalVisible(false)}>
-          <Pressable style={styles.tenureModalBox} onPress={() => {}}>
-            <Text style={styles.tenureModalTitle}>{tenureCopy.title}</Text>
-            <Text style={styles.tenureModalSubtitle}>{tenureCopy.timelineTitle}</Text>
-            <View style={styles.tenureModalList}>
-              {tenureTimeline.map((d, idx) => (
-                <View key={`${d.toISOString()}-${idx}`} style={styles.tenureModalRow}>
-                  <Text style={styles.tenureModalRowLeft}>
-                    {idx === 0 ? tenureCopy.startLabel : idx === tenureTimeline.length - 1 ? tenureCopy.todayLabel : `${idx}. ${tenureCopy.monthLabel}`}
-                  </Text>
-                  <Text style={styles.tenureModalRowRight}>{formatTenureDate(d, i18n.language)}</Text>
-                </View>
-              ))}
-            </View>
-            <TouchableOpacity style={styles.tenureModalCloseBtn} onPress={() => setTenureModalVisible(false)} activeOpacity={0.85}>
-              <Text style={styles.tenureModalCloseText}>{tenureCopy.close}</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setTenureModalVisible(false)}
+        daysWithUs={daysWithUs ?? 0}
+        joinDateIso={joinDateIso}
+        anchorMs={todayAnchor}
+        subtitle={staff?.tenure_note?.trim() || t('tenureSubtitle')}
+      />
 
       <Modal
         visible={languagesModalVisible}
@@ -935,6 +747,25 @@ export default function StaffProfileScreen() {
         </KeyboardAvoidingView>
       </Modal>
       </ScrollView>
+
+      {staff?.tips_enabled === true ? (
+      <StaffTipSheet
+        visible={tipSheetVisible}
+        staff={
+          staff
+            ? {
+                id: staff.id,
+                name: staff.full_name || t('visitorTypeStaff'),
+                avatarUrl: staff.profile_image,
+                department: staff.department,
+              }
+            : null
+        }
+        guestName={getGuestFullNameFromUser(user)}
+        roomNumber={guestRoomNumber}
+        onClose={() => setTipSheetVisible(false)}
+      />
+      ) : null}
     </View>
   );
 }
@@ -961,48 +792,8 @@ function formatReviewDate(iso: string) {
   return d.toLocaleDateString(lang === 'tr' ? 'tr-TR' : lang === 'ar' ? 'ar-SA' : 'en-US');
 }
 
-function calculateDaysWithUs(isoDate: string, anchorMs: number) {
-  const joinedAt = new Date(isoDate);
-  if (Number.isNaN(joinedAt.getTime())) return null;
-  const anchor = new Date(anchorMs);
-  const joinedDay = Date.UTC(joinedAt.getFullYear(), joinedAt.getMonth(), joinedAt.getDate());
-  const anchorDay = Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
-  return Math.max(1, Math.floor((anchorDay - joinedDay) / (24 * 60 * 60 * 1000)) + 1);
-}
-
-function resolveLocale(lang: string) {
-  const code = (lang || 'en').toLowerCase();
-  if (code.startsWith('tr')) return 'tr-TR';
-  if (code.startsWith('de')) return 'de-DE';
-  if (code.startsWith('fr')) return 'fr-FR';
-  if (code.startsWith('es')) return 'es-ES';
-  if (code.startsWith('ru')) return 'ru-RU';
-  if (code.startsWith('ar')) return 'ar-SA';
-  return 'en-US';
-}
-
-function formatTenureDate(d: Date, lang: string) {
-  return d.toLocaleDateString(resolveLocale(lang), { day: '2-digit', month: 'long', year: 'numeric' });
-}
-
-function buildTenureTimeline(isoDate: string, anchorMs: number) {
-  const start = new Date(isoDate);
-  if (Number.isNaN(start.getTime())) return [];
-  const anchor = new Date(anchorMs);
-  const rows: Date[] = [start];
-  const cursor = new Date(start);
-  let safety = 0;
-  while (cursor.getTime() < anchor.getTime() && safety < 360) {
-    cursor.setMonth(cursor.getMonth() + 1);
-    if (cursor.getTime() <= anchor.getTime()) rows.push(new Date(cursor));
-    safety += 1;
-  }
-  if (rows[rows.length - 1]?.toDateString() !== anchor.toDateString()) rows.push(anchor);
-  return rows;
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
+  container: { flex: 1, backgroundColor: P.bg },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 0, width: '100%', minWidth: '100%', alignItems: 'stretch' as const },
   privacyBanner: {
@@ -1069,7 +860,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   heroOverlap: {
-    marginTop: -(HEADER_AVATAR_SIZE / 2),
+    marginTop: -32,
     marginHorizontal: 16,
     backgroundColor: theme.colors.surface,
     borderRadius: 20,
@@ -1082,19 +873,19 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
+    width: P.avatar.size,
+    height: P.avatar.size,
+    borderRadius: P.avatar.size / 2,
     borderWidth: 4,
     borderColor: theme.colors.surface,
     backgroundColor: theme.colors.borderLight,
     shadowOpacity: 0.2,
     elevation: 6,
   },
-  avatarSmall: { width: HEADER_AVATAR_SIZE, height: HEADER_AVATAR_SIZE, borderRadius: HEADER_AVATAR_SIZE / 2, borderWidth: 2 },
+  avatarSmall: { width: 64, height: 64, borderRadius: 32, borderWidth: 2 },
   avatarPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   avatarLetterSmall: { fontSize: 24, fontWeight: '700', color: theme.colors.primary },
-  header: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 0 },
+  header: { width: '100%', alignSelf: 'stretch', alignItems: 'center', paddingHorizontal: 20, paddingTop: 0 },
   name: { ...theme.typography.title, fontSize: 24, color: theme.colors.text, textAlign: 'center' },
   dept: { fontSize: 16, fontWeight: '600', color: theme.colors.primary, marginTop: 4 },
   headerMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap', justifyContent: 'center' },
@@ -1147,6 +938,7 @@ const styles = StyleSheet.create({
   dotOff: { backgroundColor: theme.colors.textMuted },
   onlineText: { fontSize: 13, color: theme.colors.textMuted },
   statsWrap: { width: '100%', marginTop: 10 },
+  tipCtaWrap: { width: '100%', marginTop: 8, marginBottom: 2, alignItems: 'center' },
   tenureButtonWrap: { width: '100%', marginTop: 10, borderRadius: 16, overflow: 'hidden' },
   tenureButton: {
     borderRadius: 16,

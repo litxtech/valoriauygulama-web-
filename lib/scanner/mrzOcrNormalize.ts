@@ -56,5 +56,30 @@ export function mrzOcrAmbiguityVariants(mrz: string): string[] {
     .join('\n');
   variants.add(swap5S);
 
+  const swap2Z = base
+    .split('\n')
+    .map((line) => line.replace(/2(?=[A-Z<]{2})/g, 'Z').replace(/Z(?=\d)/g, '2'))
+    .join('\n');
+  variants.add(swap2Z);
+
+  const swap6G = base
+    .split('\n')
+    .map((line) => line.replace(/6(?=[A-Z])/g, 'G').replace(/G(?=\d)/g, '6'))
+    .join('\n');
+  variants.add(swap6G);
+
+  const fixChevrons = base
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/K{2,}/g, (m) => '<'.repeat(m.length))
+        .replace(/<{3,}/g, (m) => '<'.repeat(Math.min(m.length, 8)))
+    )
+    .join('\n');
+  variants.add(fixChevrons);
+
+  const dropSpaces = base.replace(/ /g, '');
+  if (dropSpaces !== base.replace(/\n/g, '')) variants.add(dropSpaces);
+
   return [...variants];
 }

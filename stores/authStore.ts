@@ -6,16 +6,20 @@ import { log } from '@/lib/logger';
 import { savePushTokenForStaff } from '@/lib/notificationsPush';
 import { isPostgrestSchemaCacheError, isSupabaseUnavailableError, sleepMs, withTimeout } from '@/lib/supabaseTransientErrors';
 import {
+  peekStaffSessionCache,
   readStaffSessionCache,
   writeStaffSessionCache,
   clearStaffSessionCache,
   type CachedStaffProfile,
 } from '@/lib/staffSessionCache';
 import { normalizeHiddenMenuItemIds } from '@/lib/staffMenuCatalog';
+import { clearLastRoute } from '@/lib/lastRoutePersistence';
 
 const STAFF_FETCH_TIMEOUT_MS = 8_000;
 const STAFF_RETRY_FAST_MAX = 3;
 const STAFF_RETRY_SLOW_MS = 45_000;
+const SESSION_FETCH_TIMEOUT_MS = 10_000;
+const STAFF_BOOT_WATCHDOG_MS = 12_000;
 
 const STAFF_SELECT_LEAN =
   'id, auth_id, email, full_name, role, department, profile_image, work_status, is_active, banned_until, deleted_at, app_permissions, organization_id, hidden_menu_item_ids';
@@ -64,6 +68,39 @@ let staffRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let staffFastRetryCount = 0;
 let staffRetryUserId: string | null = null;
 let lastStaffCheckUserId: string | null = null;
+let staffBootWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearStaffBootWatchdog() {
+  if (staffBootWatchdogTimer) {
+    clearTimeout(staffBootWatchdogTimer);
+    staffBootWatchdogTimer = null;
+  }
+}
+
+function scheduleStaffBootWatchdog(userId: string) {
+  clearStaffBootWatchdog();
+  staffBootWatchdogTimer = setTimeout(() => {
+    staffBootWatchdogTimer = null;
+    void (async () => {
+      const s = useAuthStore.getState();
+      if (s.user?.id !== userId || s.staffCheckComplete) return;
+      log.warn('authStore', 'staff boot watchdog — önbellek ile devam');
+      clearStaffRetryTimer();
+      const cached = await readStaffSessionCache(userId);
+      const existingStaff = s.staff?.auth_id === userId ? s.staff : null;
+      const staff =
+        existingStaff ?? (cached && !cached.deleted_at ? cached : null);
+      lastStaffCheckUserId = userId;
+      if (staff) hydrateOrg(staff);
+      useAuthStore.setState({
+        staffCheckComplete: true,
+        staffCheckUnavailable: !staff,
+        staff,
+        loading: false,
+      });
+    })();
+  }, STAFF_BOOT_WATCHDOG_MS);
+}
 
 function clearStaffRetryTimer() {
   if (staffRetryTimer) {
@@ -196,7 +233,7 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
     return { status: 'guest' };
   }
 
-  if (error) log.warn('authStore', 'staff fetch', error);
+  if (error) log.warn('authStore', 'staff fetch', isSupabaseUnavailableError(error) ? 'Supabase geçici kapalı (522)' : error);
 
   const cached = await readStaffSessionCache(user.id);
   if (cached && !cached.deleted_at) {
@@ -228,7 +265,7 @@ function scheduleStaffRetry(user: User, slow = false) {
 
   staffRetryTimer = setTimeout(() => {
     staffRetryTimer = null;
-    void runStaffCheck(user);
+    void runStaffCheck(user, { background: true });
   }, delay);
 }
 
@@ -237,17 +274,30 @@ function applyStaffResolve(user: User, result: StaffResolveResult): void {
   if (cur.user?.id !== user.id) return;
 
   if (result.status === 'unknown') {
+    const existingStaff = cur.staff?.auth_id === user.id ? cur.staff : null;
+    if (existingStaff || cur.staffCheckComplete) {
+      useAuthStore.setState({
+        user,
+        staff: existingStaff ?? cur.staff,
+        staffCheckComplete: true,
+        staffCheckUnavailable: false,
+        loading: false,
+      });
+      scheduleStaffRetry(user, true);
+      return;
+    }
     useAuthStore.setState({
       user,
       staffCheckComplete: false,
       staffCheckUnavailable: true,
       loading: false,
     });
-    scheduleStaffRetry(user);
+    scheduleStaffRetry(user, isSupabaseUnavailableError(result.reason));
     return;
   }
 
   clearStaffRetryTimer();
+  clearStaffBootWatchdog();
   staffFastRetryCount = 0;
   staffRetryUserId = null;
   lastStaffCheckUserId = user.id;
@@ -263,7 +313,36 @@ function applyStaffResolve(user: User, result: StaffResolveResult): void {
   log.info('authStore', 'staffCheckComplete', { hasStaff: !!staff });
 }
 
-function runStaffCheck(user: User): Promise<void> {
+function resetAuthPipeline(): void {
+  loadSessionPromise = null;
+  staffCheckPromise = null;
+  clearStaffRetryTimer();
+  staffFastRetryCount = 0;
+  staffRetryUserId = null;
+  lastStaffCheckUserId = null;
+  clearStaffBootWatchdog();
+}
+
+/** Giriş sonrası anında oturum — staff kontrolü arka planda. */
+export async function completeSignIn(user: User): Promise<void> {
+  const cur = useAuthStore.getState();
+  if (cur.user?.id === user.id && cur.staffCheckComplete) {
+    void runStaffCheck(user, { background: true });
+    return;
+  }
+  resetAuthPipeline();
+  const cached = await readStaffSessionCache(user.id);
+  useAuthStore.setState({
+    user,
+    staff: cached,
+    loading: false,
+    staffCheckComplete: true,
+    staffCheckUnavailable: false,
+  });
+  void runStaffCheck(user, { background: true });
+}
+
+function runStaffCheck(user: User, _opts?: { background?: boolean }): Promise<void> {
   if (staffCheckPromise) return staffCheckPromise;
 
   staffCheckPromise = (async () => {
@@ -279,10 +358,25 @@ function runStaffCheck(user: User): Promise<void> {
 async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => AuthState): Promise<void> {
   log.info('authStore', 'loadSession başladı');
   try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const [{ data: { session }, error: sessionError }, cachePeek] = await Promise.all([
+      withTimeout(supabase.auth.getSession(), SESSION_FETCH_TIMEOUT_MS, 'getSession'),
+      peekStaffSessionCache(),
+    ]);
     if (sessionError) {
-      log.error('authStore', 'getSession hatası', sessionError);
-      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+      const msg = sessionError.message ?? '';
+      if (isSupabaseUnavailableError(msg)) {
+        log.warn('authStore', 'getSession — Supabase geçici kapalı (522)');
+      } else {
+        log.error('authStore', 'getSession hatası', sessionError);
+      }
+      const cachedUser = get().user;
+      set({
+        user: cachedUser,
+        staff: get().staff,
+        loading: false,
+        staffCheckComplete: true,
+        staffCheckUnavailable: !cachedUser,
+      });
       return;
     }
 
@@ -295,27 +389,30 @@ async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => Au
       return;
     }
 
-    const cached = await readStaffSessionCache(user.id);
+    const cached =
+      cachePeek?.auth_id === user.id && !cachePeek.staff.deleted_at ? cachePeek.staff : null;
     const memory = get().staff?.auth_id === user.id ? get().staff : null;
-    const staff = (cached && !cached.deleted_at ? cached : null) ?? memory ?? null;
-    const alreadyKnown = get().staffCheckComplete && get().user?.id === user.id;
+    const staff = cached ?? memory ?? null;
 
     set({
       user,
-      staff: staff ?? (alreadyKnown ? get().staff : null),
+      staff,
       loading: false,
-      staffCheckComplete: !!staff || alreadyKnown,
+      staffCheckComplete: true,
       staffCheckUnavailable: false,
     });
-    log.info('authStore', 'loadSession bitti', { hasStaff: !!staff, staffCheckComplete: !!staff || alreadyKnown });
+    log.info('authStore', 'loadSession bitti', { hasStaff: !!staff });
 
-    if (!staff && !alreadyKnown) {
-      void runStaffCheck(user);
-    } else if (staff && lastStaffCheckUserId !== user.id) {
-      void runStaffCheck(user);
+    if (lastStaffCheckUserId !== user.id) {
+      void runStaffCheck(user, { background: true });
     }
   } catch (e) {
-    log.warn('authStore', 'loadSession', (e as Error)?.message);
+    const msg = (e as Error)?.message ?? '';
+    log.warn('authStore', 'loadSession', msg);
+    if (msg.includes('getSession timed out')) {
+      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+      return;
+    }
     const user = get().user;
     if (user && !get().staffCheckComplete) {
       set({ loading: false, staffCheckUnavailable: true });
@@ -329,6 +426,7 @@ async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => Au
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   staff: null,
+  /** İlk loadSession bitene kadar lobi yerine boot ekranı (Android boş ekran / flicker önleme). */
   loading: true,
   staffCheckComplete: false,
   staffCheckUnavailable: false,
@@ -361,41 +459,50 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     log.info('authStore', 'signOut');
-    clearStaffRetryTimer();
-    staffFastRetryCount = 0;
-    staffRetryUserId = null;
-    lastStaffCheckUserId = null;
+    resetAuthPipeline();
+
+    set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+
     try {
-      await supabase.auth.signOut();
       await clearGuestMessagingLocalState();
       await clearStaffSessionCache();
-      set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+      await clearLastRoute();
     } catch (e) {
-      log.error('authStore', 'signOut hatası', e);
+      log.warn('authStore', 'signOut yerel temizlik', e);
+    }
+
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch (e) {
+      log.warn('authStore', 'signOut local scope', e);
     }
   },
 }));
 
 export function initAuthListener() {
   void useAuthStore.getState().loadSession();
-  return supabase.auth.onAuthStateChange((event) => {
+  return supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
-      clearStaffRetryTimer();
-      staffFastRetryCount = 0;
-      staffRetryUserId = null;
-      lastStaffCheckUserId = null;
-      void clearGuestMessagingLocalState();
-      void clearStaffSessionCache();
-      useAuthStore.setState({
-        user: null,
-        staff: null,
-        loading: false,
-        staffCheckComplete: true,
-        staffCheckUnavailable: false,
+      void supabase.auth.getSession().then(({ data: { session: live } }) => {
+        if (live?.user) return;
+        resetAuthPipeline();
+        void clearGuestMessagingLocalState();
+        void clearStaffSessionCache();
+        useAuthStore.setState({
+          user: null,
+          staff: null,
+          loading: false,
+          staffCheckComplete: true,
+          staffCheckUnavailable: false,
+        });
       });
       return;
     }
-    if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+    if (event === 'SIGNED_IN' && session?.user) {
+      void completeSignIn(session.user);
+      return;
+    }
+    if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
       void useAuthStore.getState().loadSession();
     }
   });

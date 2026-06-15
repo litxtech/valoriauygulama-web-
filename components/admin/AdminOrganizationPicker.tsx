@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { organizationKindLabel } from '@/lib/organizationKinds';
@@ -86,29 +87,39 @@ export function AdminOrganizationPicker({
     return `${name} · ${k}`;
   };
 
+  if (options.length === 0 && !canUseAll) return null;
+
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>İşletme seç</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.headRow}>
+        <View style={styles.headIconWrap}>
+          <Ionicons name="business-outline" size={15} color={adminTheme.colors.accent} />
+        </View>
+        <Text style={styles.label}>İşletme</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
         {canUseAll ? (
           <TouchableOpacity
             style={[styles.chip, selectedOrganizationId === 'all' && styles.chipActive]}
             onPress={() => pickOrg('all')}
+            activeOpacity={0.85}
           >
             <Text style={[styles.chipText, selectedOrganizationId === 'all' && styles.chipTextActive]}>
-              Tüm işletmeler{totalPending > 0 ? ` (${totalPending})` : ''}
+              Tümü{totalPending > 0 ? ` · ${totalPending}` : ''}
             </Text>
           </TouchableOpacity>
         ) : null}
         {options.map((o) => {
           const pending = pendingCounts?.[o.id] ?? 0;
+          const active = selectedOrganizationId === o.id;
           return (
             <TouchableOpacity
               key={o.id}
-              style={[styles.chip, selectedOrganizationId === o.id && styles.chipActive]}
+              style={[styles.chip, active && styles.chipActive]}
               onPress={() => pickOrg(o.id)}
+              activeOpacity={0.85}
             >
-              <Text style={[styles.chipText, selectedOrganizationId === o.id && styles.chipTextActive]}>
+              <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
                 {chipLabel(o.name, o.kind)}
                 {pending > 0 ? ` · ${pending}` : ''}
               </Text>
@@ -122,31 +133,57 @@ export function AdminOrganizationPicker({
 
 const styles = StyleSheet.create({
   wrap: {
-    marginBottom: 12,
+    marginBottom: 14,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.borderLight,
+    ...(Platform.OS === 'ios' ? adminTheme.shadow.sm : { elevation: 2 }),
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  headIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#fff7ed',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   label: {
-    fontSize: 12,
-    color: adminTheme.colors.textMuted,
-    marginBottom: 8,
-    fontWeight: '600',
+    fontSize: 13,
+    color: adminTheme.colors.text,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 4,
   },
   chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: adminTheme.colors.surface,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    marginRight: 8,
+    maxWidth: 220,
   },
   chipActive: {
-    backgroundColor: adminTheme.colors.accent,
-    borderColor: adminTheme.colors.accent,
+    backgroundColor: adminTheme.colors.primary,
+    borderColor: adminTheme.colors.primary,
   },
   chipText: {
-    color: adminTheme.colors.text,
+    color: adminTheme.colors.textSecondary,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   chipTextActive: {
     color: '#fff',

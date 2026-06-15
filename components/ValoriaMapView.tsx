@@ -4,8 +4,8 @@
  * POI marker'ları, rota çizgisi, otel konumu.
  */
 
-import { useMemo, useRef, useCallback } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
+import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
+import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { Poi } from '@/lib/map/pois';
 import { getPoiIcon } from '@/lib/map/pois';
@@ -30,7 +30,10 @@ export type ValoriaMapViewProps = {
   onPostPress?: (postId: string) => void;
   onDiningPress?: (venueId: string) => void;
   onTransferTourPress?: (serviceId: string) => void;
+  onUserPress?: (marker: MapUserMarker) => void;
   onRegionChange?: (center: { lat: number; lng: number }) => void;
+  autoFitUserMarkers?: boolean;
+  showUserNameLabels?: boolean;
   style?: object;
 };
 
@@ -39,6 +42,136 @@ const mapboxToken =
     ? String(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN).replace(/"/g, '')
     : '';
 
+const MAPBOX_USER_MARKER_FN = `
+window.__userMarkerRegistry = window.__userMarkerRegistry || {};
+function __moveMapboxMarker(marker, lng, lat, animate) {
+  if (!animate) {
+    marker.setLngLat([lng, lat]);
+    return;
+  }
+  var from = marker.getLngLat();
+  var start = performance.now();
+  var duration = 550;
+  function frame(now) {
+    var t = Math.min(1, (now - start) / duration);
+    var ease = t * (2 - t);
+    marker.setLngLat([from.lng + (lng - from.lng) * ease, from.lat + (lat - from.lat) * ease]);
+    if (t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+window.__setUserMarkers = function(users, showUserLabels) {
+  if (!window.__valoriaMap) return;
+  var nextIds = {};
+  (users || []).forEach(function(u) {
+    nextIds[u.id] = true;
+    var existing = window.__userMarkerRegistry[u.id];
+    if (existing && existing.marker) {
+      var same = existing.lng === u.lng && existing.lat === u.lat;
+      if (!same) {
+        __moveMapboxMarker(existing.marker, u.lng, u.lat, !!u.isLiveGps);
+        existing.lng = u.lng;
+        existing.lat = u.lat;
+      }
+      return;
+    }
+    var border = u.isMe ? '4px solid #b8860b' : (u.userType === 'staff' ? '3px solid #6366f1' : (u.userType === 'guest' ? '3px solid #10b981' : '3px solid rgba(255,255,255,0.9)'));
+    if (u.isLiveGps) border = '3px solid #22c55e';
+    var wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.alignItems = 'center';
+    wrap.style.cursor = 'pointer';
+    var el = document.createElement('div');
+    el.style.width = '40px';
+    el.style.height = '40px';
+    el.style.borderRadius = '20px';
+    el.style.overflow = 'hidden';
+    el.style.border = border;
+    el.style.backgroundColor = '#e0e0e0';
+    el.style.boxShadow = u.isLiveGps ? '0 0 0 2px rgba(34,197,94,0.35), 0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.3)';
+    el.style.flexShrink = '0';
+    if (u.avatarUrl) {
+      var img = document.createElement('img');
+      img.src = u.avatarUrl;
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+      el.appendChild(img);
+    } else {
+      el.innerHTML = '<span style="font-size:20px;color:#666;line-height:40px;text-align:center;display:block">👤</span>';
+    }
+    wrap.appendChild(el);
+    if (showUserLabels && u.displayName && String(u.displayName).trim()) {
+      var ulab = document.createElement('div');
+      ulab.textContent = u.displayName;
+      ulab.style.maxWidth = '88px';
+      ulab.style.fontSize = '9px';
+      ulab.style.fontWeight = '800';
+      ulab.style.textAlign = 'center';
+      ulab.style.color = '#1a1a1a';
+      ulab.style.textShadow = '0 0 2px #fff,0 0 4px #fff';
+      ulab.style.marginTop = '2px';
+      wrap.appendChild(ulab);
+    }
+    var uOff = (showUserLabels && u.displayName && String(u.displayName).trim()) ? [0, -20] : [0, 0];
+    var m = new mapboxgl.Marker({ element: wrap, offset: uOff }).setLngLat([u.lng, u.lat]).addTo(window.__valoriaMap);
+    wrap.addEventListener('click', function() {
+      if (u.isMe) return;
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'user', markerId: u.id }));
+    });
+    window.__userMarkerRegistry[u.id] = { marker: m, lat: u.lat, lng: u.lng };
+  });
+  Object.keys(window.__userMarkerRegistry).forEach(function(id) {
+    if (nextIds[id]) return;
+    try { window.__userMarkerRegistry[id].marker.remove(); } catch(e) {}
+    delete window.__userMarkerRegistry[id];
+  });
+};
+`;
+
+const LEAFLET_USER_MARKER_FN = `
+window.__userMarkerRegistry = window.__userMarkerRegistry || {};
+window.__setUserMarkers = function(users, showUserLabels) {
+  if (!window.__valoriaMap) return;
+  var nextIds = {};
+  (users || []).forEach(function(u) {
+    nextIds[u.id] = true;
+    var existing = window.__userMarkerRegistry[u.id];
+    if (existing && existing.marker) {
+      var same = existing.lat === u.lat && existing.lng === u.lng;
+      if (!same) {
+        existing.marker.setLatLng([u.lat, u.lng]);
+        existing.lat = u.lat;
+        existing.lng = u.lng;
+      }
+      return;
+    }
+    var html = u.avatarUrl ? '<img src="' + u.avatarUrl.replace(/"/g, '&quot;') + '" style="width:100%;height:100%;object-fit:cover" />' : '<span style="font-size:20px;color:#666;line-height:40px;text-align:center;display:block">👤</span>';
+    var border = u.isMe ? '4px solid #b8860b' : (u.userType === 'staff' ? '3px solid #6366f1' : (u.userType === 'guest' ? '3px solid #10b981' : '3px solid rgba(255,255,255,0.9)'));
+    if (u.isLiveGps) border = '3px solid #22c55e';
+    var icon = L.divIcon({
+      className: 'user-avatar-marker',
+      html: '<div style="width:40px;height:40px;border-radius:20px;overflow:hidden;border:' + border + ';background:#e0e0e0;box-shadow:' + (u.isLiveGps ? '0 0 0 2px rgba(34,197,94,0.35),0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.3)') + '">' + html + '</div>',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    });
+    var m = L.marker([u.lat, u.lng], { icon: icon }).addTo(window.__valoriaMap);
+    if (u.displayName) m.bindPopup(u.displayName);
+    m.on('click', function() {
+      if (u.isMe) return;
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'user', markerId: u.id }));
+    });
+    window.__userMarkerRegistry[u.id] = { marker: m, lat: u.lat, lng: u.lng };
+  });
+  Object.keys(window.__userMarkerRegistry).forEach(function(id) {
+    if (nextIds[id]) return;
+    try { window.__valoriaMap.removeLayer(window.__userMarkerRegistry[id].marker); } catch(e) {}
+    delete window.__userMarkerRegistry[id];
+  });
+};
+`;
+
 function buildMapboxHtml(props: ValoriaMapViewProps): string {
   const lat = props.latitude ?? DEFAULT_LAT;
   const lon = props.longitude ?? DEFAULT_LON;
@@ -46,21 +179,9 @@ function buildMapboxHtml(props: ValoriaMapViewProps): string {
   const pois = props.pois ?? [];
   const routeCoords = props.routeCoordinates ?? [];
   const hotel = props.hotelMarker;
-  const userMarkers = props.userMarkers ?? [];
   const postMarkers = props.postMarkers ?? [];
   const diningMarkers = props.diningMarkers ?? [];
   const transferTourMarkers = props.transferTourMarkers ?? [];
-
-  const usersJson = JSON.stringify(
-    userMarkers.map((u) => ({
-      id: u.id,
-      lat: u.lat,
-      lng: u.lng,
-      displayName: u.displayName ?? null,
-      avatarUrl: u.avatarUrl ?? null,
-      isMe: !!u.isMe,
-    }))
-  );
 
   const poisJson = JSON.stringify(
     pois.map((p) => ({
@@ -123,9 +244,11 @@ function buildMapboxHtml(props: ValoriaMapViewProps): string {
     var center = [${lon}, ${lat}];
     var zoomLevel = ${zoom};
     var map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/streets-v12', center: center, zoom: zoomLevel });
+    window.__valoriaMap = map;
     var markers = [];
     var routeCoords = ${routeJson};
     var hotel = ${hotelJson};
+    ${MAPBOX_USER_MARKER_FN}
 
     map.on('load', function() {
       // Hotel marker
@@ -154,30 +277,8 @@ function buildMapboxHtml(props: ValoriaMapViewProps): string {
         });
         markers.push(m);
       });
-      // User avatar markers
-      var users = ${usersJson};
-      users.forEach(function(u) {
-        var el = document.createElement('div');
-        el.style.width = '40px';
-        el.style.height = '40px';
-        el.style.borderRadius = '20px';
-        el.style.overflow = 'hidden';
-        el.style.border = u.isMe ? '4px solid #b8860b' : '3px solid rgba(255,255,255,0.9)';
-        el.style.backgroundColor = '#e0e0e0';
-        el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-        if (u.avatarUrl) {
-          var img = document.createElement('img');
-          img.src = u.avatarUrl;
-          img.style.width = '100%';
-          img.style.height = '100%';
-          img.style.objectFit = 'cover';
-          el.appendChild(img);
-        } else {
-          el.innerHTML = '<span style="font-size:20px;color:#666;line-height:40px;text-align:center">👤</span>';
-        }
-        var m = new mapboxgl.Marker(el).setLngLat([u.lng, u.lat]).setPopup(u.displayName ? new mapboxgl.Popup().setHTML('<b>' + (u.displayName || '').replace(/</g, '&lt;') + '</b>') : null).addTo(map);
-        markers.push(m);
-      });
+      // User avatar markers — RN tarafından __setUserMarkers ile güncellenir
+      window.__setUserMarkers([], false);
       // Post markers (avatar + optional name under, always visible)
       var posts = ${postsJson};
       posts.forEach(function(p) {
@@ -308,7 +409,6 @@ function buildMapboxHtml(props: ValoriaMapViewProps): string {
         map.addSource('route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: routeCoords } } });
         map.addLayer({ id: 'route', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#b8860b', 'line-width': 4 } });
       }
-      // Notify initial load
       if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
     });
 
@@ -328,21 +428,9 @@ function buildOsmLeafletHtml(props: ValoriaMapViewProps): string {
   const pois = props.pois ?? [];
   const routeCoords = props.routeCoordinates ?? [];
   const hotel = props.hotelMarker;
-  const userMarkers = props.userMarkers ?? [];
   const postMarkers = props.postMarkers ?? [];
   const diningMarkers = props.diningMarkers ?? [];
   const transferTourMarkers = props.transferTourMarkers ?? [];
-
-  const usersJson = JSON.stringify(
-    userMarkers.map((u) => ({
-      id: u.id,
-      lat: u.lat,
-      lng: u.lng,
-      displayName: u.displayName ?? null,
-      avatarUrl: u.avatarUrl ?? null,
-      isMe: !!u.isMe,
-    }))
-  );
 
   const poisJson = JSON.stringify(
     pois.map((p) => ({
@@ -397,6 +485,8 @@ function buildOsmLeafletHtml(props: ValoriaMapViewProps): string {
   <script>
     function __esc(s){ if (s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
     var map = L.map('map').setView([${lat}, ${lon}], ${zoom});
+    window.__valoriaMap = map;
+    ${LEAFLET_USER_MARKER_FN}
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
     var pois = ${poisJson};
     var route = ${routeJson};
@@ -413,18 +503,7 @@ function buildOsmLeafletHtml(props: ValoriaMapViewProps): string {
         if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'poi', poi: p }));
       });
     });
-    var users = ${usersJson};
-    users.forEach(function(u) {
-      var html = u.avatarUrl ? '<img src="' + u.avatarUrl.replace(/"/g, '&quot;') + '" style="width:100%;height:100%;object-fit:cover" />' : '<span style="font-size:20px;color:#666;line-height:40px;text-align:center;display:block">👤</span>';
-      var icon = L.divIcon({
-        className: 'user-avatar-marker',
-        html: '<div style="width:40px;height:40px;border-radius:20px;overflow:hidden;border:' + (u.isMe ? '4px solid #b8860b' : '3px solid rgba(255,255,255,0.9)') + ';background:#e0e0e0;box-shadow:0 2px 4px rgba(0,0,0,0.3)">' + html + '</div>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20]
-      });
-      var m = L.marker([u.lat, u.lng], { icon: icon }).addTo(map);
-      if (u.displayName) m.bindPopup(u.displayName);
-    });
+    window.__setUserMarkers([], false);
     var posts = ${postsJson};
     posts.forEach(function(p) {
       var hasName = p.displayName && String(p.displayName).trim();
@@ -499,10 +578,14 @@ export default function ValoriaMapView({
   onPostPress,
   onDiningPress,
   onTransferTourPress,
+  onUserPress,
   onRegionChange,
+  autoFitUserMarkers = false,
+  showUserNameLabels = false,
   style,
 }: ValoriaMapViewProps) {
   const webRef = useRef<WebView>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   const html = useMemo(() => {
     const props: ValoriaMapViewProps = {
@@ -512,18 +595,66 @@ export default function ValoriaMapView({
       pois,
       routeCoordinates,
       hotelMarker,
-      userMarkers,
       postMarkers,
       diningMarkers,
       transferTourMarkers,
+      showUserNameLabels,
     };
     return mapboxToken ? buildMapboxHtml(props) : buildOsmLeafletHtml(props);
-  }, [latitude, longitude, zoom, pois, routeCoordinates, hotelMarker, userMarkers, postMarkers, diningMarkers, transferTourMarkers]);
+  }, [
+    latitude,
+    longitude,
+    zoom,
+    pois,
+    routeCoordinates,
+    hotelMarker,
+    postMarkers,
+    diningMarkers,
+    transferTourMarkers,
+    showUserNameLabels,
+  ]);
+
+  useEffect(() => {
+    setMapReady(false);
+  }, [html]);
+
+  const userMarkersPayload = useMemo(
+    () =>
+      JSON.stringify(
+        userMarkers.map((u) => ({
+          id: u.id,
+          lat: u.lat,
+          lng: u.lng,
+          displayName: u.displayName ?? null,
+          avatarUrl: u.avatarUrl ?? null,
+          isMe: !!u.isMe,
+          userType: u.userType ?? null,
+          userId: u.userId ?? null,
+          isLiveGps: !!u.isLiveGps,
+          updatedAt: u.updatedAt ?? null,
+        })),
+      ),
+    [userMarkers],
+  );
+
+  useEffect(() => {
+    if (!mapReady) return;
+    webRef.current?.injectJavaScript(`
+      try {
+        if (window.__setUserMarkers) window.__setUserMarkers(${userMarkersPayload}, ${showUserNameLabels ? 'true' : 'false'});
+      } catch (e) {}
+      true;
+    `);
+  }, [mapReady, userMarkersPayload, showUserNameLabels]);
 
   const onMessage = useCallback(
     (event: { nativeEvent: { data: string } }) => {
       try {
         const data = JSON.parse(event.nativeEvent.data);
+        if (data.type === 'ready') {
+          setMapReady(true);
+          return;
+        }
         if (data.type === 'poi' && data.poi && onPoiPress) {
           const p = pois.find((x) => x.id === data.poi.id);
           if (p) onPoiPress(p);
@@ -535,12 +666,15 @@ export default function ValoriaMapView({
           onDiningPress(String(data.venueId));
         } else if (data.type === 'transferTour' && data.serviceId && onTransferTourPress) {
           onTransferTourPress(String(data.serviceId));
+        } else if (data.type === 'user' && data.markerId && onUserPress) {
+          const m = userMarkers.find((x) => x.id === data.markerId);
+          if (m) onUserPress(m);
         } else if (data.type === 'region' && onRegionChange) {
           onRegionChange({ lat: data.lat, lng: data.lng });
         }
       } catch (_) {}
     },
-    [onPoiPress, onHotelPress, onPostPress, onDiningPress, onTransferTourPress, onRegionChange, pois]
+    [onPoiPress, onHotelPress, onPostPress, onDiningPress, onTransferTourPress, onUserPress, onRegionChange, pois, userMarkers]
   );
 
   const flatStyle = StyleSheet.flatten(style ?? {}) as Record<string, unknown>;

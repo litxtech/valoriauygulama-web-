@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,7 @@ import {
   guestListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
+  uploadVoiceMessageForGuest,
 } from '@/lib/messagingApi';
 import {
   replaceChatMessage,
@@ -51,11 +52,13 @@ import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { supabase } from '@/lib/supabase';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
+import { parseVoiceDuration, resolveVoiceMediaUrl } from '@/lib/voiceMessageMeta';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getChatInputBottomPadding, getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
-import { useMessagingBubbleStore, getContrastTextColor, BUBBLE_OTHER_DIRECT, BUBBLE_COLOR_OPTIONS } from '@/stores/messagingBubbleStore';
+import { useMessagingBubbleStore, getContrastTextColor, BUBBLE_OTHER_DIRECT } from '@/stores/messagingBubbleStore';
+import { BubbleColorPickerModal } from '@/components/chat/BubbleColorPickerModal';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { MessageTranslation } from '@/components/MessageTranslation';
@@ -84,7 +87,7 @@ import {
   sendChatImageUris,
 } from '@/lib/chatMediaSend';
 import { formatChatMessageTime } from '@/lib/formatChatTime';
-import { useChatScreenshotListener } from '@/lib/chatScreenshot';
+import { useChatScreenshotContext } from '@/lib/chatScreenshot';
 import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
 import { ChatMentionComposer } from '@/components/ChatMentionComposer';
 import { ChatMentionText } from '@/components/ChatMentionText';
@@ -96,6 +99,18 @@ import {
   type ChatMentionParticipant,
 } from '@/lib/chatMentions';
 import { usePendingMuxVideoPoll } from '@/lib/usePendingMuxVideoPoll';
+import { ChatVoiceInputPreview } from '@/components/chat/ChatVoiceInputPreview';
+import { ChatInputTrailingActions } from '@/components/chat/ChatInputTrailingActions';
+import {
+  AttachmentSheet,
+  AttachmentToggleIcon,
+  type AttachmentAction,
+} from '@/components/chat/AttachmentSheet';
+import { customerChatHeaderBackOptions } from '@/components/chat/CustomerChatHeaderBack';
+import { useChatVoiceRecording } from '@/hooks/chat/useChatVoiceRecording';
+import { useChatVoiceQueueSync } from '@/hooks/chat/useChatVoiceQueueSync';
+import { sendGuestVoiceMessage } from '@/lib/chatVoiceSend';
+import { createOptimisticVoiceMessage } from '@/lib/chatOptimisticMessage';
 
 const CUSTOMER_CHAT_CACHE_PREFIX = 'customer_chat_cache_v1:';
 type CustomerChatCacheEntry = {
@@ -141,7 +156,8 @@ function MessageBubble({
 }) {
   const { t } = useTranslation();
   const guestLabel = t('chatMessageSenderGuest');
-  const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
+  const voiceUri = msg.message_type === 'voice' ? resolveVoiceMediaUrl(msg.media_url, msg.content) : null;
+  const isVoice = msg.message_type === 'voice' && !!voiceUri;
   const isVideo = msg.message_type === 'video';
   const isImage = msg.message_type === 'image' && (msg.media_url || msg.media_thumbnail);
   const isMediaCard = isVideo || !!imageAlbum?.length || !!videoAlbum?.length || isImage;
@@ -166,7 +182,8 @@ function MessageBubble({
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubbleOther,
           isMediaCard && styles.bubbleVideo,
-          !isMediaCard && { backgroundColor: bubbleColor },
+          isVoice && styles.bubbleVoice,
+          !isMediaCard && !isVoice && { backgroundColor: bubbleColor },
         ]}
       >
         {msg.message_type === 'text' ? (
@@ -180,7 +197,13 @@ function MessageBubble({
             <MessageTranslation content={msg.content || ''} enabled={!isOwn} textColor={textColor} />
           </>
         ) : msg.message_type === 'voice' && voiceUri ? (
-          <VoiceMessagePlayer uri={voiceUri} isOwn={isOwn} />
+          <VoiceMessagePlayer
+            messageId={msg.id}
+            uri={voiceUri}
+            isOwn={isOwn}
+            durationSec={parseVoiceDuration(msg.content)}
+            uploading={isOwn && String(msg.id).startsWith('temp-')}
+          />
         ) : videoAlbum && videoAlbum.length > 1 ? (
           <ChatVideoAlbum
             messages={videoAlbum}
@@ -263,6 +286,7 @@ export default function CustomerChatScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [attachSheetVisible, setAttachSheetVisible] = useState(false);
   const insets = useSafeAreaInsets();
   const [headerName, setHeaderName] = useState<string>(conversationName || t('chatConversationFallback'));
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
@@ -272,7 +296,6 @@ export default function CustomerChatScreen() {
   const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRealtimeAtRef = useRef<number>(0);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const messagesRef = useRef<Message[]>([]);
@@ -357,6 +380,8 @@ export default function CustomerChatScreen() {
   useEffect(() => {
     const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
     navigation.setOptions({
+      ...customerChatHeaderBackOptions,
+      headerTitleAlign: 'left',
       headerTitle: () => (
         <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
           {headerAvatar ? (
@@ -528,10 +553,12 @@ export default function CustomerChatScreen() {
   // Yazıyor göstergesi: presence ile karşı tarafın yazıp yazmadığını dinle; kendi yazarken track et
   useEffect(() => {
     if (!appToken || !conversationId) return;
+    // Misafir: presence track limiti (ClientPresenceRateLimitReached) — sadece dinle, yazarken track yok
     typingPresenceRef.current = subscribeToTypingPresence(
       conversationId,
       { displayName: t('guestDefaultName'), userId: appToken },
-      setTypingNames
+      setTypingNames,
+      { enabled: false }
     );
     return () => {
       typingPresenceRef.current?.unsubscribe?.();
@@ -559,6 +586,7 @@ export default function CustomerChatScreen() {
   );
   const chatListItems = useMemo(() => buildChatListDisplayItems(sortedMessages), [sortedMessages]);
   const invertedChatListItems = useInvertedChatListItems(chatListItems);
+  useChatVoiceQueueSync(sortedMessages, invertedChatListItems, listRef);
   const isGroup = conversationType === 'group';
   const screenshotPushBody = useMemo(
     () => t('chatScreenshotNotice', { name: guestDisplayName }),
@@ -581,37 +609,34 @@ export default function CustomerChatScreen() {
 
   const mentionEnabled = mentionParticipants.length > 0;
 
-  useChatScreenshotListener(
-    Boolean(appToken && conversationId && !loading),
-    appToken && conversationId
-      ? {
-          kind: 'guest',
-          appToken,
-          senderName: guestDisplayName,
-          conversationId,
-          chatUrl: `/customer/chat/${conversationId}`,
-        }
-      : null,
-    appToken && conversationId
-      ? {
-          conversationName: headerName,
-          isGroup,
-          pushBody: screenshotPushBody,
-          ownSenderId: undefined,
-          onLocalMessage: (msg) => {
-            setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderType: 'guest' }));
-            setTimeout(() => scrollChatListToLatest(listRef, true), 100);
-          },
-          reloadStaffMessages: () => guestGetMessages(appToken, conversationId, 50),
-        }
-      : null
-  );
+  const screenshotChatContext = useMemo(() => {
+    if (!appToken || !conversationId) return null;
+    return {
+      conversationId,
+      conversationName: headerName,
+      isGroup,
+      chatUrl: `/customer/chat/${conversationId}`,
+      actor: { kind: 'guest' as const, appToken, senderName: guestDisplayName },
+      pushBody: screenshotPushBody,
+      onLocalMessage: (msg: Message) => {
+        setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderType: 'guest' }));
+        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      },
+      reloadStaffMessages: () => guestGetMessages(appToken, conversationId, 50),
+    };
+  }, [appToken, conversationId, headerName, isGroup, guestDisplayName, screenshotPushBody]);
+
+  useChatScreenshotContext(Boolean(appToken && conversationId && !loading), screenshotChatContext);
 
   const send = async () => {
     const text = input.trim();
     if (!text || !conversationId || sendInFlightRef.current) return;
-    const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
-    if (!token) return;
+    const token =
+      (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+    if (!token) {
+      Alert.alert(t('chatMessageBlockedTitle'), t('authRegisterRequiredMessage'));
+      return;
+    }
     const mentions = syncMentionsWithText(text, pendingMentions);
     sendInFlightRef.current = true;
     setInput('');
@@ -648,7 +673,7 @@ export default function CustomerChatScreen() {
     setMessages((prev) => [...prev, optimistic]);
     setTimeout(() => scrollChatListToLatest(listRef, true), 50);
     try {
-    const { messageId, conversationId: nextConversationId } = await guestSendMessage(
+    const { messageId, conversationId: nextConversationId, error: sendError } = await guestSendMessage(
       token,
       conversationId,
       text,
@@ -696,7 +721,10 @@ export default function CustomerChatScreen() {
       setInput(text);
       setPendingMentions(mentions);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      Alert.alert(t('chatMessageBlockedTitle'), t('chatMessageBlockedBody'));
+      Alert.alert(
+        t('messageSendFailedTitle'),
+        formatChatMessageSendError(sendError ?? t('unknownError'), t('unknownError'))
+      );
     }
     } catch (e) {
       setInput(text);
@@ -834,19 +862,119 @@ export default function CustomerChatScreen() {
     })();
   };
 
-  const showAttachOptions = () => {
-    Alert.alert(
-      t('chatAttachTitle'),
-      undefined,
-      [
-        { text: t('takePhoto'), onPress: () => void sendImageFromCamera() },
-        { text: t('chatPickMultiplePhotos'), onPress: () => void sendImagesFromLibrary() },
-        { text: t('chatPickMultipleVideos'), onPress: () => void sendVideoFromSource('library') },
-        { text: t('chatRecordVideo'), onPress: () => sendVideoFromSource('camera') },
-        { text: t('cancel'), style: 'cancel' },
-      ]
-    );
+  const sendVoiceMessage = useCallback(
+    async ({
+      localUri,
+      preUploadedUrl,
+      durationSec,
+    }: {
+      localUri: string;
+      preUploadedUrl: string | null;
+      durationSec: number;
+    }) => {
+      if (!conversationId) return;
+      const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+      if (!token) throw new Error(t('loginRequiredChatMessage'));
+
+      const tempId = `temp-voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setMessages((prev) => [
+        ...prev,
+        createOptimisticVoiceMessage({
+          tempId,
+          conversationId,
+          senderId: '',
+          senderType: 'guest',
+          senderName: guestDisplayName,
+          senderAvatar: null,
+          localUri,
+          durationSec,
+        }),
+      ]);
+      setTimeout(() => scrollChatListToLatest(listRef, true), 50);
+
+      const { message, error, conversationId: convId } = await sendGuestVoiceMessage(
+        { kind: 'guest', appToken: token, conversationId },
+        localUri,
+        conversationId,
+        { preUploadedMediaUrl: preUploadedUrl, durationSec }
+      );
+      if (error || !message) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        throw new Error(typeof error === 'string' ? error : t('chatVoiceSendFailed'));
+      }
+      setMessages((prev) =>
+        upsertIncomingChatMessage(
+          prev.filter((m) => m.id !== tempId),
+          message,
+          { ownSenderType: 'guest', replaceTempId: tempId }
+        )
+      );
+      void import('@/lib/notificationService').then(({ notifyAdmins, notifyConversationRecipients }) => {
+        notifyAdmins({
+          title: t('chatNotifyAdminNewGuest'),
+          body: t('staffChatVoiceSentBody'),
+          data: { url: '/admin/messages' },
+          conversationId: convId,
+        }).catch(() => {});
+        notifyConversationRecipients({
+          conversationId: convId,
+          excludeAppToken: token,
+          title: `💬 ${t('notifNewMessage')}`,
+          body: t('staffChatVoiceSentBody'),
+          data: { conversationId: convId, url: `/customer/chat/${convId}` },
+        }).catch(() => {});
+      });
+      if (convId !== conversationId) {
+        router.replace({ pathname: '/customer/chat/[id]', params: { id: convId, name: headerName } });
+        return;
+      }
+      setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+    },
+    [conversationId, guestDisplayName, headerName, router, t]
+  );
+
+  const preUploadVoice = useCallback(
+    async (uri: string) => {
+      const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+      if (!token || !conversationId) throw new Error(t('loginRequiredChatMessage'));
+      return uploadVoiceMessageForGuest(token, conversationId, uri);
+    },
+    [conversationId, t]
+  );
+
+  const voiceRecorder = useChatVoiceRecording({
+    onSend: sendVoiceMessage,
+    preUpload: preUploadVoice,
+    preUploadKey: conversationId,
+    disabled: sending || selectionMode,
+  });
+
+  const handleAttachmentPick = (action: AttachmentAction) => {
+    switch (action) {
+      case 'camera':
+        void sendImageFromCamera();
+        break;
+      case 'gallery':
+        void sendImagesFromLibrary();
+        break;
+      case 'video_library':
+        void sendVideoFromSource('library');
+        break;
+      case 'video_camera':
+        void sendVideoFromSource('camera');
+        break;
+      case 'voice':
+        void voiceRecorder.start();
+        break;
+    }
   };
+
+  const toggleAttachTray = useCallback(() => {
+    setAttachSheetVisible((open) => {
+      if (!open) Keyboard.dismiss();
+      return !open;
+    });
+  }, []);
 
   const deleteSelectedMessages = async (ids: string[]) => {
     const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
@@ -857,12 +985,15 @@ export default function CustomerChatScreen() {
     if (successIds.length) {
       setMessages((prev) => prev.filter((m) => !successIds.includes(m.id)));
     }
-    if (failed > 0) Alert.alert(t('error'), `${failed} mesaj silinemedi.`);
+    if (failed > 0) Alert.alert(t('error'), t('chatBulkDeleteFailed', { count: failed }));
   };
 
   const confirmDeleteSelected = () => {
     if (selectedMessageIds.length === 0) return;
-    Alert.alert('Toplu mesaj sil', `${selectedMessageIds.length} mesaj silinsin mi?`, [
+    Alert.alert(
+      t('chatBulkDeleteTitle'),
+      t('chatBulkDeleteMessage', { count: selectedMessageIds.length }),
+      [
       { text: t('cancel'), style: 'cancel' },
       {
         text: t('delete'),
@@ -889,9 +1020,9 @@ export default function CustomerChatScreen() {
       toggleSelectedMessage(msg);
       return;
     }
-    Alert.alert('Mesaj işlemi', undefined, [
+    Alert.alert(t('chatMessageActionTitle'), undefined, [
       {
-        text: 'Çoklu seç',
+        text: t('chatMultiSelect'),
         onPress: () => {
           setSelectionMode(true);
           setSelectedMessageIds([msg.id]);
@@ -1018,7 +1149,7 @@ export default function CustomerChatScreen() {
       <ChatVideoBatchBar states={videoUploads} />
       {selectionMode ? (
         <View style={styles.bulkBar}>
-          <Text style={styles.bulkBarText}>{selectedMessageIds.length} mesaj seçildi</Text>
+          <Text style={styles.bulkBarText}>{t('chatBulkSelected', { count: selectedMessageIds.length })}</Text>
           <TouchableOpacity
             style={[styles.bulkDeleteBtn, selectedMessageIds.length === 0 && styles.bulkDeleteBtnDisabled]}
             disabled={selectedMessageIds.length === 0}
@@ -1026,82 +1157,76 @@ export default function CustomerChatScreen() {
             activeOpacity={0.85}
           >
             <Ionicons name="trash-outline" size={16} color="#fff" />
-            <Text style={styles.bulkDeleteBtnText}>Toplu sil</Text>
+            <Text style={styles.bulkDeleteBtnText}>{t('chatBulkDeleteBtn')}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
+      <AttachmentSheet
+        visible={attachSheetVisible}
+        onPick={(action) => {
+          setAttachSheetVisible(false);
+          handleAttachmentPick(action);
+        }}
+      />
       <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
-        <ChatMentionComposer
-          style={styles.input}
-          placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('chatInputPlaceholder')}
-          placeholderTextColor={MESSAGING_COLORS.textSecondary}
-          value={input}
-          onChangeText={(next) => {
-            setInput(next);
-            typingPresenceRef.current?.updateTyping(true);
-            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = setTimeout(() => {
-              typingPresenceRef.current?.updateTyping(false);
-              typingTimeoutRef.current = null;
-            }, 3000);
-          }}
-          participants={mentionParticipants}
-          mentions={pendingMentions}
-          onMentionsChange={setPendingMentions}
-          enabled={mentionEnabled}
-          multiline
-          maxLength={2000}
-          onSubmitEditing={send}
-        />
         <TouchableOpacity
           style={styles.mediaBtn}
-          onPress={showAttachOptions}
-          disabled={sending}
+          onPress={toggleAttachTray}
+          disabled={sending || voiceRecorder.phase !== 'idle'}
           accessibilityLabel={t('a11yChatAttachPhoto')}
           activeOpacity={0.7}
         >
-          <Ionicons name="add-circle-outline" size={22} color={MESSAGING_COLORS.textSecondary} />
+          <AttachmentToggleIcon open={attachSheetVisible} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.mediaBtn}
-          onPress={() => sendVideoFromSource('library')}
-          disabled={videoBatchActive}
-          accessibilityLabel={t('chatSendVideo')}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="videocam-outline" size={20} color={MESSAGING_COLORS.textSecondary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
-          onPress={send}
-          disabled={!input.trim()}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="send" size={22} color="#fff" />
-        </TouchableOpacity>
+        <View style={[styles.input, voiceRecorder.phase !== 'idle' && styles.inputVoice]}>
+          {voiceRecorder.phase !== 'idle' ? (
+            <ChatVoiceInputPreview
+              phase={voiceRecorder.phase}
+              durationSec={voiceRecorder.durationSec}
+              onCancel={() => void voiceRecorder.cancel()}
+              textColor={MESSAGING_COLORS.text}
+              mutedColor={MESSAGING_COLORS.textSecondary}
+            />
+          ) : (
+            <ChatMentionComposer
+              style={styles.mentionInput}
+              placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('chatInputPlaceholder')}
+              placeholderTextColor={MESSAGING_COLORS.textSecondary}
+              value={input}
+              onChangeText={setInput}
+              participants={mentionParticipants}
+              mentions={pendingMentions}
+              onMentionsChange={setPendingMentions}
+              enabled={mentionEnabled}
+              multiline
+              maxLength={2000}
+              onSubmitEditing={send}
+            />
+          )}
+        </View>
+        <ChatInputTrailingActions
+          hasText={Boolean(input.trim())}
+          voicePhase={voiceRecorder.phase}
+          onSendText={send}
+          onSendVoice={() => void voiceRecorder.send()}
+          onMicPress={() => void voiceRecorder.toggleMic()}
+          sending={sending}
+          iconColor={MESSAGING_COLORS.textSecondary}
+          sendBtnStyle={styles.sendBtn}
+          sendBtnDisabledStyle={styles.sendBtnDisabled}
+        />
       </View>
 
       <ChatFullscreenImageModal uri={fullscreenImageUri} onClose={() => setFullscreenImageUri(null)} />
 
-      <Modal visible={showBubbleColorModal} transparent animationType="fade">
-        <TouchableOpacity activeOpacity={1} style={styles.bubbleColorModalOverlay} onPress={() => setShowBubbleColorModal(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.bubbleColorModalBox}>
-            <Text style={styles.bubbleColorModalTitle}>{t('chatYourBubbleColorTitle')}</Text>
-            <View style={styles.bubbleColorRow}>
-              {BUBBLE_COLOR_OPTIONS.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.bubbleColorChip, { backgroundColor: c }, myBubbleColor === c && styles.bubbleColorChipSelected]}
-                  onPress={() => { setMyBubbleColor(c); setShowBubbleColorModal(false); }}
-                />
-              ))}
-            </View>
-            <TouchableOpacity style={styles.bubbleColorModalClose} onPress={() => setShowBubbleColorModal(false)}>
-              <Text style={styles.bubbleColorModalCloseText}>{t('close')}</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      <BubbleColorPickerModal
+        visible={showBubbleColorModal}
+        onClose={() => setShowBubbleColorModal(false)}
+        selectedColor={myBubbleColor}
+        onSelectColor={(c) => void setMyBubbleColor(c)}
+        title={t('chatYourBubbleColorTitle')}
+        accentColor={MESSAGING_COLORS.primary}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1161,6 +1286,12 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     maxWidth: '92%',
   },
+  bubbleVoice: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+  },
   bubbleTimeVideo: {
     color: MESSAGING_COLORS.textSecondary,
     marginTop: 4,
@@ -1208,8 +1339,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     paddingBottom: 8,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
+    backgroundColor: '#F0F2F5',
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#e0e0e0',
   },
   input: {
@@ -1221,8 +1352,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 16,
-    marginRight: 8,
-    color: '#1F2937',
+    justifyContent: 'center',
+  },
+  inputVoice: {
+    maxHeight: 56,
+    paddingVertical: 4,
+  },
+  mentionInput: {
+    flex: 1,
+    fontSize: 16,
+    maxHeight: 100,
+    color: MESSAGING_COLORS.text,
+    padding: 0,
+    margin: 0,
   },
   mediaBtn: {
     width: 36,
@@ -1232,7 +1374,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 4,
-    borderWidth: 0,
   },
   sendBtn: {
     width: 44,

@@ -15,7 +15,7 @@ type Props = {
 };
 
 /**
- * Tesis günlüğü medya önizlemesi: fotoğraf URL veya video posteri; gerekirse duraklatılmış video karesi.
+ * Eşya kullanım medyası önizlemesi: fotoğraf URL veya video posteri; gerekirse duraklatılmış video karesi.
  */
 export function FacilityJournalMediaPreview({
   media,

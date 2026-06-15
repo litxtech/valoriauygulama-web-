@@ -185,40 +185,43 @@ export default function SaleDetailScreen() {
       <Text style={styles.sectionTitle}>Sorumlular</Text>
       <View style={styles.card}>
         <Row label="Getiren" value={sale.brought_by?.full_name ?? '-'} />
-        <Row label="Aracı" value={sale.intermediary?.full_name ?? '-'} />
-        <Row label="Satışı yapan" value={sale.closed_by?.full_name ?? '-'} />
+        <Row label={t('staffSalesIntermediary')} value={sale.intermediary?.full_name ?? '-'} />
+        <Row label={t('staffSalesClosedBy')} value={sale.closed_by?.full_name ?? '-'} />
         <Row label="Otel sorumlusu" value={sale.hotel_responsible?.full_name ?? '-'} />
         <Row label="Komisyon hak edeni" value={sale.commission_earner?.full_name ?? '-'} />
       </View>
 
       <Text style={styles.sectionTitle}>Rezervasyon</Text>
       <View style={styles.card}>
-        <Row label="Giriş" value={sale.check_in_date ?? '-'} />
-        <Row label="Çıkış" value={sale.check_out_date ?? '-'} />
+        <Row label={t('staffSalesCheckIn')} value={sale.check_in_date ?? '-'} />
+        <Row label={t('staffSalesCheckOut')} value={sale.check_out_date ?? '-'} />
         <Row label="Gece" value={sale.nights_count != null ? String(sale.nights_count) : '-'} />
         <Row label="Oda tipi" value={sale.room_type ?? '-'} />
-        <Row label="Kişi sayısı" value={String(sale.people_count ?? 1)} />
+        <Row label={t('staffSalesPeopleCount')} value={String(sale.people_count ?? 1)} />
       </View>
 
       <Text style={styles.sectionTitle}>Fiyat & Ödeme</Text>
       <View style={styles.card}>
-        <Row label="Satış" value={fmtMoneyTry(sale.sale_amount ?? 0)} />
-        <Row label="İndirim" value={fmtMoneyTry(sale.discount_amount ?? 0)} />
+        <Row label={t('staffSalesAmount')} value={fmtMoneyTry(sale.sale_amount ?? 0)} />
+        <Row label={t('staffSalesDiscount')} value={fmtMoneyTry(sale.discount_amount ?? 0)} />
         <Row label="Ek hizmet" value={fmtMoneyTry(sale.extra_service_amount ?? 0)} />
         <Row label="Net" value={fmtMoneyTry(sale.net_amount ?? 0)} />
         <View style={styles.hr} />
-        <Row label="Ödeme durumu" value={sale.payment_status} />
-        <Row label="Ödeme yeri" value={sale.payment_place ?? '-'} />
-        <Row label="Ödenen" value={fmtMoneyTry(sale.paid_amount ?? 0)} />
+        <Row label={t('staffSalesPaymentStatus')} value={sale.payment_status} />
+        <Row label={t('staffSalesPaymentPlace')} value={sale.payment_place ?? '-'} />
+        <Row label={t('staffSalesPaid')} value={fmtMoneyTry(sale.paid_amount ?? 0)} />
         <Row label="Kalan" value={fmtMoneyTry(sale.remaining_amount ?? 0)} />
       </View>
 
       <Text style={styles.sectionTitle}>Komisyon</Text>
       <View style={styles.card}>
-        <Row label="Komisyon var mı" value={sale.commission_enabled ? 'Evet' : 'Hayır'} />
-        <Row label="Tür" value={sale.commission_type ?? '-'} />
+        <Row
+          label={t('staffSalesHasCommission')}
+          value={sale.commission_enabled ? t('staffSalesYes') : t('staffSalesNo')}
+        />
+        <Row label={t('staffSalesCommissionType')} value={sale.commission_type ?? '-'} />
         <Row label="Oran/Tutar" value={sale.commission_rate != null ? String(sale.commission_rate) : '-'} />
-        <Row label="Komisyon tutarı" value={fmtMoneyTry(sale.commission_amount ?? 0)} />
+        <Row label={t('staffSalesCommissionAmount')} value={fmtMoneyTry(sale.commission_amount ?? 0)} />
         <Row label="Durum" value={sale.commission_status} />
         {sale.commission_note ? <Text style={styles.note}>{sale.commission_note}</Text> : null}
       </View>

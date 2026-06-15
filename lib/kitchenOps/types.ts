@@ -56,3 +56,16 @@ export type KitchenCategory = {
   name: string;
   sort_order: number;
 };
+
+export const EMPTY_KITCHEN_DAY_SUMMARY: KitchenDaySummary = {
+  total_revenue: 0,
+  total_pos: 0,
+  total_cash: 0,
+  total_expenses: 0,
+  personnel_expenses: 0,
+  supplier_debt: 0,
+  kitchen_owes_hotel: 0,
+  hotel_owes_kitchen: 0,
+  cari_net: 0,
+  net_remaining: 0,
+};

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { CachedImage } from '@/components/CachedImage';
 import {
@@ -8,9 +9,10 @@ import {
 type Props = {
   uri: string;
   onPress?: (uri: string) => void;
+  overlay?: ReactNode;
 };
 
-export function ChatImageMessage({ uri, onPress }: Props) {
+export function ChatImageMessage({ uri, onPress, overlay }: Props) {
   const { width: winWidth } = useWindowDimensions();
   const cardW = getChatMediaCardWidth(winWidth);
   const cardH = Math.round(cardW * 0.78);
@@ -23,6 +25,7 @@ export function ChatImageMessage({ uri, onPress }: Props) {
         accessibilityRole="image"
       >
         <CachedImage uri={uri} style={StyleSheet.absoluteFillObject} contentFit="cover" priority="high" />
+        {overlay}
       </Pressable>
     </View>
   );

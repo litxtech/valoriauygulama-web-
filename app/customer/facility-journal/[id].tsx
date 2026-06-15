@@ -10,6 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { Video, ResizeMode } from 'expo-av';
 import { CachedImage } from '@/components/CachedImage';
 import { getFacilityJournalRecord, type FacilityJournalRecordRow } from '@/lib/facilityJournal';
@@ -18,6 +19,7 @@ import { theme } from '@/constants/theme';
 const { width: SCREEN_W } = Dimensions.get('window');
 
 export default function CustomerFacilityJournalDetail() {
+  const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [record, setRecord] = useState<FacilityJournalRecordRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,14 +30,14 @@ export default function CustomerFacilityJournalDetail() {
     setLoading(true);
     const { data, error: err } = await getFacilityJournalRecord(id);
     if (err || !data) {
-      setError(err?.message ?? 'Kayıt bulunamadı veya erişim yok.');
+      setError(err?.message ?? t('customerFacilityJournalRecordNotFound'));
       setRecord(null);
     } else {
       setError(null);
       setRecord(data as FacilityJournalRecordRow);
     }
     setLoading(false);
-  }, [id]);
+  }, [id, t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -54,7 +56,7 @@ export default function CustomerFacilityJournalDetail() {
   if (!record) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>{error ?? 'Kayıt yüklenemedi.'}</Text>
+        <Text style={styles.errorText}>{error ?? t('customerFacilityJournalLoadError')}</Text>
       </View>
     );
   }
@@ -72,20 +74,20 @@ export default function CustomerFacilityJournalDetail() {
       {record.description ? <Text style={styles.body}>{record.description}</Text> : null}
       {record.location_detail ? (
         <Text style={styles.field}>
-          <Text style={styles.fieldLabel}>Konum: </Text>
+          <Text style={styles.fieldLabel}>{t('facilityJournalLocationLabel')} </Text>
           {record.location_detail}
         </Text>
       ) : null}
       {record.counterparty_name ? (
         <Text style={styles.field}>
-          <Text style={styles.fieldLabel}>Taraf: </Text>
+          <Text style={styles.fieldLabel}>{t('facilityJournalPartyLabel')} </Text>
           {record.counterparty_name}
         </Text>
       ) : null}
 
-      <Text style={styles.sectionTitle}>Medya</Text>
+      <Text style={styles.sectionTitle}>{t('facilityJournalMediaSection')}</Text>
       {media.length === 0 ? (
-        <Text style={styles.hint}>Ek medya yok.</Text>
+        <Text style={styles.hint}>{t('facilityJournalNoMedia')}</Text>
       ) : (
         media.map((m) => (
           <View key={m.id} style={styles.mediaBlock}>
@@ -102,7 +104,11 @@ export default function CustomerFacilityJournalDetail() {
               </TouchableOpacity>
             )}
             <Text style={styles.mediaLabel}>
-              {m.label === 'before' ? 'Önce' : m.label === 'after' ? 'Sonra' : 'Genel'}
+              {m.label === 'before'
+                ? t('facilityJournalMediaBefore')
+                : m.label === 'after'
+                  ? t('facilityJournalMediaAfter')
+                  : t('facilityJournalMediaGeneral')}
             </Text>
           </View>
         ))

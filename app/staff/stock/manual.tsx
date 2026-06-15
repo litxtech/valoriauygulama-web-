@@ -155,6 +155,7 @@ export default function StaffStockManualEntryScreen() {
           barcode: null,
           unit: unit || 'adet',
           current_stock: 0,
+          image_url: photo,
           created_by: staff.id,
           organization_id: staff.organization_id,
         })

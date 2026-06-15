@@ -1,27 +1,41 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl, ActivityIndicator, Text } from 'react-native';
+import { View, ScrollView, StyleSheet, RefreshControl, ActivityIndicator, Text, Pressable } from 'react-native';
 import { theme } from '@/constants/theme';
 import { fetchDaySummary, fetchCariNetBalance } from '@/lib/kitchenOps/api';
 import type { KitchenDaySummary } from '@/lib/kitchenOps/types';
+import { EMPTY_KITCHEN_DAY_SUMMARY } from '@/lib/kitchenOps/types';
 import { KitchenMoneyStat } from '@/components/kitchenOps/KitchenUi';
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 
 export default function KitchenFinanceScreen() {
-  const [summary, setSummary] = useState<KitchenDaySummary | null>(null);
+  const [summary, setSummary] = useState<KitchenDaySummary>(EMPTY_KITCHEN_DAY_SUMMARY);
   const [cariNet, setCariNet] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [s, c] = await Promise.all([fetchDaySummary(), fetchCariNetBalance()]);
-    setSummary(s);
-    setCariNet(c);
+    setLoadError(null);
+    try {
+      const [s, c] = await Promise.all([
+        fetchDaySummary(),
+        fetchCariNetBalance().catch(() => 0),
+      ]);
+      setSummary(s);
+      setCariNet(c);
+    } catch (e) {
+      setSummary(EMPTY_KITCHEN_DAY_SUMMARY);
+      setCariNet(0);
+      setLoadError(e instanceof Error ? e.message : 'Finans özeti alınamadı');
+    }
   }, []);
 
-  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+  useEffect(() => {
+    load().finally(() => setLoading(false));
+  }, [load]);
 
-  if (loading || !summary) {
+  if (loading) {
     return <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>;
   }
 
@@ -29,8 +43,23 @@ export default function KitchenFinanceScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={async () => {
+            setRefreshing(true);
+            await load();
+            setRefreshing(false);
+          }}
+        />
+      }
     >
+      {loadError ? (
+        <Pressable style={styles.errorBox} onPress={() => void load()}>
+          <Text style={styles.errorText}>{loadError}</Text>
+          <Text style={styles.errorRetry}>Yeniden dene</Text>
+        </Pressable>
+      ) : null}
       <KitchenPrintBar kind="finance_daily" />
       <Text style={styles.title}>Bugünkü Finans Özeti</Text>
       <View style={styles.grid}>
@@ -62,4 +91,14 @@ const styles = StyleSheet.create({
   formula: { marginTop: 20, backgroundColor: theme.colors.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: theme.colors.borderLight },
   formulaTitle: { fontSize: 14, fontWeight: '800', color: theme.colors.text, marginBottom: 8 },
   formulaText: { fontSize: 13, color: theme.colors.textSecondary, lineHeight: 20 },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  errorText: { color: '#dc2626', fontSize: 13, fontWeight: '600' },
+  errorRetry: { color: '#b91c1c', fontSize: 12, fontWeight: '700', marginTop: 6 },
 });

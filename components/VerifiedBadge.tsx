@@ -67,9 +67,32 @@ type NameWithBadgeProps = {
 
 /** İsim + mavi/sarı tik satırı; tik isimle tam ortada hizalı. */
 export function StaffNameWithBadge({ name, badge, textStyle, badgeSize = BADGE_SIZE, center }: NameWithBadgeProps) {
+  const hasBadge = badge === 'blue' || badge === 'yellow';
+
+  if (center) {
+    return (
+      <View style={styles.nameCenterOuter}>
+        {hasBadge ? (
+          <View style={styles.nameCenterBadgeRow}>
+            <Text style={[textStyle, styles.nameCenterTextInline]} numberOfLines={1}>
+              {name}
+            </Text>
+            <VerifiedBadge badge={badge} size={badgeSize} style={styles.badgeInline} />
+          </View>
+        ) : (
+          <Text style={[textStyle, styles.nameCenterTextFull]} numberOfLines={1}>
+            {name}
+          </Text>
+        )}
+      </View>
+    );
+  }
+
   return (
-    <View style={[styles.nameRow, center && styles.nameRowCentered]}>
-      <Text style={textStyle} numberOfLines={1}>{name}</Text>
+    <View style={styles.nameRow}>
+      <Text style={textStyle} numberOfLines={1}>
+        {name}
+      </Text>
       <VerifiedBadge badge={badge} size={badgeSize} />
     </View>
   );
@@ -90,7 +113,30 @@ const styles = StyleSheet.create({
     alignContent: 'center',
     flexWrap: 'nowrap',
   },
-  nameRowCentered: { alignSelf: 'center', justifyContent: 'center' },
+  nameCenterOuter: {
+    width: '100%',
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nameCenterTextFull: {
+    width: '100%',
+    textAlign: 'center',
+  },
+  nameCenterBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    maxWidth: '100%',
+    gap: 4,
+  },
+  nameCenterTextInline: {
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  badgeInline: {
+    marginLeft: 0,
+  },
   avatarWrap: {
     position: 'relative',
     overflow: 'visible',

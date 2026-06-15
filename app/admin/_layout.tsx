@@ -1,10 +1,20 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { View, TouchableOpacity, Platform, StyleSheet, Text, BackHandler, InteractionManager } from 'react-native';
 import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, type Href } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
-import { canAccessAdminShell, isGorevAtaOnlyUser } from '@/lib/staffPermissions';
+import {
+  canAccessAdminShell,
+  canAccessAdminPayments,
+  canAccessManagedContractsAdminRoutes,
+  canAccessDepartmentRulesAdminRoutes,
+  canCreateDepartmentRules,
+  canManageManagedContracts,
+  isGorevAtaOnlyUser,
+  isManagedContractsAdminPath,
+  isDepartmentRulesAdminPath,
+} from '@/lib/staffPermissions';
+import { canAccessAdminRoute, hasAnyAdminModulePermission } from '@/lib/adminRoutePermissions';
 import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { adminTheme } from '@/constants/adminTheme';
@@ -12,11 +22,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { complaintsText } from '@/lib/complaintsI18n';
 import { log } from '@/lib/logger';
 import { savePushTokenForStaff } from '@/lib/notificationsPush';
+import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import {
+  adminDashboardCacheKey,
+  hydrateAdminDashboardCache,
+  shouldSkipAdminDashboardNetwork,
+} from '@/lib/adminDashboardCache';
 import { exitAdminPanelToStaffTabs, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import {
   AdminStackBackButton,
   adminStackGestureForNavigation,
-  resolveAdminBackFallback,
+  isAdminKitchenOpsHubPath,
+  navigateAdminBack,
+  navigateAdminKitchenOpsHubBack,
 } from '@/lib/adminStackBack';
 
 export default function AdminLayout() {
@@ -24,7 +42,6 @@ export default function AdminLayout() {
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
-  const insets = useSafeAreaInsets();
   const adminRootExitInFlightRef = useRef(false);
 
   /**
@@ -80,19 +97,12 @@ export default function AdminLayout() {
   }, [navigation, isAdminRootPath, handleAdminBack]);
 
   const handleSubScreenBack = useCallback(() => {
-    if (navigation.canGoBack()) {
-      router.back();
+    if (isAdminKitchenOpsHubPath(pathname)) {
+      navigateAdminKitchenOpsHubBack(router, navigation);
       return;
     }
-    const fallback = resolveAdminBackFallback(pathname);
-    const current = (pathname ?? '').replace(/\/+$/, '') || '/admin';
-    const target = String(fallback).replace(/\/+$/, '');
-    if (current !== target) {
-      router.replace(fallback as never);
-    } else {
-      handleAdminBack();
-    }
-  }, [navigation, router, pathname, handleAdminBack]);
+    navigateAdminBack(router, navigation, pathname);
+  }, [navigation, router, pathname]);
 
   const renderSubScreenBack = useCallback(
     () => <AdminStackBackButton accessibilityLabel={t('back')} />,
@@ -127,6 +137,7 @@ export default function AdminLayout() {
     </TouchableOpacity>
   );
   const { staff, loading } = useAuthStore();
+  const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
 
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
 
@@ -155,12 +166,25 @@ export default function AdminLayout() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAdminRootPath) return;
+      if (!isAdminRootPath || !staff?.id) return;
+      let cancelled = false;
       const task = InteractionManager.runAfterInteractions(() => {
-        Promise.resolve(refreshNotifications()).catch(() => {});
+        void (async () => {
+          const canUseAll = Boolean(staff.app_permissions?.super_admin || staff.role === 'admin');
+          const orgId = canUseAll ? selectedOrganizationId : staff.organization_id;
+          const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+          const cacheKey = adminDashboardCacheKey(staff.id, canUseAll, orgScoped);
+          await hydrateAdminDashboardCache(cacheKey);
+          if (cancelled) return;
+          if (shouldSkipAdminDashboardNetwork(cacheKey)) return;
+          await refreshNotifications();
+        })().catch(() => {});
       });
-      return () => task.cancel();
-    }, [refreshNotifications, isAdminRootPath])
+      return () => {
+        cancelled = true;
+        task.cancel();
+      };
+    }, [refreshNotifications, isAdminRootPath, selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.id, staff?.organization_id, staff?.role])
   );
 
   /** Admin panelde push token kaydı (köke sadece personel sekmesinde girilmediyse). */
@@ -196,21 +220,55 @@ export default function AdminLayout() {
 
   useEffect(() => {
     if (loading) return;
-    if (!staff || !canAccessAdminShell(staff)) {
+    const canEnterAdmin =
+      canAccessManagedContractsAdminRoutes(staff) ||
+      canCreateDepartmentRules(staff) ||
+      canAccessAdminPayments(staff) ||
+      hasAnyAdminModulePermission(staff);
+    if (!staff || !canEnterAdmin) {
       if (Platform.OS === 'android') {
         log.warn('AdminLayout', 'redirecting non-admin user', { hasStaff: !!staff, role: staff?.role ?? null });
       }
       router.replace('/');
       return;
     }
-  }, [loading, staff]);
+  }, [loading, staff, router]);
 
-  /** Sadece görev yetkisi olan personel tam paneli göremez; yalnızca /admin/tasks* */
+  /** Tam panel yetkisi olmayan; yalnızca bölüm kuralı oluşturma yetkisi — sadece ilgili rotalar */
+  useEffect(() => {
+    if (loading || !staff) return;
+    if (canAccessAdminShell(staff) || canManageManagedContracts(staff)) return;
+    const p = pathname ?? '';
+    if (canCreateDepartmentRules(staff) && !isDepartmentRulesAdminPath(p)) {
+      router.replace('/admin/department-rules' as Href);
+      return;
+    }
+    if (canAccessAdminPayments(staff) && !p.startsWith('/admin/payments')) {
+      router.replace('/admin/payments' as Href);
+    }
+  }, [loading, staff, pathname, router]);
+
+  /** Yetkisiz admin alt rotasına doğrudan girilirse panele yönlendir */
+  useEffect(() => {
+    if (loading || !staff || isAdminRootPath) return;
+    if (isGorevAtaOnlyUser(staff)) return;
+    const p = pathname ?? '';
+    if (!p.startsWith('/admin')) return;
+    if (canAccessAdminRoute(staff, p)) return;
+    router.replace('/admin' as Href);
+  }, [loading, staff, pathname, router, isAdminRootPath]);
+
+  /** Sadece görev yetkisi olan personel tam paneli göremez; görevler + (varsa) sözleşme modülü */
   useEffect(() => {
     if (loading || !staff) return;
     if (!isGorevAtaOnlyUser(staff)) return;
     const p = pathname ?? '';
-    if (!p.startsWith('/admin/tasks')) {
+    const allowedTasks = p.startsWith('/admin/tasks');
+    const allowedContracts =
+      canManageManagedContracts(staff) && isManagedContractsAdminPath(p);
+    const allowedDepartmentRules =
+      canAccessDepartmentRulesAdminRoutes(staff) && isDepartmentRulesAdminPath(p);
+    if (!allowedTasks && !allowedContracts && !allowedDepartmentRules) {
       if (Platform.OS === 'android') {
         log.warn('AdminLayout', 'gorev-ata-only redirect', { from: p, to: '/admin/tasks' });
       }
@@ -228,7 +286,7 @@ export default function AdminLayout() {
       fontSize: 17,
     },
     headerShadowVisible: true,
-    contentStyle: { paddingBottom: insets.bottom + 16 },
+    contentStyle: { backgroundColor: adminTheme.colors.surfaceSecondary },
     ...(Platform.OS === 'android' && { statusBarStyle: 'dark' as const }),
   };
 
@@ -246,21 +304,11 @@ export default function AdminLayout() {
         <Stack.Screen
           name="index"
           options={{
-            title: t('managementPanel'),
+            title: '',
+            headerShown: false,
             /** Kaydırarak geri native pop + replace ile çakışıp "admin removed natively" uyarısı vermesin */
             gestureEnabled: false,
-            headerBackButtonMenuEnabled: false,
-            headerLeft: () => (
-              <TouchableOpacity
-                onPress={handleAdminBack}
-                style={{ marginLeft: 8, padding: 8 }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                accessibilityLabel={t('back')}
-              >
-                <Ionicons name="arrow-back" size={24} color={adminTheme.colors.text} />
-              </TouchableOpacity>
-            ),
-            headerRight: renderHeaderRight,
+            contentStyle: { backgroundColor: adminTheme.colors.surfaceSecondary },
           }}
         />
         <Stack.Screen name="approvals/index" options={{ title: t('adminApprovals'), headerRight: renderHeaderRight }} />
@@ -270,6 +318,8 @@ export default function AdminLayout() {
       <Stack.Screen name="rooms/new" options={{ title: t('adminRoomNew'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="guests/index" options={{ title: t('adminGuests'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="guests/[id]" options={{ title: t('adminGuestDetail'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="guest-welcome-card/index" options={{ title: 'Misafir karşılama kartı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="hotel-pulse/index" options={{ title: 'Misafir otel nabzı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="checkin" options={{ title: t('adminCheckin'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="housekeeping" options={{ title: t('adminHousekeeping'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="tasks/index" options={{ title: t('adminStaffTasks'), headerRight: renderHeaderRight }} />
@@ -299,23 +349,23 @@ export default function AdminLayout() {
       <Stack.Screen name="missing-items/report/[id]" options={{ title: 'Eksik detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="missing-items/legacy/[id]" options={{ title: 'Eksik detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="missing-items/history" options={{ title: 'Geçmiş eksik listesi', headerRight: renderHeaderRight }} />
-      <Stack.Screen name="lost-found/index" options={{ title: 'Emanet / Buluntu', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="lost-found/index" options={{ title: t('screenLostFound'), headerRight: renderHeaderRight }} />
       <Stack.Screen
         name="lost-found/new"
         options={{
-          title: 'Yeni emanet kaydı',
+          title: t('lfNewRecord'),
           headerBackTitle: t('back'),
           headerRight: renderHeaderRight,
         }}
       />
-      <Stack.Screen name="lost-found/[id]" options={{ title: 'Emanet detayı', headerRight: renderHeaderRight }} />
-      <Stack.Screen name="facility-journal/index" options={{ title: 'Tesis günlüğü', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="lost-found/[id]" options={{ title: t('lfDetailTitle'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="facility-journal/index" options={{ title: 'Otel eşyaları kullanımı', headerRight: renderHeaderRight }} />
       <Stack.Screen
         name="facility-journal/new"
-        options={{ title: 'Yeni tesis kaydı', headerBackTitle: t('back'), headerRight: renderHeaderRight }}
+        options={{ title: 'Yeni kullanım kaydı', headerBackTitle: t('back'), headerRight: renderHeaderRight }}
       />
-      <Stack.Screen name="facility-journal/[id]" options={{ title: 'Kayıt detayı', headerRight: renderHeaderRight }} />
-      <Stack.Screen name="facility-journal/types" options={{ title: 'Kayıt tipleri', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="facility-journal/[id]" options={{ title: 'Kullanım kaydı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="facility-journal/types" options={{ title: 'Kullanım kategorileri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/all" options={{ title: t('adminDocumentsAll'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/new" options={{ title: t('adminDocumentsUpload'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerRight: renderHeaderRight }} />
@@ -334,6 +384,8 @@ export default function AdminLayout() {
         name="documents/[id]"
         options={{ title: t('adminDocumentsDetail'), headerRight: renderHeaderRight, headerLeft: renderDocumentDetailBack }}
       />
+      <Stack.Screen name="managed-contracts" options={{ headerShown: false }} />
+      <Stack.Screen name="department-rules" options={{ headerShown: false }} />
       <Stack.Screen name="contracts" options={{ title: t('adminContracts'), headerShown: false }} />
       <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="stock/index" options={{ headerShown: false }} />
@@ -372,11 +424,14 @@ export default function AdminLayout() {
       <Stack.Screen name="complaints/index" options={{ title: complaintsText('adminTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff-complaints/index" options={{ title: 'Personel Şikayetleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/templates" options={{ title: t('adminNotificationTemplates'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notifications/sounds" options={{ title: 'Bildirim Sesleri', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notifications/event-log" options={{ title: 'Bildirim Log', headerRight: renderHeaderRight }} />
       <Stack.Screen name="smart-ops/index" options={{ title: 'Operasyon merkezi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="smart-ops/templates" options={{ title: 'Operasyon şablonları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="smart-ops/live" options={{ title: 'Canlı operasyon', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/emergency" options={{ title: t('adminEmergency'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="emergency-locations" options={{ title: 'Acil Lokasyonlari', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="staff-emergency" options={{ title: 'Personel Toplanma Alarmi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/index" options={{ title: t('adminMessages'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/chat/[id]" options={{ title: t('adminChat'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/new" options={{ title: t('adminNewChat'), headerRight: renderHeaderRight }} />
@@ -402,7 +457,7 @@ export default function AdminLayout() {
       <Stack.Screen name="profile" options={{ title: t('myProfile'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="app-links" options={{ title: t('adminAppsAndWebsites'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="settings/printer" options={{ title: t('adminPrinterSettings'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="map" options={{ headerShown: false }} />
+      <Stack.Screen name="map" options={{ title: 'Harita', headerShown: false }} />
       <Stack.Screen name="accounting" options={{ headerShown: false }} />
       <Stack.Screen name="audits" options={{ headerShown: false }} />
       <Stack.Screen name="performance" options={{ headerShown: false }} />
@@ -410,6 +465,8 @@ export default function AdminLayout() {
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/[id]" options={{ title: 'Çek detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="debts/index" options={{ title: 'Borç / alacak', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="payments" options={{ headerShown: false }} />
+      <Stack.Screen name="tips/index" options={{ title: 'Bahşişler', headerRight: renderHeaderRight }} />
       <Stack.Screen name="debts/new" options={{ title: 'Yeni borç kaydı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="debts/[id]" options={{ title: 'Borç detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="meal-menu/index" options={{ title: 'Aylık yemek listesi', headerRight: renderHeaderRight }} />
@@ -422,6 +479,8 @@ export default function AdminLayout() {
       <Stack.Screen name="dining-venues/index" options={{ title: t('diningVenuesAdminTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="dining-venues/venue/[id]" options={{ title: t('diningVenuesFormTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="dining-venues/pick-location" options={{ title: t('diningVenuesPickOnMap'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="room-service" options={{ title: 'Oda servisi', headerShown: false }} />
+      <Stack.Screen name="guest-extras" options={{ title: 'Ekstra ücretler', headerShown: false }} />
       <Stack.Screen name="local-area-guide/index" options={{ title: t('localAreaGuideAdminTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="local-area-guide/[id]" options={{ title: t('localAreaGuideAdminEdit'), headerRight: renderHeaderRight }} />
       </Stack>
@@ -432,5 +491,5 @@ export default function AdminLayout() {
 }
 
 const styles = StyleSheet.create({
-  wrapper: { flex: 1 },
+  wrapper: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
 });

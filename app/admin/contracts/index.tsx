@@ -53,6 +53,19 @@ type SectionDef = { id: string; title: string; subtitle?: string; rows: NavRow[]
 
 const SECTIONS: SectionDef[] = [
   {
+    id: 'managed',
+    title: 'İş ortakları & personel sözleşmeleri',
+    subtitle: 'Mutfak, taşeron, tedarikçi — imza, PDF, arşiv',
+    rows: [
+      {
+        href: '/admin/managed-contracts',
+        icon: 'briefcase-outline',
+        title: 'Valoria Sözleşme Yönetimi',
+        subtitle: 'Taslak, onay, aktif, arşiv, imza ve PDF',
+      },
+    ],
+  },
+  {
     id: 'ops',
     title: 'Günlük işler',
     subtitle: 'Onaylar, arşiv ve misafir iletişimi',

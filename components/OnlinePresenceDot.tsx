@@ -6,6 +6,8 @@ type Position = 'bottom-right' | 'bottom-left';
 
 type Props = {
   online: boolean;
+  /** false = statik nokta (çoklu animasyon jank’ini önler) */
+  pulse?: boolean;
   size?: number;
   position?: Position;
   borderColor?: string;
@@ -16,6 +18,7 @@ const GREEN = theme.colors.success;
 
 export function OnlinePresenceDot({
   online,
+  pulse = false,
   size = 12,
   position = 'bottom-right',
   borderColor = '#fff',
@@ -25,7 +28,11 @@ export function OnlinePresenceDot({
   const scale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (!online) return;
+    if (!online || !pulse) {
+      opacity.setValue(1);
+      scale.setValue(1);
+      return;
+    }
     const loop = Animated.loop(
       Animated.parallel([
         Animated.sequence([
@@ -40,9 +47,32 @@ export function OnlinePresenceDot({
     );
     loop.start();
     return () => loop.stop();
-  }, [online, opacity, scale]);
+  }, [online, pulse, opacity, scale]);
 
   if (!online) return null;
+
+  if (!pulse) {
+    const pos =
+      position === 'bottom-left'
+        ? ({ left: -1, bottom: -1 } as const)
+        : ({ right: -1, bottom: -1 } as const);
+    return (
+      <View
+        style={[
+          styles.dot,
+          pos,
+          style,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderColor,
+          },
+        ]}
+        pointerEvents="none"
+      />
+    );
+  }
 
   const pos =
     position === 'bottom-left'

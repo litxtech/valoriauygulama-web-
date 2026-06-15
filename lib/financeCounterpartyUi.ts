@@ -44,6 +44,14 @@ export const COUNTERPARTY_TYPE_META: Record<FinanceCounterpartyType, Counterpart
     bg: '#ccfbf1',
     hint: 'Çalışan / avans',
   },
+  private_person: {
+    label: 'Şahsi kişi',
+    shortLabel: 'Şahsi',
+    icon: 'person-circle-outline',
+    color: '#be185d',
+    bg: '#fce7f3',
+    hint: 'Bireysel alacak / ödeme',
+  },
   other: {
     label: 'Diğer',
     shortLabel: 'Diğer',
@@ -52,7 +60,112 @@ export const COUNTERPARTY_TYPE_META: Record<FinanceCounterpartyType, Counterpart
     bg: '#f1f5f9',
     hint: 'Diğer kişi veya firma',
   },
+  landlord: {
+    label: 'Mal sahibi / kira',
+    shortLabel: 'Kira',
+    icon: 'home-outline',
+    color: '#c2410c',
+    bg: '#ffedd5',
+    hint: 'Kira, aidat, mülk sahibi',
+  },
+  utility: {
+    label: 'Fatura kurumu',
+    shortLabel: 'Fatura',
+    icon: 'flash-outline',
+    color: '#ca8a04',
+    bg: '#fef9c3',
+    hint: 'Elektrik, su, doğalgaz, internet',
+  },
+  agency: {
+    label: 'Acente',
+    shortLabel: 'Acente',
+    icon: 'airplane-outline',
+    color: '#0284c7',
+    bg: '#e0f2fe',
+    hint: 'Tur, transfer, komisyon acentesi',
+  },
+  consultant: {
+    label: 'Danışman',
+    shortLabel: 'Danışman',
+    icon: 'bulb-outline',
+    color: '#7c3aed',
+    bg: '#ede9fe',
+    hint: 'Dış danışmanlık hizmeti',
+  },
+  government: {
+    label: 'Resmi kurum',
+    shortLabel: 'Kamu',
+    icon: 'ribbon-outline',
+    color: '#1d4ed8',
+    bg: '#dbeafe',
+    hint: 'Belediye, vergi, resmi ödemeler',
+  },
+  bank: {
+    label: 'Banka',
+    shortLabel: 'Banka',
+    icon: 'card-outline',
+    color: '#0f766e',
+    bg: '#ccfbf1',
+    hint: 'Banka, POS, kredi kuruluşu',
+  },
+  insurance: {
+    label: 'Sigorta',
+    shortLabel: 'Sigorta',
+    icon: 'shield-checkmark-outline',
+    color: '#059669',
+    bg: '#d1fae5',
+    hint: 'Sigorta poliçesi ve primleri',
+  },
+  lawyer: {
+    label: 'Avukat / hukuk',
+    shortLabel: 'Hukuk',
+    icon: 'scale-outline',
+    color: '#4338ca',
+    bg: '#e0e7ff',
+    hint: 'Hukuki danışmanlık ve dava',
+  },
+  accountant: {
+    label: 'Muhasebeci',
+    shortLabel: 'Muhasebe',
+    icon: 'calculator-outline',
+    color: '#0e7490',
+    bg: '#cffafe',
+    hint: 'Mali müşavir, muhasebe ofisi',
+  },
+  freelancer: {
+    label: 'Serbest çalışan',
+    shortLabel: 'Freelance',
+    icon: 'laptop-outline',
+    color: '#db2777',
+    bg: '#fce7f3',
+    hint: 'Proje bazlı dış kaynak',
+  },
 };
+
+/** Özel tür adı varsa onu, yoksa sabit meta etiketini döner */
+export function resolveCounterpartyTypeLabel(
+  partyType: FinanceCounterpartyType,
+  partyTypeLabel?: string | null
+): string {
+  const custom = partyTypeLabel?.trim();
+  if (custom) return custom;
+  return COUNTERPARTY_TYPE_META[partyType]?.label ?? partyType;
+}
+
+export function resolveCounterpartyTypeMeta(
+  partyType: FinanceCounterpartyType,
+  partyTypeLabel?: string | null
+): CounterpartyTypeMeta {
+  const base = COUNTERPARTY_TYPE_META[partyType] ?? COUNTERPARTY_TYPE_META.other;
+  const custom = partyTypeLabel?.trim();
+  if (!custom) return base;
+  return {
+    ...base,
+    label: custom,
+    shortLabel: custom,
+    hint: 'Özel kategori',
+  };
+}
 
 export function counterpartyInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);

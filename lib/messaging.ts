@@ -34,6 +34,7 @@ export interface ConversationWithMeta extends Conversation {
   unread_count?: number;
   is_pinned?: boolean;
   is_muted?: boolean;
+  is_archived?: boolean;
   /** Direct sohbetlerde karşı tarafın profil resmi (staff profile_image). */
   other_avatar?: string | null;
   other_participant?: { id: string; type: ParticipantType; name: string; avatar: string | null; is_online?: boolean; last_seen?: string | null };
@@ -151,12 +152,18 @@ export function pickNewerChatMessage(a: Message, b: Message): Message {
   return b;
 }
 
+/** Silinmiş satırları listeden ve önbellekten ayıklar. */
+export function filterVisibleChatMessages(messages: Message[]): Message[] {
+  return messages.filter((m) => !m.is_deleted);
+}
+
 /** Sunucudan gelen liste ile bellekteki (temp / realtime) mesajları birleştirir. */
 export function mergeChatMessages(fetched: Message[], existing: Message[]): Message[] {
   const map = new Map<string, Message>();
-  for (const m of fetched) map.set(m.id, m);
+  for (const m of filterVisibleChatMessages(fetched)) map.set(m.id, m);
   for (const m of existing) {
     const id = String(m.id);
+    if (m.is_deleted) continue;
     if (id.startsWith('temp-')) {
       map.set(id, m);
       continue;
@@ -166,6 +173,82 @@ export function mergeChatMessages(fetched: Message[], existing: Message[]): Mess
     else map.set(m.id, m);
   }
   return [...map.values()].sort((a, b) => messageSortKey(a) - messageSortKey(b));
+}
+
+/** Arka plan senkronu: yalnızca yeni mesaj ekler; listeyi baştan kurmaz. */
+export function appendNewChatMessagesOnly(existing: Message[], incoming: Message[]): Message[] {
+  const visible = filterVisibleChatMessages(existing);
+  const fresh = filterVisibleChatMessages(incoming).filter((m) => !visible.some((p) => p.id === m.id));
+  if (!fresh.length) return existing;
+  const temps = existing.filter((m) => String(m.id).startsWith('temp-'));
+  return capChatMessageList(dedupeChatMessagesById([...visible, ...fresh, ...temps]));
+}
+
+/** Mevcut satırları günceller (video hazır vb.); silinenleri kaldırır. */
+export function patchExistingChatMessages(existing: Message[], patches: Message[]): Message[] {
+  if (!patches.length) return existing;
+  let next = existing;
+  let changed = false;
+  for (const p of patches) {
+    if (p.is_deleted) {
+      const filtered = next.filter((m) => m.id !== p.id);
+      if (filtered.length !== next.length) {
+        next = filtered;
+        changed = true;
+      }
+      continue;
+    }
+    const idx = next.findIndex((m) => m.id === p.id);
+    if (idx < 0) continue;
+    const merged = pickNewerChatMessage(next[idx], p);
+    if (merged !== next[idx]) {
+      const copy = [...next];
+      copy[idx] = merged;
+      next = copy;
+      changed = true;
+    }
+  }
+  return changed ? capChatMessageList(next) : existing;
+}
+
+function chatMessageListsEqual(a: Message[], b: Message[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+    if (a[i].media_url !== b[i].media_url) return false;
+    if (a[i].is_deleted !== b[i].is_deleted) return false;
+  }
+  return true;
+}
+
+/**
+ * Görünür yenileme yok: yalnızca yeni / güncellenmiş satırlar; değişiklik yoksa aynı referans.
+ */
+export function applySilentChatSync(
+  prev: Message[],
+  serverRows: Message[],
+  hiddenForMeIds?: ReadonlySet<string>
+): Message[] {
+  const incoming = filterVisibleChatMessages(serverRows).filter(
+    (m) => !hiddenForMeIds?.has(m.id)
+  );
+  if (!incoming.length) return prev;
+
+  const visible = filterVisibleChatMessages(prev);
+  const have = new Set(visible.map((m) => m.id));
+  const toAdd = incoming.filter((m) => !have.has(m.id));
+  const toPatch = incoming.filter((m) => have.has(m.id));
+
+  let next = visible;
+  if (toAdd.length) next = filterVisibleChatMessages(appendNewChatMessagesOnly(next, toAdd));
+  if (toPatch.length) next = patchExistingChatMessages(next, toPatch);
+
+  const temps = prev.filter((m) => String(m.id).startsWith('temp-'));
+  if (temps.length) {
+    next = dedupeChatMessagesById([...filterVisibleChatMessages(next), ...temps]);
+  }
+
+  return chatMessageListsEqual(prev, next) ? prev : next;
 }
 
 export function mergeChatMessagesCapped(fetched: Message[], existing: Message[]): Message[] {
@@ -186,6 +269,8 @@ export function replaceChatMessage(prev: Message[], updated: Message): Message[]
 type UpsertIncomingOpts = {
   ownSenderId?: string;
   ownSenderType?: ParticipantType;
+  /** Yükleme tamamlanınca hangi temp satırının kaldırılacağı (realtime yarışında doğru eşleşme). */
+  replaceTempId?: string;
 };
 
 /** Realtime veya gönderim sonrası tek mesaj ekler; eşleşen optimistik temp'i kaldırır. */
@@ -201,6 +286,10 @@ export function upsertIncomingChatMessage(
   let removedMatchingTemp = false;
   const filtered = prev.filter((m) => {
     if (!String(m.id).startsWith('temp-')) return true;
+    if (opts?.replaceTempId && m.id === opts.replaceTempId) {
+      removedMatchingTemp = true;
+      return false;
+    }
     if (m.message_type !== newMsg.message_type) return true;
     const albumM = parseChatVideoAlbumId(m.content) ?? parseChatAlbumId(m.content);
     if (albumNew && albumM) {
@@ -213,10 +302,20 @@ export function upsertIncomingChatMessage(
     }
     if (albumNew || albumM) return true;
     if (isOwnById && m.sender_id === newMsg.sender_id && !removedMatchingTemp) {
+      if (newMsg.message_type === 'text') {
+        const tempText = (m.content ?? '').trim();
+        const newText = (newMsg.content ?? '').trim();
+        if (!tempText || tempText !== newText) return true;
+      }
       removedMatchingTemp = true;
       return false;
     }
     if (isOwnByType && m.sender_type === newMsg.sender_type && !removedMatchingTemp) {
+      if (newMsg.message_type === 'text') {
+        const tempText = (m.content ?? '').trim();
+        const newText = (newMsg.content ?? '').trim();
+        if (!tempText || tempText !== newText) return true;
+      }
       removedMatchingTemp = true;
       return false;
     }

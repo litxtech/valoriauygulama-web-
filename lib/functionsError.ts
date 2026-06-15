@@ -43,7 +43,10 @@ export async function parseEdgeFunctionErrorBody(
       return { code: b.error.code, message: b.error.message };
     }
     if (typeof b.error === 'string') {
-      return { message: b.error };
+      const errorCode = typeof (b as { error_code?: string }).error_code === 'string'
+        ? (b as { error_code: string }).error_code
+        : undefined;
+      return { code: errorCode, message: b.error };
     }
     if (typeof b.message === 'string') {
       return { message: b.message };

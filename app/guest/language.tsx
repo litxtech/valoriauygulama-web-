@@ -3,15 +3,15 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTranslation } from 'react-i18next';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
-import { LANGUAGES, LANG_STORAGE_KEY, type LangCode } from '@/i18n';
+import { LANGUAGES, LANG_STORAGE_KEY, changeAppLanguage, type LangCode } from '@/i18n';
 
 export default function LanguageScreen() {
   const router = useRouter();
   const { t, i18n } = useTranslation();
   const { setLang, setStep, roomNumber } = useGuestFlowStore();
 
-  const select = (code: LangCode) => {
-    i18n.changeLanguage(code);
+  const select = async (code: LangCode) => {
+    await changeAppLanguage(code);
     AsyncStorage.setItem(LANG_STORAGE_KEY, code);
     if (roomNumber) {
       setLang(code);
@@ -26,7 +26,7 @@ export default function LanguageScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>{t('selectLanguage')}</Text>
-        {roomNumber ? <Text style={styles.room}>Oda {roomNumber}</Text> : null}
+        {roomNumber ? <Text style={styles.room}>{t('guestRoomNumber', { room: roomNumber })}</Text> : null}
       </View>
       <ScrollView contentContainerStyle={styles.list}>
         {LANGUAGES.map(({ code, label }) => (

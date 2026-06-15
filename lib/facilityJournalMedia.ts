@@ -128,7 +128,7 @@ export async function prepareFacilityJournalUploadUri(
   return local;
 }
 
-/** Tesis günlüğü medyası: 720p + doğrudan Storage stream. */
+/** Otel eşyası kullanım medyası: 720p + doğrudan Storage stream. */
 export async function uploadFacilityJournalMedia(params: {
   uri: string;
   kind: 'image' | 'video';

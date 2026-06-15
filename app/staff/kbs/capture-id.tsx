@@ -37,11 +37,33 @@ import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { loadKbsCapturePictureSize, takeKbsIdPicture } from '@/lib/kbsCaptureCamera';
 import { autoSplitKbsSheetImage } from '@/lib/kbsCaptureSheetSplit';
+import { useTranslation } from 'react-i18next';
+import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
+import {
+  cancelKbsCapturePrewarm,
+  clearKbsCapturePrewarmAll,
+  startKbsCapturePrewarm,
+  warmKbsCaptureOpsContext,
+} from '@/lib/kbsCapturePrewarm';
+import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
+import {
+  getIdCardFrontVisionScannerCached,
+  preloadIdCardFrontVisionScanner,
+  type IdCardFrontVisionScannerComponent,
+} from '@/lib/scanner/idCardFrontVisionScannerLoader';
+import type {
+  IdCardFrontLockedPayload,
+  IdCardFrontVisionScannerRef,
+  IdCardFrontVisionUiState,
+} from '@/components/kbs/idCardFrontVisionTypes';
+import { MRZ_FRAME_BORDER } from '@/lib/scanner/mrzFrameTheme';
+import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
 
 type CaptureItem = {
   id: string;
   imageUri: string;
   captureSource: 'camera' | 'gallery';
+  captureSide: KbsCaptureSide;
 };
 
 const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
@@ -69,6 +91,7 @@ async function uriForQueue(uri: string): Promise<string> {
 }
 
 export default function KbsCaptureIdScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
@@ -93,7 +116,25 @@ export default function KbsCaptureIdScreen() {
   );
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [splitting, setSplitting] = useState(false);
+  const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [frontScanResetToken, setFrontScanResetToken] = useState(0);
+  const [frontLiveUi, setFrontLiveUi] = useState<IdCardFrontVisionUiState>({
+    frameKind: 'hunting',
+    hint: '',
+    showSpinner: false,
+    successGlow: false,
+  });
+  const [FrontVisionScanner, setFrontVisionScanner] = useState<IdCardFrontVisionScannerComponent | null>(
+    () => getIdCardFrontVisionScannerCached()
+  );
   const captureLockRef = useRef(false);
+  const frontVisionRef = useRef<IdCardFrontVisionScannerRef>(null);
+  const frontLiveEnqueueAtRef = useRef(0);
+  const visionOk = isMrzVisionScannerAvailable();
+  /** Canlı otomatik: kimlik görününce fotoğraf + tam OCR. Sorun olursa MRZ modu veya galeri. */
+  const useLiveFrontScan = captureSide === 'front' && visionOk;
+  const useExpoCamera = !useLiveFrontScan;
 
   const setGuestName = useCallback((itemId: string, field: 'firstName' | 'lastName', value: string) => {
     setGuestNamesById((prev) => ({
@@ -128,11 +169,77 @@ export default function KbsCaptureIdScreen() {
   }, [permission?.granted, permission?.canAskAgain, requestPermission]);
 
   useEffect(() => {
+    if (!useLiveFrontScan || FrontVisionScanner) return;
+    let cancelled = false;
+    void preloadIdCardFrontVisionScanner().then((Comp) => {
+      if (!cancelled && Comp) setFrontVisionScanner(() => Comp);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [useLiveFrontScan, FrontVisionScanner]);
+
+  const applyPrewarmNamesToGuest = useCallback(async (itemId: string) => {
+    const { awaitKbsCapturePrewarm } = await import('@/lib/kbsCapturePrewarm');
+    const ready = await awaitKbsCapturePrewarm(itemId);
+    const p = ready?.ocr?.parsed;
+    if (!p) return;
+    const fn = p.firstName?.trim();
+    const ln = p.lastName?.trim();
+    if (!fn && !ln) return;
+    setGuestNamesById((prev) => ({
+      ...prev,
+      [itemId]: {
+        firstName: fn || prev[itemId]?.firstName || '',
+        lastName: ln || prev[itemId]?.lastName || '',
+      },
+    }));
+  }, []);
+
+  const handleFrontLiveLocked = useCallback(async (payload: IdCardFrontLockedPayload) => {
+    const now = Date.now();
+    if (now - frontLiveEnqueueAtRef.current < 2000) return;
+    frontLiveEnqueueAtRef.current = now;
+
+    const uri = await uriForQueue(payload.imageUri);
+    const id = newCaptureId();
+    setQueue((q) => [
+      ...q,
+      { id, imageUri: uri, captureSource: 'camera', captureSide: 'front' },
+    ]);
+    startKbsCapturePrewarm({
+      itemId: id,
+      imageUri: uri,
+      captureSide: 'front',
+      prefetchedParsed: payload.parsed,
+    });
+    const fn = payload.parsed.firstName?.trim();
+    const ln = payload.parsed.lastName?.trim();
+    if (fn || ln) {
+      setGuestNamesById((prev) => ({
+        ...prev,
+        [id]: { firstName: fn ?? '', lastName: ln ?? '' },
+      }));
+    } else {
+      void applyPrewarmNamesToGuest(id);
+    }
+    void triggerMrzSuccessHaptic(0, true);
+    setFrontScanResetToken((n) => n + 1);
+  }, [applyPrewarmNamesToGuest]);
+
+  useEffect(() => {
+    warmKbsCaptureOpsContext();
     const task = InteractionManager.runAfterInteractions(() => {
       prefetchHistory();
     });
     return () => task.cancel();
   }, [prefetchHistory]);
+
+  useEffect(() => {
+    return () => {
+      clearKbsCapturePrewarmAll();
+    };
+  }, []);
 
   useEffect(() => {
     if (!roomModalVisible) return;
@@ -154,32 +261,44 @@ export default function KbsCaptureIdScreen() {
   }, [prefetchHistory, router]);
 
   const enqueueImageUris = useCallback(
-    (uris: string[], captureSource: CaptureItem['captureSource']) => {
+    (uris: string[], captureSource: CaptureItem['captureSource'], side: KbsCaptureSide) => {
       if (uris.length === 0) return;
-      setQueue((q) => [
-        ...q,
-        ...uris.map((imageUri) => ({ id: newCaptureId(), imageUri, captureSource })),
-      ]);
+      const added = uris.map((imageUri) => ({
+        id: newCaptureId(),
+        imageUri,
+        captureSource,
+        captureSide: side,
+      }));
+      setQueue((q) => [...q, ...added]);
+      for (const row of added) {
+        startKbsCapturePrewarm({
+          itemId: row.id,
+          imageUri: row.imageUri,
+          captureSide: row.captureSide,
+        });
+        void applyPrewarmNamesToGuest(row.id);
+      }
     },
-    []
+    [applyPrewarmNamesToGuest]
   );
 
   const enqueueCapturedImage = useCallback(
-    async (uri: string, captureSource: CaptureItem['captureSource']) => {
+    async (uri: string, captureSource: CaptureItem['captureSource'], opts?: { skipSplit?: boolean }) => {
       setSplitting(true);
       try {
-        const parts = await autoSplitKbsSheetImage(uri);
-        enqueueImageUris(parts, captureSource);
+        const parts = opts?.skipSplit ? [uri] : await autoSplitKbsSheetImage(uri);
+        enqueueImageUris(parts.length > 0 ? parts : [uri], captureSource, captureSide);
       } catch (e) {
-        Alert.alert('Kırpma hatası', e instanceof Error ? e.message : 'Fotoğraf bölünemedi');
+        Alert.alert(t('kbsCropError'), e instanceof Error ? e.message : t('kbsCropErrorBody'));
       } finally {
         setSplitting(false);
       }
     },
-    [enqueueImageUris]
+    [captureSide, enqueueImageUris]
   );
 
   const removeFromQueue = useCallback((itemId: string) => {
+    cancelKbsCapturePrewarm(itemId);
     setQueue((q) => q.filter((item) => item.id !== itemId));
     setGuestNamesById((prev) => {
       const next = { ...prev };
@@ -191,7 +310,7 @@ export default function KbsCaptureIdScreen() {
   /** Yazılan oda numarası aynen kullanılır; listeden eşleştirme yapılmaz. */
   const resolveRoom = useCallback(async (roomNumber: string): Promise<KbsOpsRoom> => {
     const trimmed = roomNumber.trim();
-    if (!trimmed) throw new Error('Oda numarası gerekli');
+    if (!trimmed) throw new Error(t('kbsRoomRequired'));
     const created = await ensureKbsOpsRoom(trimmed);
     if (!created.ok) throw new Error(created.error.message);
     return { ...created.data, room_number: trimmed };
@@ -217,12 +336,17 @@ export default function KbsCaptureIdScreen() {
     return () => clearTimeout(t);
   }, [roomModalVisible, roomNoTrimmed, resolveRoom]);
 
+  const handleVisionManualCapture = useCallback(() => {
+    if (captureLockRef.current || saving || splitting) return;
+    frontVisionRef.current?.captureNow();
+  }, [saving, splitting]);
+
   const handleCapture = async () => {
     if (captureLockRef.current || !cameraRef.current || !cameraReady) return;
     if (!permission?.granted) {
       const res = await requestPermission();
       if (!res.granted) {
-        Alert.alert('Kamera izni gerekli', 'Kimlik çekimi için kamera izni verin.');
+        Alert.alert(t('kbsCameraPermTitle'), t('kbsCameraPermBody'));
       }
       return;
     }
@@ -231,7 +355,7 @@ export default function KbsCaptureIdScreen() {
       const shot = await takeKbsIdPicture(cameraRef.current);
       await enqueueCapturedImage(shot.uri, 'camera');
     } catch (e) {
-      Alert.alert('Hata', e instanceof Error ? e.message : 'Çekim yapılamadı');
+      Alert.alert(t('error'), e instanceof Error ? e.message : t('kbsCaptureFailed'));
     } finally {
       captureLockRef.current = false;
     }
@@ -254,7 +378,7 @@ export default function KbsCaptureIdScreen() {
         await enqueueCapturedImage(fileUri, 'gallery');
       }
     } catch (e) {
-      Alert.alert('Hata', e instanceof Error ? e.message : 'Galeri işlenemedi');
+      Alert.alert(t('error'), e instanceof Error ? e.message : t('kbsGalleryFailed'));
     } finally {
       captureLockRef.current = false;
     }
@@ -262,7 +386,7 @@ export default function KbsCaptureIdScreen() {
 
   const openRoomModal = () => {
     if (queue.length === 0) {
-      Alert.alert('Liste boş', 'Önce en az bir kimlik çekin.');
+      Alert.alert(t('kbsListEmpty'), t('kbsListEmptyCaptureFirst'));
       return;
     }
     roomPrefetchRef.current = null;
@@ -278,7 +402,7 @@ export default function KbsCaptureIdScreen() {
   const finalizeBulk = async () => {
     if (!staff?.id || !staff.organization_id) return;
     if (!roomNoTrimmed) {
-      Alert.alert('Oda numarası', 'Lütfen oda numarasını yazın.');
+      Alert.alert(t('kbsRoomNumberTitle'), t('kbsRoomNumberBody'));
       return;
     }
     if (savingRef.current) return;
@@ -291,7 +415,7 @@ export default function KbsCaptureIdScreen() {
     Keyboard.dismiss();
 
     try {
-      setSaveStatus('Oda hazırlanıyor…');
+      setSaveStatus(t('kbsRoomPreparing'));
       let room: KbsOpsRoom;
       const cached = roomPrefetchRef.current;
       if (cached?.key === roomNoTrimmed) {
@@ -308,12 +432,15 @@ export default function KbsCaptureIdScreen() {
         return {
           imageUri: item.imageUri,
           index,
+          clientId: item.id,
           captureSource: item.captureSource,
+          captureSide: item.captureSide,
           firstName: fn || null,
           lastName: ln || null,
         };
       });
 
+      setSaveStatus(t('kbsSaveFinishing'));
       const saved = await saveKbsCaptureItemsParallel(saveItems, room, (msg) => setSaveStatus(msg));
       const savedDocIds = saved.map((s) => s.guestDocumentId);
       markKbsCapturesJustSaved(savedDocIds);
@@ -329,6 +456,7 @@ export default function KbsCaptureIdScreen() {
         );
       }
 
+      clearKbsCapturePrewarmAll();
       setQueue([]);
       setRoomNoInput('');
       setGuestNamesById({});
@@ -345,7 +473,7 @@ export default function KbsCaptureIdScreen() {
       void prefetchHistory();
       router.replace(CAPTURE_HISTORY as never);
     } catch (e) {
-      Alert.alert('Kayıt hatası', e instanceof Error ? e.message : 'Kayıt tamamlanamadı');
+      Alert.alert(t('kbsSaveError'), e instanceof Error ? e.message : t('kbsSaveFailed'));
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -353,7 +481,9 @@ export default function KbsCaptureIdScreen() {
     }
   };
 
-  const cameraActive = isFocused && permission?.granted && !roomModalVisible && !saving;
+  const cameraActive =
+    isFocused && !roomModalVisible && !saving && (useLiveFrontScan || permission?.granted);
+  const liveFrontActive = cameraActive && useLiveFrontScan;
 
   const queueStrip = (
     <ScrollView
@@ -371,7 +501,7 @@ export default function KbsCaptureIdScreen() {
             style={styles.queueStripRemove}
             onPress={() => removeFromQueue(item.id)}
             hitSlop={8}
-            accessibilityLabel="Kimliği listeden kaldır"
+            accessibilityLabel={t('kbsRemoveFromListA11y')}
           >
             <Ionicons name="close-circle" size={22} color="#fff" />
           </TouchableOpacity>
@@ -382,7 +512,22 @@ export default function KbsCaptureIdScreen() {
 
   return (
     <View style={styles.root}>
-      {cameraActive ? (
+      {liveFrontActive ? (
+        FrontVisionScanner ? (
+          <FrontVisionScanner
+            ref={frontVisionRef}
+            enabled={liveFrontActive}
+            torchEnabled={torchEnabled}
+            resetToken={frontScanResetToken}
+            onUiStateChange={setFrontLiveUi}
+            onLocked={(p) => void handleFrontLiveLocked(p)}
+          />
+        ) : (
+          <View style={styles.cameraPlaceholder}>
+            <ActivityIndicator color="#fff" size="large" />
+          </View>
+        )
+      ) : cameraActive && useExpoCamera ? (
         <CameraView
           ref={cameraRef}
           style={StyleSheet.absoluteFillObject}
@@ -421,9 +566,49 @@ export default function KbsCaptureIdScreen() {
             <Ionicons name="chevron-back" size={30} color="#fff" />
           </Pressable>
           <Text style={styles.title}>Kimlik / Pasaport</Text>
-          <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel="Çekilen kimlikler">
-            <Ionicons name="albums" size={18} color="#fff" />
-            <Text style={styles.capturedListBtnText}>Çekilenler</Text>
+          <View style={styles.topBarRight}>
+            {useLiveFrontScan ? (
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => setTorchEnabled((v) => !v)}
+                accessibilityLabel={torchEnabled ? t('kbsTorchOff') : t('kbsTorchOn')}
+              >
+                <Ionicons name={torchEnabled ? 'flash' : 'flash-off'} size={22} color="#fff" />
+              </Pressable>
+            ) : null}
+            <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel={t('kbsCapturedListA11y')}>
+              <Ionicons name="albums" size={18} color="#fff" />
+              <Text style={styles.capturedListBtnText}>Çekilenler</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.sideModeRow}>
+          <Pressable
+            style={[styles.sideModeBtn, captureSide === 'front' && styles.sideModeBtnActive]}
+            onPress={() => {
+              setCaptureSide('front');
+              setFrontScanResetToken((n) => n + 1);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: captureSide === 'front' }}
+          >
+            <Text style={[styles.sideModeBtnText, captureSide === 'front' && styles.sideModeBtnTextActive]}>
+              {t('kbsCaptureSideFront')}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.sideModeBtn, captureSide === 'mrz_back' && styles.sideModeBtnActive]}
+            onPress={() => {
+              setCaptureSide('mrz_back');
+              setFrontScanResetToken((n) => n + 1);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: captureSide === 'mrz_back' }}
+          >
+            <Text style={[styles.sideModeBtnText, captureSide === 'mrz_back' && styles.sideModeBtnTextActive]}>
+              {t('kbsCaptureSideMrz')}
+            </Text>
           </Pressable>
         </View>
 
@@ -431,9 +616,40 @@ export default function KbsCaptureIdScreen() {
           <Text style={styles.stepBadgeText}>
             {queue.length > 0
               ? `${queue.length} belge · İleri: oda no`
-              : 'Ön yüz tam kadraj — pasaportta alt şerit de karede olsun'}
+              : useLiveFrontScan && frontLiveUi.hint
+                ? frontLiveUi.hint
+                : captureSide === 'mrz_back'
+                  ? t('kbsMrzFrameHint')
+                  : t('kbsFrontFrameHint')}
           </Text>
         </View>
+
+        {useLiveFrontScan ? (
+          <View style={styles.idFrontGuide} pointerEvents="none">
+            <View
+              style={[
+                styles.idFrontGuideFrame,
+                {
+                  borderColor:
+                    frontLiveUi.successGlow || frontLiveUi.frameKind === 'success'
+                      ? '#22c55e'
+                      : frontLiveUi.frameKind === 'reading' || frontLiveUi.frameKind === 'signal'
+                        ? '#fbbf24'
+                        : MRZ_FRAME_BORDER.hunting,
+                },
+              ]}
+            />
+            {frontLiveUi.showSpinner ? (
+              <ActivityIndicator style={styles.idFrontGuideSpinner} color="#fbbf24" />
+            ) : null}
+          </View>
+        ) : null}
+
+        {captureSide === 'mrz_back' ? (
+          <View style={styles.mrzGuide} pointerEvents="none">
+            <View style={styles.mrzGuideBand} />
+          </View>
+        ) : null}
 
         {queueStrip}
 
@@ -443,21 +659,38 @@ export default function KbsCaptureIdScreen() {
               style={styles.galleryBtn}
               onPress={() => void handlePickGallery()}
               disabled={saving || splitting}
-              accessibilityLabel="Galeriden fotoğraf ekle"
+              accessibilityLabel={t('kbsAddFromGalleryA11y')}
             >
               <Ionicons name="images-outline" size={22} color="#fff" />
               <Text style={styles.galleryBtnLabel}>Galeri</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.bottomCenter}>
-            <TouchableOpacity
-              style={styles.captureBtn}
-              onPress={() => void handleCapture()}
-              disabled={saving || splitting || !cameraReady || !cameraActive}
-              accessibilityLabel="Kimlik çek"
-            >
-              <View style={styles.captureInner} />
-            </TouchableOpacity>
+            {useLiveFrontScan ? (
+              <View style={styles.bottomCenterLive}>
+                <View style={styles.liveAutoBadge}>
+                  <Ionicons name="scan-outline" size={22} color="#fff" />
+                  <Text style={styles.liveAutoBadgeText}>Otomatik</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.captureBtn}
+                  onPress={handleVisionManualCapture}
+                  disabled={saving || splitting || !cameraActive}
+                  accessibilityLabel={t('kbsCaptureIdManualA11y')}
+                >
+                  <View style={styles.captureInner} />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.captureBtn}
+                onPress={() => void handleCapture()}
+                disabled={saving || splitting || !cameraReady || !cameraActive}
+                accessibilityLabel={t('kbsCaptureIdA11y')}
+              >
+                <View style={styles.captureInner} />
+              </TouchableOpacity>
+            )}
           </View>
           <View style={[styles.bottomSide, styles.bottomSideEnd]}>
             <TouchableOpacity style={styles.forwardBtn} onPress={openRoomModal} disabled={saving}>
@@ -472,7 +705,7 @@ export default function KbsCaptureIdScreen() {
         <View style={styles.busyMask}>
           <ActivityIndicator size="large" color="#fff" />
           <Text style={styles.busyText}>
-            {splitting ? 'Kimlikler ayrılıyor…' : saveStatus || 'Kaydediliyor…'}
+            {splitting ? t('kbsSplitting') : saveStatus || t('kbsSaving')}
           </Text>
         </View>
       ) : null}
@@ -541,7 +774,7 @@ export default function KbsCaptureIdScreen() {
                       style={styles.nameInput}
                       value={guestNamesById[queue[0]!.id]?.firstName ?? ''}
                       onChangeText={(v) => setGuestName(queue[0]!.id, 'firstName', v)}
-                      placeholder="İsteğe bağlı"
+                      placeholder={t('kbsOptional')}
                       placeholderTextColor="#94a3b8"
                       autoCapitalize="words"
                       editable={!saving}
@@ -553,7 +786,7 @@ export default function KbsCaptureIdScreen() {
                       style={styles.nameInput}
                       value={guestNamesById[queue[0]!.id]?.lastName ?? ''}
                       onChangeText={(v) => setGuestName(queue[0]!.id, 'lastName', v)}
-                      placeholder="İsteğe bağlı"
+                      placeholder={t('kbsOptional')}
                       placeholderTextColor="#94a3b8"
                       autoCapitalize="words"
                       editable={!saving}
@@ -581,7 +814,7 @@ export default function KbsCaptureIdScreen() {
                         style={[styles.nameInput, styles.nameInputLast]}
                         value={guestNamesById[item.id]?.lastName ?? ''}
                         onChangeText={(v) => setGuestName(item.id, 'lastName', v)}
-                        placeholder="Soyad (isteğe bağlı)"
+                        placeholder={t('kbsLastNameOptional')}
                         placeholderTextColor="#94a3b8"
                         autoCapitalize="words"
                         editable={!saving}
@@ -654,6 +887,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   capturedListBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -676,6 +910,54 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   stepBadgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  sideModeRow: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    gap: 8,
+    marginTop: 10,
+    padding: 4,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  sideModeBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+  },
+  sideModeBtnActive: {
+    backgroundColor: 'rgba(37, 99, 235, 0.95)',
+  },
+  sideModeBtnText: { color: 'rgba(255,255,255,0.75)', fontWeight: '800', fontSize: 13 },
+  sideModeBtnTextActive: { color: '#fff' },
+  mrzGuide: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingBottom: SCREEN_H * 0.22,
+  },
+  mrzGuideBand: {
+    width: '92%',
+    height: SCREEN_H * 0.2,
+    borderWidth: 2,
+    borderColor: 'rgba(52, 211, 153, 0.9)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+  },
+  idFrontGuide: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SCREEN_H * 0.12,
+  },
+  idFrontGuideFrame: {
+    width: '88%',
+    flex: 1,
+    maxHeight: SCREEN_H * 0.52,
+    borderWidth: 2,
+    borderRadius: 14,
+    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+  },
+  idFrontGuideSpinner: { position: 'absolute', bottom: SCREEN_H * 0.16 },
   queueStrip: { paddingHorizontal: 16, paddingVertical: 8, gap: 8, flexDirection: 'row' },
   queueStripCard: {
     width: 68,
@@ -755,6 +1037,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.16)',
   },
   captureInner: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#fff' },
+  liveAutoBadge: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.55)',
+    backgroundColor: 'rgba(37, 99, 235, 0.45)',
+  },
+  liveAutoBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', marginTop: 2, textAlign: 'center' },
+  bottomCenterLive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+  },
   busyMask: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -823,7 +1122,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   roomHint: { marginTop: 10, fontSize: 14, fontWeight: '600', color: '#0369a1', textAlign: 'center' },
-  roomSheetScroll: { maxHeight: SCREEN_H * 0.42 },
+  roomSheetScroll: { flexGrow: 0, flexShrink: 1, maxHeight: SCREEN_H * 0.62 },
   roomSheetScrollContent: { paddingBottom: 8 },
   nameSectionTitle: {
     marginTop: 16,

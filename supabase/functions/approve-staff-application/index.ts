@@ -40,6 +40,7 @@ type ApproveBody = {
   certifications_summary?: string | null;
   kvkk_consent_at?: string | null;
   drives_vehicle?: boolean | null;
+  tips_enabled?: boolean | null;
 };
 
 Deno.serve(async (req: Request) => {
@@ -117,6 +118,7 @@ Deno.serve(async (req: Request) => {
       certifications_summary,
       kvkk_consent_at,
       drives_vehicle,
+      tips_enabled,
     } = body;
 
     if (!application_id) {
@@ -208,6 +210,12 @@ Deno.serve(async (req: Request) => {
       certifications_summary: certifications_summary?.trim() || null,
       kvkk_consent_at: kvkk_consent_at && String(kvkk_consent_at).trim() ? String(kvkk_consent_at).trim().slice(0, 10) : null,
       drives_vehicle: drives_vehicle === true,
+      tips_enabled:
+        tips_enabled === false
+          ? false
+          : app_permissions?.bahsis_alabilir === false
+            ? false
+            : true,
     });
     if (insertError) {
       return new Response(

@@ -23,6 +23,7 @@ import {
   type StockListPdfRow,
 } from '@/lib/stockListPdf';
 import { StockInventoryList, type StockInventoryListItem } from '@/components/stock/StockInventoryList';
+import { buildLatestPhotoProofByProductId, resolveStockProductImageUrl } from '@/lib/stockProductImages';
 
 type Product = {
   id: string;
@@ -114,6 +115,11 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
     return map;
   }, [movements]);
 
+  const photoByProductId = useMemo(
+    () => buildLatestPhotoProofByProductId(movements),
+    [movements]
+  );
+
   const filtered = useMemo(() => {
     let list = products;
     if (nameSearch.trim()) {
@@ -164,9 +170,10 @@ export function AllStocksOverview({ productPathPrefix }: Props) {
           current_stock: p.current_stock,
           min_stock: p.min_stock,
           categoryName,
+          imageUrl: resolveStockProductImageUrl(p.image_url, photoByProductId[p.id]),
         };
       });
-  }, [filtered]);
+  }, [filtered, photoByProductId]);
 
   const summary = useMemo(() => {
     let ok = 0;

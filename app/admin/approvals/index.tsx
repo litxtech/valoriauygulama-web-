@@ -25,13 +25,19 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { sendNotification } from '@/lib/notificationService';
 import { formatDateShort } from '@/lib/date';
 import { VAT_RATE, ACCOMMODATION_TAX_RATE } from '@/constants/hmbHotel';
-import { GUEST_TYPES, GUEST_MESSAGE_TEMPLATES } from '@/lib/notifications';
+import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
 import {
   approvalsCacheKey,
   getApprovalsCache,
   getApprovalsCacheAgeMs,
   setApprovalsCache,
 } from '@/lib/adminApprovalsCache';
+import { stockProductImagePatchFromEntry } from '@/lib/stockProductImages';
+import {
+  confirmBulkApproval,
+  confirmBulkReject,
+  pickExpenseRejectReason,
+} from '@/lib/adminExpenseRejectReasons';
 
 /** Liste için yeterli; tam kayıt detayda veya lazy yüklenir. */
 const LIST_LIMIT = 40;
@@ -84,6 +90,11 @@ type KindMeta = {
 };
 
 const KIND_ORDER: Kind[] = ['staff_app', 'stock', 'expense', 'report', 'contract'];
+
+/** Toplu onay / red (kart seçimi) */
+const BULK_KINDS: Kind[] = ['stock', 'expense', 'report'];
+
+const itemSelKey = (it: UnifiedItem) => `${it.kind}:${it.id}`;
 
 const KIND_META: Record<Kind, KindMeta> = {
   staff_app: {
@@ -275,6 +286,7 @@ export default function AdminApprovalsHubScreen() {
     staff_image: string | null;
     photo_proof: string | null;
   } | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (loadInFlightRef.current) return;
@@ -572,9 +584,8 @@ export default function AdminApprovalsHubScreen() {
   const expenseSummary = (e: ExpenseRow) =>
     `${fmtMoney(Number(e.amount))} · ${formatDateShort(e.expense_date)} · ${e.category?.name ?? '—'}`;
 
-  const approveExpense = async (e: ExpenseRow) => {
-    if (!me?.id) return;
-    setActing(true);
+  const approveExpenseOne = async (e: ExpenseRow, opts?: { closeDetail?: boolean }) => {
+    if (!me?.id) return false;
     const { error } = await supabase
       .from('staff_expenses')
       .update({
@@ -584,10 +595,9 @@ export default function AdminApprovalsHubScreen() {
         rejection_reason: null,
       })
       .eq('id', e.id);
-    setActing(false);
     if (error) {
       Alert.alert('Hata', error.message);
-      return;
+      return false;
     }
     if (e.staff_id) {
       await sendNotification({
@@ -599,13 +609,23 @@ export default function AdminApprovalsHubScreen() {
         createdByStaffId: me.id,
       });
     }
-    setDetail(null);
+    if (opts?.closeDetail !== false) setDetail(null);
+    return true;
+  };
+
+  const approveExpense = async (e: ExpenseRow) => {
+    setActing(true);
+    await approveExpenseOne(e);
+    setActing(false);
     await load();
   };
 
-  const rejectExpenseWithReason = async (e: ExpenseRow, reason: string) => {
-    if (!me?.id) return;
-    setActing(true);
+  const rejectExpenseWithReason = async (
+    e: ExpenseRow,
+    reason: string,
+    opts?: { closeDetail?: boolean; silentAlert?: boolean }
+  ) => {
+    if (!me?.id) return false;
     const { error } = await supabase
       .from('staff_expenses')
       .update({
@@ -615,10 +635,9 @@ export default function AdminApprovalsHubScreen() {
         rejection_reason: reason,
       })
       .eq('id', e.id);
-    setActing(false);
     if (error) {
       Alert.alert('Hata', error.message);
-      return;
+      return false;
     }
     if (e.staff_id) {
       await sendNotification({
@@ -630,60 +649,74 @@ export default function AdminApprovalsHubScreen() {
         createdByStaffId: me.id,
       });
     }
-    setDetail(null);
-    await load();
-    Alert.alert('Gönderildi', 'Harcama reddedildi ve personel bilgilendirildi.');
+    if (opts?.closeDetail !== false) setDetail(null);
+    if (!opts?.silentAlert) Alert.alert('Gönderildi', 'Harcama reddedildi ve personel bilgilendirildi.');
+    return true;
   };
 
   const rejectExpense = (e: ExpenseRow) => {
-    Alert.alert('Harcamayı reddet', 'Red nedeni seçin (personel bildiriminde görünür).', [
-      { text: 'İptal', style: 'cancel' },
-      { text: 'Yanlış', onPress: () => void rejectExpenseWithReason(e, 'Harcama yanlış.') },
-      { text: 'Tekrar giriş', onPress: () => void rejectExpenseWithReason(e, 'Gereksiz tekrar giriş.') },
-      { text: 'Kabul edilmedi', onPress: () => void rejectExpenseWithReason(e, 'Kabul edilmedi.') },
-    ]);
+    pickExpenseRejectReason((reason) => void rejectExpenseWithReason(e, reason), 'Harcamayı reddet');
   };
 
-  const approveStock = async (m: Movement) => {
-    if (!me?.id) return;
-    setActing(true);
+  const approveStockOne = async (m: Movement, opts?: { closeDetail?: boolean }) => {
+    if (!me?.id) return false;
     const { data: prod } = await supabase.from('stock_products').select('current_stock').eq('id', m.product_id).single();
     const cur = (prod?.current_stock ?? 0) as number;
     const newStock = m.movement_type === 'in' ? cur + m.quantity : cur - m.quantity;
     if (m.movement_type === 'out' && newStock < 0) {
-      setActing(false);
-      Alert.alert('Hata', 'Stok yetersiz.');
-      return;
+      Alert.alert('Hata', `Stok yetersiz: ${m.product?.name ?? m.product_id}`);
+      return false;
     }
-    await supabase
+    const { error } = await supabase
       .from('stock_movements')
       .update({ status: 'approved', approved_by: me.id, approved_at: new Date().toISOString() })
       .eq('id', m.id);
-    await supabase.from('stock_products').update({ current_stock: newStock }).eq('id', m.product_id);
+    if (error) {
+      Alert.alert('Hata', error.message);
+      return false;
+    }
+    const imagePatch = stockProductImagePatchFromEntry(m.photo_proof, m.movement_type);
+    await supabase
+      .from('stock_products')
+      .update({ current_stock: newStock, ...(imagePatch ?? {}) })
+      .eq('id', m.product_id);
+    if (opts?.closeDetail !== false) setDetail(null);
+    return true;
+  };
+
+  const approveStock = async (m: Movement) => {
+    setActing(true);
+    await approveStockOne(m);
     setActing(false);
-    setDetail(null);
     await load();
+  };
+
+  const rejectStockOne = async (id: string, opts?: { closeDetail?: boolean }) => {
+    const { error } = await supabase.from('stock_movements').update({ status: 'rejected' }).eq('id', id);
+    if (error) {
+      Alert.alert('Hata', error.message);
+      return false;
+    }
+    if (opts?.closeDetail !== false) setDetail(null);
+    return true;
   };
 
   const rejectStock = async (id: string) => {
     setActing(true);
-    await supabase.from('stock_movements').update({ status: 'rejected' }).eq('id', id);
+    await rejectStockOne(id);
     setActing(false);
-    setDetail(null);
     await load();
   };
 
-  const markReportReviewed = async (r: ReportRow) => {
-    if (!me?.id) return;
-    setActing(true);
+  const markReportReviewedOne = async (r: ReportRow, opts?: { closeDetail?: boolean }) => {
+    if (!me?.id) return false;
     const { error } = await supabase
       .from('feed_post_reports')
       .update({ status: 'reviewed', reviewed_at: new Date().toISOString(), reviewed_by: me.id })
       .eq('id', r.id);
-    setActing(false);
     if (error) {
       Alert.alert('Hata', error.message);
-      return;
+      return false;
     }
     const postTitle = r.feed_posts?.title ?? null;
     const notifBody = postTitle
@@ -710,7 +743,14 @@ export default function AdminApprovalsHubScreen() {
         createdByStaffId: me.id,
       });
     }
-    setDetail(null);
+    if (opts?.closeDetail !== false) setDetail(null);
+    return true;
+  };
+
+  const markReportReviewed = async (r: ReportRow) => {
+    setActing(true);
+    await markReportReviewedOne(r);
+    setActing(false);
     await load();
   };
 
@@ -782,7 +822,7 @@ export default function AdminApprovalsHubScreen() {
     const vatAmount = Math.round(totalNet * VAT_RATE * 100) / 100;
     const accommodationTaxAmount = Math.round(totalNet * ACCOMMODATION_TAX_RATE * 100) / 100;
     const roomNumber = contractRooms.find((x) => x.id === roomId)?.room_number ?? '';
-    const msg = GUEST_MESSAGE_TEMPLATES[GUEST_TYPES.admin_assigned_room]({ roomNumber });
+    const msg = guestMessageTemplate(GUEST_TYPES.admin_assigned_room, { roomNumber }, row.contract_lang);
     setActing(true);
     try {
       const { error: caErr } = await supabase
@@ -871,6 +911,124 @@ export default function AdminApprovalsHubScreen() {
       return hay.includes(q);
     });
   }, [visibleItems, kindFilter, searchQuery]);
+
+  const bulkableFiltered = useMemo(
+    () => filteredItems.filter((it) => BULK_KINDS.includes(it.kind)),
+    [filteredItems]
+  );
+
+  const selectedItems = useMemo(
+    () => filteredItems.filter((it) => selectedKeys.has(itemSelKey(it))),
+    [filteredItems, selectedKeys]
+  );
+
+  useEffect(() => {
+    setSelectedKeys(new Set());
+  }, [kindFilter, searchQuery, orgFilter]);
+
+  const toggleSelect = (it: UnifiedItem) => {
+    if (!BULK_KINDS.includes(it.kind)) return;
+    const key = itemSelKey(it);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const selectAllBulkable = () => {
+    setSelectedKeys(new Set(bulkableFiltered.map(itemSelKey)));
+  };
+
+  const clearSelection = () => setSelectedKeys(new Set());
+
+  const runBulkApprove = async (targets: UnifiedItem[]) => {
+    if (!targets.length || !me?.id) return;
+    setActing(true);
+    let ok = 0;
+    for (const it of targets) {
+      if (it.kind === 'expense') {
+        if (await approveExpenseOne(it.raw as ExpenseRow, { closeDetail: false })) ok++;
+      } else if (it.kind === 'stock') {
+        if (await approveStockOne(it.raw as Movement, { closeDetail: false })) ok++;
+      } else if (it.kind === 'report') {
+        if (await markReportReviewedOne(it.raw as ReportRow, { closeDetail: false })) ok++;
+      }
+    }
+    setActing(false);
+    setDetail(null);
+    clearSelection();
+    await load();
+    Alert.alert('Tamam', `${ok} / ${targets.length} kayıt onaylandı.`);
+  };
+
+  const runBulkRejectExpenses = async (rows: ExpenseRow[], reason: string) => {
+    if (!rows.length || !me?.id) return;
+    setActing(true);
+    let ok = 0;
+    for (const e of rows) {
+      if (await rejectExpenseWithReason(e, reason, { closeDetail: false, silentAlert: true })) ok++;
+    }
+    setActing(false);
+    setDetail(null);
+    clearSelection();
+    await load();
+    Alert.alert('Tamam', `${ok} harcama reddedildi.`);
+  };
+
+  const runBulkRejectStocks = async (ids: string[]) => {
+    if (!ids.length) return;
+    setActing(true);
+    let ok = 0;
+    for (const id of ids) {
+      if (await rejectStockOne(id, { closeDetail: false })) ok++;
+    }
+    setActing(false);
+    setDetail(null);
+    clearSelection();
+    await load();
+    Alert.alert('Tamam', `${ok} stok hareketi reddedildi.`);
+  };
+
+  const bulkApproveSelected = () => {
+    if (!selectedItems.length) return;
+    confirmBulkApproval(selectedItems.length, () => void runBulkApprove(selectedItems));
+  };
+
+  const bulkApproveAllFiltered = () => {
+    if (!bulkableFiltered.length) return;
+    confirmBulkApproval(bulkableFiltered.length, () => void runBulkApprove(bulkableFiltered), 'Tümünü onayla');
+  };
+
+  const bulkRejectSelected = () => {
+    if (!selectedItems.length) return;
+    const expenses = selectedItems.filter((i) => i.kind === 'expense');
+    const stocks = selectedItems.filter((i) => i.kind === 'stock');
+    if (expenses.length && stocks.length) {
+      Alert.alert('Toplu red', 'Harcama ve stok birlikte seçili. Lütfen tek tür seçin.');
+      return;
+    }
+    if (expenses.length) {
+      pickExpenseRejectReason(
+        (reason) => void runBulkRejectExpenses(expenses.map((i) => i.raw as ExpenseRow), reason),
+        'Seçilen harcamaları reddet'
+      );
+      return;
+    }
+    if (stocks.length) {
+      confirmBulkReject(stocks.length, () => void runBulkRejectStocks(stocks.map((i) => i.id)));
+    }
+  };
+
+  const bulkRejectAllExpensesFiltered = () => {
+    const expenses = bulkableFiltered.filter((i) => i.kind === 'expense');
+    if (!expenses.length) return;
+    pickExpenseRejectReason(
+      (reason) => void runBulkRejectExpenses(expenses.map((i) => i.raw as ExpenseRow), reason),
+      'Listedeki tüm harcamaları reddet'
+    );
+  };
 
   const renderDetailActions = () => {
     if (!detail || !me) return null;
@@ -1404,8 +1562,64 @@ export default function AdminApprovalsHubScreen() {
             {filteredItems.length === visibleItems.length
               ? `${filteredItems.length} kayıt`
               : `${filteredItems.length} / ${visibleItems.length}`}
+            {selectedKeys.size > 0 ? ` · ${selectedKeys.size} seçili` : ''}
           </Text>
         </View>
+
+        {bulkableFiltered.length > 0 ? (
+          <View style={styles.bulkBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkBarScroll}>
+              <TouchableOpacity style={styles.bulkChip} onPress={selectAllBulkable} disabled={acting}>
+                <Ionicons name="checkbox-outline" size={16} color={adminTheme.colors.primary} />
+                <Text style={styles.bulkChipText}>Tümünü seç ({bulkableFiltered.length})</Text>
+              </TouchableOpacity>
+              {selectedKeys.size > 0 ? (
+                <TouchableOpacity style={styles.bulkChipMuted} onPress={clearSelection} disabled={acting}>
+                  <Text style={styles.bulkChipMutedText}>Seçimi kaldır</Text>
+                </TouchableOpacity>
+              ) : null}
+              {selectedKeys.size > 0 ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.bulkChip, styles.bulkChipOk]}
+                    onPress={bulkApproveSelected}
+                    disabled={acting}
+                  >
+                    <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+                    <Text style={styles.bulkChipTextOk}>Seçilenleri onayla ({selectedKeys.size})</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.bulkChip, styles.bulkChipDanger]}
+                    onPress={bulkRejectSelected}
+                    disabled={acting}
+                  >
+                    <Ionicons name="close-outline" size={16} color="#fff" />
+                    <Text style={styles.bulkChipTextOk}>Seçilenleri reddet</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.bulkChip, styles.bulkChipOk]}
+                  onPress={bulkApproveAllFiltered}
+                  disabled={acting}
+                >
+                  <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+                  <Text style={styles.bulkChipTextOk}>Tümünü onayla</Text>
+                </TouchableOpacity>
+              )}
+              {bulkableFiltered.some((i) => i.kind === 'expense') ? (
+                <TouchableOpacity
+                  style={[styles.bulkChip, styles.bulkChipDanger]}
+                  onPress={bulkRejectAllExpensesFiltered}
+                  disabled={acting}
+                >
+                  <Ionicons name="ban-outline" size={16} color="#fff" />
+                  <Text style={styles.bulkChipTextOk}>Tüm harcamaları reddet</Text>
+                </TouchableOpacity>
+              ) : null}
+            </ScrollView>
+          </View>
+        ) : null}
 
         {showListSkeleton ? (
           <>
@@ -1449,13 +1663,38 @@ export default function AdminApprovalsHubScreen() {
           filteredItems.map((it, idx) => {
             const meta = KIND_META[it.kind];
             const isUrgent = Date.now() - new Date(it.created_at).getTime() > 48 * 60 * 60 * 1000;
+            const bulkable = BULK_KINDS.includes(it.kind);
+            const checked = selectedKeys.has(itemSelKey(it));
             return (
-              <TouchableOpacity
+              <View
                 key={`${it.kind}-${it.id}`}
-                style={[styles.itemCard, idx === 0 && styles.itemCardFirst]}
-                onPress={() => setDetail(it)}
-                activeOpacity={0.88}
+                style={[
+                  styles.itemCard,
+                  idx === 0 && styles.itemCardFirst,
+                  checked && styles.itemCardSelected,
+                ]}
               >
+                {bulkable ? (
+                  <TouchableOpacity
+                    style={styles.itemCheckBtn}
+                    onPress={() => toggleSelect(it)}
+                    hitSlop={8}
+                    disabled={acting}
+                  >
+                    <Ionicons
+                      name={checked ? 'checkbox' : 'square-outline'}
+                      size={24}
+                      color={checked ? adminTheme.colors.primary : adminTheme.colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.itemCheckSpacer} />
+                )}
+                <TouchableOpacity
+                  style={styles.itemCardMain}
+                  onPress={() => setDetail(it)}
+                  activeOpacity={0.88}
+                >
                 <LinearGradient colors={meta.grad} style={styles.itemIconGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
                   <Ionicons name={meta.icon} size={22} color="#fff" />
                 </LinearGradient>
@@ -1492,7 +1731,8 @@ export default function AdminApprovalsHubScreen() {
                 <View style={styles.itemChevronWrap}>
                   <Ionicons name="chevron-forward" size={18} color={adminTheme.colors.textMuted} />
                 </View>
-              </TouchableOpacity>
+                </TouchableOpacity>
+              </View>
             );
           })
         )}
@@ -1693,6 +1933,38 @@ const styles = StyleSheet.create({
   },
   listSectionTitle: { fontSize: 17, fontWeight: '800', color: adminTheme.colors.text },
   listSectionMeta: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  bulkBar: {
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: adminTheme.radius.lg,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    ...cardShadow,
+  },
+  bulkBarScroll: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8 },
+  bulkChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  bulkChipMuted: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
+  bulkChipMutedText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textMuted },
+  bulkChipText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.primary },
+  bulkChipOk: { backgroundColor: '#16a34a', borderColor: '#15803d' },
+  bulkChipDanger: { backgroundColor: adminTheme.colors.error, borderColor: '#b91c1c' },
+  bulkChipTextOk: { fontSize: 13, fontWeight: '800', color: '#fff' },
+  itemCheckBtn: { paddingLeft: 4, paddingRight: 2, justifyContent: 'center' },
+  itemCheckSpacer: { width: 8 },
+  itemCardMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 },
+  itemCardSelected: { borderColor: adminTheme.colors.primary, backgroundColor: 'rgba(37,99,235,0.06)' },
   emptyCard: {
     backgroundColor: adminTheme.colors.surface,
     borderRadius: adminTheme.radius.xl,
@@ -1787,8 +2059,9 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.surface,
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
-    maxHeight: '95%',
-    flex: 1,
+    height: '92%',
+    maxHeight: '92%',
+    width: '100%',
     overflow: 'hidden',
   },
   modalHandle: {

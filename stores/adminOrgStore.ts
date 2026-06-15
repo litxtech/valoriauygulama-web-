@@ -11,6 +11,8 @@ export type AdminOrganizationOption = {
   name: string;
   slug: string | null;
   kind: string | null;
+  /** PDF / yazdır üst başlık; boşsa name */
+  finance_report_brand: string | null;
 };
 
 type AdminOrgState = {
@@ -162,13 +164,25 @@ export const useAdminOrgStore = create<AdminOrgState>((set, get) => ({
       return;
     }
     set({ loading: true });
-    const { data } = await supabase.from('organizations').select('id,name,slug,kind').order('name');
-    const organizations = ((data ?? []) as { id: string; name: string; slug: string | null; kind: string | null }[]).map(
+    const { data } = await supabase
+      .from('organizations')
+      .select('id,name,slug,kind,finance_report_brand')
+      .order('name');
+    const organizations = (
+      (data ?? []) as {
+        id: string;
+        name: string;
+        slug: string | null;
+        kind: string | null;
+        finance_report_brand: string | null;
+      }[]
+    ).map(
       (o) => ({
         id: o.id,
         name: o.name,
         slug: o.slug,
         kind: o.kind,
+        finance_report_brand: o.finance_report_brand ?? null,
       })
     );
     set((s) => {

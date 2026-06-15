@@ -4,5 +4,4 @@
  */
 require('./lib/cryptoPolyfill');
 require('./lib/weakRefPolyfill');
-
 require('expo-router/entry');

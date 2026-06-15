@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { KitchenCategory, KitchenDaySummary, KitchenStockItem, KitchenStockMovement } from './types';
+import { EMPTY_KITCHEN_DAY_SUMMARY } from './types';
 import { isKitchenStockLow } from './stockStatus';
 
 type KitchenMovementPhotoRow = {
@@ -185,12 +186,38 @@ export async function fetchUnresolvedAlertCount(): Promise<number> {
   return count ?? 0;
 }
 
+function normalizeKitchenDaySummary(raw: unknown): KitchenDaySummary {
+  if (raw == null) return { ...EMPTY_KITCHEN_DAY_SUMMARY };
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { ...EMPTY_KITCHEN_DAY_SUMMARY };
+    }
+  }
+  if (typeof parsed !== 'object') return { ...EMPTY_KITCHEN_DAY_SUMMARY };
+  const o = parsed as Record<string, unknown>;
+  return {
+    total_revenue: Number(o.total_revenue ?? 0),
+    total_pos: Number(o.total_pos ?? 0),
+    total_cash: Number(o.total_cash ?? 0),
+    total_expenses: Number(o.total_expenses ?? 0),
+    personnel_expenses: Number(o.personnel_expenses ?? 0),
+    supplier_debt: Number(o.supplier_debt ?? 0),
+    kitchen_owes_hotel: Number(o.kitchen_owes_hotel ?? 0),
+    hotel_owes_kitchen: Number(o.hotel_owes_kitchen ?? 0),
+    cari_net: Number(o.cari_net ?? 0),
+    net_remaining: Number(o.net_remaining ?? 0),
+  };
+}
+
 export async function fetchDaySummary(date?: string): Promise<KitchenDaySummary> {
   const { data, error } = await supabase.rpc('kitchen_day_closure_summary', {
     p_date: date ?? new Date().toISOString().slice(0, 10),
   });
   if (error) throw error;
-  return data as KitchenDaySummary;
+  return normalizeKitchenDaySummary(data);
 }
 
 export async function checkPosMismatch(date?: string): Promise<boolean> {

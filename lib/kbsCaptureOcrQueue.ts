@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { parseIdCardImageUri } from '@/lib/kbsCaptureOcr';
+import { parseIdCardImageUriWithFallback } from '@/lib/kbsCaptureOcr';
 import { applyKbsCaptureOcrResult, markKbsCaptureOcrState } from '@/lib/kbsCaptureHistory';
 
 export type KbsCaptureOcrJob = {
@@ -37,7 +37,7 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
     if (!local) {
       local = await downloadImage(job.imageUrl, job.docId);
     }
-    const ocr = await parseIdCardImageUri(local);
+    const ocr = await parseIdCardImageUriWithFallback(local);
     const res = await applyKbsCaptureOcrResult(
       job.docId,
       job.guestId,

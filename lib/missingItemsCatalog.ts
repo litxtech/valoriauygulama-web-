@@ -153,7 +153,8 @@ export type ResolvedMissingCatalogCategory = {
   items: { key: string; label: string }[];
 };
 
-export function getMissingCatalog(area: MissingItemArea): ResolvedMissingCatalogCategory[] {
+/** Uygulama içi varsayılan liste (DB boşken veya tohum için). */
+export function getBuiltinMissingCatalog(area: MissingItemArea): ResolvedMissingCatalogCategory[] {
   const raw = area === 'kitchen' ? KITCHEN_CATALOG : HOTEL_CATALOG;
   return raw.map((cat) => ({
     id: cat.id,
@@ -164,6 +165,11 @@ export function getMissingCatalog(area: MissingItemArea): ResolvedMissingCatalog
       label: i18n.t(item.labelKey),
     })),
   }));
+}
+
+/** @deprecated Yerel senkron kullanım — tercihen fetchMissingItemCatalog */
+export function getMissingCatalog(area: MissingItemArea): ResolvedMissingCatalogCategory[] {
+  return getBuiltinMissingCatalog(area);
 }
 
 export function findCatalogLabel(area: MissingItemArea, key: string): string | null {

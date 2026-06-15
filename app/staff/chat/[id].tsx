@@ -1,9 +1,8 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TextInput,
   TouchableOpacity,
   Pressable,
@@ -30,20 +29,55 @@ import {
   staffGetConversationHeader,
   staffSetConversationMuted,
   staffDeleteMessage,
+  staffHideMessageForMe,
+  staffListHiddenMessageIdsForConversation,
+  isPersistedChatMessageId,
+  resolveStaffConversationIdForSend,
   staffListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
+  uploadVoiceMessageForStaff,
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
-import { mergeChatMessagesCapped, replaceChatMessage, upsertIncomingChatMessage, latestMessageCreatedAtIso, capChatMessageList, type Message } from '@/lib/messaging';
+import {
+  mergeChatMessagesCapped,
+  replaceChatMessage,
+  upsertIncomingChatMessage,
+  latestMessageCreatedAtIso,
+  capChatMessageList,
+  filterVisibleChatMessages,
+  applySilentChatSync,
+  type Message,
+} from '@/lib/messaging';
 import {
   CHAT_LIST_INVERTED_CONTENT_STYLE,
   scrollChatListToLatest,
   useInvertedChatListItems,
+  type ChatListRef,
 } from '@/lib/chatListScroll';
-import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
+import { CHAT_FLASH_LIST_PROPS, CHAT_MESSAGES_PAGE_SIZE, useChatHeavyMediaReady } from '@/lib/chatListPerf';
+import { FlashList } from '@shopify/flash-list';
+import * as Clipboard from 'expo-clipboard';
+import { MessageActionSheet, type MessageAction } from '@/components/chat/MessageActionSheet';
+import { MessageReadersModal } from '@/components/chat/MessageReadersModal';
+import { loadChatMessageReaders, type ChatMessageReaderRow } from '@/lib/chatMessageReaders';
+import {
+  AttachmentSheet,
+  AttachmentToggleIcon,
+  type AttachmentAction,
+} from '@/components/chat/AttachmentSheet';
+import { ConnectionBanner } from '@/components/chat/ConnectionBanner';
+import { useChatOutbox } from '@/hooks/chat/useChatOutbox';
+import { dequeueTextMessage } from '@/lib/chat/messageQueue';
+import { sendOneStaffImage } from '@/lib/chatMediaSend';
+import { makeChatAlbumContent } from '@/lib/chatImageAlbum';
 import { theme } from '@/constants/theme';
-import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
+import { ReplyPreviewBar } from '@/components/premium/ReplyPreviewBar';
+import { TypingBubble } from '@/components/premium/TypingBubble';
+import { MessageBubble } from '@/components/chat/MessageBubble';
+import { ChatInputBar } from '@/components/chat/ChatInputBar';
+import { chatTheme } from '@/constants/chatTheme';
+import { createOptimisticImageMessage, createOptimisticTextMessage, createOptimisticVoiceMessage, isTempMessageId } from '@/lib/chatOptimisticMessage';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
@@ -51,17 +85,13 @@ import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { CachedImage } from '@/components/CachedImage';
 import {
   useMessagingBubbleStore,
-  getBubbleColorForSender,
-  getContrastTextColor,
-  BUBBLE_OTHER_DIRECT,
   BUBBLE_COLOR_OPTIONS,
+  getBubbleColorForSender,
+  BUBBLE_OTHER_DIRECT,
 } from '@/stores/messagingBubbleStore';
+import { BubbleColorPickerModal } from '@/components/chat/BubbleColorPickerModal';
 import { useTranslation } from 'react-i18next';
-import { MessageTranslation } from '@/components/MessageTranslation';
 import { prefetchTranslations } from '@/lib/translateText';
-import { ChatVideoMessage } from '@/components/ChatVideoMessage';
-import { ChatImageMessage } from '@/components/ChatImageMessage';
-import { ChatImageAlbum } from '@/components/ChatImageAlbum';
 import { ChatFullscreenImageModal } from '@/components/ChatFullscreenImageModal';
 import { ChatVideoAlbum } from '@/components/ChatVideoAlbum';
 import { buildChatListDisplayItems } from '@/lib/chatImageAlbum';
@@ -71,6 +101,7 @@ import {
   expireStaleChatVideoUploadsForConversation,
   getChatVideoBatchSummary,
   pruneDoneChatVideoUploads,
+  cancelChatVideoUpload,
   registerChatVideoScreen,
   retryChatVideoUploadWithSession,
   sendChatVideoFromPickerWithSession,
@@ -80,13 +111,10 @@ import {
 import {
   pickChatImageFromCamera,
   pickChatImagesFromLibrary,
-  sendChatImageUris,
 } from '@/lib/chatMediaSend';
-import { formatChatMessageDateTime, formatChatMessageTime } from '@/lib/formatChatTime';
-import { useChatScreenshotListener } from '@/lib/chatScreenshot';
+import { useChatScreenshotContext } from '@/lib/chatScreenshot';
 import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
 import { ChatMentionComposer } from '@/components/ChatMentionComposer';
-import { ChatMentionText } from '@/components/ChatMentionText';
 import {
   notifyChatMessageWithMentions,
   syncMentionsWithText,
@@ -95,6 +123,12 @@ import {
   type ChatMentionParticipant,
 } from '@/lib/chatMentions';
 import { usePendingMuxVideoPoll } from '@/lib/usePendingMuxVideoPoll';
+import { ChatGroupExportHeaderButtons } from '@/components/chat/ChatGroupExportHeaderButtons';
+import { ChatVoiceInputPreview } from '@/components/chat/ChatVoiceInputPreview';
+import { ChatInputTrailingActions } from '@/components/chat/ChatInputTrailingActions';
+import { useChatVoiceRecording } from '@/hooks/chat/useChatVoiceRecording';
+import { useChatVoiceQueueSync } from '@/hooks/chat/useChatVoiceQueueSync';
+import { sendStaffVoiceMessage } from '@/lib/chatVoiceSend';
 
 const ALL_STAFF_GROUP_NAME = 'Tüm Çalışanlar';
 const STAFF_CHAT_CACHE_PREFIX = 'staff_chat_cache_v1:';
@@ -106,208 +140,44 @@ type StaffChatCacheEntry = {
 };
 const staffChatMemoryCache: Record<string, StaffChatCacheEntry> = {};
 
-function MessageBubble({
-  msg,
-  isOwn,
-  isGroup,
-  onImagePress,
-  onDelete,
-  onToggleSelect,
-  selected,
-  selectionMode,
-  bubbleColor,
-  videoUpload,
-  videoUploads,
-  onVideoRetry,
-  onVideoRetryForMessage,
-  imageAlbum,
-  videoAlbum,
-  mediaPreloadReady = true,
-}: {
-  msg: Message;
-  isOwn: boolean;
-  isGroup: boolean;
-  onImagePress?: (uri: string) => void;
-  onDelete?: (msg: Message) => void;
-  onToggleSelect?: (msg: Message) => void;
-  selected?: boolean;
-  selectionMode?: boolean;
-  bubbleColor?: string;
-  videoUpload?: ChatVideoUploadState;
-  videoUploads?: Record<string, ChatVideoUploadState>;
-  onVideoRetry?: () => void;
-  onVideoRetryForMessage?: (msg: Message) => void;
-  imageAlbum?: Message[];
-  videoAlbum?: Message[];
-  mediaPreloadReady?: boolean;
-}) {
-  const { t } = useTranslation();
-  const voiceUri = msg.message_type === 'voice' ? (msg.media_url || msg.content) : null;
-  const isVideo = msg.message_type === 'video';
-  const isImage = msg.message_type === 'image' && (msg.media_url || msg.media_thumbnail);
-  const isMediaCard = isVideo || !!imageAlbum?.length || !!videoAlbum?.length || isImage;
-  const imageUri = msg.media_url || msg.media_thumbnail || '';
-  const displayName = msg.sender_name?.trim() || (msg.sender_type === 'guest' ? t('guestDefaultName') : null) || '?';
-  const initial = displayName.charAt(0).toUpperCase();
-  const timeStr = isGroup ? formatChatMessageDateTime(msg.created_at) : formatChatMessageTime(msg.created_at);
-  const color = bubbleColor ?? BUBBLE_OTHER_DIRECT;
-  const textColor = getContrastTextColor(color);
+function readStaffChatMemory(conversationId: string): Message[] {
+  const mem = staffChatMemoryCache[conversationId];
+  return mem?.messages?.length ? filterVisibleChatMessages(mem.messages) : [];
+}
 
-  const renderContent = (own: boolean) => {
-    if (msg.message_type === 'text') {
-      const mentionList = parseMessageMentions(msg.mentions);
-      return (
-        <>
-          <ChatMentionText
-            content={msg.content || ''}
-            mentions={mentionList}
-            style={[own ? styles.bubbleTextOwn : styles.bubbleTextOther, { color: textColor }]}
-            mentionStyle={{ color: own ? '#fff' : theme.colors.accent, fontWeight: '700' }}
-          />
-          <MessageTranslation content={msg.content || ''} enabled={!own} textColor={textColor} />
-        </>
-      );
-    }
-    if (msg.message_type === 'voice' && voiceUri) {
-      return <VoiceMessagePlayer uri={voiceUri} isOwn={own} />;
-    }
-    if (videoAlbum && videoAlbum.length > 1) {
-      return (
-        <ChatVideoAlbum
-          messages={videoAlbum}
-          isOwn={own}
-          videoUploads={videoUploads}
-          onRetryVideo={(m) => onVideoRetryForMessage?.(m)}
-          deferLocalVideo={!mediaPreloadReady}
-        />
-      );
-    }
-    if (isVideo) {
-      const upload =
-        videoUpload ?? videoUploads?.[msg.id] ?? Object.values(videoUploads ?? {}).find((s) => s.messageId === msg.id);
-      return (
-        <View style={styles.chatVideoWrap}>
-          <ChatVideoMessage
-            mediaUrl={msg.media_url}
-            mediaThumbnail={msg.media_thumbnail}
-            isOwn={own}
-            uploadProgress={upload?.progress}
-            uploadPhase={upload?.phase}
-            uploadFailed={upload?.phase === 'failed'}
-            onRetry={onVideoRetry}
-            preloadEnabled={mediaPreloadReady}
-          />
-        </View>
-      );
-    }
-    if (imageAlbum && imageAlbum.length > 1) {
-      return (
-        <ChatImageAlbum
-          messages={imageAlbum}
-          onPressImage={(uri) => onImagePress?.(uri)}
-        />
-      );
-    }
-    if (isImage && imageUri) {
-      return <ChatImageMessage uri={imageUri} onPress={onImagePress} />;
-    }
-    return (
-      <Text style={[own ? styles.bubbleTextOwn : styles.bubbleTextOther, { color: textColor }]}>
-        [{msg.message_type}] {msg.content || msg.media_url || '—'}
-      </Text>
-    );
-  };
+function migrateStaffChatCache(fromId: string, toId: string) {
+  if (fromId === toId) return;
+  const src = staffChatMemoryCache[fromId];
+  if (!src?.messages?.length) return;
+  const dst = staffChatMemoryCache[toId];
+  if (!dst || src.updatedAt >= dst.updatedAt) {
+    staffChatMemoryCache[toId] = { ...src };
+  }
+  void AsyncStorage.getItem(`${STAFF_CHAT_CACHE_PREFIX}${fromId}`).then((raw) => {
+    if (!raw) return;
+    return AsyncStorage.setItem(`${STAFF_CHAT_CACHE_PREFIX}${toId}`, raw);
+  }).catch(() => {});
+}
 
-  return (
-    <Pressable
-      style={[
-        styles.bubbleWrap,
-        isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther,
-        selected ? styles.bubbleWrapSelected : null,
-      ]}
-      onLongPress={isOwn && onDelete ? () => onDelete(msg) : undefined}
-      onPress={selectionMode && isOwn ? () => onToggleSelect?.(msg) : undefined}
-      delayLongPress={400}
-    >
-      {!isOwn && (
-        <View style={styles.otherMeta}>
-          <View style={styles.avatarWrap}>
-            {msg.sender_avatar ? (
-              <CachedImage uri={msg.sender_avatar} style={styles.avatarImg} contentFit="cover" />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarInitial}>{initial}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.otherContent}>
-            {displayName ? (
-              <Text style={styles.senderName}>{displayName}</Text>
-            ) : null}
-            <View
-              style={[
-                styles.bubble,
-                styles.bubbleOther,
-                isMediaCard && styles.bubbleVideo,
-                !isMediaCard && { backgroundColor: color },
-              ]}
-            >
-              {renderContent(false)}
-              <View style={styles.bubbleFooter}>
-                <Text
-                  style={[
-                    styles.bubbleTimeOther,
-                    isMediaCard ? styles.bubbleTimeVideo : null,
-                    !isMediaCard && { color: textColor, opacity: 0.9 },
-                  ]}
-                >
-                  {timeStr}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-      )}
-      {isOwn && (
-        <View
-          style={[
-            styles.bubble,
-            styles.bubbleOwn,
-            isMediaCard && styles.bubbleVideo,
-            !isMediaCard && { backgroundColor: color },
-          ]}
-        >
-          {renderContent(true)}
-          <View style={styles.bubbleFooter}>
-            <Text
-              style={[
-                styles.bubbleTimeOwn,
-                isMediaCard ? styles.bubbleTimeVideo : null,
-                !isMediaCard && { color: textColor, opacity: 0.9 },
-              ]}
-            >
-              {timeStr}
-            </Text>
-            {msg.is_read ? (
-              <Ionicons
-                name="checkmark-done"
-                size={14}
-                color={isMediaCard ? theme.colors.primary : textColor}
-                style={styles.readIcon}
-              />
-            ) : (
-              <Ionicons
-                name="checkmark"
-                size={14}
-                color={isMediaCard ? theme.colors.textMuted : textColor}
-                style={styles.readIcon}
-              />
-            )}
-          </View>
-        </View>
-      )}
-    </Pressable>
-  );
+function pruneStaffChatCache(conversationId: string, removedIds: string[]) {
+  const removed = new Set(removedIds);
+  const mem = staffChatMemoryCache[conversationId];
+  if (mem?.messages?.length) {
+    mem.messages = filterVisibleChatMessages(mem.messages.filter((m) => !removed.has(m.id)));
+    mem.updatedAt = Date.now();
+  }
+  void AsyncStorage.getItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`)
+    .then((raw) => {
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as StaffChatCacheEntry;
+      if (!Array.isArray(parsed?.messages)) return;
+      parsed.messages = filterVisibleChatMessages(
+        parsed.messages.filter((m) => !removed.has(m.id))
+      );
+      parsed.updatedAt = Date.now();
+      return AsyncStorage.setItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`, JSON.stringify(parsed));
+    })
+    .catch(() => {});
 }
 
 export default function StaffChatScreen() {
@@ -333,7 +203,10 @@ export default function StaffChatScreen() {
   const [pendingMentions, setPendingMentions] = useState<ChatMention[]>([]);
   const [mentionParticipants, setMentionParticipants] = useState<ChatMentionParticipant[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+  /** Birebir sohbette kanonik conversation_id; realtime ve fetch bununla eşleşmeli. */
+  const [conversationResolved, setConversationResolved] = useState(false);
+  const imageSendInFlightRef = useRef(0);
+  const [mediaListVersion, setMediaListVersion] = useState(0);
   const videoUploads = useChatVideoUploadStates(conversationId);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const insets = useSafeAreaInsets();
@@ -342,27 +215,134 @@ export default function StaffChatScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [allStaffMuted, setAllStaffMuted] = useState(false);
-  const listRef = useRef<FlatList>(null);
-  const sendInFlightRef = useRef(false);
+  const listRef = useRef<ChatListRef>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  /** Birebir sohbette her metin gönderiminde tekrar RPC çözümlemesini önler. */
+  const resolvedConversationIdRef = useRef<string | null>(null);
+  const resolveRedirectFromRef = useRef<string | null>(null);
+  /** inverted listede kullanıcı alttaysa (offset≈0) yeni mesajda kaydır. */
+  const stickToBottomRef = useRef(true);
+  /** Benden sil — sunucu/önbellek birleşiminde tekrar gösterme. */
+  const hiddenForMeIdsRef = useRef<Set<string>>(new Set());
+  const cacheWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialFetchDoneRef = useRef<string | null>(null);
+
+  const scrollToLatestIfNeeded = useCallback((force = false) => {
+    if (!force && !stickToBottomRef.current) return;
+    scrollChatListToLatest(listRef, true);
+  }, []);
+
+  const { isOffline, queueIfOffline } = useChatOutbox((result) => {
+    if (!staff?.id) return;
+    setMessages((prev) => {
+      let next = prev;
+      for (const m of result.sent) {
+        next = upsertIncomingChatMessage(next, m, { ownSenderId: staff.id });
+      }
+      return next;
+    });
+    for (const id of result.failedIds) {
+      setFailedMessageIds((prev) => new Set(prev).add(id));
+    }
+  });
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [failedMessageIds, setFailedMessageIds] = useState<Set<string>>(() => new Set());
+  const [imageUploadProgress, setImageUploadProgress] = useState<Record<string, number>>({});
+  const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
+  const imageRetryRef = useRef<Record<string, { uri: string; albumContent: string }>>({});
+  const cancelledImageUploadsRef = useRef<Set<string>>(new Set());
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const loadingOlderRef = useRef(false);
+  const [actionMessage, setActionMessage] = useState<Message | null>(null);
+  const [readInfoMessageId, setReadInfoMessageId] = useState<string | null>(null);
+  const [readInfoRows, setReadInfoRows] = useState<ChatMessageReaderRow[]>([]);
+  const [loadingReadInfo, setLoadingReadInfo] = useState(false);
+  const [attachSheetVisible, setAttachSheetVisible] = useState(false);
+  const pendingSendByTempIdRef = useRef<
+    Map<string, { text: string; mentions: ChatMention[]; replyId: string | null }>
+  >(new Map());
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const chatHasVideosEarly = useMemo(
     () => messages.some((m) => m.message_type === 'video'),
     [messages]
   );
-  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading, {
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading && messages.length === 0, {
     hasVideos: chatHasVideosEarly,
   });
 
   useEffect(() => {
-    setMessages([]);
-    setLoading(true);
+    initialFetchDoneRef.current = null;
+    setReplyTarget(null);
+    setHasMoreOlder(true);
+    setFailedMessageIds(new Set());
+    setFailedImageIds(new Set());
+    setImageUploadProgress({});
+    resolvedConversationIdRef.current = null;
+    resolveRedirectFromRef.current = null;
+    stickToBottomRef.current = true;
+    hiddenForMeIdsRef.current = new Set();
+    setConversationResolved(false);
+
+    const cached = conversationId ? readStaffChatMemory(conversationId) : [];
+    if (cached.length > 0) {
+      setMessages(cached);
+      setLoading(false);
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
   }, [conversationId]);
 
+  useEffect(() => {
+    if (!staff?.id || !conversationId) {
+      setConversationResolved(false);
+      resolvedConversationIdRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    resolvedConversationIdRef.current = null;
+    (async () => {
+      try {
+        const resolved = await resolveStaffConversationIdForSend(conversationId, staff.id);
+        if (cancelled) return;
+        resolvedConversationIdRef.current = resolved;
+        if (resolved !== conversationId) {
+          if (resolveRedirectFromRef.current === conversationId) {
+            setConversationResolved(true);
+            return;
+          }
+          resolveRedirectFromRef.current = conversationId;
+          migrateStaffChatCache(conversationId, resolved);
+          router.replace({ pathname: '/staff/chat/[id]', params: { id: resolved } });
+          return;
+        }
+        resolveRedirectFromRef.current = null;
+        setConversationResolved(true);
+      } catch {
+        if (!cancelled) {
+          resolvedConversationIdRef.current = conversationId;
+          setConversationResolved(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, staff?.id, router]);
+
+  const messageById = useMemo(() => {
+    const map = new Map<string, Message>();
+    for (const m of messages) map.set(m.id, m);
+    return map;
+  }, [messages]);
+
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
+
   const inputRowExtra = Platform.OS === 'android' ? -20 : 56;
   const bottomInset = getEffectiveBottomInset(insets);
   const chatInputBottomPad = getChatInputBottomPadding(insets);
@@ -380,45 +360,49 @@ export default function StaffChatScreen() {
 
   useEffect(() => {
     if (!conversationId) return;
+    if (readStaffChatMemory(conversationId).length > 0) return;
     let cancelled = false;
-    const memory = staffChatMemoryCache[conversationId];
-    if (memory?.messages?.length) {
-      setMessages(memory.messages);
-      if (memory.headerName) setConversationName(memory.headerName);
-      setHeaderAvatar(memory.headerAvatar ?? null);
-      setLoading(false);
-    }
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`);
+    void AsyncStorage.getItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`)
+      .then((raw) => {
         if (!raw || cancelled) return;
         const parsed = JSON.parse(raw) as StaffChatCacheEntry;
-        if (Array.isArray(parsed?.messages) && parsed.messages.length > 0) {
-          setMessages(parsed.messages);
-          if (parsed.headerName) setConversationName(parsed.headerName);
-          setHeaderAvatar(parsed.headerAvatar ?? null);
-          setLoading(false);
-        }
-      } catch {
-        // cache parse hatası sessiz geçilir
-      }
-    })();
+        if (!Array.isArray(parsed?.messages) || parsed.messages.length === 0) return;
+        const visible = filterVisibleChatMessages(parsed.messages);
+        staffChatMemoryCache[conversationId] = {
+          messages: visible,
+          headerName: parsed.headerName,
+          headerAvatar: parsed.headerAvatar ?? null,
+          updatedAt: parsed.updatedAt ?? Date.now(),
+        };
+        setMessages(visible);
+        if (parsed.headerName) setConversationName(parsed.headerName);
+        setHeaderAvatar(parsed.headerAvatar ?? null);
+        setLoading(false);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [conversationId]);
 
   useEffect(() => {
-    if (!conversationId) return;
-    if (messages.length === 0 && !headerAvatar && !conversationName) return;
+    if (!conversationId || messages.length === 0) return;
     const entry: StaffChatCacheEntry = {
-      messages: capChatMessageList(messages),
+      messages: capChatMessageList(filterVisibleChatMessages(messages)),
       headerName: conversationName,
       headerAvatar: headerAvatar ?? null,
       updatedAt: Date.now(),
     };
     staffChatMemoryCache[conversationId] = entry;
-    void AsyncStorage.setItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`, JSON.stringify(entry)).catch(() => {});
+    if (cacheWriteTimerRef.current) clearTimeout(cacheWriteTimerRef.current);
+    cacheWriteTimerRef.current = setTimeout(() => {
+      void AsyncStorage.setItem(`${STAFF_CHAT_CACHE_PREFIX}${conversationId}`, JSON.stringify(entry)).catch(
+        () => {}
+      );
+    }, 1200);
+    return () => {
+      if (cacheWriteTimerRef.current) clearTimeout(cacheWriteTimerRef.current);
+    };
   }, [conversationId, messages, conversationName, headerAvatar]);
 
   useEffect(() => {
@@ -467,6 +451,7 @@ export default function StaffChatScreen() {
   const isGroup = conversationType === 'group';
   const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
   const invertedChatListItems = useInvertedChatListItems(chatListItems);
+  useChatVoiceQueueSync(messages, invertedChatListItems, listRef);
   const canEditGroup = isAdmin && isGroup;
   const screenshotSenderName =
     staff?.full_name?.trim() || staff?.email?.trim() || t('chatMessageSenderStaff');
@@ -491,31 +476,32 @@ export default function StaffChatScreen() {
 
   const mentionEnabled = mentionParticipants.length > 0;
 
-  useChatScreenshotListener(
-    Boolean(staff?.id && conversationId && !loading),
-    staff?.id && conversationId
-      ? {
-          kind: 'staff',
-          staffId: staff.id,
-          senderName: screenshotSenderName,
-          conversationId,
-          chatUrl: `/staff/chat/${conversationId}`,
-        }
-      : null,
-    staff?.id && conversationId
-      ? {
-          conversationName,
-          isGroup,
-          pushBody: screenshotPushBody,
-          ownSenderId: staff.id,
-          onLocalMessage: (msg) => {
-            setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff!.id }));
-            setTimeout(() => scrollChatListToLatest(listRef, true), 100);
-          },
-          reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff!.id),
-        }
-      : null
-  );
+  const screenshotChatContext = useMemo(() => {
+    if (!staff?.id || !conversationId) return null;
+    return {
+      conversationId,
+      conversationName,
+      isGroup,
+      chatUrl: `/staff/chat/${conversationId}`,
+      actor: { kind: 'staff' as const, staffId: staff.id, senderName: screenshotSenderName },
+      pushBody: screenshotPushBody,
+      ownSenderId: staff.id,
+      onLocalMessage: (msg: Message) => {
+        setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderId: staff.id }));
+        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      },
+      reloadStaffMessages: () => staffGetMessages(conversationId, 50, undefined, staff.id),
+    };
+  }, [
+    staff?.id,
+    conversationId,
+    conversationName,
+    isGroup,
+    screenshotSenderName,
+    screenshotPushBody,
+  ]);
+
+  useChatScreenshotContext(Boolean(staff?.id && conversationId && !loading), screenshotChatContext);
 
   const openGroupSettingsModal = () => {
     setEditGroupName(conversationName);
@@ -531,9 +517,141 @@ export default function StaffChatScreen() {
     return () => clearTimeout(openSettingsTimer);
   }, [canEditGroup, openGroupSettings, conversationName, headerAvatar, groupThemeColor]);
 
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedMessageIds([]);
+  }, []);
+
+  const selectAllOwnMessages = useCallback(() => {
+    const ownIds = messages
+      .filter(
+        (m) =>
+          m.sender_id === staff?.id &&
+          !m.is_deleted &&
+          isPersistedChatMessageId(m.id)
+      )
+      .map((m) => m.id);
+    setSelectedMessageIds((prev) => (prev.length === ownIds.length ? [] : ownIds));
+  }, [messages, staff?.id]);
+
+  const deleteSelectedMessages = useCallback(
+    async (ids: string[]) => {
+      if (!conversationId || !staff?.id || ids.length === 0) return;
+      const persistedIds = ids.filter(isPersistedChatMessageId);
+      const pendingIds = ids.filter((id) => !isPersistedChatMessageId(id));
+
+      if (pendingIds.length) {
+        setMessages((prev) => prev.filter((m) => !pendingIds.includes(m.id)));
+        pendingIds.forEach((id) => {
+          pendingSendByTempIdRef.current.delete(id);
+          cancelledImageUploadsRef.current.add(id);
+        });
+      }
+      if (!persistedIds.length) return;
+
+      let resolvedConv = conversationId;
+      try {
+        resolvedConv = await resolveStaffConversationIdForSend(conversationId, staff.id);
+      } catch {
+        /* mevcut id ile dene */
+      }
+
+      const byId = new Map(messagesRef.current.map((m) => [m.id, m]));
+      const results = await Promise.all(
+        persistedIds.map(async (id) => {
+          const msg = byId.get(id);
+          const convId = msg?.conversation_id ?? resolvedConv;
+          let result = await staffDeleteMessage(convId, id);
+          if (result.error && convId !== resolvedConv) {
+            result = await staffDeleteMessage(resolvedConv, id);
+          }
+          return result;
+        })
+      );
+      const successIds = persistedIds.filter((_, idx) => !results[idx].error);
+      const failed = results.filter((r) => r.error).length;
+      if (successIds.length) {
+        pruneStaffChatCache(conversationId, successIds);
+        setMessages((prev) => prev.filter((m) => !successIds.includes(m.id)));
+        stickToBottomRef.current = true;
+      }
+      if (failed > 0) Alert.alert(t('error'), t('staffChatDeleteFailedCount', { count: failed }));
+    },
+    [conversationId, staff?.id, t]
+  );
+
+  const confirmDeleteSelected = useCallback(() => {
+    if (selectedMessageIds.length === 0) return;
+    Alert.alert(
+      t('staffChatDeleteForEveryone'),
+      selectedMessageIds.length === 1
+        ? t('staffChatDeleteForEveryoneMsg')
+        : t('staffChatDeleteForEveryoneMsgPlural'),
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('staffChatDeleteBtn'),
+          style: 'destructive',
+          onPress: async () => {
+            await deleteSelectedMessages(selectedMessageIds);
+            exitSelectionMode();
+          },
+        },
+      ]
+    );
+  }, [selectedMessageIds, deleteSelectedMessages, exitSelectionMode, t]);
+
   useEffect(() => {
+    if (selectionMode) {
+      navigation.setOptions({
+        headerTitle: () => (
+          <Text style={styles.selectionHeaderTitle} numberOfLines={1}>
+            {selectedMessageIds.length} mesaj seçildi
+          </Text>
+        ),
+        headerTitleAlign: 'center',
+        headerStyle: {
+          backgroundColor: theme.colors.surface,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.borderLight,
+        },
+        headerTintColor: theme.colors.text,
+        headerBackTitle: ' ',
+        headerBackVisible: false,
+        headerLeft: () => (
+          <Pressable onPress={exitSelectionMode} hitSlop={12} style={styles.headerIconTouch}>
+            <Ionicons name="close" size={24} color={theme.colors.text} />
+          </Pressable>
+        ),
+        headerRight: () => (
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={selectAllOwnMessages}
+              hitSlop={12}
+              style={styles.headerIconTouch}
+            >
+              <Ionicons
+                name={selectedMessageIds.length > 0 ? 'checkbox' : 'square-outline'}
+                size={22}
+                color={theme.colors.primary}
+              />
+            </Pressable>
+            <Pressable
+              onPress={confirmDeleteSelected}
+              disabled={selectedMessageIds.length === 0}
+              hitSlop={12}
+              style={[styles.headerIconTouch, selectedMessageIds.length === 0 && styles.headerIconDisabled]}
+            >
+              <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
+            </Pressable>
+          </View>
+        ),
+      });
+      return;
+    }
+
     const isAllStaff = isAllStaffGroup;
-    const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
+    const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 160));
     navigation.setOptions({
       headerTitle: () => (
         <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
@@ -547,6 +665,7 @@ export default function StaffChatScreen() {
           <Text style={styles.headerTitleText} numberOfLines={1}>{conversationName}</Text>
         </View>
       ),
+      headerTitleAlign: 'left',
       headerStyle: {
         backgroundColor: theme.colors.surface,
         borderBottomWidth: 1,
@@ -554,38 +673,19 @@ export default function StaffChatScreen() {
       },
       headerTintColor: theme.colors.text,
       headerBackTitle: t('back'),
+      headerBackVisible: undefined,
+      headerLeft: undefined,
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
-          {selectionMode ? (
-            <>
-              <TouchableOpacity
-                onPress={() => {
-                  const ownIds = messages
-                    .filter((m) => m.sender_id === staff?.id && !m.is_deleted)
-                    .map((m) => m.id);
-                  setSelectedMessageIds((prev) => (prev.length === ownIds.length ? [] : ownIds));
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                style={{ marginRight: 10 }}
-              >
-                <Ionicons
-                  name={selectedMessageIds.length > 0 ? 'checkbox' : 'square-outline'}
-                  size={22}
-                  color={theme.colors.primary}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectionMode(false);
-                  setSelectedMessageIds([]);
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <Ionicons name="close" size={24} color={theme.colors.textMuted} />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
+        <View style={styles.headerActions}>
+          {canEditGroup && staff?.id && conversationId ? (
+            <ChatGroupExportHeaderButtons
+              conversationId={conversationId}
+              staffId={staff.id}
+              conversationName={conversationName || t('screenChat')}
+              iconColor={groupThemeColor}
+              compact
+            />
+          ) : null}
           {canEditGroup ? (
             <TouchableOpacity
               onPress={openGroupSettingsModal}
@@ -627,8 +727,6 @@ export default function StaffChatScreen() {
               <Text style={styles.headerGroupBadgeText}>{t('group')}</Text>
             </View>
           ) : null}
-            </>
-          )}
         </View>
       ),
     });
@@ -646,41 +744,107 @@ export default function StaffChatScreen() {
     winWidth,
     selectionMode,
     selectedMessageIds.length,
-    messages,
+    exitSelectionMode,
+    selectAllOwnMessages,
+    confirmDeleteSelected,
   ]);
 
   useEffect(() => {
-    if (!staff || !conversationId) {
-      setLoading(false);
+    if (!staff || !conversationId || !conversationResolved) {
+      if (!conversationId) setLoading(false);
       return;
     }
-    (async () => {
-      const seedFromMemory = staffChatMemoryCache[conversationId]?.messages ?? [];
-      const afterIso = latestMessageCreatedAtIso(seedFromMemory);
-      const useIncremental = Boolean(afterIso && seedFromMemory.length > 0);
+    const fetchKey = `${conversationId}:${staff.id}`;
+    if (initialFetchDoneRef.current === fetchKey) return;
+    initialFetchDoneRef.current = fetchKey;
 
-      let list: Message[];
-      if (useIncremental) {
-        list = await staffGetMessages(conversationId, 120, undefined, staff.id, {
-          afterCreatedAt: afterIso!,
-        });
-        if (list.length === 0) {
-          staffMarkConversationRead(conversationId, staff.id);
-          setLoading(false);
-          return;
-        }
-      } else {
-        list = await staffGetMessages(conversationId, 50, undefined, staff.id);
+    let cancelled = false;
+    (async () => {
+      const localSeed = filterVisibleChatMessages(messagesRef.current);
+      const memSeed = readStaffChatMemory(conversationId);
+      const seed = localSeed.length > 0 ? localSeed : memSeed;
+      const hasLocalCache = seed.length > 0;
+
+      if (hasLocalCache) {
+        setLoading(false);
       }
 
-      setMessages((prev) => {
-        const base = prev.length > 0 ? prev : staffChatMemoryCache[conversationId]?.messages ?? [];
-        return mergeChatMessagesCapped(list, base);
-      });
-      staffMarkConversationRead(conversationId, staff.id);
+      const afterIso = hasLocalCache ? latestMessageCreatedAtIso(seed) : undefined;
+      const [hiddenIds, list] = await Promise.all([
+        staffListHiddenMessageIdsForConversation(conversationId, staff.id),
+        staffGetMessages(
+          conversationId,
+          hasLocalCache ? 50 : CHAT_MESSAGES_PAGE_SIZE,
+          undefined,
+          staff.id,
+          hasLocalCache && afterIso ? { afterCreatedAt: afterIso } : undefined
+        ),
+      ]);
+      if (cancelled) return;
+      hiddenForMeIdsRef.current = new Set(hiddenIds);
+
+      const rows = list.filter((m) => !hiddenForMeIdsRef.current.has(m.id));
+
+      if (hasLocalCache) {
+        setMessages((prev) => {
+          const base = filterVisibleChatMessages(prev.length > 0 ? prev : seed).filter(
+            (m) => !hiddenForMeIdsRef.current.has(m.id)
+          );
+          return rows.length > 0
+            ? applySilentChatSync(base, rows, hiddenForMeIdsRef.current)
+            : base;
+        });
+        setHasMoreOlder(true);
+      } else {
+        setMessages(rows);
+        setHasMoreOlder(rows.length >= CHAT_MESSAGES_PAGE_SIZE);
+      }
+
+      void staffMarkConversationRead(conversationId, staff.id);
       setLoading(false);
     })();
-  }, [staff?.id, conversationId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [staff?.id, conversationId, conversationResolved]);
+
+  /** Arka plan: liste titremez; yalnızca yeni/güncel satırlar eklenir. */
+  const syncNewMessagesFromServer = useCallback(
+    (opts?: { allowScroll?: boolean }) => {
+      if (!staff?.id || !conversationId || !conversationResolved) return;
+      const visible = messagesRef.current.filter((m) => !hiddenForMeIdsRef.current.has(m.id));
+      const afterIso =
+        visible.length > 0 ? latestMessageCreatedAtIso(visible) : undefined;
+      void staffGetMessages(conversationId, 80, undefined, staff.id, {
+        afterCreatedAt: afterIso,
+      }).then((list) => {
+        const rows = list.filter((m) => !hiddenForMeIdsRef.current.has(m.id));
+        if (!rows.length) return;
+        let addedIncoming = false;
+        setMessages((prev) => {
+          const next = applySilentChatSync(prev, rows, hiddenForMeIdsRef.current);
+          if (next !== prev) {
+            addedIncoming = rows.some(
+              (m) => m.sender_id !== staff.id && !prev.some((p) => p.id === m.id)
+            );
+          }
+          return next;
+        });
+        if (addedIncoming) {
+          stickToBottomRef.current = true;
+          scrollToLatestIfNeeded(true);
+        }
+      });
+    },
+    [staff?.id, conversationId, conversationResolved, scrollToLatestIfNeeded]
+  );
+
+  useEffect(() => {
+    if (!staff?.id || !conversationId || !conversationResolved) return;
+    const timer = setInterval(() => syncNewMessagesFromServer(), 60_000);
+    return () => clearInterval(timer);
+  }, [staff?.id, conversationId, conversationResolved, syncNewMessagesFromServer]);
 
   const prefetchKeyRef = useRef('');
   useEffect(() => {
@@ -696,11 +860,25 @@ export default function StaffChatScreen() {
   }, [messages, staff?.id]);
 
   useEffect(() => {
-    if (!conversationId) return;
+    if (!conversationId || !conversationResolved) return;
     subscriptionRef.current = subscribeToMessages(
       conversationId,
       (newMsg) => {
-        setMessages((prev) => upsertIncomingChatMessage(prev, newMsg, { ownSenderId: staff?.id }));
+        let replaceTempId: string | undefined;
+        if (staff?.id && newMsg.sender_id === staff.id && newMsg.message_type === 'text') {
+          const text = (newMsg.content ?? '').trim();
+          if (text) {
+            replaceTempId = messagesRef.current.find(
+              (m) => isTempMessageId(m.id) && (m.content ?? '').trim() === text
+            )?.id;
+          }
+        }
+        setMessages((prev) =>
+          upsertIncomingChatMessage(prev, newMsg, {
+            ownSenderId: staff?.id,
+            replaceTempId,
+          })
+        );
         if (
           newMsg.message_type === 'text' &&
           newMsg.sender_id !== staff?.id &&
@@ -708,30 +886,48 @@ export default function StaffChatScreen() {
         ) {
           prefetchTranslations([(newMsg.content ?? '').trim()]);
         }
-        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+        if (newMsg.sender_id !== staff?.id) {
+          stickToBottomRef.current = true;
+          scrollToLatestIfNeeded(true);
+        } else if (stickToBottomRef.current) {
+          scrollToLatestIfNeeded(true);
+        }
       },
       {
         onMessageDeleted: (messageId) => {
+          pruneStaffChatCache(conversationId, [messageId]);
           setMessages((prev) => prev.filter((m) => m.id !== messageId));
         },
         onMessageUpdated: (updated) => {
+          if (updated.is_deleted) {
+            pruneStaffChatCache(conversationId, [updated.id]);
+            setMessages((prev) => prev.filter((m) => m.id !== updated.id));
+            return;
+          }
           setMessages((prev) => replaceChatMessage(prev, updated));
         },
       }
     );
     return () => subscriptionRef.current?.unsubscribe?.();
-  }, [conversationId, staff?.id]);
+  }, [conversationId, conversationResolved, staff?.id, scrollToLatestIfNeeded]);
 
   useEffect(() => {
     if (!selectionMode) return;
     const ownIds = new Set(
-      messages.filter((m) => m.sender_id === staff?.id && !m.is_deleted).map((m) => m.id)
+      messages
+        .filter(
+          (m) =>
+            m.sender_id === staff?.id &&
+            !m.is_deleted &&
+            isPersistedChatMessageId(m.id)
+        )
+        .map((m) => m.id)
     );
     setSelectedMessageIds((prev) => prev.filter((id) => ownIds.has(id)));
   }, [messages, selectionMode, staff?.id]);
 
   useEffect(() => {
-    if (!conversationId || !staff) return;
+    if (!conversationId || !staff || !conversationResolved) return;
     typingPresenceRef.current = subscribeToTypingPresence(
       conversationId,
       { displayName: staff.full_name || staff.email || t('visitorTypeStaff'), userId: staff.id },
@@ -741,7 +937,7 @@ export default function StaffChatScreen() {
       typingPresenceRef.current?.unsubscribe?.();
       typingPresenceRef.current = null;
     };
-  }, [conversationId, staff?.id, staff?.full_name, staff?.email, t]);
+  }, [conversationId, conversationResolved, staff?.id, staff?.full_name, staff?.email, t]);
 
   // Android: klavye açılınca mesaj kutusu klavyenin üstünde kalsın
   useEffect(() => {
@@ -754,47 +950,57 @@ export default function StaffChatScreen() {
     };
   }, []);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || !staff || !conversationId || sendInFlightRef.current) return;
-    const mentions = syncMentionsWithText(text, pendingMentions);
-    sendInFlightRef.current = true;
-    setInput('');
-    setPendingMentions([]);
-    typingPresenceRef.current?.updateTyping(false);
-    const tempId = `temp-${Date.now()}`;
-    const optimistic: Message = {
-      id: tempId,
-      conversation_id: conversationId,
-      sender_id: staff.id,
-      sender_type: 'staff',
-      sender_name: staff.full_name || staff.email,
-      sender_avatar: staff.profile_image ?? null,
-      message_type: 'text',
-      content: text,
-      media_url: null,
-      media_thumbnail: null,
-      file_name: null,
-      file_size: null,
-      mime_type: null,
-      is_delivered: false,
-      delivered_at: null,
-      is_read: false,
-      read_at: null,
-      is_edited: false,
-      edited_at: null,
-      is_deleted: false,
-      deleted_at: null,
-      reply_to_id: null,
-      scheduled_at: null,
-      created_at: new Date().toISOString(),
-      mentions: mentions.length ? mentions : [],
-    };
-    setMessages((prev) => [...prev, optimistic]);
-    setTimeout(() => scrollChatListToLatest(listRef, true), 50);
+  const loadOlderMessages = useCallback(async () => {
+    if (!conversationId || !staff?.id || loadingOlderRef.current || !hasMoreOlder) return;
+    const oldest = messages.find((m) => !isTempMessageId(m.id));
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    try {
+      const older = await staffGetMessages(
+        conversationId,
+        CHAT_MESSAGES_PAGE_SIZE,
+        oldest.id,
+        staff.id
+      );
+      if (older.length === 0) {
+        setHasMoreOlder(false);
+        return;
+      }
+      const rows = older.filter((m) => !hiddenForMeIdsRef.current.has(m.id));
+      if (rows.length) {
+        setMessages((prev) => mergeChatMessagesCapped(rows, prev));
+      }
+      setHasMoreOlder(older.length >= CHAT_MESSAGES_PAGE_SIZE);
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [conversationId, staff?.id, hasMoreOlder, messages]);
+
+  const deliverTextMessage = async (
+    text: string,
+    mentions: ChatMention[],
+    replyId: string | null,
+    tempId: string
+  ) => {
+    if (!staff || !conversationId) return;
+    const targetConv = resolvedConversationIdRef.current ?? conversationId;
+    if (isOffline) {
+      await queueIfOffline({
+        id: tempId,
+        conversationId: targetConv,
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        text,
+        replyToId: replyId,
+        mentions,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
     try {
       const { data: sent, error, conversationId: nextConversationId } = await staffSendMessage(
-        conversationId,
+        targetConv,
         staff.id,
         staff.full_name || staff.email,
         staff.profile_image ?? null,
@@ -802,70 +1008,199 @@ export default function StaffChatScreen() {
         'text',
         undefined,
         undefined,
-        undefined,
-        mentions.length ? mentions : undefined
+        targetConv,
+        mentions.length ? mentions : undefined,
+        replyId
       );
-      if (error) {
-        setInput(text);
-        setPendingMentions(mentions);
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
+      if (error || !sent) {
+        setFailedMessageIds((prev) => new Set(prev).add(tempId));
+        if (error) {
+          Alert.alert(t('messageSendFailedTitle'), typeof error === 'string' ? error : String(error));
+        }
         return;
       }
-      if (sent) {
-        setMessages((prev) => upsertIncomingChatMessage(prev, sent, { ownSenderId: staff.id }));
-        const convId = nextConversationId ?? conversationId;
-        const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
-        void notifyChatMessageWithMentions({
-          conversationId: convId,
-          conversationTitle: conversationName || t('notifNewMessage'),
-          messageText: text,
-          mentions,
-          senderDisplayName: staff.full_name || staff.email || '',
-          excludeStaffId: staff.id,
-          chatUrl: `/staff/chat/${convId}`,
-          mentionPushBody: t('chatMentionPushBody', {
-            name: staff.full_name || staff.email,
-            preview,
-          }),
-          defaultPushBody: preview,
+      setFailedMessageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tempId);
+        return next;
+      });
+      await dequeueTextMessage(tempId).catch(() => {});
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempId);
+        return upsertIncomingChatMessage(withoutTemp, sent, {
+          ownSenderId: staff.id,
+          replaceTempId: tempId,
         });
-        if (nextConversationId !== conversationId) {
-          router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
-          return;
-        }
-        scrollChatListToLatest(listRef, true);
-      } else {
-        setInput(text);
-        setPendingMentions(mentions);
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        Alert.alert(t('messageSendFailedTitle'), t('chatMessageBlockedBody'));
+      });
+      const convId = nextConversationId ?? conversationId;
+      const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
+      void notifyChatMessageWithMentions({
+        conversationId: convId,
+        conversationTitle: conversationName || t('notifNewMessage'),
+        messageText: text,
+        mentions,
+        senderDisplayName: staff.full_name || staff.email || '',
+        excludeStaffId: staff.id,
+        chatUrl: `/staff/chat/${convId}`,
+        mentionPushBody: t('chatMentionPushBody', {
+          name: staff.full_name || staff.email,
+          preview,
+        }),
+        defaultPushBody: preview,
+      });
+      if (nextConversationId && nextConversationId !== targetConv) {
+        resolvedConversationIdRef.current = nextConversationId;
+        router.replace({ pathname: '/staff/chat/[id]', params: { id: nextConversationId } });
+        return;
       }
+      scrollToLatestIfNeeded(true);
     } catch (e) {
-      setInput(text);
-      setPendingMentions(mentions);
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setFailedMessageIds((prev) => new Set(prev).add(tempId));
       Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
     } finally {
-      sendInFlightRef.current = false;
+      pendingSendByTempIdRef.current.delete(tempId);
     }
   };
 
-  const sendImagesFromLibrary = async () => {
-    if (!staff || !conversationId || sending) return;
-    const uris = await pickChatImagesFromLibrary();
-    if (!uris.length) return;
-    setSending(true);
+  const send = () => {
+    const text = input.trim();
+    if (!text || !staff || !conversationId) return;
+    const mentions = syncMentionsWithText(text, pendingMentions);
+    setInput('');
+    setPendingMentions([]);
+    const replyId = replyTarget?.id ?? null;
+    setReplyTarget(null);
+    typingPresenceRef.current?.updateTyping(false);
+    const targetConv = resolvedConversationIdRef.current ?? conversationId;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    stickToBottomRef.current = true;
+    const optimistic = createOptimisticTextMessage({
+      tempId,
+      conversationId: targetConv,
+      senderId: staff.id,
+      senderName: staff.full_name || staff.email,
+      senderAvatar: staff.profile_image ?? null,
+      text,
+      replyToId: replyId,
+      mentions,
+    });
+    pendingSendByTempIdRef.current.set(tempId, { text, mentions, replyId });
+    setMessages((prev) => [...prev, optimistic]);
+    scrollToLatestIfNeeded(true);
+    void deliverTextMessage(text, mentions, replyId, tempId);
+  };
+
+  const retryFailedMessage = (msg: Message) => {
+    if (!isTempMessageId(msg.id) || !staff) return;
+    const payload = pendingSendByTempIdRef.current.get(msg.id);
+    const text = payload?.text ?? msg.content ?? '';
+    const mentions = payload?.mentions ?? parseMessageMentions(msg.mentions);
+    const replyId = msg.reply_to_id;
+    if (!text.trim()) return;
+    setFailedMessageIds((prev) => {
+      const next = new Set(prev);
+      next.delete(msg.id);
+      return next;
+    });
+    pendingSendByTempIdRef.current.set(msg.id, { text, mentions, replyId });
+    void deliverTextMessage(text, mentions, replyId, msg.id);
+  };
+
+  const uploadStaffImages = async (uris: string[]) => {
+    if (!staff || !conversationId || !uris.length) return;
+    if (isOffline) {
+      Alert.alert(t('error'), t('staffChatOfflineMedia'));
+      return;
+    }
+    let convId = conversationId;
     try {
-      const actor = {
-        kind: 'staff' as const,
-        staffId: staff.id,
-        staffName: staff.full_name || staff.email,
-        staffAvatar: staff.profile_image ?? null,
-        conversationId,
+      convId = await resolveStaffConversationIdForSend(conversationId, staff.id);
+      if (convId !== conversationId) {
+        router.replace({ pathname: '/staff/chat/[id]', params: { id: convId } });
+      }
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('unknownError'));
+      return;
+    }
+    const batchId = uris.length > 1 ? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}` : null;
+    const optimisticRows = uris.map((uri, i) =>
+      createOptimisticImageMessage({
+        tempId: `temp-img-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+        conversationId: convId,
+        senderId: staff.id,
+        senderName: staff.full_name || staff.email,
+        senderAvatar: staff.profile_image ?? null,
+        localUri: uri,
+        albumContent: batchId ? makeChatAlbumContent(batchId) : '',
+      })
+    );
+    optimisticRows.forEach((row, i) => {
+      imageRetryRef.current[row.id] = {
+        uri: uris[i],
+        albumContent: row.content ?? '',
       };
-      const { conversationId: convId, sentMessages, failed } = await sendChatImageUris(actor, uris, t('photo'));
-      if (sentMessages.length) {
+    });
+    imageSendInFlightRef.current += 1;
+    setMediaListVersion((v) => v + 1);
+    setMessages((prev) => [...prev, ...optimisticRows]);
+    requestAnimationFrame(() => scrollChatListToLatest(listRef, true));
+    const actor = {
+      kind: 'staff' as const,
+      staffId: staff.id,
+      staffName: staff.full_name || staff.email,
+      staffAvatar: staff.profile_image ?? null,
+      conversationId: convId,
+    };
+    let failed = 0;
+    try {
+      for (let i = 0; i < uris.length; i++) {
+        const tempId = optimisticRows[i].id;
+        if (cancelledImageUploadsRef.current.has(tempId)) {
+          setImageUploadProgress((p) => {
+            const next = { ...p };
+            delete next[tempId];
+            return next;
+          });
+          continue;
+        }
+        setImageUploadProgress((p) => ({ ...p, [tempId]: 0.05 }));
+        setFailedImageIds((prev) => {
+          const next = new Set(prev);
+          next.delete(tempId);
+          return next;
+        });
+        const { message, conversationId: cid, error } = await sendOneStaffImage(
+          { ...actor, conversationId: convId },
+          uris[i],
+          optimisticRows[i].content ?? '',
+          (fraction) => setImageUploadProgress((p) => ({ ...p, [tempId]: fraction })),
+          convId
+        );
+        if (cid && cid !== convId) {
+          convId = cid;
+          router.replace({ pathname: '/staff/chat/[id]', params: { id: convId } });
+        }
+        if (error || !message) {
+          failed += 1;
+          setFailedImageIds((prev) => new Set(prev).add(tempId));
+          continue;
+        }
+        setMessages((prev) => {
+          const without = prev.filter((m) => m.id !== tempId);
+          return upsertIncomingChatMessage(without, message, {
+            ownSenderId: staff.id,
+            replaceTempId: tempId,
+          });
+        });
+        setMediaListVersion((v) => v + 1);
+        setImageUploadProgress((p) => {
+          const next = { ...p };
+          delete next[tempId];
+          return next;
+        });
+        delete imageRetryRef.current[tempId];
+      }
+      if (failed === 0 && uris.length > 0) {
         const { notifyConversationRecipients } = await import('@/lib/notificationService');
         notifyConversationRecipients({
           conversationId: convId,
@@ -874,21 +1209,33 @@ export default function StaffChatScreen() {
           body: t('staffChatPhotoSentBody'),
           data: { conversationId: convId, url: `/staff/chat/${convId}` },
         }).catch(() => {});
-        setMessages((prev) =>
-          sentMessages.reduce((acc, m) => upsertIncomingChatMessage(acc, m, { ownSenderId: staff.id }), prev)
-        );
         scrollChatListToLatest(listRef, true);
       }
       if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
     } finally {
-      setSending(false);
+      imageSendInFlightRef.current = Math.max(0, imageSendInFlightRef.current - 1);
+      setMediaListVersion((v) => v + 1);
     }
   };
 
+  const sendImagesFromLibrary = async () => {
+    if (!staff || !conversationId) return;
+    const uris = await pickChatImagesFromLibrary();
+    if (!uris.length) return;
+    await uploadStaffImages(uris);
+  };
+
+  const retryImageUpload = (msg: Message) => {
+    const payload = imageRetryRef.current[msg.id];
+    if (!payload) return;
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    void uploadStaffImages([payload.uri]);
+  };
+
   const sendImageFromCamera = async () => {
-    if (!staff || !conversationId || sending) return;
+    if (!staff || !conversationId) return;
     const granted = await ensureCameraPermission({
       title: t('chatCameraPermissionTitle'),
       message: t('chatCameraPermissionMessage'),
@@ -897,33 +1244,7 @@ export default function StaffChatScreen() {
     if (!granted) return;
     const uri = await pickChatImageFromCamera();
     if (!uri) return;
-    setSending(true);
-    try {
-      const actor = {
-        kind: 'staff' as const,
-        staffId: staff.id,
-        staffName: staff.full_name || staff.email,
-        staffAvatar: staff.profile_image ?? null,
-        conversationId,
-      };
-      const { sentMessages, failed, conversationId: convId } = await sendChatImageUris(actor, [uri], t('photo'));
-      if (sentMessages[0]) {
-        const { notifyConversationRecipients } = await import('@/lib/notificationService');
-        notifyConversationRecipients({
-          conversationId: convId,
-          excludeStaffId: staff.id,
-          title: conversationName || t('notifNewMessage'),
-          body: t('staffChatPhotoSentBody'),
-          data: { conversationId: convId, url: `/staff/chat/${convId}` },
-        }).catch(() => {});
-        setMessages((prev) => upsertIncomingChatMessage(prev, sentMessages[0], { ownSenderId: staff.id }));
-        scrollChatListToLatest(listRef, true);
-      } else if (failed) Alert.alert(t('error'), t('imageSendFailed'));
-    } catch (e) {
-      Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
-    } finally {
-      setSending(false);
-    }
+    await uploadStaffImages([uri]);
   };
 
   const uploadGroupAvatar = async (uri: string): Promise<string> => {
@@ -1011,6 +1332,10 @@ export default function StaffChatScreen() {
 
   const sendVideoFromSource = async (source: 'camera' | 'library') => {
     if (!staff || !conversationId || videoBatchActive) return;
+    if (isOffline) {
+      Alert.alert(t('error'), t('staffChatOfflineMedia'));
+      return;
+    }
     const actor = {
       kind: 'staff' as const,
       staffId: staff.id,
@@ -1066,135 +1391,364 @@ export default function StaffChatScreen() {
     );
   };
 
-  const showAttachOptions = () => {
-    Alert.alert(
-      t('chatAttachTitle'),
-      undefined,
-      [
-        { text: t('takePhoto'), onPress: () => void sendImageFromCamera() },
-        { text: t('chatPickMultiplePhotos'), onPress: () => void sendImagesFromLibrary() },
-        { text: t('chatPickMultipleVideos'), onPress: () => void sendVideoFromSource('library') },
-        { text: t('chatRecordVideo'), onPress: () => sendVideoFromSource('camera') },
-        { text: t('cancel'), style: 'cancel' },
-      ]
-    );
-  };
+  const sendVoiceMessage = useCallback(
+    async ({
+      localUri,
+      preUploadedUrl,
+      durationSec,
+    }: {
+      localUri: string;
+      preUploadedUrl: string | null;
+      durationSec: number;
+    }) => {
+      if (!staff || !conversationId) return;
+      if (isOffline) {
+        throw new Error(t('staffChatOfflineMedia'));
+      }
+      const tempId = `temp-voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      stickToBottomRef.current = true;
+      setMessages((prev) => [
+        ...prev,
+        createOptimisticVoiceMessage({
+          tempId,
+          conversationId,
+          senderId: staff.id,
+          senderType: 'staff',
+          senderName: staff.full_name || staff.email,
+          senderAvatar: staff.profile_image ?? null,
+          localUri,
+          durationSec,
+        }),
+      ]);
+      scrollChatListToLatest(listRef, true);
 
-  const deleteSelectedMessages = async (ids: string[]) => {
-    if (!conversationId || ids.length === 0) return;
-    const results = await Promise.all(ids.map((id) => staffDeleteMessage(conversationId, id)));
-    const failed = results.filter((r) => r.error).length;
-    const successIds = ids.filter((_, idx) => !results[idx].error);
-    if (successIds.length) {
-      setMessages((prev) => prev.filter((m) => !successIds.includes(m.id)));
+      let convId = conversationId;
+      try {
+        convId = await resolveStaffConversationIdForSend(conversationId, staff.id);
+        if (convId !== conversationId) {
+          router.replace({ pathname: '/staff/chat/[id]', params: { id: convId } });
+        }
+      } catch (e) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        throw e;
+      }
+
+      const actor = {
+        kind: 'staff' as const,
+        staffId: staff.id,
+        staffName: staff.full_name || staff.email,
+        staffAvatar: staff.profile_image ?? null,
+        conversationId: convId,
+      };
+      const { message, error, conversationId: cid } = await sendStaffVoiceMessage(
+        actor,
+        localUri,
+        convId,
+        { preUploadedMediaUrl: preUploadedUrl, durationSec }
+      );
+      if (error || !message) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        throw new Error(typeof error === 'string' ? error : t('chatVoiceSendFailed'));
+      }
+      setMessages((prev) =>
+        upsertIncomingChatMessage(
+          prev.filter((m) => m.id !== tempId),
+          message,
+          { ownSenderId: staff.id, replaceTempId: tempId }
+        )
+      );
+      const finalConvId = cid ?? convId;
+      void import('@/lib/notificationService').then(({ notifyConversationRecipients }) =>
+        notifyConversationRecipients({
+          conversationId: finalConvId,
+          excludeStaffId: staff.id,
+          title: conversationName || t('notifNewMessage'),
+          body: t('staffChatVoiceSentBody'),
+          data: { conversationId: finalConvId, url: `/staff/chat/${finalConvId}` },
+        })
+      );
+      scrollChatListToLatest(listRef, true);
+    },
+    [staff, conversationId, isOffline, t, conversationName, router]
+  );
+
+  const preUploadVoice = useCallback(
+    (uri: string) => uploadVoiceMessageForStaff(uri),
+    []
+  );
+
+  const voiceRecorder = useChatVoiceRecording({
+    onSend: sendVoiceMessage,
+    preUpload: preUploadVoice,
+    preUploadKey: conversationId,
+    disabled: isOffline || selectionMode,
+  });
+
+  const handleAttachmentPick = (action: AttachmentAction) => {
+    switch (action) {
+      case 'camera':
+        void sendImageFromCamera();
+        break;
+      case 'gallery':
+        void sendImagesFromLibrary();
+        break;
+      case 'video_library':
+        void sendVideoFromSource('library');
+        break;
+      case 'video_camera':
+        void sendVideoFromSource('camera');
+        break;
+      case 'voice':
+        void voiceRecorder.start();
+        break;
     }
-    if (failed > 0) Alert.alert(t('error'), `${failed} mesaj silinemedi.`);
   };
 
-  const confirmDeleteSelected = () => {
-    if (selectedMessageIds.length === 0) return;
-    Alert.alert('Toplu mesaj sil', `${selectedMessageIds.length} mesaj silinsin mi?`, [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          await deleteSelectedMessages(selectedMessageIds);
-          setSelectionMode(false);
-          setSelectedMessageIds([]);
-        },
-      },
-    ]);
+  const toggleAttachTray = useCallback(() => {
+    setAttachSheetVisible((open) => {
+      if (!open) Keyboard.dismiss();
+      return !open;
+    });
+  }, []);
+
+  const removeMessageLocal = async (msg: Message, forEveryone: boolean) => {
+    if (!conversationId || !staff) return;
+    if (isTempMessageId(msg.id)) {
+      if (msg.message_type === 'image') removePendingImageMessage(msg);
+      else if (msg.message_type === 'video') cancelPendingUpload(msg);
+      else setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      return;
+    }
+    if (forEveryone && msg.sender_id === staff?.id) {
+      if (!isPersistedChatMessageId(msg.id)) {
+        setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+        pendingSendByTempIdRef.current.delete(msg.id);
+        return;
+      }
+      let convId = msg.conversation_id ?? conversationId;
+      try {
+        convId = await resolveStaffConversationIdForSend(convId, staff.id);
+      } catch {
+        /* mevcut id */
+      }
+      let { error } = await staffDeleteMessage(convId, msg.id);
+      if (error && convId !== conversationId) {
+        const retry = await staffDeleteMessage(conversationId, msg.id);
+        error = retry.error;
+        if (!error) convId = conversationId;
+      }
+      if (error) {
+        try {
+          const canonical = await resolveStaffConversationIdForSend(conversationId, staff.id);
+          if (canonical !== convId) {
+            const retry = await staffDeleteMessage(canonical, msg.id);
+            error = retry.error;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (error) {
+        Alert.alert(t('error'), typeof error === 'string' ? error : String(error));
+        return;
+      }
+      pruneStaffChatCache(conversationId, [msg.id]);
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      return;
+    }
+    if (!isPersistedChatMessageId(msg.id)) {
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      return;
+    }
+    let convId = msg.conversation_id ?? resolvedConversationIdRef.current ?? conversationId;
+    try {
+      convId = await resolveStaffConversationIdForSend(convId, staff.id);
+    } catch {
+      /* mevcut id */
+    }
+    let { error } = await staffHideMessageForMe(convId, msg.id);
+    if (error && convId !== conversationId) {
+      const retry = await staffHideMessageForMe(conversationId, msg.id);
+      error = retry.error;
+    }
+    if (error) {
+      Alert.alert(t('error'), error);
+      return;
+    }
+    hiddenForMeIdsRef.current.add(msg.id);
+    pruneStaffChatCache(conversationId, [msg.id]);
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+  };
+
+  const openMessageReadInfo = useCallback(
+    async (msg: Message) => {
+      if (!staff?.id || msg.sender_id !== staff.id || isTempMessageId(msg.id)) return;
+      setReadInfoMessageId(msg.id);
+      setLoadingReadInfo(true);
+      setReadInfoRows([]);
+      const { rows, error } = await loadChatMessageReaders(msg.id);
+      setReadInfoRows(rows);
+      setLoadingReadInfo(false);
+      if (error) {
+        Alert.alert(t('error'), t('staffChatMessageInfoFailed'));
+      }
+    },
+    [staff?.id, t]
+  );
+
+  const handleMessageAction = (action: MessageAction) => {
+    const msg = actionMessage;
+    if (!msg) return;
+    switch (action) {
+      case 'reply':
+        setReplyTarget(msg);
+        break;
+      case 'copy':
+        void Clipboard.setStringAsync(msg.content ?? msg.media_url ?? '');
+        break;
+      case 'info':
+        void openMessageReadInfo(msg);
+        break;
+      case 'select':
+        setSelectionMode(true);
+        setSelectedMessageIds(msg.sender_id === staff?.id ? [msg.id] : []);
+        break;
+      case 'delete_me':
+        void removeMessageLocal(msg, false);
+        break;
+      case 'delete_all':
+        void removeMessageLocal(msg, true);
+        break;
+    }
+    setActionMessage(null);
+  };
+
+  const openMessageActions = (msg: Message) => {
+    if (selectionMode) return;
+    setActionMessage(msg);
   };
 
   const toggleSelectedMessage = (msg: Message) => {
-    if (msg.sender_id !== staff?.id) return;
+    if (msg.sender_id !== staff?.id || !isPersistedChatMessageId(msg.id)) return;
     setSelectedMessageIds((prev) =>
       prev.includes(msg.id) ? prev.filter((id) => id !== msg.id) : [...prev, msg.id]
     );
   };
 
   const handleDeleteMessage = (msg: Message) => {
-    if (!conversationId || msg.sender_id !== staff?.id) return;
-    if (selectionMode) {
+    if (selectionMode && msg.sender_id === staff?.id) {
       toggleSelectedMessage(msg);
       return;
     }
-    Alert.alert('Mesaj işlemi', undefined, [
-      {
-        text: 'Çoklu seç',
-        onPress: () => {
-          setSelectionMode(true);
-          setSelectedMessageIds([msg.id]);
-        },
-      },
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await staffDeleteMessage(conversationId, msg.id);
-          if (error) {
-            Alert.alert(t('error'), typeof error === 'string' ? error : String(error));
-            return;
-          }
-          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
-        },
-      },
-    ]);
+    openMessageActions(msg);
   };
+
+  const removePendingImageMessage = useCallback((msg: Message) => {
+    cancelledImageUploadsRef.current.add(msg.id);
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    setImageUploadProgress((p) => {
+      const next = { ...p };
+      delete next[msg.id];
+      return next;
+    });
+    setFailedImageIds((prev) => {
+      const next = new Set(prev);
+      next.delete(msg.id);
+      return next;
+    });
+    delete imageRetryRef.current[msg.id];
+  }, []);
+
+  const cancelPendingUpload = useCallback(
+    (msg: Message) => {
+      Alert.alert(t('staffChatCancelUploadTitle'), t('staffChatCancelUploadMsg'), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('staffChatRemove'),
+          style: 'destructive',
+          onPress: () => {
+            if (msg.message_type === 'video' && conversationId) {
+              const upload =
+                videoUploads[msg.id] ??
+                Object.values(videoUploads).find((s) => s.messageId === msg.id);
+              if (upload) {
+                const removedIds = cancelChatVideoUpload(conversationId, upload);
+                setMessages((prev) => prev.filter((m) => !removedIds.includes(m.id)));
+                const realId = upload.messageId;
+                if (realId && !isTempMessageId(realId)) {
+                  void staffDeleteMessage(conversationId, realId);
+                }
+              } else {
+                setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+              }
+              return;
+            }
+            if (msg.message_type === 'image') {
+              removePendingImageMessage(msg);
+            }
+          },
+        },
+      ]);
+    },
+    [conversationId, t, videoUploads, removePendingImageMessage]
+  );
 
   if (!staff) return null;
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <Stack.Screen
-          options={{
-            title: conversationName,
-            headerStyle: { backgroundColor: theme.colors.surface },
-            headerTintColor: theme.colors.text,
-          }}
-        />
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingLabel}>{t('loadingMessages')}</Text>
-      </View>
-    );
-  }
-
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: conversationName,
-          headerStyle: {
-            backgroundColor: theme.colors.surface,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.colors.borderLight,
-          },
-          headerTintColor: theme.colors.text,
-          headerTitleStyle: { fontSize: 17, fontWeight: '700', color: theme.colors.text },
-        }}
-      />
       <KeyboardAvoidingView
         style={[styles.container, androidKbPadding > 0 && { paddingBottom: androidKbPadding }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <FlatList
+        <ConnectionBanner visible={isOffline} />
+        <View style={styles.messageListHost}>
+        <FlashList
           ref={listRef}
+          style={styles.messageList}
           data={invertedChatListItems}
+          extraData={{
+            messageCount: messages.length,
+            lastMessageId: messages[messages.length - 1]?.id ?? '',
+            mediaListVersion,
+            imageUploadProgress,
+            failedImageIds,
+            videoUploads,
+            myBubbleColor,
+          }}
           keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
-          contentContainerStyle={[CHAT_LIST_INVERTED_CONTENT_STYLE, styles.listContent]}
+          contentContainerStyle={[
+            invertedChatListItems.length > 0 ? CHAT_LIST_INVERTED_CONTENT_STYLE : undefined,
+            styles.listContent,
+          ]}
           showsVerticalScrollIndicator={false}
-          {...CHAT_FLAT_LIST_PROPS}
+          {...CHAT_FLASH_LIST_PROPS}
+          onScroll={(e) => {
+            stickToBottomRef.current = e.nativeEvent.contentOffset.y < 120;
+          }}
+          scrollEventThrottle={100}
+          onEndReached={() => void loadOlderMessages()}
+          onEndReachedThreshold={0.2}
           renderItem={({ item }) => {
-            const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
+            const msg =
+              item.kind === 'message'
+                ? item.message
+                : item.messages.find(
+                    (m) =>
+                      isTempMessageId(m.id) ||
+                      imageUploadProgress[m.id] != null ||
+                      failedImageIds.has(m.id)
+                  ) ?? item.messages[item.messages.length - 1];
             if (msg.message_type === 'screenshot_notice') {
               return <ChatScreenshotNotice message={msg} />;
             }
             const isOwn = msg.sender_id === staff?.id;
-            const bubbleColor = isOwn ? (myBubbleColor ?? BUBBLE_OTHER_DIRECT) : (isGroup ? getBubbleColorForSender(msg.sender_id) : BUBBLE_OTHER_DIRECT);
+            const bubbleColor = isOwn
+              ? myBubbleColor
+              : isGroup
+                ? getBubbleColorForSender(msg.sender_id)
+                : BUBBLE_OTHER_DIRECT;
             const resolveVideoUpload = (m: Message) =>
               videoUploads[m.id] ?? Object.values(videoUploads).find((s) => s.messageId === m.id);
             return (
@@ -1202,15 +1756,22 @@ export default function StaffChatScreen() {
                 msg={msg}
                 isOwn={isOwn}
                 isGroup={isGroup}
+                bubbleColor={bubbleColor}
                 imageAlbum={item.kind === 'image_album' ? item.messages : undefined}
+                imageUploadProgress={
+                  imageUploadProgress[msg.id] ??
+                  (item.kind === 'image_album'
+                    ? item.messages.map((m) => imageUploadProgress[m.id]).find((p) => p != null)
+                    : undefined)
+                }
                 videoAlbum={item.kind === 'video_album' ? item.messages : undefined}
                 videoUploads={videoUploads}
                 onImagePress={setFullscreenImageUri}
                 onDelete={handleDeleteMessage}
+                onOpenActions={openMessageActions}
                 onToggleSelect={toggleSelectedMessage}
                 selected={selectedMessageIds.includes(msg.id)}
                 selectionMode={selectionMode}
-                bubbleColor={bubbleColor}
                 videoUpload={resolveVideoUpload(msg)}
                 onVideoRetry={
                   resolveVideoUpload(msg)?.phase === 'failed'
@@ -1225,11 +1786,34 @@ export default function StaffChatScreen() {
                   if (st?.phase === 'failed') void retryVideoUpload(st);
                 }}
                 mediaPreloadReady={heavyMediaReady}
+                replyToMessage={msg.reply_to_id ? messageById.get(msg.reply_to_id) ?? null : null}
+                onReply={() => setReplyTarget(msg)}
+                sendFailed={failedMessageIds.has(msg.id)}
+                onRetrySend={() => retryFailedMessage(msg)}
+                imageUploadFailed={
+                  failedImageIds.has(msg.id) ||
+                  (item.kind === 'image_album' ? item.messages.some((m) => failedImageIds.has(m.id)) : false)
+                }
+                onRetryImageUpload={() => retryImageUpload(msg)}
+                onCancelPendingUpload={
+                  isOwn &&
+                  (isTempMessageId(msg.id) ||
+                    imageUploadProgress[msg.id] != null ||
+                    failedImageIds.has(msg.id) ||
+                    Boolean(resolveVideoUpload(msg)?.phase && resolveVideoUpload(msg)?.phase !== 'done'))
+                    ? () => cancelPendingUpload(msg)
+                    : undefined
+                }
+                onOpenReadInfo={
+                  isOwn && !isTempMessageId(msg.id) ? () => void openMessageReadInfo(msg) : undefined
+                }
               />
             );
           }}
-          ListEmptyComponent={
-            <View style={[styles.emptyWrap, styles.emptyWrapInverted]}>
+        />
+        {invertedChatListItems.length === 0 ? (
+          <View style={styles.emptyStateOverlay} pointerEvents="none">
+            <View style={styles.emptyWrap}>
               <View style={styles.emptyIcon}>
                 <Ionicons name="chatbubble-outline" size={40} color={theme.colors.textMuted} />
               </View>
@@ -1238,46 +1822,82 @@ export default function StaffChatScreen() {
                 {isGroup ? t('staffChatEmptyGroupFirst') : t('staffChatEmptyDirectFirst')}
               </Text>
             </View>
-          }
-        />
-        {typingNames.length > 0 ? (
-          <View style={styles.typingRow}>
-            {typingNames.length === 1 ? (
-              <Text style={styles.typingText} numberOfLines={1}>
-                {t('staffChatTypingOne', { name: typingNames[0] })}
-              </Text>
-            ) : (
-              <View style={styles.typingMultiRow}>
-                {typingNames.slice(0, 4).map((name) => (
-                  <View key={name} style={styles.typingChip}>
-                    <Text style={styles.typingChipLetter}>{name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                ))}
-                <Text style={styles.typingTextSmall}> yazıyor...</Text>
-              </View>
-            )}
           </View>
+        ) : null}
+        </View>
+        {typingNames.length > 0 ? (
+          <TypingBubble
+            names={typingNames}
+            singleLabel={
+              typingNames.length === 1 ? t('staffChatTypingOne', { name: typingNames[0] }) : undefined
+            }
+          />
         ) : null}
         <ChatVideoBatchBar states={videoUploads} />
-        {selectionMode ? (
-          <View style={styles.bulkBar}>
-            <Text style={styles.bulkBarText}>{selectedMessageIds.length} mesaj seçildi</Text>
-            <TouchableOpacity
-              style={[styles.bulkDeleteBtn, selectedMessageIds.length === 0 && styles.bulkDeleteBtnDisabled]}
-              disabled={selectedMessageIds.length === 0}
-              onPress={confirmDeleteSelected}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="trash-outline" size={16} color="#fff" />
-              <Text style={styles.bulkDeleteBtnText}>Toplu sil</Text>
-            </TouchableOpacity>
-          </View>
+        {replyTarget && !selectionMode ? (
+          <ReplyPreviewBar message={replyTarget} onClear={() => setReplyTarget(null)} />
         ) : null}
-        <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
-          <ChatMentionComposer
-            style={styles.input}
-            placeholder={mentionEnabled ? t('chatMentionInputPlaceholder') : t('messageInputPlaceholder')}
-            placeholderTextColor={theme.colors.textMuted}
+        {!selectionMode ? (
+          <AttachmentSheet
+            visible={attachSheetVisible}
+            onPick={(action) => {
+              setAttachSheetVisible(false);
+              handleAttachmentPick(action);
+            }}
+          />
+        ) : null}
+        {!selectionMode && mentionEnabled ? (
+          <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
+            <TouchableOpacity
+              style={styles.mediaBtn}
+              onPress={toggleAttachTray}
+              activeOpacity={0.7}
+              disabled={voiceRecorder.phase !== 'idle'}
+            >
+              <AttachmentToggleIcon open={attachSheetVisible} />
+            </TouchableOpacity>
+            <View style={[styles.input, voiceRecorder.phase !== 'idle' && styles.inputVoice]}>
+              {voiceRecorder.phase !== 'idle' ? (
+                <ChatVoiceInputPreview
+                  phase={voiceRecorder.phase}
+                  durationSec={voiceRecorder.durationSec}
+                  onCancel={() => void voiceRecorder.cancel()}
+                />
+              ) : (
+                <ChatMentionComposer
+                  style={styles.mentionInput}
+                  placeholder={t('chatMentionInputPlaceholder')}
+                  placeholderTextColor={chatTheme.textMuted}
+                  value={input}
+                  onChangeText={(next) => {
+                    setInput(next);
+                    typingPresenceRef.current?.updateTyping(true);
+                    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                    typingTimeoutRef.current = setTimeout(() => {
+                      typingPresenceRef.current?.updateTyping(false);
+                      typingTimeoutRef.current = null;
+                    }, 3000);
+                  }}
+                  participants={mentionParticipants}
+                  mentions={pendingMentions}
+                  onMentionsChange={setPendingMentions}
+                  enabled
+                  multiline
+                  maxLength={2000}
+                  onSubmitEditing={send}
+                />
+              )}
+            </View>
+            <ChatInputTrailingActions
+              hasText={Boolean(input.trim())}
+              voicePhase={voiceRecorder.phase}
+              onSendText={send}
+              onSendVoice={() => void voiceRecorder.send()}
+              onMicPress={() => void voiceRecorder.toggleMic()}
+            />
+          </View>
+        ) : !selectionMode ? (
+          <ChatInputBar
             value={input}
             onChangeText={(next) => {
               setInput(next);
@@ -1288,34 +1908,19 @@ export default function StaffChatScreen() {
                 typingTimeoutRef.current = null;
               }, 3000);
             }}
-            participants={mentionParticipants}
-            mentions={pendingMentions}
-            onMentionsChange={setPendingMentions}
-            enabled={mentionEnabled}
-            multiline
-            maxLength={2000}
-            onSubmitEditing={send}
+            onSend={send}
+            onAttach={toggleAttachTray}
+            attachOpen={attachSheetVisible}
+            voice={{
+              phase: voiceRecorder.phase,
+              durationSec: voiceRecorder.durationSec,
+              onMicPress: () => void voiceRecorder.toggleMic(),
+              onSendVoice: () => void voiceRecorder.send(),
+              onCancelVoice: () => void voiceRecorder.cancel(),
+            }}
+            bottomPadding={chatInputBottomPad}
           />
-          <TouchableOpacity style={styles.mediaBtn} onPress={showAttachOptions} disabled={sending} activeOpacity={0.7}>
-            <Ionicons name="add-circle-outline" size={22} color={theme.colors.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.mediaBtn}
-            onPress={() => sendVideoFromSource('library')}
-            disabled={videoBatchActive}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="videocam-outline" size={20} color={theme.colors.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
-            onPress={send}
-            disabled={!input.trim()}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="send" size={20} color={theme.colors.white} />
-          </TouchableOpacity>
-        </View>
+        ) : null}
       </KeyboardAvoidingView>
 
       <Modal visible={showGroupSettings} transparent animationType="fade">
@@ -1389,26 +1994,37 @@ export default function StaffChatScreen() {
         </TouchableOpacity>
       </Modal>
 
-      <Modal visible={showBubbleColorModal} transparent animationType="fade">
-        <TouchableOpacity activeOpacity={1} style={styles.bubbleColorModalOverlay} onPress={() => setShowBubbleColorModal(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.bubbleColorModalBox}>
-            <Text style={styles.bubbleColorModalTitle}>{t('chatYourBubbleColorTitle')}</Text>
-            <View style={styles.bubbleColorRow}>
-              {BUBBLE_COLOR_OPTIONS.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.bubbleColorChip, { backgroundColor: c }, myBubbleColor === c && styles.bubbleColorChipSelected]}
-                  onPress={() => { setMyBubbleColor(c); setShowBubbleColorModal(false); }}
-                />
-              ))}
-            </View>
-            <TouchableOpacity style={styles.bubbleColorModalClose} onPress={() => setShowBubbleColorModal(false)}>
-              <Text style={styles.bubbleColorModalCloseText}>{t('close')}</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      <BubbleColorPickerModal
+        visible={showBubbleColorModal}
+        onClose={() => setShowBubbleColorModal(false)}
+        selectedColor={myBubbleColor}
+        onSelectColor={(c) => void setMyBubbleColor(c)}
+        title={t('chatYourBubbleColorTitle')}
+        accentColor={theme.colors.primary}
+        surfaceColor={theme.colors.surface}
+        textColor={theme.colors.text}
+      />
 
+      <MessageActionSheet
+        visible={Boolean(actionMessage)}
+        onClose={() => setActionMessage(null)}
+        canDeleteForEveryone={Boolean(
+          actionMessage && actionMessage.sender_id === staff?.id && !isTempMessageId(actionMessage.id)
+        )}
+        showMessageInfo={Boolean(
+          actionMessage &&
+            actionMessage.sender_id === staff?.id &&
+            !isTempMessageId(actionMessage.id)
+        )}
+        onAction={handleMessageAction}
+      />
+      <MessageReadersModal
+        visible={Boolean(readInfoMessageId)}
+        onClose={() => setReadInfoMessageId(null)}
+        loading={loadingReadInfo}
+        readers={readInfoRows}
+        isGroup={isGroup}
+      />
       <ChatFullscreenImageModal uri={fullscreenImageUri} onClose={() => setFullscreenImageUri(null)} />
     </>
   );
@@ -1417,7 +2033,7 @@ export default function StaffChatScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.backgroundSecondary,
+    backgroundColor: chatTheme.background,
   },
   centered: {
     flex: 1,
@@ -1475,9 +2091,39 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  selectionHeaderTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: theme.colors.text,
+    textAlign: 'center',
+    maxWidth: 220,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+    gap: 4,
+  },
+  headerIconTouch: {
+    padding: 8,
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerIconDisabled: {
+    opacity: 0.35,
+  },
+  messageList: {
+    flex: 1,
+  },
   listContent: {
     padding: theme.spacing.lg,
     paddingBottom: theme.spacing.xl,
+  },
+  loadOlder: {
+    paddingVertical: 12,
+    alignItems: 'center',
   },
   bubbleWrap: {
     marginBottom: 14,
@@ -1571,6 +2217,11 @@ const styles = StyleSheet.create({
   bubbleTimeOther: {
     fontSize: 11,
     color: theme.colors.textMuted,
+  },
+  readIconSeen: {
+    textShadowColor: '#60a5fa',
+    textShadowRadius: 6,
+    textShadowOffset: { width: 0, height: 0 },
   },
   readIcon: {
     marginLeft: 2,
@@ -1673,12 +2324,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  messageListHost: {
+    flex: 1,
+    position: 'relative',
+  },
+  emptyStateOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 72,
+  },
   emptyWrap: {
     alignItems: 'center',
-    paddingVertical: 48,
-  },
-  emptyWrapInverted: {
-    transform: [{ scaleY: -1 }],
+    paddingVertical: 24,
   },
   emptyIcon: {
     width: 72,
@@ -1747,31 +2406,43 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    paddingBottom: 8,
-    backgroundColor: theme.colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.borderLight,
-    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: chatTheme.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: chatTheme.border,
+    gap: 8,
   },
   input: {
     flex: 1,
-    backgroundColor: theme.colors.backgroundSecondary,
+    backgroundColor: chatTheme.background,
     borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     fontSize: 15,
-    maxHeight: 100,
-    color: '#1F2937',
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    maxHeight: 96,
+    color: chatTheme.text,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chatTheme.border,
+    justifyContent: 'center',
+  },
+  inputVoice: {
+    maxHeight: 56,
+    paddingVertical: 4,
+  },
+  mentionInput: {
+    flex: 1,
+    fontSize: 15,
+    maxHeight: 96,
+    color: chatTheme.text,
+    padding: 0,
+    margin: 0,
   },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: chatTheme.accent,
     justifyContent: 'center',
     alignItems: 'center',
   },

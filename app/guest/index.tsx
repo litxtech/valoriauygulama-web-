@@ -6,6 +6,10 @@ import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
 import { useTranslation } from 'react-i18next';
 import { log } from '@/lib/logger';
+import {
+  relaunchAndroidModernBarcodeScanner,
+  useAndroidModernBarcodeScanner,
+} from '@/lib/androidModernBarcodeScan';
 
 type PermStatus = 'granted' | 'denied' | 'undetermined';
 
@@ -15,6 +19,7 @@ export default function GuestScanScreen() {
   const [requesting, setRequesting] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const router = useRouter();
   const { setQR, reset } = useGuestFlowStore();
   const { t } = useTranslation();
@@ -107,6 +112,14 @@ export default function GuestScanScreen() {
     }
   };
 
+  const usesModernAndroidScanner = useAndroidModernBarcodeScanner(
+    permStatus === 'granted',
+    ['qr'],
+    (result) => {
+      void handleBarCodeScanned(result);
+    }
+  );
+
   if (permStatus === null) {
     return (
       <View style={styles.centered}>
@@ -127,18 +140,18 @@ export default function GuestScanScreen() {
             <View style={styles.permCardTitleWrap}>
               <Text style={styles.permCardTitle}>{t('scanQR')}</Text>
               <Text style={styles.permCardSubtitle}>
-                {t('scanQRDesc')} {!canAskAgain && 'Kamera izni daha önce kalıcı kapatıldı. Ayarlardan açmanız gerekir.'}
+                {t('scanQRDesc')}{!canAskAgain ? ` ${t('guestCameraPermPermanentDenied')}` : ''}
               </Text>
             </View>
             <View style={[styles.permCardBadge, permStatus === 'denied' && styles.permCardBadgeDenied]}>
               <Text style={[styles.permCardBadgeText, permStatus === 'denied' && styles.permCardBadgeTextDenied]}>
-                {permStatus === 'denied' ? 'Kapalı' : 'İstenmedi'}
+                {permStatus === 'denied' ? t('guestPermStatusDenied') : t('guestPermStatusUndetermined')}
               </Text>
             </View>
           </View>
           <View style={styles.permCardNotes}>
-            <Text style={styles.permCardNote}>• "Devam" derseniz sistem izin penceresi açılır.</Text>
-            <Text style={styles.permCardNote}>• Daha önce reddedildiyse ayarlardan kamera iznini açmanız gerekir.</Text>
+            <Text style={styles.permCardNote}>{t('guestCameraPermNoteContinue')}</Text>
+            <Text style={styles.permCardNote}>{t('guestCameraPermNoteSettings')}</Text>
           </View>
           <TouchableOpacity
             style={[styles.permCardPrimaryBtn, requesting && { opacity: 0.75 }]}
@@ -151,7 +164,7 @@ export default function GuestScanScreen() {
             ) : (
               <>
                 <Text style={styles.permCardPrimaryIcon}>{canAskAgain ? '✓' : '⚙'}</Text>
-                <Text style={styles.permCardPrimaryText}>{canAskAgain ? 'Devam' : 'Ayarları aç'}</Text>
+                <Text style={styles.permCardPrimaryText}>{canAskAgain ? t('guestContinue') : t('guestOpenSettings')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -162,12 +175,25 @@ export default function GuestScanScreen() {
 
   return (
     <View style={styles.container}>
-      <CameraView
-        style={StyleSheet.absoluteFillObject}
-        facing="back"
-        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-      />
+      {usesModernAndroidScanner ? (
+        <View style={styles.modernScannerFallback}>
+          <Text style={styles.hint}>{t('scanQRDesc')}</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => relaunchAndroidModernBarcodeScanner(['qr'])}
+          >
+            <Text style={styles.retryBtnText}>QR tarayıcıyı aç</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <CameraView
+          style={StyleSheet.absoluteFillObject}
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+          onBarcodeScanned={!cameraReady || scanned ? undefined : handleBarCodeScanned}
+        />
+      )}
       <View style={styles.overlay}>
         <View style={styles.frame} />
         <Text style={styles.hint}>QR kodu çerçeve içine getirin</Text>
@@ -315,4 +341,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   retryBtnText: { color: '#fff', fontWeight: '600' },
+  modernScannerFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: '#1a365d',
+  },
 });

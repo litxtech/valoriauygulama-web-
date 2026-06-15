@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,51 +19,86 @@ import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { CounterpartyListCard } from '@/components/admin/CounterpartyListCard';
 import { fetchCounterpartyBalanceMap } from '@/lib/financeCounterpartyBalances';
-import type { FinanceCounterpartyType } from '@/lib/financeLedger';
+import type { FinanceCounterpartyType, FinanceLedgerScope } from '@/lib/financeLedger';
+import { LEDGER_SCOPE_LABELS } from '@/lib/financeLedger';
+import { FinanceReportExportButtons } from '@/components/admin/FinanceReportExportButtons';
+import {
+  buildCounterpartyListReportHtml,
+  counterpartyPartyTypeLabel,
+  resolveFinanceReportFooter,
+} from '@/lib/financeCounterpartyReport';
+import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
+import {
+  accountingCanUseAllOrg,
+  mergeCounterpartyBalancesForOrgs,
+  organizationNameById,
+  resolveAccountingOrgScope,
+} from '@/lib/accountingOrgScope';
+import {
+  confirmDeactivateCounterparty,
+  deactivateFinanceCounterparty,
+} from '@/lib/financeCounterpartyActions';
 
 type Row = {
   id: string;
+  organization_id: string;
   name: string;
   party_type: FinanceCounterpartyType;
+  party_type_label: string | null;
   phone: string | null;
+  profile_image: string | null;
 };
 
 type ProjRow = { id: string; name: string };
 
 type Tab = 'contacts' | 'projects';
+type ScopeFilter = 'all' | FinanceLedgerScope;
+type SortMode = 'name' | 'paid_most';
 
 const TYPE_FILTERS: { key: 'all' | FinanceCounterpartyType; label: string }[] = [
   { key: 'all', label: 'Tümü' },
-  { key: 'customer', label: 'Müşteri' },
+  { key: 'private_person', label: 'Şahsi kişi' },
+  { key: 'subcontractor', label: 'Usta / taşeron' },
   { key: 'supplier', label: 'Tedarikçi' },
-  { key: 'subcontractor', label: 'Taşeron' },
+  { key: 'customer', label: 'Müşteri' },
   { key: 'other', label: 'Diğer' },
+];
+
+const SCOPE_FILTERS: { key: ScopeFilter; label: string }[] = [
+  { key: 'all', label: 'Tüm kayıtlar' },
+  { key: 'hotel', label: LEDGER_SCOPE_LABELS.hotel },
+  { key: 'personal', label: LEDGER_SCOPE_LABELS.personal },
 ];
 
 export default function AccountingCounterpartiesIndex() {
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
+  const organizations = useAdminOrgStore((s) => s.organizations);
   const [tab, setTab] = useState<Tab>('contacts');
   const [rows, setRows] = useState<Row[]>([]);
   const [projects, setProjects] = useState<ProjRow[]>([]);
-  const [balances, setBalances] = useState<Map<string, { net: number }>>(new Map());
+  const [balances, setBalances] = useState<
+    Map<string, { income: number; expense: number; net: number }>
+  >(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | FinanceCounterpartyType>('all');
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
+  const [sortMode, setSortMode] = useState<SortMode>('name');
   const [projectName, setProjectName] = useState('');
   const [savingProj, setSavingProj] = useState(false);
 
-  const orgId = useMemo(() => {
-    if (me?.app_permissions?.super_admin === true || me?.role === 'admin') {
-      return selectedOrganizationId !== 'all' ? selectedOrganizationId : me?.organization_id;
-    }
-    return me?.organization_id;
-  }, [me, selectedOrganizationId]);
+  const canUseAllOrg = accountingCanUseAllOrg(me);
+  const orgScope = useMemo(
+    () => resolveAccountingOrgScope(me, selectedOrganizationId),
+    [me, selectedOrganizationId]
+  );
+  const pickerOrgId = orgScope && orgScope !== 'all' ? orgScope : me?.organization_id;
 
   const load = useCallback(async () => {
-    if (!orgId || orgId === 'all') {
+    if (!orgScope) {
       setRows([]);
       setProjects([]);
       setBalances(new Map());
@@ -70,26 +106,32 @@ export default function AccountingCounterpartiesIndex() {
       return;
     }
     setLoading(true);
-    const [cpRes, prRes] = await Promise.all([
-      supabase
-        .from('finance_counterparties')
-        .select('id, name, party_type, phone')
-        .eq('organization_id', orgId)
-        .eq('is_active', true)
-        .order('name'),
-      supabase
-        .from('finance_projects')
-        .select('id, name')
-        .eq('organization_id', orgId)
-        .eq('is_active', true)
-        .order('name'),
-    ]);
-    setRows(cpRes.error ? [] : ((cpRes.data as Row[]) ?? []));
+    let cpQ = supabase
+      .from('finance_counterparties')
+      .select('id, organization_id, name, party_type, party_type_label, phone, profile_image')
+      .eq('is_active', true)
+      .order('name');
+    let prQ = supabase.from('finance_projects').select('id, name').eq('is_active', true).order('name');
+    if (orgScope !== 'all') {
+      cpQ = cpQ.eq('organization_id', orgScope);
+      prQ = prQ.eq('organization_id', orgScope);
+    }
+    const [cpRes, prRes] = await Promise.all([cpQ, prQ]);
+    const list = cpRes.error ? [] : ((cpRes.data as Row[]) ?? []);
+    setRows(list);
     setProjects(prRes.error ? [] : ((prRes.data as ProjRow[]) ?? []));
     setLoading(false);
 
-    fetchCounterpartyBalanceMap(orgId).then(setBalances);
-  }, [orgId]);
+    const scope = scopeFilter === 'all' ? null : scopeFilter;
+    if (orgScope === 'all') {
+      mergeCounterpartyBalancesForOrgs(
+        list.map((r) => r.organization_id),
+        (oid) => fetchCounterpartyBalanceMap(oid, scope)
+      ).then(setBalances);
+    } else {
+      fetchCounterpartyBalanceMap(orgScope, scope).then(setBalances);
+    }
+  }, [orgScope, scopeFilter]);
 
   useEffect(() => {
     load();
@@ -100,8 +142,45 @@ export default function AccountingCounterpartiesIndex() {
     if (typeFilter !== 'all') list = list.filter((r) => r.party_type === typeFilter);
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((r) => r.name.toLowerCase().includes(q) || r.phone?.includes(q));
+    if (sortMode === 'paid_most') {
+      list = [...list].sort((a, b) => {
+        const ea = balances.get(a.id)?.expense ?? 0;
+        const eb = balances.get(b.id)?.expense ?? 0;
+        if (eb !== ea) return eb - ea;
+        return a.name.localeCompare(b.name, 'tr');
+      });
+    } else {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    }
     return list;
-  }, [rows, typeFilter, search]);
+  }, [rows, typeFilter, search, sortMode, balances]);
+
+  const listReportRows = useMemo(() => {
+    return filtered.map((r) => {
+      const b = balances.get(r.id);
+      return {
+        name: r.name,
+        partyTypeLabel: counterpartyPartyTypeLabel(r.party_type, r.party_type_label),
+        phone: r.phone,
+        income: b?.income ?? 0,
+        expense: b?.expense ?? 0,
+        net: b?.net ?? 0,
+      };
+    });
+  }, [filtered, balances]);
+
+  const listReportTotals = useMemo(() => {
+    let grandIncome = 0;
+    let grandExpense = 0;
+    for (const r of listReportRows) {
+      grandIncome += r.income;
+      grandExpense += r.expense;
+    }
+    return { grandIncome, grandExpense };
+  }, [listReportRows]);
+
+  const scopeLabelForReport =
+    scopeFilter === 'all' ? 'Tüm kayıtlar' : LEDGER_SCOPE_LABELS[scopeFilter];
 
   const listStats = useMemo(() => {
     let withPositive = 0;
@@ -116,11 +195,10 @@ export default function AccountingCounterpartiesIndex() {
   }, [rows, balances]);
 
   const addProject = async () => {
-    if (!orgId || orgId === 'all') return;
-    if (!projectName.trim()) return;
+    if (!orgScope || orgScope === 'all' || !projectName.trim()) return;
     setSavingProj(true);
     const { error } = await supabase.from('finance_projects').insert({
-      organization_id: orgId,
+      organization_id: orgScope,
       name: projectName.trim(),
     });
     setSavingProj(false);
@@ -138,7 +216,24 @@ export default function AccountingCounterpartiesIndex() {
     );
   }
 
-  const needOrg = !orgId || orgId === 'all';
+  const needOrg = !orgScope;
+  const showOrgBadge = orgScope === 'all';
+
+  const removeFromList = useCallback((row: Row) => {
+    confirmDeactivateCounterparty(row.name, async () => {
+      const err = await deactivateFinanceCounterparty(row.id, row.organization_id);
+      if (err) {
+        Alert.alert('Hata', err);
+        return;
+      }
+      setRows((prev) => prev.filter((r) => r.id !== row.id));
+      setBalances((prev) => {
+        const next = new Map(prev);
+        next.delete(row.id);
+        return next;
+      });
+    });
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -154,9 +249,9 @@ export default function AccountingCounterpartiesIndex() {
           <Text style={styles.backHubText}>Muhasebe</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>Cariler</Text>
+        <Text style={styles.title}>Kişi ödemeleri</Text>
         <Text style={styles.subtitle}>
-          Müşteri, tedarikçi, taşeron… Kimden para aldığınızı, kime ödediğinizi buradan takip edin.
+          Usta, tedarikçi veya şahsi kişiler — kime ne ödediğiniz, kimden ne aldığınız. İsme dokunun, tüm hareketleri görün.
         </Text>
 
         <AdminOrganizationPicker
@@ -208,19 +303,77 @@ export default function AccountingCounterpartiesIndex() {
                   </View>
                 ) : null}
 
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scopeFilters}>
+                  {SCOPE_FILTERS.map((f) => (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[styles.scopeChip, scopeFilter === f.key && styles.scopeChipOn]}
+                      onPress={() => setScopeFilter(f.key)}
+                    >
+                      <Text style={[styles.scopeChipText, scopeFilter === f.key && styles.scopeChipTextOn]}>
+                        {f.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
                 <View style={styles.legend}>
                   <Text style={styles.legendText}>
-                    ↑ aldığınız para · ↓ ödediğiniz para · Net: ikisi arasındaki fark
+                    ↑ aldığınız · ↓ ödediğiniz · Dokunun → detay · Uzun basın → listeden kaldır
                   </Text>
+                </View>
+
+                {filtered.length > 0 ? (
+                  <FinanceReportExportButtons
+                    fileName="kisi-odemeleri-liste"
+                    mailSubject={`Kişi ödemeleri özeti — ${scopeLabelForReport}`}
+                    shareDialogTitle="Kişi ödemeleri özeti"
+                    getHtml={(kind) =>
+                      buildCounterpartyListReportHtml(
+                        {
+                          scopeLabel: scopeLabelForReport,
+                          rows: listReportRows,
+                          grandIncome: listReportTotals.grandIncome,
+                          grandExpense: listReportTotals.grandExpense,
+                          footer: resolveFinanceReportFooter(
+                            footerOptsFromOrganization(organizations.find((o) => o.id === pickerOrgId))
+                          ),
+                        },
+                        kind
+                      )
+                    }
+                  />
+                ) : null}
+
+                <View style={styles.sortRow}>
+                  <TouchableOpacity
+                    style={[styles.sortBtn, sortMode === 'name' && styles.sortBtnOn]}
+                    onPress={() => setSortMode('name')}
+                  >
+                    <Text style={[styles.sortBtnText, sortMode === 'name' && styles.sortBtnTextOn]}>A-Z</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sortBtn, sortMode === 'paid_most' && styles.sortBtnOn]}
+                    onPress={() => setSortMode('paid_most')}
+                  >
+                    <Text style={[styles.sortBtnText, sortMode === 'paid_most' && styles.sortBtnTextOn]}>
+                      En çok ödenen
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
                   style={styles.addMain}
-                  onPress={() => router.push('/admin/accounting/counterparties/new')}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/admin/accounting/counterparties/new',
+                      params: scopeFilter !== 'all' ? { scope: scopeFilter } : {},
+                    } as never)
+                  }
                   activeOpacity={0.9}
                 >
                   <Ionicons name="person-add-outline" size={24} color="#fff" />
-                  <Text style={styles.addMainText}>Yeni kişi / firma ekle</Text>
+                  <Text style={styles.addMainText}>Yeni kişi ekle (usta, tedarikçi…)</Text>
                 </TouchableOpacity>
 
                 <View style={styles.searchWrap}>
@@ -251,8 +404,8 @@ export default function AccountingCounterpartiesIndex() {
                 {filtered.length === 0 ? (
                   <View style={styles.emptyBox}>
                     <Ionicons name="people-outline" size={40} color={adminTheme.colors.border} />
-                    <Text style={styles.emptyTitle}>Henüz cari yok</Text>
-                    <Text style={styles.emptySub}>Müşteri, tedarikçi veya taşeron ekleyin.</Text>
+                    <Text style={styles.emptyTitle}>Henüz kişi yok</Text>
+                    <Text style={styles.emptySub}>Önce kişiyi ekleyin, sonra ödeme veya tahsilat kaydedin.</Text>
                   </View>
                 ) : (
                   filtered.map((r) => {
@@ -263,21 +416,33 @@ export default function AccountingCounterpartiesIndex() {
                         id={r.id}
                         name={r.name}
                         party_type={r.party_type}
+                        party_type_label={r.party_type_label}
                         phone={r.phone}
+                        profileImage={r.profile_image}
                         income={bal?.income ?? 0}
                         expense={bal?.expense ?? 0}
                         net={bal?.net ?? 0}
+                        organizationName={
+                          showOrgBadge
+                            ? organizationNameById(r.organization_id, organizations)
+                            : undefined
+                        }
                         onPress={() =>
                           router.push({
                             pathname: '/admin/accounting/counterparties/[id]',
                             params: { id: r.id },
                           } as never)
                         }
+                        onLongPress={() => removeFromList(r)}
                       />
                     );
                   })
                 )}
               </>
+            ) : orgScope === 'all' ? (
+              <View style={styles.hintBox}>
+                <Text style={styles.hintText}>Proje eklemek için üstten tek bir işletme seçin.</Text>
+              </View>
             ) : (
               <>
                 <Text style={styles.projHint}>İnşaat veya proje bazlı gider/gelir için şantiye adı ekleyin.</Text>
@@ -369,6 +534,31 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   searchInput: { flex: 1, fontSize: 16, color: adminTheme.colors.text, paddingVertical: 10 },
+  scopeFilters: { marginBottom: 12 },
+  scopeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  scopeChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
+  scopeChipText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  scopeChipTextOn: { color: '#fff' },
+  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  sortBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  sortBtnOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  sortBtnText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  sortBtnTextOn: { color: '#fff' },
   filters: { marginBottom: 14 },
   filterChip: {
     paddingHorizontal: 14,

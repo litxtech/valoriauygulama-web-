@@ -9,37 +9,37 @@ export default function KitchenOpsLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'Mutfak Operasyon',
+          title: t('staffKitchenOpsTitle'),
           headerLeft: () => <StaffStackBackButton fallback={STAFF_TABS_FALLBACK} />,
         }}
       />
-      <Stack.Screen name="stock/entry" options={{ title: 'Stok Ekle' }} />
-      <Stack.Screen name="stock/exit" options={{ title: 'Stok Çıkışı' }} />
-      <Stack.Screen name="stock/current" options={{ title: 'Mevcut Stok' }} />
-      <Stack.Screen name="stock/low" options={{ title: 'Azalan Ürünler' }} />
-      <Stack.Screen name="shortages/index" options={{ title: 'Mutfak Eksikleri' }} />
-      <Stack.Screen name="shortages/report/[id]" options={{ title: 'Eksik Listesi' }} />
-      <Stack.Screen name="stock/scan" options={{ title: 'Barkod Oku', headerShown: false }} />
-      <Stack.Screen name="stock/product/[id]" options={{ title: 'Ürün Detayı' }} />
-      <Stack.Screen name="revenue/index" options={{ title: 'Hasılat' }} />
-      <Stack.Screen name="revenue/new" options={{ title: 'Hasılat Gir' }} />
-      <Stack.Screen name="expenses/index" options={{ title: 'Giderler' }} />
-      <Stack.Screen name="expenses/new" options={{ title: 'Gider Gir' }} />
-      <Stack.Screen name="personnel/index" options={{ title: 'Personel Ödemeleri' }} />
-      <Stack.Screen name="personnel/new" options={{ title: 'Ödeme Kaydı' }} />
-      <Stack.Screen name="suppliers/index" options={{ title: 'Tedarikçi Borçları' }} />
-      <Stack.Screen name="suppliers/new" options={{ title: 'Borç Kaydı' }} />
-      <Stack.Screen name="cari/index" options={{ title: 'Otel - Mutfak Cari' }} />
-      <Stack.Screen name="pos/index" options={{ title: 'POS İşlemleri' }} />
-      <Stack.Screen name="pos/new" options={{ title: 'POS Kaydı' }} />
-      <Stack.Screen name="settlements/index" options={{ title: 'Ödeme / Mahsup' }} />
-      <Stack.Screen name="settlements/new" options={{ title: 'Yeni Ödeme' }} />
-      <Stack.Screen name="handovers/index" options={{ title: 'Mutfak Teslim Kayıtları' }} />
-      <Stack.Screen name="handovers/new" options={{ title: 'Teslim Kaydı' }} />
-      <Stack.Screen name="handovers/[id]" options={{ title: 'Teslim Detayı' }} />
-      <Stack.Screen name="day-close/index" options={{ title: 'Gün Sonu Kapanış' }} />
-      <Stack.Screen name="finance/index" options={{ title: 'Finans Özet' }} />
-      <Stack.Screen name="reception" options={{ title: 'Reception Muhasebe' }} />
+      <Stack.Screen name="stock/entry" options={{ title: t('staffKitchenStockAdd') }} />
+      <Stack.Screen name="stock/exit" options={{ title: t('staffKitchenStockExit') }} />
+      <Stack.Screen name="stock/current" options={{ title: t('staffKitchenCurrentStock') }} />
+      <Stack.Screen name="stock/low" options={{ title: t('staffKitchenLowStock') }} />
+      <Stack.Screen name="shortages/index" options={{ title: t('staffKitchenShortages') }} />
+      <Stack.Screen name="shortages/report/[id]" options={{ title: t('staffKitchenShortageReport') }} />
+      <Stack.Screen name="stock/scan" options={{ title: t('staffKitchenBarcodeScan'), headerShown: false }} />
+      <Stack.Screen name="stock/product/[id]" options={{ title: t('staffKitchenProductDetail') }} />
+      <Stack.Screen name="revenue/index" options={{ title: t('staffKitchenRevenue') }} />
+      <Stack.Screen name="revenue/new" options={{ title: t('staffKitchenRevenueEnter') }} />
+      <Stack.Screen name="expenses/index" options={{ title: t('staffKitchenExpenses') }} />
+      <Stack.Screen name="expenses/new" options={{ title: t('staffKitchenExpenseEnter') }} />
+      <Stack.Screen name="personnel/index" options={{ title: t('staffKitchenPersonnelPayments') }} />
+      <Stack.Screen name="personnel/new" options={{ title: t('staffKitchenPaymentRecord') }} />
+      <Stack.Screen name="suppliers/index" options={{ title: t('staffKitchenSupplierDebts') }} />
+      <Stack.Screen name="suppliers/new" options={{ title: t('staffKitchenDebtRecord') }} />
+      <Stack.Screen name="cari/index" options={{ title: t('staffKitchenHotelCari') }} />
+      <Stack.Screen name="pos/index" options={{ title: t('staffKitchenPos') }} />
+      <Stack.Screen name="pos/new" options={{ title: t('staffKitchenPosRecord') }} />
+      <Stack.Screen name="settlements/index" options={{ title: t('staffKitchenSettlements') }} />
+      <Stack.Screen name="settlements/new" options={{ title: t('staffKitchenNewPayment') }} />
+      <Stack.Screen name="handovers/index" options={{ title: t('staffKitchenHandovers') }} />
+      <Stack.Screen name="handovers/new" options={{ title: t('staffKitchenHandoverRecord') }} />
+      <Stack.Screen name="handovers/[id]" options={{ title: t('staffKitchenHandoverDetail') }} />
+      <Stack.Screen name="day-close/index" options={{ title: t('staffKitchenDayClose') }} />
+      <Stack.Screen name="finance/index" options={{ title: t('staffKitchenFinanceSummary') }} />
+      <Stack.Screen name="reception" options={{ title: t('staffKitchenReceptionAccounting') }} />
     </Stack>
   );
 }

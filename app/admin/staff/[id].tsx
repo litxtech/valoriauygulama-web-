@@ -41,6 +41,8 @@ import {
   normalizeHiddenMenuItemIds,
   type StaffMenuCatalogSection,
 } from '@/lib/staffMenuCatalog';
+import { mergeStaffAppPermissions, staffAppPermissionLabels } from '@/lib/staffAppPermissionsCatalog';
+import { StaffAppPermissionsEditor } from '@/components/admin/StaffAppPermissionsEditor';
 
 const WARN_SEVERITY_LEVELS: StaffPersonnelWarningSeverity[] = [
   'reminder',
@@ -103,42 +105,7 @@ const CONTRACT_TYPES: { value: string; label: string }[] = [
   { value: 'other', label: 'Diğer' },
 ];
 
-const APP_PERMISSIONS = [
-  { key: 'stok_giris', label: 'Stok girişi yapabilir' },
-  { key: 'mesajlasma', label: 'Müşterilerle mesajlaşabilir' },
-  { key: 'misafir_mesaj_alabilir', label: 'Müşteriden direkt mesaj alabilir' },
-  { key: 'video_paylasim', label: 'Video/resim paylaşabilir' },
-  { key: 'ekip_sohbet', label: 'Ekip sohbetini görebilir' },
-  { key: 'dokuman_yukle', label: 'Doküman yükleyebilir / yönetebilir' },
-  { key: 'gorev_ata', label: 'Görev atayabilir' },
-  { key: 'personel_ekle', label: 'Personel ekleyebilir (sadece yönetici)' },
-  { key: 'raporlar', label: 'Raporları görebilir' },
-  { key: 'satis_komisyon', label: 'Satış / komisyon modülüne erişebilir' },
-  { key: 'tum_sozlesmeler', label: 'Tüm sözleşmeleri görüntüleyebilir' },
-  { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturabilir' },
-  { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitlerini (mutfak) görüntüleyebilir / düzenleyebilir' },
-  { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyitlerini onaylayabilir' },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur, onay/puan yok)' },
-  { key: 'transfer_tour_services', label: 'Transfer & Tur: hizmetleri yönet' },
-  { key: 'transfer_tour_requests', label: 'Transfer & Tur: talepleri yönet' },
-  { key: 'dining_venues', label: 'Yemek & Mekanlar: rehberi yönet (ekle, düzenle, sil)' },
-  { key: 'yarin_oda_temizlik_listesi', label: 'Yarın temizlenecek odalar listesini yönetebilir' },
-  { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi oluşturabilir / düzenleyebilir' },
-  { key: 'yemek_listesi_mutfak_onay', label: 'Günlük yemek listesi mutfak onayı verebilir' },
-  { key: 'otel_mutfak_menu', label: 'Otel mutfağı menüsünü yönetebilir (yemek/içecek, fiyat, fotoğraf)' },
-  { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)' },
-  { key: 'id_capture', label: 'Kimlik / pasaport çekim sistemi' },
-  { key: 'teknik_varlik_yonetimi', label: 'Akıllı Tesis Envanteri: bina, lokasyon, varlık ve QR yönetimi' },
-  { key: 'teknik_varliklar', label: 'Teknik QR: okutma, müdahale kaydı, durum güncelleme' },
-  { key: 'teknik_varliklar_okuma', label: 'Teknik QR: salt okunur (talimatları görüntüleme)' },
-  { key: 'emanet_buluntu', label: 'Emanet / buluntu: kayıt oluşturma ve yönetim' },
-  { key: 'tesis_gunlugu', label: 'Tesis günlüğü: kayıt oluşturma (foto/video)' },
-];
-
-const APP_PERMISSION_LABELS: Record<string, string> = APP_PERMISSIONS.reduce<Record<string, string>>((acc, item) => {
-  acc[item.key] = item.label;
-  return acc;
-}, {});
+const APP_PERMISSION_LABELS = staffAppPermissionLabels();
 
 const DAYS = [
   { value: 1, label: 'Pzt' },
@@ -149,38 +116,6 @@ const DAYS = [
   { value: 6, label: 'Cmt' },
   { value: 7, label: 'Paz' },
 ];
-
-const DEFAULT_PERMISSIONS: Record<string, boolean> = {
-  stok_giris: true,
-  mesajlasma: true,
-  misafir_mesaj_alabilir: true,
-  video_paylasim: true,
-  ekip_sohbet: true,
-  dokuman_yukle: false,
-  gorev_ata: false,
-  personel_ekle: false,
-  raporlar: false,
-  satis_komisyon: false,
-  tum_sozlesmeler: false,
-  kahvalti_teyit_olustur: false,
-  kahvalti_teyit_departman: false,
-  kahvalti_teyit_onayla: false,
-  kahvalti_rapor: false,
-  transfer_tour_services: false,
-  transfer_tour_requests: false,
-  dining_venues: false,
-  yarin_oda_temizlik_listesi: false,
-  yemek_listesi_olustur: false,
-  yemek_listesi_mutfak_onay: false,
-  otel_mutfak_menu: false,
-  kbs_mrz_scan: false,
-  id_capture: false,
-  teknik_varlik_yonetimi: false,
-  teknik_varliklar: false,
-  teknik_varliklar_okuma: false,
-  emanet_buluntu: false,
-  tesis_gunlugu: false,
-};
 
 type OrgRow = { id: string; name: string; slug: string; kind: string };
 
@@ -223,6 +158,7 @@ type StaffDetail = {
   kvkk_consent_at?: string | null;
   drives_vehicle?: boolean | null;
   profile_hidden_by_admin?: boolean | null;
+  tips_enabled?: boolean | null;
   hidden_menu_item_ids?: unknown;
 };
 
@@ -371,7 +307,7 @@ export default function EditStaffScreen() {
   const [sgk_no, setSgkNo] = useState('');
   const [shift_type, setShiftType] = useState('');
   const [work_days, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5]);
-  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>(DEFAULT_PERMISSIONS);
+  const [app_permissions, setAppPermissions] = useState<Record<string, boolean>>(() => mergeStaffAppPermissions(null));
   const [notes, setNotes] = useState('');
   const [is_active, setIsActive] = useState(true);
   const [office_location, setOfficeLocation] = useState('');
@@ -393,6 +329,7 @@ export default function EditStaffScreen() {
   const [kvkk_consent_at, setKvkkConsentAt] = useState('');
   const [drives_vehicle, setDrivesVehicle] = useState(false);
   const [profileHiddenByAdmin, setProfileHiddenByAdmin] = useState(false);
+  const [supportsTipsEnabledColumn, setSupportsTipsEnabledColumn] = useState(true);
   const [nonAdminRole, setNonAdminRole] = useState<string>('receptionist');
   /** Uzak DB’de migration 211 uygulanmadıysa tenure_note yok; güncellemede göndermeyelim. */
   const [supportsTenureNoteColumn, setSupportsTenureNoteColumn] = useState(true);
@@ -445,7 +382,7 @@ export default function EditStaffScreen() {
     if (!id) return;
     (async () => {
       const STAFF_BASE =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin';
+        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin, tips_enabled';
       const isSchemaColMissing = (errMsg: string, col: string) =>
         errMsg.includes(col) ||
         errMsg.includes('does not exist') ||
@@ -454,29 +391,51 @@ export default function EditStaffScreen() {
 
       let tenureOk = true;
       let menuOk = true;
+      let tipsOk = true;
       let selectCols = `${STAFF_BASE}, tenure_note, hidden_menu_item_ids`;
       let { data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single();
       let errMsg = String(error?.message ?? '');
 
+      if (error && isSchemaColMissing(errMsg, 'tips_enabled')) {
+        tipsOk = false;
+        selectCols = `${STAFF_BASE.replace(', tips_enabled', '')}, tenure_note, hidden_menu_item_ids`;
+        ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
+        errMsg = String(error?.message ?? '');
+      }
       if (error && isSchemaColMissing(errMsg, 'tenure_note')) {
         tenureOk = false;
-        selectCols = `${STAFF_BASE}, hidden_menu_item_ids`;
+        selectCols = tipsOk
+          ? `${STAFF_BASE}, hidden_menu_item_ids`
+          : `${STAFF_BASE.replace(', tips_enabled', '')}, hidden_menu_item_ids`;
         ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
         errMsg = String(error?.message ?? '');
       }
       if (error && isSchemaColMissing(errMsg, 'hidden_menu_item_ids')) {
         menuOk = false;
-        selectCols = tenureOk ? `${STAFF_BASE}, tenure_note` : STAFF_BASE;
+        selectCols = tenureOk
+          ? tipsOk
+            ? `${STAFF_BASE}, tenure_note`
+            : `${STAFF_BASE.replace(', tips_enabled', '')}, tenure_note`
+          : tipsOk
+            ? `${STAFF_BASE}, tenure_note`
+            : STAFF_BASE.replace(', tips_enabled', '');
         ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
         errMsg = String(error?.message ?? '');
       }
       if (error && tenureOk && isSchemaColMissing(errMsg, 'tenure_note')) {
         tenureOk = false;
-        selectCols = menuOk ? `${STAFF_BASE}, hidden_menu_item_ids` : STAFF_BASE;
+        selectCols = menuOk
+          ? tipsOk
+            ? `${STAFF_BASE}, hidden_menu_item_ids`
+            : `${STAFF_BASE.replace(', tips_enabled', '')}, hidden_menu_item_ids`
+          : tipsOk
+            ? STAFF_BASE
+            : STAFF_BASE.replace(', tips_enabled', '');
         ({ data, error } = await supabase.from('staff').select(selectCols).eq('id', id).single());
       }
       setSupportsTenureNoteColumn(tenureOk);
       setSupportsHiddenMenuColumn(menuOk);
+      setSupportsTipsEnabledColumn(tipsOk);
       if (error || !data) {
         Alert.alert('Hata', 'Çalışan bulunamadı.');
         router.back();
@@ -501,7 +460,11 @@ export default function EditStaffScreen() {
       setSgkNo(s.sgk_no ?? '');
       setShiftType(s.shift_type ?? '');
       setWorkDays(Array.isArray(s.work_days) && s.work_days.length ? s.work_days : [1, 2, 3, 4, 5]);
-      setAppPermissions(typeof s.app_permissions === 'object' && s.app_permissions ? { ...DEFAULT_PERMISSIONS, ...s.app_permissions } : DEFAULT_PERMISSIONS);
+      const mergedPerms = mergeStaffAppPermissions(
+        typeof s.app_permissions === 'object' && s.app_permissions ? s.app_permissions : null
+      );
+      mergedPerms.bahsis_alabilir = s.tips_enabled !== false;
+      setAppPermissions(mergedPerms);
       setNotes(s.notes ?? '');
       setIsActive(s.is_active ?? true);
       setOfficeLocation(s.office_location ?? '');
@@ -582,9 +545,6 @@ export default function EditStaffScreen() {
     );
   };
 
-  const togglePermission = (key: string) => {
-    setAppPermissions((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
 
   const toggleHiddenMenuItem = (itemId: string) => {
     setHiddenMenuItemIds((prev) =>
@@ -605,11 +565,6 @@ export default function EditStaffScreen() {
     }
     return grouped;
   }, []);
-
-  const guestMessagesBlocked = app_permissions.misafir_mesaj_alabilir === false;
-  const toggleGuestMessagesBlocked = (blocked: boolean) => {
-    setAppPermissions((prev) => ({ ...prev, misafir_mesaj_alabilir: !blocked }));
-  };
 
   const isAdmin = role === 'admin';
   const toggleFullAdmin = (next: boolean) => {
@@ -822,6 +777,9 @@ export default function EditStaffScreen() {
       if (supportsTenureNoteColumn) {
         staffExtraUpdate.tenure_note = tenure_note.trim() || null;
       }
+      if (supportsTipsEnabledColumn) {
+        staffExtraUpdate.tips_enabled = app_permissions.bahsis_alabilir !== false;
+      }
       const { error: updateErr } = await supabase.from('staff').update(staffExtraUpdate).eq('id', id);
       if (updateErr) {
         const umsg = String(updateErr.message ?? '');
@@ -831,6 +789,14 @@ export default function EditStaffScreen() {
         ) {
           setSupportsTenureNoteColumn(false);
           const { tenure_note: _drop, ...retry } = staffExtraUpdate as { tenure_note?: unknown } & Record<string, unknown>;
+          const { error: retryErr } = await supabase.from('staff').update(retry).eq('id', id);
+          if (retryErr) throw new Error(retryErr.message);
+        } else if (
+          supportsTipsEnabledColumn &&
+          (umsg.includes('tips_enabled') || /schema cache/i.test(umsg) || /PGRST204/i.test(umsg))
+        ) {
+          setSupportsTipsEnabledColumn(false);
+          const { tips_enabled: _drop, ...retry } = staffExtraUpdate as { tips_enabled?: unknown } & Record<string, unknown>;
           const { error: retryErr } = await supabase.from('staff').update(retry).eq('id', id);
           if (retryErr) throw new Error(retryErr.message);
         } else {
@@ -1356,16 +1322,16 @@ export default function EditStaffScreen() {
           icon="phone-portrait-outline"
         >
           <View style={styles.rowSwitch}>
-            <Text style={styles.switchLabel}>Misafirden mesaj alamaz</Text>
+            <Text style={styles.switchLabel}>Misafirden mesaj alamaz (devre dışı)</Text>
             <Switch
-              value={guestMessagesBlocked}
-              onValueChange={toggleGuestMessagesBlocked}
+              value={false}
+              disabled
               trackColor={{ false: adminTheme.colors.border, true: adminTheme.colors.primary }}
               thumbColor="#fff"
             />
           </View>
           <Text style={styles.hintInline}>
-            Açıksa misafir ekranında güvenlik uyarısı gösterilir.
+            Misafir hesapları oteldeki tüm aktif personele mesaj yazabilir. Eski engelleme kaldırıldı.
           </Text>
 
           <View style={[styles.rowSwitch, { marginTop: 10 }]}>
@@ -1381,32 +1347,26 @@ export default function EditStaffScreen() {
             Açıksa yalnızca fotoğraf ve maskeli ad görünür.
           </Text>
 
+          {!supportsTipsEnabledColumn ? (
+            <Text style={styles.hintInline}>
+              Veritabanı migration 420 uygulanmadı; bahşiş ayarı (misafir bahşişi alabilir) kaydedilemez.
+            </Text>
+          ) : null}
+
           <TouchableOpacity
             style={styles.expandToggle}
             onPress={() => setPermissionsExpanded((v) => !v)}
             activeOpacity={0.75}
           >
             <Text style={styles.expandToggleText}>
-              {permissionsExpanded
-                ? 'Modül izinlerini gizle'
-                : `Modül izinlerini göster (${APP_PERMISSIONS.filter((p) => p.key !== 'misafir_mesaj_alabilir').length} kalem)`}
+              {permissionsExpanded ? 'Modül izinlerini gizle' : 'Modül izinlerini göster'}
             </Text>
             <Ionicons name={permissionsExpanded ? 'chevron-up' : 'chevron-down'} size={20} color={adminTheme.colors.primary} />
           </TouchableOpacity>
 
-          {permissionsExpanded
-            ? APP_PERMISSIONS.filter((p) => p.key !== 'misafir_mesaj_alabilir').map((p) => (
-                <TouchableOpacity key={p.key} style={styles.checkRow} onPress={() => togglePermission(p.key)} activeOpacity={0.7}>
-                  <Ionicons
-                    name={app_permissions[p.key] ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={22}
-                    color={app_permissions[p.key] ? adminTheme.colors.primary : adminTheme.colors.textMuted}
-                    style={{ marginRight: 10 }}
-                  />
-                  <Text style={styles.checkLabel}>{p.label}</Text>
-                </TouchableOpacity>
-              ))
-            : null}
+          {permissionsExpanded ? (
+            <StaffAppPermissionsEditor permissions={app_permissions} onChange={setAppPermissions} />
+          ) : null}
 
           <View style={[styles.rowSwitch, { marginTop: 12 }]}>
             <Text style={styles.switchLabel}>Hesap aktif</Text>

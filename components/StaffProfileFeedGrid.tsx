@@ -13,7 +13,12 @@ import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
-import { loadStaffProfileFeedPreviews, type StaffProfileFeedPreview } from '@/lib/staffProfileFeedThumbnails';
+import {
+  loadStaffProfileFeedPreviews,
+  type StaffProfileFeedPreview,
+  type StaffProfileFeedFilter,
+} from '@/lib/staffProfileFeedThumbnails';
+import { formatStatCompact } from '@/lib/modernProfileTenure';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
@@ -44,10 +49,13 @@ export function StaffProfileFeedGrid({
   allowOwnPostDelete = false,
   viewerStaffId = null,
   edgeToEdge = false,
+  feedFilter = 'all',
+  showEngagementOverlay = true,
 }: Props) {
   const { width: winW } = useWindowDimensions();
   const router = useRouter();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language || 'tr';
   const [items, setItems] = useState<StaffProfileFeedPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -65,7 +73,8 @@ export function StaffProfileFeedGrid({
     if (!staffId) return;
     setLoading(true);
     setErr(null);
-    const { items: row, error } = await loadStaffProfileFeedPreviews(staffId, 30);
+    const lim = maxPreview != null ? Math.max(maxPreview, 30) : 30;
+    const { items: row, error } = await loadStaffProfileFeedPreviews(staffId, lim, feedFilter);
     if (error) {
       setErr(error.message);
       setItems([]);
@@ -76,7 +85,7 @@ export function StaffProfileFeedGrid({
       onPreviewCount?.(slice.length);
     }
     setLoading(false);
-  }, [staffId, maxPreview, onPreviewCount]);
+  }, [staffId, maxPreview, onPreviewCount, feedFilter]);
 
   useEffect(() => {
     load();
@@ -133,7 +142,9 @@ export function StaffProfileFeedGrid({
     if (!showEmptyHint) return null;
     return (
       <View style={styles.emptyBlock}>
-        <Text style={styles.emptyText}>{t('profileFeedPostsEmpty')}</Text>
+        <Text style={styles.emptyText}>
+          {t(feedFilter === 'media' ? 'modernProfileMediaEmpty' : 'profileFeedPostsEmpty')}
+        </Text>
       </View>
     );
   }
@@ -174,6 +185,19 @@ export function StaffProfileFeedGrid({
           {it.kind === 'video' ? (
             <View style={styles.playBadge} pointerEvents="none">
               <Ionicons name="play" size={18} color="#fff" />
+            </View>
+          ) : null}
+          {showEngagementOverlay && (it.likesCount || it.commentsCount || it.viewsCount) ? (
+            <View style={styles.engagementOverlay} pointerEvents="none">
+              {it.likesCount ? (
+                <Text style={styles.engagementText}>❤️ {formatStatCompact(it.likesCount, lang)}</Text>
+              ) : null}
+              {it.commentsCount ? (
+                <Text style={styles.engagementText}>💬 {formatStatCompact(it.commentsCount, lang)}</Text>
+              ) : null}
+              {it.viewsCount ? (
+                <Text style={styles.engagementText}>👁 {formatStatCompact(it.viewsCount, lang)}</Text>
+              ) : null}
             </View>
           ) : null}
         </TouchableOpacity>
@@ -231,5 +255,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  engagementOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 5,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    gap: 1,
+  },
+  engagementText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#fff',
+    lineHeight: 12,
   },
 });

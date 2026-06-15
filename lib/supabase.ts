@@ -2,6 +2,7 @@ import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { log } from '@/lib/logger';
+import { supabaseResilientFetch } from '@/lib/supabaseResilientFetch';
 import Constants from 'expo-constants';
 
 type PublicExtra = {
@@ -42,13 +43,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export { supabaseUrl, supabaseAnonKey };
+const supabaseAuthOptions = {
+  storage: AsyncStorage,
+  autoRefreshToken: true,
+  persistSession: true,
+  detectSessionInUrl: false,
+} as const;
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
+  global: {
+    fetch: supabaseResilientFetch,
   },
+  auth: supabaseAuthOptions,
+});
+
+/** Misafir mesaj RPC — ham fetch; resilient sarmalayıcı geçici 503 üretip "sunucuya ulaşılamıyor" göstermesin. */
+export const supabaseMessaging = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: supabaseAuthOptions,
 });
 
 export type GuestStatus = 'pending' | 'checked_in' | 'checked_out' | 'cancelled';

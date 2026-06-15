@@ -18,10 +18,12 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { DEBT_CATEGORY_LABELS, notifyDebtEntryCreated, type DebtCategory } from '@/lib/finance';
+import { useTranslation } from 'react-i18next';
 
 type StaffOpt = { id: string; full_name: string | null };
 
 export default function StaffDebtNew() {
+  const { t } = useTranslation();
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
   const [saving, setSaving] = useState(false);
@@ -52,36 +54,36 @@ export default function StaffDebtNew() {
   }, [orgId]);
 
   const borrowerLabel = () => {
-    if (borrowerIsOrg) return 'Şirket / Otel';
+    if (borrowerIsOrg) return t('staffDebtsCompany');
     const s = staffList.find((x) => x.id === borrowerStaffId);
-    return s?.full_name?.trim() || 'Personel seçin';
+    return s?.full_name?.trim() || t('staffDebtsSelectStaff');
   };
   const lenderLabel = () => {
-    if (lenderIsOrg) return 'Şirket / Otel';
+    if (lenderIsOrg) return t('staffDebtsCompany');
     const s = staffList.find((x) => x.id === lenderStaffId);
-    return s?.full_name?.trim() || 'Personel seçin';
+    return s?.full_name?.trim() || t('staffDebtsSelectStaff');
   };
 
   const save = async () => {
     if (!me?.id || !orgId) {
-      Alert.alert('Oturum', 'İşletme bilgisi gerekli.');
+      Alert.alert(t('error'), t('staffDebtsOrgRequired'));
       return;
     }
     if (borrowerIsOrg && lenderIsOrg) {
-      Alert.alert('Form', 'Taraflardan biri mutlaka personel olmalı.');
+      Alert.alert(t('error'), t('staffDebtsOneStaffRequired'));
       return;
     }
     if (!borrowerIsOrg && !borrowerStaffId) {
-      Alert.alert('Form', 'Borçlu seçin.');
+      Alert.alert(t('error'), t('staffDebtsSelectBorrower'));
       return;
     }
     if (!lenderIsOrg && !lenderStaffId) {
-      Alert.alert('Form', 'Alacaklı seçin.');
+      Alert.alert(t('error'), t('staffDebtsSelectLender'));
       return;
     }
     const a = parseFloat(amount.replace(',', '.'));
     if (Number.isNaN(a) || a <= 0) {
-      Alert.alert('Form', 'Geçerli tutar girin.');
+      Alert.alert(t('error'), t('staffDebtsInvalidFormAmount'));
       return;
     }
 
@@ -95,7 +97,7 @@ export default function StaffDebtNew() {
         borrower_is_organization: borrowerIsOrg,
         lender_staff_id: lenderIsOrg ? null : lenderStaffId,
         lender_is_organization: lenderIsOrg,
-        description: description.trim() || 'Borç kaydı',
+        description: description.trim() || t('staffDebtsDefaultDesc'),
         amount_principal: a,
         currency: 'TRY',
         due_date: dueDate.trim() || null,
@@ -108,7 +110,7 @@ export default function StaffDebtNew() {
 
     setSaving(false);
     if (error) {
-      Alert.alert('Kayıt', error.message);
+      Alert.alert(t('staffDebtsRecordLabel'), error.message);
       return;
     }
 
@@ -155,7 +157,7 @@ export default function StaffDebtNew() {
         <View style={cardStyle}>
           <Text style={styles.label}>Borçlu (ödeyecek)</Text>
           <TouchableOpacity style={styles.pick} onPress={() => setBorrowerIsOrg((v) => !v)}>
-            <Text style={styles.pickHint}>{borrowerIsOrg ? 'Şirket borçlu' : 'Personel borçlu'}</Text>
+            <Text style={styles.pickHint}>{borrowerIsOrg ? t('staffDebtsCompanyBorrower') : t('staffDebtsBorrowerStaffHint')}</Text>
             <Ionicons name={borrowerIsOrg ? 'checkbox' : 'square-outline'} size={22} color={theme.colors.primary} />
           </TouchableOpacity>
           {!borrowerIsOrg ? (
@@ -167,7 +169,7 @@ export default function StaffDebtNew() {
 
           <Text style={[styles.label, { marginTop: 14 }]}>Alacaklı (tahsil edecek)</Text>
           <TouchableOpacity style={styles.pick} onPress={() => setLenderIsOrg((v) => !v)}>
-            <Text style={styles.pickHint}>{lenderIsOrg ? 'Şirket alacaklı' : 'Personel alacaklı'}</Text>
+            <Text style={styles.pickHint}>{lenderIsOrg ? t('staffDebtsCompanyLender') : t('staffDebtsLenderStaffHint')}</Text>
             <Ionicons name={lenderIsOrg ? 'checkbox' : 'square-outline'} size={22} color={theme.colors.primary} />
           </TouchableOpacity>
           {!lenderIsOrg ? (
@@ -182,7 +184,7 @@ export default function StaffDebtNew() {
           <Text style={styles.label}>Ana para (₺)</Text>
           <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0,00" />
           <Text style={styles.label}>Açıklama</Text>
-          <TextInput style={[styles.input, styles.ta]} value={description} onChangeText={setDescription} multiline placeholder="Ne için…" />
+          <TextInput style={[styles.input, styles.ta]} value={description} onChangeText={setDescription} multiline placeholder={t('staffDebtsDescPh')} />
           <Text style={styles.label}>Vade (isteğe bağlı)</Text>
           <TextInput style={styles.input} value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />
         </View>
@@ -195,7 +197,9 @@ export default function StaffDebtNew() {
       <Modal visible={pickModal != null} transparent animationType="slide">
         <Pressable style={styles.modalBackdrop} onPress={() => setPickModal(null)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>{pickModal === 'borrower' ? 'Borçlu personel' : 'Alacaklı personel'}</Text>
+            <Text style={styles.modalTitle}>
+              {pickModal === 'borrower' ? t('staffDebtsPickBorrowerStaff') : t('staffDebtsPickLenderStaff')}
+            </Text>
             <FlatList
               data={staffList.filter((s) => s.id !== me?.id)}
               keyExtractor={(item) => item.id}

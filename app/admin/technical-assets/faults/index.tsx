@@ -13,7 +13,8 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessTechnicalAssetsAdminRoutes } from '@/lib/staffPermissions';
-import type { TechFaultReportRow } from '@/lib/technicalAssets';
+import { fetchTechAssetDetail, type TechFaultReportRow } from '@/lib/technicalAssets';
+import { notifyTechFaultStatusChanged } from '@/lib/technicalAssetNotifications';
 
 export default function AdminTechnicalFaultsScreen() {
   const router = useRouter();
@@ -56,7 +57,24 @@ export default function AdminTechnicalFaultsScreen() {
             })
             .eq('id', row.id);
           if (error) Alert.alert('Hata', error.message);
-          else await load();
+          else {
+            if (staff?.id) {
+              let assetDetail = null;
+              if (row.asset_id) {
+                const { data: a } = await fetchTechAssetDetail(row.asset_id);
+                assetDetail = a;
+              }
+              void notifyTechFaultStatusChanged({
+                organizationId: row.organization_id,
+                faultId: row.id,
+                title: row.title,
+                status: 'resolved',
+                asset: assetDetail,
+                updatedByStaffId: staff.id,
+              });
+            }
+            await load();
+          }
         },
       },
     ]);

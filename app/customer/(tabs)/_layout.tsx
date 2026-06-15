@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, useFocusEffect, type Href } from 'expo-router';
@@ -7,6 +7,7 @@ import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
+import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
@@ -19,13 +20,16 @@ import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { savePushTokenForGuest } from '@/lib/notificationsPush';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
-import { appTabBar, appTabBarCustomer, vibrantIconColor } from '@/constants/tabBarTheme';
+import { appTabBar, appTabBarCustomer, getAppTabBarColors, vibrantIconColor } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { CachedImage } from '@/components/CachedImage';
 import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { complaintsText } from '@/lib/complaintsI18n';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { useAppFeatureVisible, useCustomerTabHref } from '@/hooks/useAppFeatureVisible';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import { GlassSurface } from '@/components/premium/GlassSurface';
+import { FeedCreateAnchorMenu } from '@/components/header/FeedCreateAnchorMenu';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -35,8 +39,9 @@ const IG_HEADER_FG = '#262626';
 const IG_HEADER_BORDER = '#eee';
 
 function CustomerProfileTabIcon({ color: _c, focused }: { color: string; focused: boolean }) {
+  const { isNight } = usePremiumTheme();
   const user = useAuthStore((s) => s.user);
-  const c = vibrantIconColor('customer', 'profile', focused);
+  const c = vibrantIconColor('customer', 'profile', focused, isNight);
   const avatarUri = (user?.user_metadata?.avatar_url as string) || null;
   if (avatarUri) {
     return (
@@ -65,11 +70,12 @@ const tabAvatarStyles = StyleSheet.create({
 function AdminPanelHeaderButton() {
   const router = useRouter();
   const { t } = useTranslation();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
   const staff = useAuthStore((s) => s.staff);
   if (staff?.role !== 'admin') return null;
   return (
     <TouchableOpacity onPress={() => router.push('/admin')} style={{ marginRight: 12 }} activeOpacity={0.8}>
-      <Text style={{ color: IG_HEADER_FG, fontWeight: '600', fontSize: 14 }}>{t('panel')}</Text>
+      <Text style={{ color: isNight ? premiumColors.text : IG_HEADER_FG, fontWeight: '600', fontSize: 14 }}>{t('panel')}</Text>
     </TouchableOpacity>
   );
 }
@@ -105,7 +111,9 @@ const profileHeaderStyles = StyleSheet.create({
 
 function NotificationBellHeaderButton() {
   const router = useRouter();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
   const unreadCount = useGuestNotificationStore((s) => s.unreadCount);
+  const iconColor = isNight ? premiumColors.text : IG_HEADER_FG;
   return (
     <TouchableOpacity
       onPress={() => router.push('/customer/notifications')}
@@ -114,7 +122,7 @@ function NotificationBellHeaderButton() {
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
       <View>
-        <Ionicons name="notifications-outline" size={24} color={IG_HEADER_FG} />
+        <Ionicons name="notifications-outline" size={24} color={iconColor} />
         {unreadCount > 0 ? (
           <View
             style={{
@@ -154,18 +162,19 @@ function NewChatHeaderButton() {
   );
 }
 
-function FeedCreateHeaderButton() {
-  const router = useRouter();
+function FeedCreateHeaderButton({ onPress }: { onPress: () => void }) {
   const { t } = useTranslation();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
+  const iconColor = isNight ? premiumColors.text : IG_HEADER_FG;
   return (
     <TouchableOpacity
-      onPress={() => router.push('/customer/feed/new')}
+      onPress={onPress}
       style={styles.feedCreateBtn}
       activeOpacity={0.7}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       accessibilityLabel={t('share')}
     >
-      <Ionicons name="add-outline" size={28} color={IG_HEADER_FG} />
+      <Ionicons name="add-outline" size={28} color={iconColor} />
     </TouchableOpacity>
   );
 }
@@ -180,7 +189,15 @@ const styles = StyleSheet.create({
 });
 
 export default function CustomerTabsLayout() {
+  const router = useRouter();
   const { t } = useTranslation();
+  const [feedCreateMenuOpen, setFeedCreateMenuOpen] = useState(false);
+  const { isNight, colors: premiumColors } = usePremiumTheme();
+  const tabBarColors = getAppTabBarColors(isNight);
+  const headerTitleColor = isNight ? premiumColors.text : '#111827';
+  const headerFg = isNight ? premiumColors.text : IG_HEADER_FG;
+  const headerBg = isNight ? 'transparent' : IG_HEADER_BG;
+  const headerBorder = isNight ? tabBarColors.border : IG_HEADER_BORDER;
   const insets = useSafeAreaInsets();
   const tabBarHeight = getFloatingTabBarTotalHeight(insets);
   const tabBarInnerHeight = getFloatingTabBarInnerHeight();
@@ -233,20 +250,17 @@ export default function CustomerTabsLayout() {
         const total = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
         setUnreadCount(total);
       };
-      refresh();
-      const interval = setInterval(refresh, 90000);
+      void refresh();
       return () => {
         cancelled = true;
-        clearInterval(interval);
       };
     }, [appToken, setUnreadCount])
   );
 
   useFocusEffect(
     useCallback(() => {
-      refreshNotifications();
-      const interval = setInterval(refreshNotifications, 180000);
-      return () => clearInterval(interval);
+      void refreshNotifications();
+      return () => {};
     }, [refreshNotifications])
   );
 
@@ -263,30 +277,57 @@ export default function CustomerTabsLayout() {
     });
   }, [appToken, refreshNotifications, setUnreadCount]);
 
-  // Mesaj rozeti: sohbet listesine girmeden tab menüde (realtime)
+  // Mesaj rozeti: realtime (poll kaldırıldı — subscribeMessagingUnreadLive yeterli)
   useEffect(() => {
     if (!appToken) return;
     const token = appToken;
-    const unsub = subscribeMessagingUnreadLive(token, () => {
-      scheduleGuestMessagingUnreadRefresh(token);
-    });
-    return unsub;
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+    void (async () => {
+      const row = await getOrCreateGuestForCurrentSession();
+      if (cancelled || !row?.guest_id) return;
+      unsub = subscribeMessagingUnreadLive({ kind: 'guest', guestId: row.guest_id }, () => {
+        scheduleGuestMessagingUnreadRefresh(token);
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [appToken]);
 
+  const feedCreateItems = useMemo(
+    () => [
+      {
+        key: 'post',
+        label: t('post'),
+        icon: 'images' as const,
+        iconColor: '#8b5cf6',
+        onPress: () => router.push('/customer/feed/new'),
+      },
+    ],
+    [router, t]
+  );
+
   return (
+    <>
     <Tabs
       tabBar={(props) => (
-        <FloatingIslandTabBar {...props} surfaceColor={appTabBar.background} borderColor={appTabBar.border} />
+        <FloatingIslandTabBar
+          {...props}
+          surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.background}
+          borderColor={tabBarColors.border}
+        />
       )}
       screenOptions={({ route }) => {
         const feedTab = route.name === 'index';
         return {
-        /** iOS: erken mount. Android: lazy — tüm sekmeleri aynı anda yükleme. */
         lazy: Platform.OS === 'android',
         detachInactiveScreens: false,
+        sceneStyle: { backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg },
         tabBarHideOnKeyboard: true,
-        tabBarActiveTintColor: appTabBar.fallbackActive,
-        tabBarInactiveTintColor: appTabBar.inactive,
+        tabBarActiveTintColor: tabBarColors.fallbackActive,
+        tabBarInactiveTintColor: tabBarColors.inactive,
         tabBarStyle: {
           backgroundColor: 'transparent',
           borderTopWidth: 0,
@@ -312,17 +353,18 @@ export default function CustomerTabsLayout() {
         tabBarActiveBackgroundColor: 'transparent',
         tabBarInactiveBackgroundColor: 'transparent',
         headerStyle: {
-          backgroundColor: IG_HEADER_BG,
+          backgroundColor: headerBg,
           shadowOpacity: 0,
           elevation: 0,
-          borderBottomWidth: 1,
-          borderBottomColor: IG_HEADER_BORDER,
+          borderBottomWidth: isNight ? StyleSheet.hairlineWidth : 1,
+          borderBottomColor: headerBorder,
         },
+        headerBackground: isNight ? () => <GlassSurface style={{ flex: 1, borderRadius: 0 }} strong intensity={52} /> : undefined,
         headerShadowVisible: false,
         headerTitleAlign: 'center' as const,
-        headerTintColor: IG_HEADER_FG,
-        headerTitleStyle: { fontSize: 19, fontWeight: '800', color: '#111827', letterSpacing: 0.3 },
-        ...(Platform.OS === 'android' ? { statusBarStyle: 'dark' as const } : null),
+        headerTintColor: headerFg,
+        headerTitleStyle: { fontSize: 19, fontWeight: '800', color: headerTitleColor, letterSpacing: 0.3 },
+        ...(Platform.OS === 'android' ? { statusBarStyle: (isNight ? 'light' : 'dark') as const } : null),
         headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 88 } : { paddingLeft: 0, minWidth: 0 },
         headerRightContainerStyle: feedTab ? { paddingRight: 6, minWidth: 88 } : { paddingRight: 0, minWidth: 0 },
         headerRight: feedTab
@@ -333,7 +375,10 @@ export default function CustomerTabsLayout() {
               </View>
             )
           : () => null,
-        headerLeft: feedTab && showFeedCreate ? () => <FeedCreateHeaderButton /> : () => null,
+        headerLeft:
+          feedTab && showFeedCreate
+            ? () => <FeedCreateHeaderButton onPress={() => setFeedCreateMenuOpen(true)} />
+            : () => null,
       };
       }}
     >
@@ -350,7 +395,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'home' : 'home-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'index', focused)}
+              color={vibrantIconColor('customer', 'index', focused, isNight)}
             />
           ),
           tabBarButton: (props) => (
@@ -377,7 +422,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'map' : 'map-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'map', focused)}
+              color={vibrantIconColor('customer', 'map', focused, isNight)}
             />
           ),
           tabBarStyle: { display: 'none', height: 0 },
@@ -407,7 +452,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'car' : 'car-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'transfer-tour', focused)}
+              color={vibrantIconColor('customer', 'transfer-tour', focused, isNight)}
             />
           ),
         }}
@@ -445,7 +490,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'restaurant' : 'restaurant-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'dining-venues', focused)}
+              color={vibrantIconColor('customer', 'dining-venues', focused, isNight)}
             />
           ),
         }}
@@ -463,7 +508,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'flag' : 'flag-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'complaints', focused)}
+              color={vibrantIconColor('customer', 'complaints', focused, isNight)}
             />
           ),
         }}
@@ -486,7 +531,7 @@ export default function CustomerTabsLayout() {
             <Ionicons
               name={focused ? 'people' : 'people-outline'}
               size={TAB_ICON_SIZE}
-              color={vibrantIconColor('customer', 'personel', focused)}
+              color={vibrantIconColor('customer', 'personel', focused, isNight)}
             />
           ),
           href: staff?.role === 'admin' ? tabHrefPersonel : null,
@@ -540,5 +585,11 @@ export default function CustomerTabsLayout() {
         }}
       />
     </Tabs>
+    <FeedCreateAnchorMenu
+      visible={feedCreateMenuOpen}
+      onClose={() => setFeedCreateMenuOpen(false)}
+      items={feedCreateItems}
+    />
+    </>
   );
 }

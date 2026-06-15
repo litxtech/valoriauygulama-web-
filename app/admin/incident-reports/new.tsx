@@ -4,7 +4,14 @@ import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { createIncidentReport, listIncidentReportTypes, type IncidentReportTypeRow } from '@/lib/incidentReports';
+import {
+  createIncidentReport,
+  listIncidentReportTypes,
+  notifyIncidentReportRecipients,
+  syncIncidentReportRecipients,
+  type IncidentReportTypeRow,
+} from '@/lib/incidentReports';
+import { IncidentStaffPicker } from '@/components/incident/IncidentStaffPicker';
 
 function makeReportNo() {
   const d = new Date();
@@ -19,7 +26,8 @@ function makeReportNo() {
 export default function AdminIncidentReportNewScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const basePath = pathname.startsWith('/staff') ? '/staff/incident-reports' : '/admin/incident-reports';
+  const isStaffRoute = pathname.startsWith('/staff');
+  const basePath = isStaffRoute ? '/staff/incident-reports' : '/admin/incident-reports';
   const { staff } = useAuthStore();
   const [types, setTypes] = useState<IncidentReportTypeRow[]>([]);
   const [saving, setSaving] = useState(false);
@@ -28,8 +36,11 @@ export default function AdminIncidentReportNewScreen() {
   const [occurredAt, setOccurredAt] = useState(new Date().toISOString().slice(0, 16));
   const [locationLabel, setLocationLabel] = useState('');
   const [roomNumber, setRoomNumber] = useState('');
+  const [relatedGuestName, setRelatedGuestName] = useState('');
   const [description, setDescription] = useState('');
   const [actionTaken, setActionTaken] = useState('');
+  const [recipientStaffIds, setRecipientStaffIds] = useState<string[]>([]);
+  const [notifyOnCreate, setNotifyOnCreate] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -69,18 +80,63 @@ export default function AdminIncidentReportNewScreen() {
       occurred_at: Number.isNaN(occurred.getTime()) ? new Date().toISOString() : occurred.toISOString(),
       location_label: locationLabel.trim(),
       room_number: roomNumber.trim() || null,
+      related_guest_name: relatedGuestName.trim() || null,
       description: description.trim(),
       action_taken: actionTaken.trim() || null,
       created_by_staff_id: staff.id,
       hotel_name: staff.organization?.name ?? 'Valoria Hotel',
     });
-    setSaving(false);
     if (error || !data?.id) {
+      setSaving(false);
       Alert.alert('Kayıt Hatası', error?.message ?? 'Tutanak oluşturulamadı.');
       return;
     }
-    Alert.alert('Başarılı', 'Tutanak taslak olarak oluşturuldu.');
-    router.replace(basePath as any);
+
+    if (recipientStaffIds.length > 0) {
+      const syncRes = await syncIncidentReportRecipients({
+        organizationId: staff.organization_id,
+        reportId: data.id,
+        staffIds: recipientStaffIds,
+        createdByStaffId: staff.id,
+      });
+      if (syncRes.error) {
+        setSaving(false);
+        Alert.alert('Uyarı', syncRes.error.message ?? 'Personel ataması kaydedilemedi.');
+        router.replace({ pathname: `${basePath}/[id]` as any, params: { id: data.id } });
+        return;
+      }
+    }
+
+    if (notifyOnCreate && recipientStaffIds.length > 0) {
+      const notifyRes = await notifyIncidentReportRecipients({
+        report: {
+          id: data.id,
+          report_no: reportNo.trim(),
+          location_label: locationLabel.trim(),
+          room_number: roomNumber.trim() || null,
+          status: 'draft',
+        },
+        staffIds: recipientStaffIds,
+        createdByStaffId: staff.id,
+        isStaffRoute,
+        message: 'Yeni tutanak oluşturuldu. Detayları inceleyin.',
+      });
+      setSaving(false);
+      if (notifyRes.error) {
+        Alert.alert(
+          'Tutanak oluşturuldu',
+          `Personel bildirimi gönderilemedi: ${notifyRes.error}`,
+          [{ text: 'Detaya git', onPress: () => router.replace({ pathname: `${basePath}/[id]` as any, params: { id: data.id } }) }]
+        );
+        return;
+      }
+      Alert.alert('Başarılı', `Tutanak oluşturuldu. ${notifyRes.count} personele bildirim gönderildi.`);
+    } else {
+      setSaving(false);
+      Alert.alert('Başarılı', 'Tutanak taslak olarak oluşturuldu.');
+    }
+
+    router.replace({ pathname: `${basePath}/[id]` as any, params: { id: data.id } });
   };
 
   return (
@@ -115,6 +171,30 @@ export default function AdminIncidentReportNewScreen() {
 
         <Text style={styles.label}>Oda No (opsiyonel)</Text>
         <TextInput style={styles.input} value={roomNumber} onChangeText={setRoomNumber} placeholder="203" />
+
+        <Text style={styles.label}>İlgili Misafir (opsiyonel)</Text>
+        <TextInput style={styles.input} value={relatedGuestName} onChangeText={setRelatedGuestName} placeholder="Misafir adı" />
+
+        <Text style={styles.label}>İlgili Personel</Text>
+        <IncidentStaffPicker
+          organizationId={staff?.organization_id ?? null}
+          selectedStaffIds={recipientStaffIds}
+          onChange={setRecipientStaffIds}
+        />
+
+        <TouchableOpacity
+          style={styles.notifyToggle}
+          onPress={() => setNotifyOnCreate((v) => !v)}
+          activeOpacity={0.85}
+          disabled={recipientStaffIds.length === 0}
+        >
+          <Ionicons
+            name={notifyOnCreate && recipientStaffIds.length > 0 ? 'checkbox' : 'square-outline'}
+            size={20}
+            color={recipientStaffIds.length === 0 ? adminTheme.colors.textMuted : adminTheme.colors.primary}
+          />
+          <Text style={styles.notifyToggleText}>Oluşturulunca seçili personellere bildirim gönder</Text>
+        </TouchableOpacity>
 
         <Text style={styles.label}>Olay Açıklaması</Text>
         <TextInput
@@ -182,6 +262,8 @@ const styles = StyleSheet.create({
   typeChipActive: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
   typeChipText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.text },
   typeChipTextActive: { color: '#fff' },
+  notifyToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+  notifyToggleText: { flex: 1, fontSize: 12, fontWeight: '600', color: adminTheme.colors.text },
   saveBtn: {
     marginTop: 14,
     backgroundColor: adminTheme.colors.primary,

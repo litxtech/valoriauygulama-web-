@@ -2,8 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 
-const VISITS_LIST_CACHE_KEY = 'staff_profile_visits_list_v1';
+const VISITS_LIST_CACHE_KEY = 'staff_profile_visits_list_v2';
+const VISIT_RECORD_DEDUP_MS = 30 * 60 * 1000;
 let visitsListMemory: StaffProfileVisitRow[] | null = null;
+/** Aynı profil için kısa sürede tekrar RPC (navigasyon yarışı); sunucu hesap başına tek sayım yapar. */
+const recentVisitRecordedAt = new Map<string, number>();
 
 export type StaffProfileVisitRow = {
   id: string;
@@ -13,33 +16,57 @@ export type StaffProfileVisitRow = {
   visitor_photo: string | null;
   /** Personel ziyaretçi için "Hakkında" (bio); misafir için genelde yok. */
   visitor_about?: string | null;
+  visitor_staff_id?: string | null;
+  visitor_guest_id?: string | null;
 };
 
 export async function recordStaffProfileVisit(viewedStaffId: string): Promise<void> {
   if (!viewedStaffId) return;
+  const now = Date.now();
+  const last = recentVisitRecordedAt.get(viewedStaffId);
+  if (last != null && now - last < VISIT_RECORD_DEDUP_MS) return;
+  recentVisitRecordedAt.set(viewedStaffId, now);
+
   const { error } = await supabase.rpc('record_staff_profile_visit', {
     p_viewed_staff_id: viewedStaffId,
   });
   if (error) {
+    recentVisitRecordedAt.delete(viewedStaffId);
     console.warn('[recordStaffProfileVisit]', error.message);
   }
 }
 
 type StaffProfileRouteMode = 'staff' | 'customer';
 
-/** Gönderi kartı / akıştan profile gidilirken ziyareti hemen kaydet (sayfa yüklenmesini bekleme). */
+/** Profil ziyaretçi satırından ilgili profile git. */
+export function openStaffProfileVisitor(
+  router: Pick<Router, 'push'>,
+  item: Pick<StaffProfileVisitRow, 'visitor_kind' | 'visitor_staff_id' | 'visitor_guest_id'>,
+  routeMode: StaffProfileRouteMode = 'staff'
+): void {
+  if (item.visitor_kind === 'staff' && item.visitor_staff_id) {
+    openStaffProfileWithVisit(router, item.visitor_staff_id, routeMode);
+    return;
+  }
+  if (item.visitor_guest_id) {
+    const href =
+      routeMode === 'staff'
+        ? (`/staff/guests/${item.visitor_guest_id}` as const)
+        : (`/customer/guest/${item.visitor_guest_id}` as const);
+    router.push(href as never);
+  }
+}
+
+/** Profil sayfasına git; ziyaret kaydı yalnızca profil ekranında tek sefer yapılır. */
 export function openStaffProfileWithVisit(
   router: Pick<Router, 'push'>,
   viewedStaffId: string,
   mode: StaffProfileRouteMode,
-  viewerStaffId?: string | null
+  _viewerStaffId?: string | null
 ): void {
   if (!viewedStaffId) return;
   const href =
     mode === 'staff' ? (`/staff/profile/${viewedStaffId}` as const) : (`/customer/staff/${viewedStaffId}` as const);
-  if (!viewerStaffId || viewerStaffId !== viewedStaffId) {
-    void recordStaffProfileVisit(viewedStaffId);
-  }
   router.push(href as never);
 }
 

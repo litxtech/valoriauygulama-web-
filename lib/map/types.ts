@@ -9,6 +9,14 @@ export type MapUserMarker = {
   displayName?: string | null;
   avatarUrl?: string | null;
   isMe?: boolean;
+  /** Personel / misafir ayrımı — admin canlı takip haritası */
+  userType?: 'guest' | 'staff';
+  /** Profil sayfası için gerçek kullanıcı id */
+  userId?: string;
+  /** Gerçek GPS ile canlı takip (otel yedeği değil) */
+  isLiveGps?: boolean;
+  /** Son konum güncellemesi — canlı hareket için */
+  updatedAt?: string;
 };
 
 export type MapPostMarker = {

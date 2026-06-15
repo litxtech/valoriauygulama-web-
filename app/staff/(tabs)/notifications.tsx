@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,39 @@ import {
   staffMealMenuNotificationHref,
 } from '@/lib/staffMealMenuNotification';
 import { isSmartOpsNotificationType } from '@/lib/smartOps';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import {
+  acknowledgeNotificationEvent,
+  eventIdFromNotificationData,
+  isEmergencyNotificationPayload,
+  markNotificationEventOpenedFromPayload,
+} from '@/lib/notificationEventLog';
+import { TaskCompletionSheet } from '@/components/TaskCompletionSheet';
+import { completeStaffAssignment } from '@/lib/staffAssignmentComplete';
+import { dispatchTaskCompletionNotify } from '@/lib/staffAssignmentCreate';
+import {
+  assignmentIdFromNotificationData,
+  fetchMyStaffAssignmentBrief,
+  isAssignmentOpen,
+  isStaffAssignmentNotification,
+  type StaffAssignmentBrief,
+} from '@/lib/staffAssignmentNotification';
+import { resolveNotificationHref } from '@/lib/notificationNavigation';
+import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
+
+function missingNotificationPreview(body: string | null | undefined, maxLines = 6): string | null {
+  if (!body?.trim()) return null;
+  const lines = body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('•'));
+  if (lines.length === 0) return body.trim();
+  const shown = lines.slice(0, maxLines);
+  const rest = lines.length - shown.length;
+  if (rest > 0) shown.push(`… +${rest}`);
+  return shown.join('\n');
+}
 
 type NotifRow = {
   id: string;
@@ -50,6 +83,7 @@ type NotifRow = {
     lostFoundItemId?: string;
     subjectStaffId?: string;
     subject_staff_id?: string;
+    assignmentId?: string;
   } | null;
 };
 
@@ -98,8 +132,179 @@ function warningIdFromNotifData(data: Record<string, unknown> | NotifRow['data']
   return typeof w === 'string' ? w.trim() : '';
 }
 
+function createStaffNotifStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: p.pageBg },
+  content: { padding: 20, paddingBottom: 40 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: p.pageBg },
+  message: { fontSize: 16, color: p.muted },
+  title: { fontSize: 20, fontWeight: '700', color: p.text, marginBottom: 4 },
+  subtitle: { fontSize: 14, color: p.muted, marginBottom: 20 },
+  pushCard: {
+    backgroundColor: p.cardBg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+    padding: 14,
+    marginBottom: 14,
+  },
+  pushCardRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  pushCardTitle: { fontSize: 15, fontWeight: '700', color: p.text },
+  pushCardDesc: { fontSize: 13, color: p.subtext, lineHeight: 18 },
+  pushCardBtnRow: { marginTop: 12, gap: 10 },
+  pushCardBtn: {
+    backgroundColor: '#2b6cb0',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  pushCardBtnDisabled: { opacity: 0.7 },
+  pushCardBtnText: { color: '#fff', fontWeight: '700' },
+  pushCardBtnSecondary: {
+    marginTop: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2b6cb0',
+  },
+  pushCardBtnSecondaryText: { color: '#2b6cb0', fontWeight: '600' },
+  deleteAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginBottom: 12,
+    borderRadius: 6,
+    backgroundColor: 'transparent',
+  },
+  deleteAllBtnDisabled: { opacity: 0.6 },
+  deleteAllBtnText: { fontSize: 12, fontWeight: '500', color: '#e53e3e' },
+  empty: { color: p.muted, fontSize: 14 },
+  row: {
+    backgroundColor: p.cardBg,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+  },
+  rowRead: { opacity: 0.85 },
+  rowCategory: { fontSize: 12, color: '#b8860b', fontWeight: '600', marginBottom: 4 },
+  rowTitle: { fontSize: 16, fontWeight: '600', color: p.text, marginBottom: 4 },
+  rowBody: { fontSize: 14, color: p.subtext, marginBottom: 8 },
+  rowTime: { fontSize: 12, color: p.muted },
+  detailBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'center', padding: 20 },
+  detailCard: {
+    backgroundColor: p.cardBg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: p.cardBorder,
+    padding: 16,
+  },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 },
+  detailTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: p.text },
+  detailBody: { fontSize: 14, lineHeight: 20, color: p.subtext, marginBottom: 8 },
+  detailMeta: { fontSize: 12, color: p.muted, marginBottom: 4 },
+  detailBox: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: p.cardBorder,
+    paddingTop: 10,
+    gap: 4,
+  },
+  detailSectionTitle: { marginTop: 6, marginBottom: 2, fontSize: 13, fontWeight: '700', color: p.text },
+  detailLine: { fontSize: 13, color: p.subtext },
+  detailNote: { fontSize: 13, color: p.text, lineHeight: 20 },
+  detailWarn: { marginTop: 10, fontSize: 13, color: '#b45309' },
+  warningDetailBtn: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#991b1b',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  warningDetailBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  emergencyBanner: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  emergencyBannerText: { color: '#991b1b', fontSize: 14, fontWeight: '600', lineHeight: 20 },
+  emergencyAckBtn: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#dc2626',
+    paddingVertical: 14,
+    borderRadius: 10,
+  },
+  emergencyAckBtnDone: { backgroundColor: '#16a34a' },
+  emergencyAckBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  detailLinkBtn: {
+    marginTop: 12,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2b6cb0',
+  },
+  detailLinkBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  detailLinkBtnSecondary: {
+    marginTop: 8,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2b6cb0',
+  },
+  detailLinkBtnSecondaryText: { color: '#2b6cb0', fontWeight: '700', fontSize: 14 },
+  taskCompleteBtn: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#16a34a',
+  },
+  taskCompleteBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  taskCompleteDetailBtn: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#16a34a',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  taskCompleteDetailBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  taskCompletedBadge: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  taskCompletedBadgeText: { color: '#16a34a', fontWeight: '700', fontSize: 14 },
+  });
+}
+
 export default function StaffNotificationsScreen() {
   const { t, i18n } = useTranslation();
+  const palette = usePersonelDesign();
+  const styles = useMemo(() => createStaffNotifStyles(palette), [palette]);
   const dateLoc = i18n.language?.startsWith('ar') ? 'ar-SA' : i18n.language?.startsWith('tr') ? 'tr-TR' : 'en-US';
   const fmtDate = (iso: string) => new Date(iso).toLocaleString(dateLoc);
   const router = useRouter();
@@ -107,6 +312,9 @@ export default function StaffNotificationsScreen() {
   const missingItemsBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { staff } = useAuthStore();
   const scrollRef = useRef<ScrollView>(null);
+  const lastLoadAtRef = useRef(0);
+  const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const NOTIF_LIST_TTL_MS = 60_000;
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -118,7 +326,16 @@ export default function StaffNotificationsScreen() {
   const [personnelWarningDetail, setPersonnelWarningDetail] = useState<PersonnelWarningDetail | null>(null);
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
+  const [emergencyAckSubmitting, setEmergencyAckSubmitting] = useState(false);
+  const [emergencyAcknowledged, setEmergencyAcknowledged] = useState(false);
+  const [assignmentDetail, setAssignmentDetail] = useState<StaffAssignmentBrief | null>(null);
+  const [completeTarget, setCompleteTarget] = useState<StaffAssignmentBrief | null>(null);
+  const [completing, setCompleting] = useState(false);
   const { refresh: refreshBadge, setUnreadCount, setNotificationsScreenFocused } = useStaffNotificationStore();
+  const { displayFor } = useNotificationLocalization(list, {
+    staffPersist: Boolean(staff?.id),
+    enabled: Boolean(staff?.id),
+  });
 
   const markAllAsRead = useCallback(async () => {
     if (!staff?.id) return;
@@ -154,6 +371,7 @@ export default function StaffNotificationsScreen() {
       .order('created_at', { ascending: false })
       .limit(100);
     setList((data as NotifRow[]) ?? []);
+    lastLoadAtRef.current = Date.now();
     setLoading(false);
     if (opts?.scrollToTop) {
       requestAnimationFrame(() => {
@@ -175,24 +393,32 @@ export default function StaffNotificationsScreen() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `staff_id=eq.${staff.id}` },
         () => {
-          load({ scrollToTop: true });
+          if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+          reloadDebounceRef.current = setTimeout(() => {
+            reloadDebounceRef.current = null;
+            load({ scrollToTop: true });
+          }, 450);
         }
       )
       .subscribe();
     return () => {
+      if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
       supabase.removeChannel(channel);
     };
-  }, [staff?.id]);
+  }, [staff?.id, load]);
 
   useFocusEffect(
     useCallback(() => {
       setUnreadCount(0);
       setNotificationsScreenFocused(true);
-      load().then(() => {
-        markAllAsRead();
-      });
+      const stale = list.length === 0 || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
+      if (stale) {
+        load().then(() => markAllAsRead());
+      } else {
+        void markAllAsRead();
+      }
       return () => setNotificationsScreenFocused(false);
-    }, [setUnreadCount, setNotificationsScreenFocused, load, markAllAsRead])
+    }, [list.length, setUnreadCount, setNotificationsScreenFocused, load, markAllAsRead])
   );
 
   const enablePush = useCallback(async () => {
@@ -313,6 +539,7 @@ export default function StaffNotificationsScreen() {
     setMissingItemDetail(null);
     setMissingReportDetail(null);
     setPersonnelWarningDetail(null);
+    setAssignmentDetail(null);
     setDetailVisible(true);
     const reportId =
       typeof n.data?.missingItemReportId === 'string' ? n.data.missingItemReportId.trim() : '';
@@ -346,6 +573,67 @@ export default function StaffNotificationsScreen() {
     setPersonnelWarningDetail(data as PersonnelWarningDetail);
   };
 
+  const loadAssignmentForNotification = async (assignmentId: string) => {
+    if (!staff?.id) {
+      setAssignmentDetail(null);
+      setDetailLoading(false);
+      return;
+    }
+    setDetailLoading(true);
+    const row = await fetchMyStaffAssignmentBrief(assignmentId, staff.id);
+    setAssignmentDetail(row);
+    setDetailLoading(false);
+  };
+
+  const openTaskCompleteFromNotif = async (n: NotifRow) => {
+    if (!staff?.id) return;
+    if (!n.read_at) markRead(n.id);
+    const assignmentId = assignmentIdFromNotificationData(n.data);
+    if (!assignmentId) {
+      router.push('/staff/tasks');
+      return;
+    }
+    const row = await fetchMyStaffAssignmentBrief(assignmentId, staff.id);
+    if (!row) {
+      Alert.alert(t('error'), t('staffNotifTaskCompleteFailed'));
+      return;
+    }
+    if (!isAssignmentOpen(row.status)) {
+      Alert.alert(t('staffTasks_savedTitle'), t('staffNotifTaskCompleted'));
+      return;
+    }
+    setCompleteTarget(row);
+  };
+
+  const submitTaskCompletion = async (payload: { note?: string; proofUris: string[] }) => {
+    if (!staff?.id || !completeTarget) return;
+    const target = completeTarget;
+    setCompleting(true);
+    const result = await completeStaffAssignment({
+      assignmentId: target.id,
+      staffId: staff.id,
+      note: payload.note,
+      proofUris: payload.proofUris,
+    });
+    setCompleting(false);
+    if (result.error) {
+      Alert.alert(t('error'), result.error);
+      return;
+    }
+    dispatchTaskCompletionNotify({
+      assignmentId: target.id,
+      title: target.title,
+      createdByStaffId: target.created_by_staff_id,
+      completedByStaffId: staff.id,
+      completedByStaffName: staff.full_name ?? '',
+    });
+    setCompleteTarget(null);
+    setAssignmentDetail((prev) =>
+      prev?.id === target.id ? { ...prev, status: 'completed' } : prev
+    );
+    Alert.alert(t('staffTasks_savedTitle'), t('staffTasks_taskCompletedBody'));
+  };
+
   const openPersonnelWarningsFromDetail = () => {
     const wid =
       personnelWarningDetail?.id?.trim() ||
@@ -362,12 +650,34 @@ export default function StaffNotificationsScreen() {
   };
 
   const displayTitle = (n: NotifRow) => {
-    if (isMissingNotification(n)) return 'Eksik Var';
-    return n.title;
+    const shown = displayFor(n);
+    if (isMissingNotification(n)) return shown.title?.trim() || t('staffNotifMissingReport');
+    return shown.title;
+  };
+
+  const displayBody = (n: NotifRow) => {
+    const shown = displayFor(n);
+    if (isMissingNotification(n)) return missingNotificationPreview(shown.body);
+    return shown.body?.trim() || null;
   };
 
   const onNotificationPress = (n: NotifRow) => {
     if (!n.read_at) markRead(n.id);
+    if (
+      isEmergencyNotificationPayload(
+        (n.data ?? {}) as Record<string, unknown>,
+        n.notification_type
+      )
+    ) {
+      setSelectedNotification(n);
+      setMissingItemDetail(null);
+      setMissingReportDetail(null);
+      setPersonnelWarningDetail(null);
+      setEmergencyAcknowledged(false);
+      setDetailVisible(true);
+      void markNotificationEventOpenedFromPayload((n.data ?? {}) as Record<string, unknown>);
+      return;
+    }
     if (n.notification_type === 'staff_personnel_warning') {
       setSelectedNotification(n);
       setMissingItemDetail(null);
@@ -397,6 +707,21 @@ export default function StaffNotificationsScreen() {
     }
     if (isStaffMealMenuDailyNotification((n.data ?? {}) as Record<string, unknown>)) {
       router.push(staffMealMenuNotificationHref((n.data ?? {}) as Record<string, unknown>));
+      return;
+    }
+    if (isStaffAssignmentNotification(n.notification_type, n.data)) {
+      setSelectedNotification(n);
+      setMissingItemDetail(null);
+      setMissingReportDetail(null);
+      setPersonnelWarningDetail(null);
+      setAssignmentDetail(null);
+      setDetailVisible(true);
+      const assignmentId = assignmentIdFromNotificationData(n.data);
+      if (assignmentId) {
+        void loadAssignmentForNotification(assignmentId);
+      } else {
+        setDetailLoading(false);
+      }
       return;
     }
     if (isSmartOpsNotificationType(n.notification_type)) {
@@ -443,19 +768,16 @@ export default function StaffNotificationsScreen() {
       router.push(`${lostFoundBase}/${lostFoundUrlMatch[1]}` as never);
       return;
     }
-    const reportIdFromData =
-      typeof n.data?.missingItemReportId === 'string' ? n.data.missingItemReportId.trim() : '';
-    if (reportIdFromData) {
-      router.push(`${missingItemsBase}/report/${reportIdFromData}` as never);
-      return;
-    }
-    const missingAreaMatch = missingUrl.match(/\/missing-items\/(kitchen|hotel)/);
-    if (missingAreaMatch?.[1]) {
-      router.push(`${missingItemsBase}/${missingAreaMatch[1]}` as never);
-      return;
-    }
-    if (typeof n.data?.area === 'string' && (n.data.area === 'kitchen' || n.data.area === 'hotel')) {
-      router.push(`${missingItemsBase}/${n.data.area}` as never);
+    if (isMissingNotification(n)) {
+      const href = resolveNotificationHref((n.data ?? {}) as Record<string, unknown>, {
+        pathnameIsAdmin: !!pathname?.startsWith('/admin'),
+        isStaff: true,
+      });
+      if (href && href !== '/staff/notifications' && href !== '/admin/notifications') {
+        router.push(href as never);
+        return;
+      }
+      openNotificationDetail(n);
       return;
     }
     openNotificationDetail(n);
@@ -503,7 +825,7 @@ export default function StaffNotificationsScreen() {
   return (
     <ScrollView
       ref={scrollRef}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: palette.pageBg }]}
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
       contentInsetAdjustmentBehavior="automatic"
@@ -566,21 +888,38 @@ export default function StaffNotificationsScreen() {
       {list.length === 0 && !loading ? (
         <Text style={styles.empty}>{t('staffNotifEmpty')}</Text>
       ) : (
-        list.map((n) => (
-          <TouchableOpacity
-            key={n.id}
-            style={[styles.row, n.read_at ? styles.rowRead : null]}
-            onPress={() => onNotificationPress(n)}
-            activeOpacity={0.8}
-          >
-            {categoryLabel(n.category) ? (
-              <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
+        list.map((n) => {
+          const isTaskNotif = isStaffAssignmentNotification(n.notification_type, n.data);
+          return (
+          <View key={n.id} style={[styles.row, n.read_at ? styles.rowRead : null]}>
+            <TouchableOpacity
+              onPress={() => onNotificationPress(n)}
+              activeOpacity={0.8}
+            >
+              {categoryLabel(n.category) ? (
+                <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
+              ) : null}
+              <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
+              {displayBody(n) ? (
+                <Text style={styles.rowBody} numberOfLines={isMissingNotification(n) ? 8 : 4}>
+                  {displayBody(n)}
+                </Text>
+              ) : null}
+              <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
+            </TouchableOpacity>
+            {isTaskNotif ? (
+              <TouchableOpacity
+                style={styles.taskCompleteBtn}
+                onPress={() => void openTaskCompleteFromNotif(n)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+                <Text style={styles.taskCompleteBtnText}>{t('staffTasks_completeBtn')}</Text>
+              </TouchableOpacity>
             ) : null}
-            <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
-            {n.body ? <Text style={styles.rowBody}>{n.body}</Text> : null}
-            <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
-          </TouchableOpacity>
-        ))
+          </View>
+          );
+        })
       )}
       <Modal
         visible={detailVisible}
@@ -589,6 +928,7 @@ export default function StaffNotificationsScreen() {
         onRequestClose={() => {
           setDetailVisible(false);
           setPersonnelWarningDetail(null);
+          setEmergencyAcknowledged(false);
         }}
       >
         <View style={styles.detailBackdrop}>
@@ -611,7 +951,9 @@ export default function StaffNotificationsScreen() {
               !(
                 selectedNotification.notification_type === 'staff_personnel_warning' &&
                 personnelWarningDetail
-              ) && <Text style={styles.detailBody}>{selectedNotification.body}</Text>}
+              ) && (
+                <Text style={styles.detailBody}>{displayFor(selectedNotification).body}</Text>
+              )}
             {!!selectedNotification && (
               <Text style={styles.detailMeta}>
                 {t('staffNotifDate', { date: fmtDate(selectedNotification.created_at) })}
@@ -754,128 +1096,126 @@ export default function StaffNotificationsScreen() {
                   <Text style={styles.warningDetailBtnText}>{t('staffNotifOpenWarningsPage')}</Text>
                 </TouchableOpacity>
               </View>
+            ) : selectedNotification &&
+              isEmergencyNotificationPayload(
+                (selectedNotification.data ?? {}) as Record<string, unknown>,
+                selectedNotification.notification_type
+              ) ? (
+              <View style={styles.emergencyBanner}>
+                <Text style={styles.emergencyBannerText}>{t('staffEmergencyAckBanner')}</Text>
+                {eventIdFromNotificationData(
+                  (selectedNotification.data ?? {}) as Record<string, unknown>
+                ) ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.emergencyAckBtn,
+                      emergencyAcknowledged && styles.emergencyAckBtnDone,
+                    ]}
+                    disabled={emergencyAckSubmitting || emergencyAcknowledged}
+                    onPress={async () => {
+                      const eid = eventIdFromNotificationData(
+                        (selectedNotification.data ?? {}) as Record<string, unknown>
+                      );
+                      if (!eid) return;
+                      setEmergencyAckSubmitting(true);
+                      const { ok, error } = await acknowledgeNotificationEvent(eid);
+                      setEmergencyAckSubmitting(false);
+                      if (!ok) {
+                        Alert.alert(t('error'), error ?? t('unknownError'));
+                        return;
+                      }
+                      setEmergencyAcknowledged(true);
+                      Alert.alert(t('staffEmergencyAckDoneTitle'), t('staffEmergencyAckDoneBody'));
+                    }}
+                    activeOpacity={0.88}
+                  >
+                    {emergencyAckSubmitting ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name={emergencyAcknowledged ? 'checkmark-circle' : 'alert-circle'}
+                          size={22}
+                          color="#fff"
+                        />
+                        <Text style={styles.emergencyAckBtnText}>
+                          {emergencyAcknowledged
+                            ? t('staffEmergencyAckDoneBtn')
+                            : t('staffEmergencyAckBtn')}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={[styles.detailMeta, { marginTop: 8 }]}>{t('staffEmergencyAckNoEventId')}</Text>
+                )}
+              </View>
             ) : selectedNotification && isMissingNotification(selectedNotification) ? (
               <Text style={styles.detailWarn}>{t('staffNotifMissingLoadFailed')}</Text>
+            ) : assignmentDetail ? (
+              <View style={styles.detailBox}>
+                <Text style={styles.detailSectionTitle}>{assignmentDetail.title}</Text>
+                {assignmentDetail.body?.trim() ? (
+                  <Text style={styles.detailNote}>{assignmentDetail.body.trim()}</Text>
+                ) : null}
+                {isAssignmentOpen(assignmentDetail.status) ? (
+                  <TouchableOpacity
+                    style={styles.taskCompleteDetailBtn}
+                    onPress={() => {
+                      setDetailVisible(false);
+                      setCompleteTarget(assignmentDetail);
+                    }}
+                    activeOpacity={0.88}
+                  >
+                    <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
+                    <Text style={styles.taskCompleteDetailBtnText}>{t('staffTasks_completeBtn')}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.taskCompletedBadge}>
+                    <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+                    <Text style={styles.taskCompletedBadgeText}>{t('staffNotifTaskCompleted')}</Text>
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.detailLinkBtnSecondary}
+                  onPress={() => {
+                    setDetailVisible(false);
+                    router.push({
+                      pathname: '/staff/tasks',
+                      params: { focusAssignment: assignmentDetail.id },
+                    } as never);
+                  }}
+                >
+                  <Text style={styles.detailLinkBtnSecondaryText}>{t('staffNotifOpenTasksPage')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : selectedNotification &&
+              isStaffAssignmentNotification(selectedNotification.notification_type, selectedNotification.data) &&
+              !detailLoading ? (
+              <View style={styles.detailBox}>
+                <Text style={styles.detailWarn}>{t('staffNotifTaskCompleteFailed')}</Text>
+                <TouchableOpacity
+                  style={styles.detailLinkBtn}
+                  onPress={() => {
+                    setDetailVisible(false);
+                    router.push('/staff/tasks');
+                  }}
+                >
+                  <Text style={styles.detailLinkBtnText}>{t('staffNotifOpenTasksPage')}</Text>
+                </TouchableOpacity>
+              </View>
             ) : null}
           </View>
         </View>
       </Modal>
+      <TaskCompletionSheet
+        visible={!!completeTarget}
+        taskTitle={completeTarget?.title ?? ''}
+        saving={completing}
+        onClose={() => setCompleteTarget(null)}
+        onSubmit={submitTaskCompletion}
+      />
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f7fafc' },
-  content: { padding: 20, paddingBottom: 40 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  message: { fontSize: 16, color: '#718096' },
-  title: { fontSize: 20, fontWeight: '700', color: '#1a202c', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#718096', marginBottom: 20 },
-  pushCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    padding: 14,
-    marginBottom: 14,
-  },
-  pushCardRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  pushCardTitle: { fontSize: 15, fontWeight: '700', color: '#1a202c' },
-  pushCardDesc: { fontSize: 13, color: '#4a5568', lineHeight: 18 },
-  pushCardBtnRow: { marginTop: 12, gap: 10 },
-  pushCardBtn: {
-    backgroundColor: '#2b6cb0',
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  pushCardBtnDisabled: { opacity: 0.7 },
-  pushCardBtnText: { color: '#fff', fontWeight: '700' },
-  pushCardBtnSecondary: {
-    marginTop: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2b6cb0',
-  },
-  pushCardBtnSecondaryText: { color: '#2b6cb0', fontWeight: '600' },
-  deleteAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    marginBottom: 12,
-    borderRadius: 6,
-    backgroundColor: 'transparent',
-  },
-  deleteAllBtnDisabled: { opacity: 0.6 },
-  deleteAllBtnText: { fontSize: 12, fontWeight: '500', color: '#e53e3e' },
-  empty: { color: '#a0aec0', fontSize: 14 },
-  row: {
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  rowRead: { opacity: 0.85 },
-  rowCategory: { fontSize: 12, color: '#b8860b', fontWeight: '600', marginBottom: 4 },
-  rowTitle: { fontSize: 16, fontWeight: '600', color: '#1a202c', marginBottom: 4 },
-  rowBody: { fontSize: 14, color: '#4a5568', marginBottom: 8 },
-  rowTime: { fontSize: 12, color: '#a0aec0' },
-  detailBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'center', padding: 20 },
-  detailCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    padding: 16,
-  },
-  detailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 },
-  detailTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: '#1a202c' },
-  detailBody: { fontSize: 14, lineHeight: 20, color: '#334155', marginBottom: 8 },
-  detailMeta: { fontSize: 12, color: '#64748b', marginBottom: 4 },
-  detailBox: {
-    marginTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    paddingTop: 10,
-    gap: 4,
-  },
-  detailSectionTitle: { marginTop: 6, marginBottom: 2, fontSize: 13, fontWeight: '700', color: '#1e293b' },
-  detailLine: { fontSize: 13, color: '#334155' },
-  detailNote: { fontSize: 13, color: '#1f2937', lineHeight: 20 },
-  detailWarn: { marginTop: 10, fontSize: 13, color: '#b45309' },
-  warningDetailBtn: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#991b1b',
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  warningDetailBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  detailLinkBtn: {
-    marginTop: 12,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#2b6cb0',
-  },
-  detailLinkBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  detailLinkBtnSecondary: {
-    marginTop: 8,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2b6cb0',
-  },
-  detailLinkBtnSecondaryText: { color: '#2b6cb0', fontWeight: '700', fontSize: 14 },
-});

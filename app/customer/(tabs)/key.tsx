@@ -5,7 +5,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
-import { FramedQR, type QRCodeRef, type QRFrameStyle, QR_FRAME_LABELS } from '@/components/DesignableQR';
+import { FramedQR, type QRCodeRef, type QRFrameStyle, qrFrameLabel } from '@/components/DesignableQR';
 import { readNfcTagForDoor, isNfcAvailable, startAutoNfcDoorListener } from '@/lib/nfcDoor';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BarcodeScannerView } from '@/components/BarcodeScannerView';
@@ -34,22 +34,6 @@ export default function DigitalKeyScreen() {
   const [nfcListening, setNfcListening] = useState(false);
   const insets = useSafeAreaInsets();
   const openDoorWithRoomRef = useRef<(roomNum: string) => Promise<void>>(() => Promise.resolve());
-
-  useFocusEffect(
-    useCallback(() => {
-      if (Platform.OS === 'web' || !isValid || !nfcAvailable || openDoorLoading) return;
-      setNfcListening(true);
-      const listener = startAutoNfcDoorListener((result) => {
-        setNfcListening(false);
-        if (!result?.room) return;
-        openDoorWithRoomRef.current(result.room);
-      });
-      return () => {
-        listener.stop();
-        setNfcListening(false);
-      };
-    }, [isValid, nfcAvailable, openDoorLoading])
-  );
 
   useEffect(() => {
     if (Platform.OS !== 'web') {
@@ -130,6 +114,22 @@ export default function DigitalKeyScreen() {
   }, [roomToken]);
 
   const isValid = !!roomToken;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === 'web' || !isValid || !nfcAvailable || openDoorLoading) return;
+      setNfcListening(true);
+      const listener = startAutoNfcDoorListener((result) => {
+        setNfcListening(false);
+        if (!result?.room) return;
+        openDoorWithRoomRef.current(result.room);
+      });
+      return () => {
+        listener.stop();
+        setNfcListening(false);
+      };
+    }, [isValid, nfcAvailable, openDoorLoading])
+  );
 
   const downloadQrAsImage = useCallback(async (ref: QRCodeRef, label: string) => {
     if (!ref?.toDataURL) {
@@ -291,7 +291,7 @@ export default function DigitalKeyScreen() {
           <Text style={styles.sectionTitle}>{t('qrCodesTitle')}</Text>
           <TouchableOpacity style={styles.qrDrawerBtn} onPress={() => setQrDrawerVisible(true)}>
             <Text style={styles.qrDrawerBtnText}>
-              {selectedQrType === 'checkin' ? t('digitalKeyCheckinType') : t('digitalKeyContractType')} • {QR_FRAME_LABELS[selectedFrame]}
+              {selectedQrType === 'checkin' ? t('digitalKeyCheckinType') : t('digitalKeyContractType')} • {qrFrameLabel(selectedFrame)}
             </Text>
             <Text style={styles.qrDrawerBtnHint}>{t('digitalKeyQrDrawerHint')}</Text>
           </TouchableOpacity>
@@ -329,7 +329,7 @@ export default function DigitalKeyScreen() {
             <Text style={styles.drawerLabel}>{t('digitalKeyTypeLabel')}</Text>
             <View style={styles.drawerRow}>
               <TouchableOpacity style={[styles.drawerChip, selectedQrType === 'checkin' && styles.drawerChipActive]} onPress={() => setSelectedQrType('checkin')}>
-                <Text style={[styles.drawerChipText, selectedQrType === 'checkin' && styles.drawerChipTextActive]}>Check-in QR</Text>
+                <Text style={[styles.drawerChipText, selectedQrType === 'checkin' && styles.drawerChipTextActive]}>{t('qrCheckinChip')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.drawerChip, selectedQrType === 'contract' && styles.drawerChipActive]} onPress={() => setSelectedQrType('contract')}>
                 <Text style={[styles.drawerChipText, selectedQrType === 'contract' && styles.drawerChipTextActive]}>
@@ -341,12 +341,12 @@ export default function DigitalKeyScreen() {
             <View style={styles.drawerRow}>
               {FRAME_OPTIONS.map((f) => (
                 <TouchableOpacity key={f} style={[styles.drawerChipSmall, selectedFrame === f && styles.drawerChipActive]} onPress={() => setSelectedFrame(f)}>
-                  <Text style={[styles.drawerChipText, selectedFrame === f && styles.drawerChipTextActive]}>{QR_FRAME_LABELS[f]}</Text>
+                  <Text style={[styles.drawerChipText, selectedFrame === f && styles.drawerChipTextActive]}>{qrFrameLabel(f)}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             <TouchableOpacity style={styles.drawerDoneBtn} onPress={() => setQrDrawerVisible(false)}>
-              <Text style={styles.drawerDoneText}>Tamam</Text>
+              <Text style={styles.drawerDoneText}>{t('ok')}</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>

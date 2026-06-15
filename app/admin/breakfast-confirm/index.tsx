@@ -23,6 +23,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
+import { BreakfastConfirmShareSheet } from '@/components/breakfast/BreakfastConfirmShareSheet';
 import { CachedImage } from '@/components/CachedImage';
 import { notifyBreakfastApproved, notifyBreakfastRejected } from '@/lib/notificationService';
 import { awardStaffPoints } from '@/lib/staffPoints';
@@ -88,9 +89,10 @@ type BreakfastCardProps = {
   onLightbox: (v: { urls: string[]; index: number }) => void;
   onApprove: (item: Row) => void;
   onReject: (item: Row) => void;
+  onShare: (item: Row) => void;
 };
 
-const BreakfastCard = memo(function BreakfastCard({ item, thumbSize, onLightbox, onApprove, onReject }: BreakfastCardProps) {
+const BreakfastCard = memo(function BreakfastCard({ item, thumbSize, onLightbox, onApprove, onReject, onShare }: BreakfastCardProps) {
   const isPending = !item.approved_at && !item.rejected_at;
   const isApproved = !!item.approved_at;
   const relDay = getRelativeDay(item.record_date);
@@ -206,6 +208,11 @@ const BreakfastCard = memo(function BreakfastCard({ item, thumbSize, onLightbox,
           </TouchableOpacity>
         </View>
       ) : null}
+
+      <TouchableOpacity style={styles.shareBtn} onPress={() => onShare(item)} activeOpacity={0.85}>
+        <Ionicons name="share-social-outline" size={18} color={adminTheme.colors.primary} />
+        <Text style={styles.shareBtnText}>Paylaş / Yazdır</Text>
+      </TouchableOpacity>
     </View>
   );
 });
@@ -229,6 +236,7 @@ export default function AdminBreakfastConfirmListScreen() {
   const [scoreValue, setScoreValue] = useState('5');
   const [scoreNote, setScoreNote] = useState('');
   const [scoring, setScoring] = useState(false);
+  const [shareTarget, setShareTarget] = useState<Row | null>(null);
 
   const load = useCallback(async () => {
     if (!canQuery) {
@@ -425,6 +433,7 @@ export default function AdminBreakfastConfirmListScreen() {
         onLightbox={setLightbox}
         onApprove={approve}
         onReject={(r) => { setRejectTarget(r); setRejectReason(''); }}
+        onShare={setShareTarget}
       />
     ),
     [thumbSize, approve]
@@ -562,6 +571,14 @@ export default function AdminBreakfastConfirmListScreen() {
         urls={lightbox?.urls ?? []}
         initialIndex={lightbox?.index ?? 0}
         onClose={() => setLightbox(null)}
+      />
+
+      <BreakfastConfirmShareSheet
+        visible={shareTarget !== null}
+        record={shareTarget}
+        staffId={staff?.id ?? null}
+        staffName={staff?.full_name ?? 'Yönetici'}
+        onClose={() => setShareTarget(null)}
       />
 
       <FlatList
@@ -1132,6 +1149,20 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
   },
   rejectBtnText: { color: '#DC2626', fontWeight: '700', fontSize: 14 },
+
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.borderLight,
+    backgroundColor: '#f8fafc',
+  },
+  shareBtnText: { color: adminTheme.colors.primary, fontWeight: '700', fontSize: 14 },
 
   /* Modal */
   modalOverlay: {
