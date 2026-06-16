@@ -76,6 +76,7 @@ const IS_ANDROID = Platform.OS === 'android';
 const ANDROID_ITEM_PRESS_GUARD_MS = 28;
 
 const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  fnb: { color: '#ea580c', icon: 'grid-outline' },
   kitchen: { color: '#ea580c', icon: 'restaurant-outline' },
   nav: { color: '#6366f1', icon: 'compass-outline' },
   staff: { color: '#ea580c', icon: 'person-outline' },

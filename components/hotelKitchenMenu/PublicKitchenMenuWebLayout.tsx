@@ -20,7 +20,8 @@ import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMe
 import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
 import { PublicKitchenMenuCartBar } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartBar';
 import { PublicKitchenMenuCartSheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartSheet';
-import { categoryAccentColor, menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
+import { categoryAccentColor, menuUi, menuWebPageBg } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
+import { CachedImage } from '@/components/CachedImage';
 import type { PublicKitchenMenuOrg } from '@/lib/publicKitchenMenu';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import type { MenuSectionFilter } from '@/lib/hotelKitchenMenuFilters';
@@ -28,6 +29,8 @@ import { coverImageUrl } from '@/lib/hotelKitchenMenu';
 import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
 import { cartItemCount, cartQuantityFor, cartTotal } from '@/lib/publicKitchenMenuCart';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
+import type { ResolvedKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
+import { resolveKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
 
 type CategoryChip = { title: string; count: number };
 type ProductChip = { name: string; count: number };
@@ -63,6 +66,7 @@ type Props = {
   onCartCleared: () => void;
   paymentBanner: 'success' | 'cancel' | null;
   onDismissPaymentBanner: () => void;
+  menuTheme?: ResolvedKitchenMenuTheme;
 };
 
 function LivePulseBadge({ label }: { label: string }) {
@@ -118,10 +122,17 @@ export function PublicKitchenMenuWebLayout({
   onCartCleared,
   paymentBanner,
   onDismissPaymentBanner,
+  menuTheme: menuThemeProp,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const menuTheme =
+    menuThemeProp ??
+    resolveKitchenMenuTheme(null, {
+      heroTitle: t('hotelKitchenMenuHeroTitle'),
+      heroSubtitle: t('publicKitchenMenuHeroSub'),
+    });
   const [detailItem, setDetailItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
 
@@ -137,10 +148,16 @@ export function PublicKitchenMenuWebLayout({
     [items]
   );
 
-  const showFeatured = featured.length >= 2 && !hasActiveFilters && section === 'all' && !categoryFilter;
+  const showFeatured =
+    menuTheme.layout !== 'compact' && featured.length >= 2 && !hasActiveFilters && section === 'all' && !categoryFilter;
+
+  const accent = menuTheme.primaryColor;
+  const navy = menuTheme.navyColor;
+  const accentSoft = menuTheme.accentLightColor;
+  const heroImage = menuTheme.heroImageUrl;
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, menuWebPageBg]}>
       <KitchenMenuUpdatedToast visible={updateToast} onHidden={onUpdateToastHidden} />
 
       {paymentBanner ? (
@@ -173,15 +190,27 @@ export function PublicKitchenMenuWebLayout({
         showsVerticalScrollIndicator
       >
         <LinearGradient
-          colors={[...menuUi.webHeroGradient]}
+          colors={[...menuTheme.webHeroGradient]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.hero}
         >
-          <View style={[styles.heroGlowOrb, styles.heroGlowOrbA]} />
-          <View style={[styles.heroGlowOrb, styles.heroGlowOrbB]} />
+          {heroImage ? (
+            <>
+              <CachedImage uri={heroImage} style={styles.heroBgImage} contentFit="cover" recyclingKey={`hero-${orgSlug}`} />
+              <LinearGradient
+                colors={['rgba(8,16,28,0.55)', 'rgba(8,16,28,0.78)', navy + 'ee']}
+                style={StyleSheet.absoluteFillObject}
+              />
+            </>
+          ) : null}
 
-          <View style={[styles.heroInner, { maxWidth: contentMax + 80, paddingTop: insets.top + 28 }]}>
+          <View style={styles.heroPattern} pointerEvents="none" />
+          <View style={[styles.heroGlowOrb, styles.heroGlowOrbA, { backgroundColor: menuTheme.webHeroGlow }]} />
+          <View style={[styles.heroGlowOrb, styles.heroGlowOrbB, { backgroundColor: menuTheme.webHeroGlow }]} />
+          <View style={[styles.heroGoldLine, { backgroundColor: accent }]} />
+
+          <View style={[styles.heroInner, { maxWidth: contentMax + 80, paddingTop: insets.top + 32 }]}>
             <View style={styles.heroTopRow}>
               <LivePulseBadge label={t('publicKitchenMenuLiveBadge')} />
               <Text style={styles.heroHint}>{t('publicKitchenMenuLiveHint')}</Text>
@@ -190,18 +219,22 @@ export function PublicKitchenMenuWebLayout({
               </View>
             </View>
 
+            <Text style={[styles.heroEyebrow, { color: accentSoft }]}>{t('hotelKitchenMenuHeroTitle').toUpperCase()}</Text>
             <Text style={styles.heroHotel}>{org.name}</Text>
-            <Text style={styles.heroTagline}>{t('hotelKitchenMenuHeroTitle')}</Text>
-            <Text style={styles.heroSub}>{t('publicKitchenMenuHeroSub')}</Text>
+            <View style={[styles.heroDivider, { backgroundColor: accent }]} />
+            <Text style={[styles.heroTagline, { color: accentSoft }]}>
+              {menuTheme.heroTitle ?? t('hotelKitchenMenuHeroTitle')}
+            </Text>
+            <Text style={styles.heroSub}>{menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub')}</Text>
 
             <View style={styles.heroStats}>
-              <View style={styles.statPill}>
-                <Ionicons name="restaurant-outline" size={16} color={menuUi.accentLight} />
+              <View style={[styles.statPill, { borderColor: `${accent}44` }]}>
+                <Ionicons name="restaurant-outline" size={16} color={accent} />
                 <Text style={styles.statText}>{t('hotelKitchenMenuResultCount', { count: items.length })}</Text>
               </View>
               {categoryChips.length > 0 ? (
-                <View style={styles.statPill}>
-                  <Ionicons name="layers-outline" size={16} color={menuUi.accentLight} />
+                <View style={[styles.statPill, { borderColor: `${accent}44` }]}>
+                  <Ionicons name="layers-outline" size={16} color={accent} />
                   <Text style={styles.statText}>
                     {categoryChips.length} {t('publicKitchenMenuCategories').toLowerCase()}
                   </Text>
@@ -209,8 +242,8 @@ export function PublicKitchenMenuWebLayout({
               ) : null}
             </View>
 
-            <View style={styles.searchWrap}>
-              <Ionicons name="search" size={20} color="rgba(255,255,255,0.55)" />
+            <View style={[styles.searchWrap, { borderColor: `${accent}55` }]}>
+              <Ionicons name="search" size={20} color={accentSoft} />
               <TextInput
                 style={styles.searchInput}
                 placeholder={t('hotelKitchenMenuSearchPh')}
@@ -228,23 +261,34 @@ export function PublicKitchenMenuWebLayout({
         </LinearGradient>
 
         <View style={[styles.content, { maxWidth: contentMax + 40 }]}>
-          <View style={styles.filtersPanel}>
+          <View style={[styles.filtersPanel, { borderTopColor: accent }]}>
+            <View style={[styles.filtersPanelHeader, { backgroundColor: navy }]}>
+              <Ionicons name="options-outline" size={16} color={accent} />
+              <Text style={styles.filtersPanelHeaderText}>{t('hotelKitchenMenuSectionAll')}</Text>
+            </View>
+            <View style={styles.filtersPanelBody}>
             <View style={styles.sectionRow}>
               <TouchableOpacity
-                style={[styles.sectionChip, section === 'all' && styles.sectionChipOn]}
+                style={[
+                  styles.sectionChip,
+                  section === 'all' && { backgroundColor: `${accent}22`, borderColor: accent },
+                ]}
                 onPress={() => setSection('all')}
               >
-                <Ionicons name="grid-outline" size={16} color={section === 'all' ? menuUi.navy : menuUi.webMuted} />
-                <Text style={[styles.sectionChipText, section === 'all' && styles.sectionChipTextOn]}>
+                <Ionicons name="grid-outline" size={16} color={section === 'all' ? navy : menuUi.webMuted} />
+                <Text style={[styles.sectionChipText, section === 'all' && { color: navy, fontWeight: '800' }]}>
                   {t('hotelKitchenMenuSectionAll')}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.sectionChip, section === 'breakfast' && styles.sectionChipOn]}
+                style={[
+                  styles.sectionChip,
+                  section === 'breakfast' && { backgroundColor: `${accent}22`, borderColor: accent },
+                ]}
                 onPress={() => setSection('breakfast')}
               >
-                <Ionicons name="sunny-outline" size={16} color={section === 'breakfast' ? menuUi.navy : menuUi.webMuted} />
-                <Text style={[styles.sectionChipText, section === 'breakfast' && styles.sectionChipTextOn]}>
+                <Ionicons name="sunny-outline" size={16} color={section === 'breakfast' ? navy : menuUi.webMuted} />
+                <Text style={[styles.sectionChipText, section === 'breakfast' && { color: navy, fontWeight: '800' }]}>
                   {t('hotelKitchenMenuSectionBreakfast')}
                 </Text>
               </TouchableOpacity>
@@ -258,7 +302,7 @@ export function PublicKitchenMenuWebLayout({
                 style={styles.chipScroll}
               >
                 <TouchableOpacity
-                  style={[styles.catChip, !categoryFilter && styles.catChipOn]}
+                  style={[styles.catChip, !categoryFilter && { backgroundColor: navy, borderColor: navy }]}
                   onPress={() => pickCategory(null)}
                 >
                   <Text style={[styles.catChipText, !categoryFilter && styles.catChipTextOn]}>
@@ -268,7 +312,10 @@ export function PublicKitchenMenuWebLayout({
                 {categoryChips.map((c) => (
                   <TouchableOpacity
                     key={c.title}
-                    style={[styles.catChip, categoryFilter === c.title && styles.catChipOn]}
+                    style={[
+                      styles.catChip,
+                      categoryFilter === c.title && { backgroundColor: navy, borderColor: navy },
+                    ]}
                     onPress={() => pickCategory(categoryFilter === c.title ? null : c.title)}
                   >
                     <Text style={[styles.catChipText, categoryFilter === c.title && styles.catChipTextOn]}>
@@ -337,9 +384,10 @@ export function PublicKitchenMenuWebLayout({
                     setSearch('');
                   }}
                 >
-                  <Text style={styles.clearFilters}>{t('hotelKitchenMenuClearFilters')}</Text>
+                  <Text style={[styles.clearFilters, { color: accent }]}>{t('hotelKitchenMenuClearFilters')}</Text>
                 </TouchableOpacity>
               ) : null}
+            </View>
             </View>
           </View>
 
@@ -356,8 +404,10 @@ export function PublicKitchenMenuWebLayout({
               {showFeatured ? (
                 <View style={styles.featuredBlock}>
                   <View style={styles.sectionHead}>
-                    <Ionicons name="sparkles" size={18} color={menuUi.accent} />
-                    <Text style={styles.sectionTitle}>{t('publicKitchenMenuFeatured')}</Text>
+                    <View style={[styles.sectionIconWrap, { backgroundColor: `${accent}22` }]}>
+                      <Ionicons name="sparkles" size={16} color={accent} />
+                    </View>
+                    <Text style={[styles.sectionTitle, { color: navy }]}>{t('publicKitchenMenuFeatured')}</Text>
                   </View>
                   <ScrollView
                     horizontal
@@ -369,6 +419,8 @@ export function PublicKitchenMenuWebLayout({
                         <PublicKitchenMenuDishCard
                           item={item}
                           layout="featured"
+                          themeAccent={accent}
+                          themeNavy={navy}
                           onPress={() => setDetailItem(item)}
                           onAddToCart={() => onAddToCart(item)}
                           cartQuantity={cartQuantityFor(cartLines, item.id)}
@@ -383,18 +435,23 @@ export function PublicKitchenMenuWebLayout({
                 <View key={grp.title || 'all'} style={styles.categoryBlock}>
                   {grp.title ? (
                     <View style={styles.categoryHead}>
+                      <View style={[styles.categoryDot, { backgroundColor: accent }]} />
                       <View style={[styles.categoryAccent, { backgroundColor: categoryAccentColor(grp.title) }]} />
-                      <Text style={styles.categoryTitle}>{grp.title}</Text>
+                      <Text style={[styles.categoryTitle, { color: navy }]}>{grp.title}</Text>
                       <View style={styles.categoryLine} />
-                      <Text style={styles.categoryCount}>{grp.items.length}</Text>
+                      <View style={[styles.categoryCountBadge, { backgroundColor: `${accent}22`, borderColor: `${accent}55` }]}>
+                        <Text style={[styles.categoryCount, { color: navy }]}>{grp.items.length}</Text>
+                      </View>
                     </View>
                   ) : null}
-                  <View style={[styles.grid, { gap: columns > 1 ? 20 : 16 }]}>
+                  <View style={[styles.grid, { gap: columns > 1 ? 22 : 18 }]}>
                     {grp.items.map((item) => (
                       <View key={item.id} style={{ width: cellWidth as `${number}%` }}>
                         <PublicKitchenMenuDishCard
                           item={item}
                           layout="premium"
+                          themeAccent={accent}
+                          themeNavy={navy}
                           onPress={() => setDetailItem(item)}
                           onAddToCart={() => onAddToCart(item)}
                           cartQuantity={cartQuantityFor(cartLines, item.id)}
@@ -408,10 +465,16 @@ export function PublicKitchenMenuWebLayout({
           )}
         </View>
 
-        <View style={styles.footer}>
+        <LinearGradient
+          colors={[navy, menuTheme.webHeroGradient[1], navy]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.footer}
+        >
+          <View style={[styles.footerGoldBar, { backgroundColor: accent }]} />
           <Text style={styles.footerBrand}>{org.name}</Text>
-          <Text style={styles.footerSub}>{t('publicKitchenMenuHeroSub')}</Text>
-        </View>
+          <Text style={styles.footerSub}>{menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub')}</Text>
+        </LinearGradient>
       </ScrollView>
 
       <PublicKitchenMenuDishDetailModal
@@ -454,19 +517,34 @@ export function PublicKitchenMenuWebLayout({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: menuUi.webSurface },
   scroll: { flex: 1 },
-  hero: { width: '100%', position: 'relative', overflow: 'hidden' },
+  hero: { width: '100%', position: 'relative', overflow: 'hidden', minHeight: 420 },
+  heroBgImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  heroPattern: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.35,
+    backgroundImage:
+      'repeating-linear-gradient(135deg, rgba(255,255,255,0.03) 0px, rgba(255,255,255,0.03) 1px, transparent 1px, transparent 12px)',
+  } as object,
+  heroGoldLine: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    opacity: 0.9,
+  },
   heroGlowOrb: {
     position: 'absolute',
     borderRadius: 999,
-    backgroundColor: menuUi.webHeroGlow,
   },
-  heroGlowOrbA: { width: 280, height: 280, top: -80, right: -40, opacity: 0.9 },
-  heroGlowOrbB: { width: 200, height: 200, bottom: -60, left: -30, opacity: 0.55 },
+  heroGlowOrbA: { width: 360, height: 360, top: -120, right: -80, opacity: 0.85 },
+  heroGlowOrbB: { width: 240, height: 240, bottom: -80, left: -50, opacity: 0.5 },
   heroInner: {
     alignSelf: 'center',
     width: '100%',
-    paddingHorizontal: 24,
-    paddingBottom: 36,
+    paddingHorizontal: 28,
+    paddingBottom: 44,
+    zIndex: 2,
   },
   heroTopRow: {
     flexDirection: 'row',
@@ -515,53 +593,63 @@ const styles = StyleSheet.create({
   },
   liveBadgeText: { fontSize: 12, fontWeight: '800', color: '#bbf7d0', letterSpacing: 0.3 },
   heroHint: { fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: '600' },
+  heroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 3.2,
+    marginBottom: 8,
+  },
   heroHotel: {
-    fontSize: 42,
+    fontSize: 48,
     fontWeight: '800',
     color: '#fff',
-    letterSpacing: -1.2,
-    lineHeight: 46,
+    letterSpacing: -1.5,
+    lineHeight: 52,
+  },
+  heroDivider: {
+    width: 56,
+    height: 3,
+    borderRadius: 2,
+    marginTop: 14,
+    marginBottom: 12,
   },
   heroTagline: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
-    color: menuUi.accentLight,
-    marginTop: 8,
-    letterSpacing: 0.2,
+    letterSpacing: 0.15,
   },
   heroSub: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.62)',
-    marginTop: 6,
-    lineHeight: 20,
-    maxWidth: 480,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.68)',
+    marginTop: 8,
+    lineHeight: 22,
+    maxWidth: 520,
   },
-  heroStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 18 },
+  heroStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 22 },
   statPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
   },
-  statText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.88)' },
+  statText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.92)' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 22,
+    marginTop: 26,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    minHeight: 54,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)',
-    gap: 10,
-    maxWidth: 520,
-  },
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    minHeight: 58,
+    borderWidth: 1.5,
+    gap: 12,
+    maxWidth: 560,
+    backdropFilter: 'blur(12px)',
+  } as object,
   searchInput: {
     flex: 1,
     fontSize: 16,
@@ -572,22 +660,37 @@ const styles = StyleSheet.create({
   content: {
     alignSelf: 'center',
     width: '100%',
-    paddingHorizontal: 20,
-    marginTop: -20,
+    paddingHorizontal: 22,
+    marginTop: -28,
   },
   filtersPanel: {
     backgroundColor: menuUi.webGlass,
-    borderRadius: 20,
-    padding: 18,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: menuUi.webGlassBorder,
-    ...menuUi.shadowSm,
-    marginBottom: 28,
+    borderTopWidth: 4,
+    ...menuUi.shadowLg,
+    marginBottom: 32,
+    overflow: 'hidden',
     position: 'sticky',
     top: 12,
     zIndex: 20,
-    backdropFilter: 'blur(14px)',
+    backdropFilter: 'blur(16px)',
   } as object,
+  filtersPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  filtersPanelHeaderText: {
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  filtersPanelBody: { padding: 18, paddingTop: 14 },
   sectionRow: { flexDirection: 'row', gap: 10 },
   sectionChip: {
     flex: 1,
@@ -595,15 +698,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 11,
+    paddingVertical: 12,
     borderRadius: 14,
     backgroundColor: menuUi.warmBg,
     borderWidth: 1,
     borderColor: menuUi.border,
   },
-  sectionChipOn: { backgroundColor: menuUi.accentSoft, borderColor: menuUi.accent },
   sectionChipText: { fontSize: 14, fontWeight: '700', color: menuUi.webMuted },
-  sectionChipTextOn: { color: menuUi.navy, fontWeight: '800' },
   chipScroll: { marginTop: 14 },
   chipRow: { gap: 8, paddingRight: 8 },
   catChip: {
@@ -651,27 +752,43 @@ const styles = StyleSheet.create({
   },
   resultCount: { fontSize: 13, color: menuUi.webMuted, fontWeight: '600' },
   clearFilters: { fontSize: 13, fontWeight: '700', color: menuUi.accent },
-  featuredBlock: { marginBottom: 32 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: menuUi.navy, letterSpacing: -0.3 },
-  featuredRow: { gap: 16, paddingRight: 8 },
-  featuredCell: { width: 280 },
-  categoryBlock: { marginBottom: 36 },
+  featuredBlock: { marginBottom: 36 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  sectionIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
+  featuredRow: { gap: 18, paddingRight: 8 },
+  featuredCell: { width: 300 },
+  categoryBlock: { marginBottom: 40 },
   categoryHead: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 18,
+    gap: 10,
+    marginBottom: 20,
   },
-  categoryAccent: { width: 4, height: 28, borderRadius: 2 },
+  categoryDot: { width: 8, height: 8, borderRadius: 4 },
+  categoryAccent: { width: 3, height: 26, borderRadius: 2 },
   categoryTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
-    color: menuUi.navy,
-    letterSpacing: -0.4,
+    letterSpacing: -0.5,
   },
   categoryLine: { flex: 1, height: 1, backgroundColor: menuUi.border },
-  categoryCount: { fontSize: 13, fontWeight: '800', color: menuUi.webMuted },
+  categoryCountBadge: {
+    minWidth: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  categoryCount: { fontSize: 13, fontWeight: '800' },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -698,11 +815,19 @@ const styles = StyleSheet.create({
   },
   footer: {
     alignItems: 'center',
-    paddingVertical: 40,
-    marginTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: menuUi.border,
+    paddingVertical: 44,
+    marginTop: 20,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  footerBrand: { fontSize: 15, fontWeight: '800', color: menuUi.navy },
-  footerSub: { fontSize: 13, color: menuUi.webMuted, marginTop: 4 },
+  footerGoldBar: {
+    position: 'absolute',
+    top: 0,
+    left: '20%',
+    right: '20%',
+    height: 3,
+    borderRadius: 2,
+  },
+  footerBrand: { fontSize: 17, fontWeight: '800', color: '#fff', letterSpacing: 0.2 },
+  footerSub: { fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 6, textAlign: 'center', maxWidth: 420 },
 });

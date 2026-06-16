@@ -50,6 +50,7 @@ import {
   readPublicMenuLang,
   type PublicMenuLang,
 } from '@/lib/publicKitchenMenuLang';
+import { resolveKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
 
 type Props = {
   orgSlug: string;
@@ -238,6 +239,15 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
 
   const hasActiveFilters = !!(categoryFilter || productFilter || tagFilter || search.trim());
 
+  const menuTheme = useMemo(
+    () =>
+      resolveKitchenMenuTheme(org?.kitchen_menu_public_theme, {
+        heroTitle: t('hotelKitchenMenuHeroTitle'),
+        heroSubtitle: t('publicKitchenMenuHeroSub'),
+      }),
+    [org?.kitchen_menu_public_theme, t]
+  );
+
   const grouped = useMemo(() => {
     if (hasActiveFilters) return [{ title: '', items: filtered }];
     return groupByCategory(filtered);
@@ -321,6 +331,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         onCartCleared={handleCartCleared}
         paymentBanner={paymentBanner}
         onDismissPaymentBanner={() => setPaymentBanner(null)}
+        menuTheme={menuTheme}
       />
     );
   }

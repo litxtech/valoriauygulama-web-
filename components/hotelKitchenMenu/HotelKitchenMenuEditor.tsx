@@ -22,9 +22,10 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   deleteHotelKitchenMenuItem,
   fetchHotelKitchenMenuItemById,
+  hotelKitchenMenuSaveUserMessage,
   MAX_HOTEL_KITCHEN_MENU_IMAGES,
   newHotelKitchenMenuItemId,
-  upsertHotelKitchenMenuItem,
+  upsertHotelKitchenMenuItemWithRetry,
 } from '@/lib/hotelKitchenMenu';
 import { uploadHotelKitchenMenuImagesParallel } from '@/lib/hotelKitchenMenuUpload';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -151,7 +152,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         localUris: pendingUris,
       });
 
-      await upsertHotelKitchenMenuItem({
+      await upsertHotelKitchenMenuItemWithRetry({
         ...base,
         id: savedId,
         imageUrls: [...existingUrls, ...uploaded].slice(0, MAX_HOTEL_KITCHEN_MENU_IMAGES),
@@ -168,7 +169,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         Alert.alert(t('success'), isEdit ? t('hotelKitchenMenuSaved') : t('hotelKitchenMenuCreated'));
       }
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? t('unknownErrorShort'));
+      Alert.alert(t('error'), hotelKitchenMenuSaveUserMessage(e));
     } finally {
       setSaving(false);
     }

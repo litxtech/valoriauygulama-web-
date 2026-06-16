@@ -49,6 +49,16 @@ export function usePublicKitchenMenuLive(
           },
           () => tick()
         )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'organizations',
+            filter: `id=eq.${organizationId}`,
+          },
+          () => tick()
+        )
         .subscribe();
     }, REALTIME_DELAY_MS);
 

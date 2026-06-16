@@ -1,5 +1,7 @@
 import { hasStaffAppPermission, type StaffPermissionSlice } from '@/lib/staffPermissions';
 import { canAccessAdminShell, isGorevAtaOnlyUser } from '@/lib/staffPermissions';
+import { canAccessFnbHub } from '@/lib/fnbHub';
+import { canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
 /** Admin panel menü href → app_permissions anahtarı */
 export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
@@ -89,6 +91,8 @@ export function adminRoutePermissionKey(href: string): string | null {
 export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
+  if (href.startsWith('/admin/fnb-hub')) return canAccessFnbHub(staff);
+  if (href.startsWith('/admin/kitchen-ops/reception')) return canAccessKitchenReceptionAccounting(staff);
 
   const key = adminRoutePermissionKey(href);
   if (key) return hasStaffAppPermission(staff, key);

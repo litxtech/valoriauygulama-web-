@@ -45,6 +45,12 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'department_rules_admin', labelTr: 'Bölüm kuralları (yönetim)', section: 'admin' },
   { id: 'managed_contracts_prepare_admin', labelTr: 'Sözleşme hazırla (yönetim)', section: 'admin' },
   { id: 'passports', labelTr: 'Pasaport / MRZ', section: 'staff' },
+  // F&B Merkezi
+  { id: 'fnb_hub', labelTr: 'F&B Merkezi', section: 'ops' },
+  { id: 'fnb_sales_new', labelTr: 'Anlık satış gir', section: 'ops' },
+  { id: 'fnb_kitchen_revenue', labelTr: 'Mutfak hasılat gir', section: 'ops' },
+  { id: 'fnb_menu_manage', labelTr: 'Menü yönet (F&B)', section: 'ops' },
+  { id: 'fnb_menu_theme', labelTr: 'Web menü tasarımı', section: 'ops' },
   // Otel & Misafir
   { id: 'hotel_kitchen_menu', labelTr: 'Otel mutfağı menüsü', section: 'hotel' },
   { id: 'hotel_kitchen_menu_manage', labelTr: 'Otel mutfağı — yönetim', section: 'hotel' },

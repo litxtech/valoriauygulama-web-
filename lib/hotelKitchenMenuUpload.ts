@@ -1,8 +1,14 @@
 import * as ImageManipulator from 'expo-image-manipulator';
 import { HOTEL_KITCHEN_MENU_BUCKET } from '@/lib/hotelKitchenMenu';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import {
+  extractErrorMessage,
+  isSupabaseUnavailableError,
+  sleepMs,
+} from '@/lib/supabaseTransientErrors';
 
 const MENU_IMAGE_MAX_WIDTH = 900;
+const UPLOAD_MAX_ATTEMPTS = 4;
 
 async function prepareMenuImageUri(localUri: string): Promise<string> {
   try {
@@ -26,13 +32,28 @@ export async function uploadHotelKitchenMenuImage(params: {
   const { organizationId, itemId, localUri } = params;
   const prepared = await prepareMenuImageUri(localUri);
   const subfolder = `org/${organizationId}/items/${itemId}`;
-  const { publicUrl } = await uploadUriToPublicBucket({
-    bucketId: HOTEL_KITCHEN_MENU_BUCKET,
-    uri: prepared,
-    kind: 'image',
-    subfolder,
-  });
-  return publicUrl;
+  let lastMsg = '';
+
+  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+    try {
+      const { publicUrl } = await uploadUriToPublicBucket({
+        bucketId: HOTEL_KITCHEN_MENU_BUCKET,
+        uri: prepared,
+        kind: 'image',
+        subfolder,
+      });
+      return publicUrl;
+    } catch (e: unknown) {
+      lastMsg = extractErrorMessage(e);
+      if (attempt < UPLOAD_MAX_ATTEMPTS && isSupabaseUnavailableError(lastMsg)) {
+        await sleepMs(500 + attempt * 450);
+        continue;
+      }
+      throw e instanceof Error ? e : new Error(lastMsg || 'upload failed');
+    }
+  }
+
+  throw new Error(lastMsg || 'upload failed');
 }
 
 export async function uploadHotelKitchenMenuImagesParallel(params: {

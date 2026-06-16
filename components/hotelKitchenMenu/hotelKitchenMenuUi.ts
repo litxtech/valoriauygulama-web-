@@ -51,17 +51,34 @@ export const menuUi = {
   },
   webHeroGradient: ['#0c1829', '#1a365d', '#243b55', '#1a365d'] as const,
   webHeroGlow: 'rgba(212, 168, 75, 0.18)',
-  webGlass: 'rgba(255, 255, 255, 0.92)',
-  webGlassBorder: 'rgba(255, 255, 255, 0.55)',
-  webSurface: '#faf9f7',
+  webGlass: 'rgba(255, 255, 255, 0.94)',
+  webGlassBorder: 'rgba(255, 255, 255, 0.65)',
+  webSurface: '#f5f0e8',
+  webSurfaceAlt: '#faf7f2',
   webMuted: '#64748b',
   webText: '#0f172a',
+  webGoldLine: 'rgba(212, 168, 75, 0.55)',
 } as const;
+
+/** Web sayfa arka planı — sıcak degrade + hafif altın/lacivert lekeler */
+export const menuWebPageBg = {
+  backgroundImage:
+    'radial-gradient(ellipse 80% 50% at 15% -5%, rgba(212,168,75,0.14) 0%, transparent 55%), radial-gradient(ellipse 60% 40% at 95% 5%, rgba(26,54,93,0.08) 0%, transparent 50%), linear-gradient(180deg, #f3ece0 0%, #faf7f2 35%, #f8f5ef 100%)',
+  minHeight: '100%',
+} as object;
 
 /** Web kart hover — RN Web style object */
 export const menuWebCardHover = {
-  transition: 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease',
+  transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s ease',
   cursor: 'pointer',
+} as object;
+
+export const menuWebCardHoverLift = {
+  ...menuWebCardHover,
+  ':hover': {
+    transform: 'translateY(-4px)',
+    boxShadow: '0 20px 40px rgba(26, 54, 93, 0.14), 0 0 0 1px rgba(212, 168, 75, 0.25)',
+  },
 } as object;
 
 /** Kategori vurgusu — mavi yerine marka tonları */

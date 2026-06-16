@@ -163,7 +163,8 @@ export function canManageKitchenOps(staff: StaffPermissionSlice): boolean {
 export function canAccessKitchenReceptionAccounting(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
-  if (staff.role === 'reception_chief') return true;
+  if (staff.role === 'reception_chief' || staff.role === 'receptionist') return true;
+  if (hasStaffAppPermission(staff, 'mutfak_operasyon_yonetim')) return true;
   return hasStaffAppPermission(staff, 'reception_mutfak_muhasebe');
 }
 

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import type { KitchenMenuPublicTheme } from '@/lib/kitchenMenuTheme';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenuTypes';
 import {
   getPublicMenuCache,
@@ -16,6 +17,7 @@ export type PublicKitchenMenuOrg = {
   id: string;
   name: string;
   slug: string;
+  kitchen_menu_public_theme?: KitchenMenuPublicTheme | null;
 };
 
 const LIST_SELECT = `
@@ -65,14 +67,17 @@ export async function fetchPublicKitchenMenuOrg(slug: string): Promise<PublicKit
 
   let { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, public_kitchen_menu_enabled')
+    .select('id, name, slug, public_kitchen_menu_enabled, kitchen_menu_public_theme')
     .eq('slug', normalized)
     .maybeSingle();
 
-  if (error?.message?.includes('public_kitchen_menu_enabled')) {
+  if (
+    error?.message?.includes('public_kitchen_menu_enabled') ||
+    error?.message?.includes('kitchen_menu_public_theme')
+  ) {
     const fallback = await supabase
       .from('organizations')
-      .select('id, name, slug')
+      .select('id, name, slug, public_kitchen_menu_enabled')
       .eq('slug', normalized)
       .maybeSingle();
     data = fallback.data;
@@ -87,7 +92,12 @@ export async function fetchPublicKitchenMenuOrg(slug: string): Promise<PublicKit
     public_kitchen_menu_enabled?: boolean;
   };
   if (row.public_kitchen_menu_enabled === false) return null;
-  return { id: row.id, name: row.name, slug: row.slug };
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    kitchen_menu_public_theme: (row as { kitchen_menu_public_theme?: KitchenMenuPublicTheme | null }).kitchen_menu_public_theme ?? null,
+  };
 }
 
 export async function fetchOrganizationSlugById(organizationId: string): Promise<string | null> {
@@ -114,7 +124,7 @@ export async function fetchPublicKitchenMenuBySlug(
     if (cached) return cached;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('hotel_kitchen_menu_items')
     .select(
       `
@@ -122,7 +132,8 @@ export async function fetchPublicKitchenMenuBySlug(
       organizations!inner (
         id,
         name,
-        slug
+        slug,
+        kitchen_menu_public_theme
       )
     `
     )
@@ -131,14 +142,47 @@ export async function fetchPublicKitchenMenuBySlug(
     .order('sort_order', { ascending: false })
     .order('created_at', { ascending: false });
 
+  if (error?.message?.includes('kitchen_menu_public_theme')) {
+    const retry = await supabase
+      .from('hotel_kitchen_menu_items')
+      .select(
+        `
+        ${LIST_SELECT},
+        organizations!inner (
+          id,
+          name,
+          slug
+        )
+      `
+      )
+      .eq('organizations.slug', normalized)
+      .eq('is_available', true)
+      .order('sort_order', { ascending: false })
+      .order('created_at', { ascending: false });
+    data = retry.data;
+    error = retry.error;
+  }
+
   if (!error && data?.length) {
     const first = data[0] as Record<string, unknown>;
-    const orgRaw = first.organizations as { id: string; name: string; slug: string } | { id: string; name: string; slug: string }[];
+    const orgRaw = first.organizations as
+      | { id: string; name: string; slug: string; kitchen_menu_public_theme?: unknown }
+      | { id: string; name: string; slug: string; kitchen_menu_public_theme?: unknown }[];
     const orgRow = Array.isArray(orgRaw) ? orgRaw[0] : orgRaw;
     if (!orgRow?.id) return fetchPublicKitchenMenuBySlugLegacy(normalized);
     const items = (data as Record<string, unknown>[]).map((row) => mapListRow(row));
+    let theme = (orgRow.kitchen_menu_public_theme ?? null) as PublicKitchenMenuOrg['kitchen_menu_public_theme'];
+    if (theme === null && orgRow.id) {
+      const orgWithTheme = await fetchPublicKitchenMenuOrg(normalized);
+      theme = orgWithTheme?.kitchen_menu_public_theme ?? null;
+    }
     const bundle: PublicMenuBundle = {
-      org: { id: orgRow.id, name: orgRow.name, slug: orgRow.slug },
+      org: {
+        id: orgRow.id,
+        name: orgRow.name,
+        slug: orgRow.slug,
+        kitchen_menu_public_theme: theme,
+      },
       items,
     };
     setPublicMenuCache(normalized, bundle);

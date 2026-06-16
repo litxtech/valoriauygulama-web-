@@ -427,6 +427,7 @@ export default function AdminLayout() {
       <Stack.Screen name="notifications/sounds" options={{ title: 'Bildirim Sesleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/event-log" options={{ title: 'Bildirim Log', headerRight: renderHeaderRight }} />
       <Stack.Screen name="smart-ops/index" options={{ title: 'Operasyon merkezi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="fnb-hub" options={{ headerShown: false }} />
       <Stack.Screen name="smart-ops/templates" options={{ title: 'Operasyon şablonları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="smart-ops/live" options={{ title: 'Canlı operasyon', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/emergency" options={{ title: t('adminEmergency'), headerRight: renderHeaderRight }} />

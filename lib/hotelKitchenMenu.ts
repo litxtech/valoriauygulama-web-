@@ -1,6 +1,12 @@
 import { supabase } from '@/lib/supabase';
 import { invalidatePublicAppOriginCache } from '@/lib/appPublicUrl';
 import {
+  extractErrorMessage,
+  isSupabaseUnavailableError,
+  isTransientSupabaseDbError,
+  sleepMs,
+} from '@/lib/supabaseTransientErrors';
+import {
   getHotelKitchenMenuCache,
   invalidateHotelKitchenMenuCache,
   setHotelKitchenMenuCache,
@@ -17,6 +23,7 @@ export { invalidateHotelKitchenMenuCache, getHotelKitchenMenuCache } from '@/lib
 
 export const HOTEL_KITCHEN_MENU_BUCKET = 'hotel-kitchen-menu';
 export const MAX_HOTEL_KITCHEN_MENU_IMAGES = 5;
+const UPSERT_MAX_ATTEMPTS = 5;
 
 export function newHotelKitchenMenuItemId(): string {
   const g = globalThis as { crypto?: { randomUUID?: () => string } };
@@ -131,6 +138,10 @@ export async function fetchHotelKitchenMenuItems(params: {
 
   const { data, error } = await q;
   if (error) {
+    if (isSupabaseUnavailableError(error.message)) {
+      const hit = getHotelKitchenMenuCache(key);
+      if (hit) return hit;
+    }
     return fetchHotelKitchenMenuItemsLegacy(params);
   }
   const rows = ((data ?? []) as Record<string, unknown>[]).map((row) => mapListRow(row));
@@ -271,6 +282,62 @@ export async function upsertHotelKitchenMenuItem(input: UpsertHotelKitchenMenuIn
   }
   invalidateHotelKitchenMenuCache();
   return data;
+}
+
+async function verifyHotelKitchenMenuItemExists(itemId: string): Promise<boolean> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { data, error } = await supabase
+        .from('hotel_kitchen_menu_items')
+        .select('id')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (!error && data?.id) return true;
+    } catch {
+      /* ağ geçici */
+    }
+    if (attempt < 3) await sleepMs(500 + attempt * 400);
+  }
+  return false;
+}
+
+/** 522 / timeout sonrası sunucuda kayıt oluşmuş olabilir — doğrulama ile yanlış hata göstermeyin. */
+export async function upsertHotelKitchenMenuItemWithRetry(
+  input: UpsertHotelKitchenMenuInput
+): Promise<string> {
+  const itemId = input.id ?? newHotelKitchenMenuItemId();
+  const payload: UpsertHotelKitchenMenuInput = { ...input, id: itemId };
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= UPSERT_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await upsertHotelKitchenMenuItem(payload);
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(extractErrorMessage(e));
+      if (attempt < UPSERT_MAX_ATTEMPTS && isTransientSupabaseDbError({ message: lastError.message })) {
+        await sleepMs(500 + attempt * 450);
+        continue;
+      }
+      break;
+    }
+  }
+
+  if (await verifyHotelKitchenMenuItemExists(itemId)) {
+    invalidateHotelKitchenMenuCache();
+    return itemId;
+  }
+
+  throw lastError ?? new Error('Kayıt yapılamadı');
+}
+
+/** Kullanıcıya gösterilecek kısa kayıt hatası. */
+export function hotelKitchenMenuSaveUserMessage(reason: unknown): string {
+  const raw = extractErrorMessage(reason).trim();
+  if (isSupabaseUnavailableError(raw)) {
+    return 'Sunucu geçici yanıt vermedi (522). Menü listesini yenileyin; kayıt oluşmuş olabilir.';
+  }
+  if (raw.length > 140) return `${raw.slice(0, 140)}…`;
+  return raw || 'Kayıt yapılamadı';
 }
 
 export async function deleteHotelKitchenMenuItem(itemId: string): Promise<void> {

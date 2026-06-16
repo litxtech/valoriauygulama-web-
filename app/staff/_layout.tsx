@@ -352,10 +352,8 @@ export default function StaffLayout() {
         name="meal-menu"
         options={{ title: t('staffMealMenuTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
       />
-      <Stack.Screen name="hotel-menu/index" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="hotel-menu/[id]" options={{ title: t('screenHotelKitchenMenu'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="hotel-menu/manage" options={{ title: t('hotelKitchenMenuManageTitle'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="hotel-menu/edit" options={{ headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-menu" options={{ headerShown: false }} />
+      <Stack.Screen name="fnb-hub" options={{ headerShown: false }} />
       <Stack.Screen
         name="meal-menu-edit"
         options={{ title: t('staffMealMenuEditTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}

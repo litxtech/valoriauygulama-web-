@@ -4,8 +4,16 @@
 
 import { supabase } from '@/lib/supabase';
 import type { StaffPermissionSlice } from '@/lib/staffPermissions';
+import { MEAL_MENU_KITCHEN_DEPARTMENTS } from '@/lib/staffPermissions';
 
-export const BREAKFAST_DEPARTMENTS = new Set(['kitchen', 'restaurant']);
+/** DB `staff_department_is_kitchen` ile uyumlu (350). */
+export const BREAKFAST_DEPARTMENTS = new Set([...MEAL_MENU_KITCHEN_DEPARTMENTS, 'restaurant']);
+
+export function staffDepartmentAllowsBreakfast(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  const d = (staff.department ?? '').trim().toLowerCase();
+  return BREAKFAST_DEPARTMENTS.has(d);
+}
 
 /** JSONB / cache kaynaklı `true`, `"true"`, `1` değerlerini kabul et (staff.app_permissions). */
 export function appPermissionTruthy(perms: Record<string, unknown> | null | undefined, key: string): boolean {
@@ -71,8 +79,7 @@ export function canBreakfastSubmitUi(
   if (staff.role === 'admin') return true;
   if (!appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_olustur')) return false;
   if (settings.require_kitchen_department) {
-    const d = staff.department ?? '';
-    if (!BREAKFAST_DEPARTMENTS.has(d)) return false;
+    if (!staffDepartmentAllowsBreakfast(staff)) return false;
   }
   return true;
 }
@@ -101,7 +108,10 @@ export function canBreakfastApproveUi(staff: StaffPermissionSlice): boolean {
 export function canBreakfastDepartmentViewUi(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
-  return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_departman');
+  if (!appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_departman')) {
+    return false;
+  }
+  return staffDepartmentAllowsBreakfast(staff);
 }
 
 /** Admin atadığı personel: tüm işletme kahvaltı kayıtlarını salt okunur görür (onay/puan yok). */

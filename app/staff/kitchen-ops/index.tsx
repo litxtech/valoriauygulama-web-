@@ -7,13 +7,15 @@ import { theme } from '@/constants/theme';
 import { KitchenOpsHub } from '@/components/kitchenOps/KitchenOpsHub';
 import { fetchCariNetBalance, fetchDaySummary, fetchUnresolvedAlertCount } from '@/lib/kitchenOps/api';
 import { useAuthStore } from '@/stores/authStore';
-import { canAccessKitchenOps } from '@/lib/staffPermissions';
+import { canAccessKitchenOps, canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
 export default function KitchenOpsHome() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const staff = useAuthStore((s) => s.staff);
-  const allowed = canAccessKitchenOps(staff);
+  const canKitchen = canAccessKitchenOps(staff);
+  const canReception = canAccessKitchenReceptionAccounting(staff);
+  const allowed = canKitchen || canReception;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
@@ -36,9 +38,13 @@ export default function KitchenOpsHome() {
   }, []);
 
   useEffect(() => {
-    if (!allowed) return;
+    if (!canKitchen && canReception) {
+      router.replace('/staff/kitchen-ops/reception');
+      return;
+    }
+    if (!canKitchen) return;
     load().finally(() => setLoading(false));
-  }, [allowed, load]);
+  }, [canKitchen, canReception, load, router]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -51,7 +57,15 @@ export default function KitchenOpsHome() {
       <View style={styles.center}>
         <Ionicons name="lock-closed-outline" size={48} color={theme.colors.textMuted} />
         <Text style={styles.deniedTitle}>Erişim yok</Text>
-        <Text style={styles.denied}>Mutfak operasyon modülüne yetkiniz bulunmuyor.</Text>
+        <Text style={styles.denied}>Mutfak veya reception muhasebe yetkisi gerekir.</Text>
+      </View>
+    );
+  }
+
+  if (!canKitchen) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }

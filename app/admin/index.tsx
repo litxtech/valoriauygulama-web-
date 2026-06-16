@@ -153,6 +153,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/stock', icon: 'cube-outline', label: 'Stok yönetimi' },
       { href: '/admin/stock/all', icon: 'layers-outline', label: 'Tüm stoklar' },
       { href: '/admin/stock/approvals', icon: 'checkmark-done-outline', label: 'Onay bekleyenler', badge: 0 },
+      { href: '/admin/fnb-hub', icon: 'grid-outline', label: 'F&B Merkezi (mutfak · satış · menü)' },
       { href: '/admin/kitchen-ops', icon: 'restaurant-outline', label: 'Mutfak operasyon yönetimi' },
       { href: '/admin/kitchen-ops/reception', icon: 'checkmark-done-outline', label: 'Reception mutfak muhasebe' },
       { href: '/admin/tips', icon: 'gift-outline', label: 'Bahşişler' },

@@ -50,8 +50,12 @@ export default function StaffHotelMenuManageScreen() {
   }, [navigation, t]);
 
   const load = useCallback(async (opts?: { skipCache?: boolean }) => {
-    const rows = await fetchHotelKitchenMenuItems({ availableOnly: false, skipCache: opts?.skipCache });
-    setItems(rows);
+    try {
+      const rows = await fetchHotelKitchenMenuItems({ availableOnly: false, skipCache: opts?.skipCache });
+      setItems(rows);
+    } catch {
+      /* 522 vb. — mevcut listeyi koru */
+    }
   }, []);
 
   useFocusEffect(
@@ -63,9 +67,7 @@ export default function StaffHotelMenuManageScreen() {
         void load({ skipCache: false }).catch(() => {});
       } else {
         setLoading(true);
-        void load({ skipCache: true })
-          .catch(() => setItems([]))
-          .finally(() => setLoading(false));
+        void load({ skipCache: true }).finally(() => setLoading(false));
       }
       return undefined;
     }, [load])
@@ -108,6 +110,15 @@ export default function StaffHotelMenuManageScreen() {
         <Text style={styles.manageHeroTitle}>{t('hotelKitchenMenuManageHero')}</Text>
         <Text style={styles.manageHeroSub}>{t('hotelKitchenMenuManageHeroSub')}</Text>
       </LinearGradient>
+      <TouchableOpacity
+        style={styles.themeBtn}
+        onPress={() => router.push('/staff/fnb-hub/menu-theme')}
+        activeOpacity={0.88}
+      >
+        <Ionicons name="color-palette-outline" size={20} color={menuUi.navy} />
+        <Text style={styles.themeBtnText}>{t('hotelKitchenMenuThemeTitle')}</Text>
+        <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.addBtn}
         onPress={() => router.push('/staff/hotel-menu/edit')}
@@ -169,6 +180,21 @@ const styles = StyleSheet.create({
   },
   manageHeroTitle: { fontSize: 20, fontWeight: '800', color: '#fff' },
   manageHeroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 18 },
+  themeBtn: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: menuUi.border,
+    ...menuUi.shadowSm,
+  },
+  themeBtnText: { flex: 1, fontSize: 15, fontWeight: '700', color: menuUi.navy },
   addBtn: { marginHorizontal: 16, marginTop: 12, borderRadius: 14, overflow: 'hidden', ...menuUi.shadowSm },
   addBtnGrad: {
     flexDirection: 'row',

@@ -34,6 +34,7 @@ import {
   type StaffPermissionSlice,
 } from '@/lib/staffPermissions';
 import { canAccessAdminRoute } from '@/lib/adminRoutePermissions';
+import { canAccessFnbHub } from '@/lib/fnbHub';
 import { staffMenuLabel } from '@/lib/staffMenuI18n';
 import { filterStaffMenuSectionsByHidden, filterStaffMenuSectionsByOrgFeatures } from '@/lib/staffMenuVisibility';
 import type { OrganizationUiFeaturesConfig } from '@/lib/organizationUiFeatures';
@@ -52,7 +53,7 @@ export type StaffHamburgerMenuItem = {
   accent: string;
 };
 
-export type StaffHamburgerMenuSectionId = 'kitchen' | 'nav' | 'staff' | 'hotel' | 'ops' | 'admin';
+export type StaffHamburgerMenuSectionId = 'fnb' | 'kitchen' | 'nav' | 'staff' | 'hotel' | 'ops' | 'admin';
 
 export type StaffHamburgerMenuSection = {
   id: StaffHamburgerMenuSectionId;
@@ -120,6 +121,7 @@ type MenuBuilder = {
 function createBuilder(): { push: MenuBuilder['push']; sections: Record<StaffHamburgerMenuSectionId, StaffHamburgerMenuItem[]> } {
   const seen = new Set<string>();
   const sections: Record<StaffHamburgerMenuSectionId, StaffHamburgerMenuItem[]> = {
+    fnb: [],
     kitchen: [],
     nav: [],
     staff: [],
@@ -186,6 +188,60 @@ export function buildStaffHamburgerMenuSections(
   const isFullAdmin = isAdmin && !isGorevAtaOnlyUser(staff);
   const perms = staff.app_permissions ?? {};
   const isKitchenStaff = isKitchenStaffMember(staff) && canAccessKitchenOps(staff);
+
+  // —— F&B Merkezi (mutfak + satış + menü — yetkiye göre kısayollar) ——
+  if (canAccessFnbHub(staff)) {
+    push('fnb', {
+      id: 'fnb_hub',
+      label: t('fnbHubTitle'),
+      href: '/staff/fnb-hub',
+      icon: 'grid-outline',
+      accent: '#ea580c',
+    });
+    if (canAccessReservationSales(staff)) {
+      push('fnb', {
+        id: 'fnb_sales_new',
+        label: t('fnbHubSalesNew'),
+        href: '/staff/sales/new',
+        icon: 'add-circle-outline',
+        accent: ACCENTS.sales,
+      });
+    }
+    if (canAccessKitchenOps(staff)) {
+      push('fnb', {
+        id: 'fnb_kitchen_revenue',
+        label: t('fnbHubKitchenRevenue'),
+        href: '/staff/kitchen-ops/revenue/new',
+        icon: 'cash-outline',
+        accent: '#059669',
+      });
+    }
+    if (canManageHotelKitchenMenu(staff)) {
+      push('fnb', {
+        id: 'fnb_menu_manage',
+        label: t('hotelKitchenMenuManageCta'),
+        href: '/staff/hotel-menu/manage',
+        icon: 'restaurant-outline',
+        accent: ACCENTS.meal_edit,
+      });
+      push('fnb', {
+        id: 'fnb_menu_theme',
+        label: t('hotelKitchenMenuThemeTitle'),
+        href: '/staff/fnb-hub/menu-theme',
+        icon: 'color-palette-outline',
+        accent: '#7c3aed',
+      });
+    }
+    if (canAccessKitchenReceptionAccounting(staff)) {
+      push('fnb', {
+        id: 'fnb_reception',
+        label: t('staffKitchenAccountingControl'),
+        href: '/staff/kitchen-ops/reception',
+        icon: 'checkmark-done-outline',
+        accent: '#6366f1',
+      });
+    }
+  }
 
   // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
   if (isKitchenStaff) {
@@ -642,7 +698,7 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.kitchen_ops,
     });
   }
-  if (canAccessKitchenReceptionAccounting(staff) && !canAccessKitchenOps(staff)) {
+  if (canAccessKitchenReceptionAccounting(staff)) {
     push('ops', {
       id: 'kitchen_reception',
       label: t('staffKitchenAccountingControl'),
@@ -883,6 +939,7 @@ export function buildStaffHamburgerMenuSections(
   pushBreakfastBriefingMenuItem(push, staff, isAdmin);
 
   const sectionTitles: Record<StaffHamburgerMenuSectionId, string> = {
+    fnb: t('fnbHubMenuSection'),
     kitchen: t('staffMenuSectionKitchen'),
     nav: t('staffMenuSectionNav'),
     staff: t('staffMenuSectionStaff'),
@@ -891,7 +948,7 @@ export function buildStaffHamburgerMenuSections(
     admin: t('staffMenuSectionAdmin'),
   };
 
-  const built = (['kitchen', 'nav', 'staff', 'hotel', 'ops', 'admin'] as const)
+  const built = (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'ops', 'admin'] as const)
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
 

@@ -283,7 +283,7 @@ export default function StaffBreakfastConfirmScreen() {
       <View style={styles.centered}>
         <Text style={styles.blockTitle}>Erişim yok</Text>
         <Text style={styles.blockSub}>
-          Bu ekran yalnızca mutfak / restoran departmanı ve yöneticinizin atadığı kahvaltı teyidi yetkisi olan personel içindir.
+          Bu ekran mutfak / restoran departmanı personeli içindir. Personel kaydınızda departman (mutfak, kitchen, chef vb.) tanımlı olmalı ve yöneticiniz «Kahvaltı teyidi oluşturma» yetkisini açmalıdır.
         </Text>
       </View>
     );

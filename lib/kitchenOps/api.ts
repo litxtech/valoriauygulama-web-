@@ -228,6 +228,72 @@ export async function checkPosMismatch(date?: string): Promise<boolean> {
   return !!data;
 }
 
+export type KitchenPosTransactionRow = {
+  id: string;
+  entry_date: string;
+  amount: number;
+  net_amount: number;
+  commission_rate?: number;
+  description: string | null;
+  status: string;
+  created_at: string;
+  created_by: string | null;
+  creator_name?: string | null;
+};
+
+export async function fetchKitchenPosTransactions(limit = 50): Promise<KitchenPosTransactionRow[]> {
+  const { data, error } = await supabase
+    .from('kitchen_pos_transactions')
+    .select('id, entry_date, amount, net_amount, commission_rate, description, status, created_at, created_by')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  const rows = (data ?? []) as KitchenPosTransactionRow[];
+  const staffIds = [...new Set(rows.map((r) => r.created_by).filter(Boolean))] as string[];
+  if (staffIds.length === 0) return rows;
+
+  const { data: staffRows } = await supabase.from('staff').select('id, full_name').in('id', staffIds);
+  const nameById = new Map((staffRows ?? []).map((s) => [s.id as string, (s.full_name as string | null) ?? null]));
+  return rows.map((r) => ({
+    ...r,
+    creator_name: r.created_by ? nameById.get(r.created_by) ?? null : null,
+  }));
+}
+
+export async function advanceKitchenPosStatus(transactionId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('kitchen_pos_advance_status', {
+    p_transaction_id: transactionId,
+  });
+  if (error) throw error;
+  return String(data ?? '');
+}
+
+export type KitchenDayClosureRow = {
+  id: string;
+  closure_date: string;
+  total_revenue: number;
+  total_pos: number;
+  net_remaining: number;
+  status: string;
+  submitted_at: string | null;
+};
+
+export async function fetchPendingDayClosures(): Promise<KitchenDayClosureRow[]> {
+  const { data, error } = await supabase
+    .from('kitchen_day_closures')
+    .select('id, closure_date, total_revenue, total_pos, net_remaining, status, submitted_at')
+    .in('status', ['submitted', 'draft'])
+    .order('closure_date', { ascending: false })
+    .limit(14);
+  if (error) throw error;
+  return (data ?? []) as KitchenDayClosureRow[];
+}
+
+export async function approveKitchenDayClosure(closureId: string): Promise<void> {
+  const { error } = await supabase.rpc('kitchen_day_closure_approve', { p_closure_id: closureId });
+  if (error) throw error;
+}
+
 export async function fetchCariNetBalance(): Promise<number> {
   const { data, error } = await supabase.rpc('kitchen_cari_net_balance');
   if (error) throw error;
