@@ -255,14 +255,24 @@ export default function StaffLayout() {
         name="staff-posts/[id]"
         options={{ title: t('profileFeedPostsSection'), headerBackTitle: t('back') }}
       />
-      <Stack.Screen name="profile/edit" options={{ title: t('screenEditProfile'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="profile/blocked-users" options={{ headerBackTitle: t('back') }} />
-      <Stack.Screen name="profile/notifications" options={{ headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="profile/edit"
+        options={{ title: t('screenEditProfile'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen name="profile/account" options={{ ...staffStackScrollSafeGestureOptions }} />
+      <Stack.Screen
+        name="profile/blocked-users"
+        options={{ headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
+      <Stack.Screen
+        name="profile/notifications"
+        options={{ headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
+      />
       <Stack.Screen name="operations/index" options={{ title: t('staffOperationsTasks'), headerBackTitle: t('back') }} />
       <Stack.Screen name="smart-ops/[id]" options={{ title: t('staffSmartOpsConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen
         name="profile/app-links"
-        options={{ title: t('screenAppsAndWeb'), headerBackTitle: t('back') }}
+        options={{ title: t('screenAppsAndWeb'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
       />
       <Stack.Screen
         name="profile/passports"

@@ -13,11 +13,20 @@ type Props = {
   onPress: () => void;
   onImagePress?: () => void;
   layout?: Layout;
+  onAddToCart?: () => void;
+  cartQuantity?: number;
 };
 
 const COMPACT_THUMB = Platform.OS === 'web' ? 88 : 76;
 
-export function PublicKitchenMenuDishCard({ item, onPress, onImagePress, layout = 'grid' }: Props) {
+export function PublicKitchenMenuDishCard({
+  item,
+  onPress,
+  onImagePress,
+  layout = 'grid',
+  onAddToCart,
+  cartQuantity = 0,
+}: Props) {
   const { t } = useTranslation();
   const cover = coverImageUrl(item);
   const catColor = categoryAccentColor(item.category_title);
@@ -89,15 +98,33 @@ export function PublicKitchenMenuDishCard({ item, onPress, onImagePress, layout 
           </View>
         </View>
         <View style={styles.premiumBody}>
-          <View style={[styles.premiumCatDot, { backgroundColor: catColor }]} />
-          <View style={styles.premiumTextCol}>
-            <Text style={[styles.premiumCategory, { color: catColor }]} numberOfLines={1}>
-              {item.category_title}
-            </Text>
-            <Text style={styles.premiumName} numberOfLines={2}>{item.name}</Text>
-            {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
+          <View style={styles.premiumMainRow}>
+            <View style={[styles.premiumCatDot, { backgroundColor: catColor }]} />
+            <View style={styles.premiumTextCol}>
+              <Text style={[styles.premiumCategory, { color: catColor }]} numberOfLines={1}>
+                {item.category_title}
+              </Text>
+              <Text style={styles.premiumName} numberOfLines={2}>{item.name}</Text>
+              {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
+            </View>
           </View>
-          <Text style={styles.premiumPrice}>{formatMenuPrice(item.price)}</Text>
+          <View style={styles.premiumFooter}>
+            <Text style={styles.premiumPrice}>{formatMenuPrice(item.price)}</Text>
+            {onAddToCart ? (
+              <Pressable
+                style={[styles.addBtn, cartQuantity > 0 && styles.addBtnActive]}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  onAddToCart();
+                }}
+              >
+                <Ionicons name={cartQuantity > 0 ? 'checkmark' : 'add'} size={16} color={cartQuantity > 0 ? '#fff' : menuUi.navy} />
+                <Text style={[styles.addBtnText, cartQuantity > 0 && styles.addBtnTextActive]}>
+                  {cartQuantity > 0 ? `${cartQuantity}` : t('publicKitchenMenuAddToCart')}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       </Pressable>
     );
@@ -408,11 +435,14 @@ const styles = StyleSheet.create({
   },
   premiumViewBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   premiumBody: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     padding: 16,
     gap: 10,
     flex: 1,
+  },
+  premiumMainRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
   },
   premiumCatDot: { width: 4, height: 44, borderRadius: 2, marginTop: 2 },
   premiumTextCol: { flex: 1, minWidth: 0 },
@@ -440,7 +470,37 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     color: menuUi.price,
-    marginTop: 2,
+  },
+  premiumFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 10,
+    width: '100%',
+  },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: menuUi.accentSoft,
+    borderWidth: 1,
+    borderColor: menuUi.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  addBtnActive: {
+    backgroundColor: menuUi.navy,
+    borderColor: menuUi.navy,
+  },
+  addBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: menuUi.navy,
+  },
+  addBtnTextActive: {
+    color: '#fff',
   },
   card: {
     backgroundColor: menuUi.cardBg,

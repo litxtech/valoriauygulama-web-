@@ -17,17 +17,24 @@ import { theme } from '@/constants/theme';
 import { PublicKitchenMenuDishCard } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishCard';
 import { PublicKitchenMenuDishDetailModal } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishDetailModal';
 import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMenuUpdatedToast';
+import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
+import { PublicKitchenMenuCartBar } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartBar';
+import { PublicKitchenMenuCartSheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartSheet';
 import { categoryAccentColor, menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import type { PublicKitchenMenuOrg } from '@/lib/publicKitchenMenu';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import type { MenuSectionFilter } from '@/lib/hotelKitchenMenuFilters';
 import { coverImageUrl } from '@/lib/hotelKitchenMenu';
+import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
+import { cartItemCount, cartQuantityFor, cartTotal } from '@/lib/publicKitchenMenuCart';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type CategoryChip = { title: string; count: number };
 type ProductChip = { name: string; count: number };
 type TagChip = { tag: string; label: string; count: number };
 
 type Props = {
+  orgSlug: string;
   org: PublicKitchenMenuOrg;
   items: HotelKitchenMenuItemWithImages[];
   filtered: HotelKitchenMenuItemWithImages[];
@@ -48,6 +55,14 @@ type Props = {
   hasActiveFilters: boolean;
   updateToast: boolean;
   onUpdateToastHidden: () => void;
+  menuLang: PublicMenuLang;
+  onMenuLangChange: (lang: PublicMenuLang) => void;
+  cartLines: PublicMenuCartLine[];
+  onAddToCart: (item: HotelKitchenMenuItemWithImages) => void;
+  onUpdateCartQuantity: (itemId: string, quantity: number) => void;
+  onCartCleared: () => void;
+  paymentBanner: 'success' | 'cancel' | null;
+  onDismissPaymentBanner: () => void;
 };
 
 function LivePulseBadge({ label }: { label: string }) {
@@ -74,6 +89,7 @@ function LivePulseBadge({ label }: { label: string }) {
 }
 
 export function PublicKitchenMenuWebLayout({
+  orgSlug,
   org,
   items,
   filtered,
@@ -94,11 +110,23 @@ export function PublicKitchenMenuWebLayout({
   hasActiveFilters,
   updateToast,
   onUpdateToastHidden,
+  menuLang,
+  onMenuLangChange,
+  cartLines,
+  onAddToCart,
+  onUpdateCartQuantity,
+  onCartCleared,
+  paymentBanner,
+  onDismissPaymentBanner,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [detailItem, setDetailItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
+
+  const cartCount = cartItemCount(cartLines);
+  const cartSum = cartTotal(cartLines);
 
   const columns = width >= 1200 ? 3 : width >= 760 ? 2 : 1;
   const contentMax = columns === 3 ? 1180 : columns === 2 ? 920 : 640;
@@ -115,9 +143,33 @@ export function PublicKitchenMenuWebLayout({
     <View style={styles.root}>
       <KitchenMenuUpdatedToast visible={updateToast} onHidden={onUpdateToastHidden} />
 
+      {paymentBanner ? (
+        <View
+          style={[
+            styles.paymentBanner,
+            paymentBanner === 'success' ? styles.paymentBannerOk : styles.paymentBannerCancel,
+            { paddingTop: insets.top + 10 },
+          ]}
+        >
+          <Ionicons
+            name={paymentBanner === 'success' ? 'checkmark-circle' : 'information-circle'}
+            size={22}
+            color={paymentBanner === 'success' ? '#166534' : '#92400e'}
+          />
+          <Text style={styles.paymentBannerText}>
+            {paymentBanner === 'success'
+              ? t('publicKitchenMenuPaymentSuccess')
+              : t('publicKitchenMenuPaymentCancelled')}
+          </Text>
+          <TouchableOpacity onPress={onDismissPaymentBanner} hitSlop={10}>
+            <Ionicons name="close" size={20} color={menuUi.navy} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 48 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + (cartCount > 0 ? 120 : 48) }}
         showsVerticalScrollIndicator
       >
         <LinearGradient
@@ -133,6 +185,9 @@ export function PublicKitchenMenuWebLayout({
             <View style={styles.heroTopRow}>
               <LivePulseBadge label={t('publicKitchenMenuLiveBadge')} />
               <Text style={styles.heroHint}>{t('publicKitchenMenuLiveHint')}</Text>
+              <View style={styles.heroLang}>
+                <PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />
+              </View>
             </View>
 
             <Text style={styles.heroHotel}>{org.name}</Text>
@@ -315,6 +370,8 @@ export function PublicKitchenMenuWebLayout({
                           item={item}
                           layout="featured"
                           onPress={() => setDetailItem(item)}
+                          onAddToCart={() => onAddToCart(item)}
+                          cartQuantity={cartQuantityFor(cartLines, item.id)}
                         />
                       </View>
                     ))}
@@ -339,6 +396,8 @@ export function PublicKitchenMenuWebLayout({
                           item={item}
                           layout="premium"
                           onPress={() => setDetailItem(item)}
+                          onAddToCart={() => onAddToCart(item)}
+                          cartQuantity={cartQuantityFor(cartLines, item.id)}
                         />
                       </View>
                     ))}
@@ -359,6 +418,34 @@ export function PublicKitchenMenuWebLayout({
         visible={!!detailItem}
         item={detailItem}
         onClose={() => setDetailItem(null)}
+        onAddToCart={
+          detailItem
+            ? () => {
+                onAddToCart(detailItem);
+              }
+            : undefined
+        }
+        cartQuantity={detailItem ? cartQuantityFor(cartLines, detailItem.id) : 0}
+      />
+
+      <PublicKitchenMenuCartBar
+        itemCount={cartCount}
+        total={cartSum}
+        onOpenCart={() => setCartOpen(true)}
+      />
+
+      <PublicKitchenMenuCartSheet
+        visible={cartOpen}
+        onClose={() => setCartOpen(false)}
+        orgSlug={orgSlug}
+        orgName={org.name}
+        lines={cartLines}
+        lang={menuLang}
+        onUpdateQuantity={onUpdateCartQuantity}
+        onCartCleared={() => {
+          onCartCleared();
+          setCartOpen(false);
+        }}
       />
     </View>
   );
@@ -388,6 +475,18 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     flexWrap: 'wrap',
   },
+  heroLang: { marginLeft: 'auto' },
+  paymentBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    zIndex: 50,
+  },
+  paymentBannerOk: { backgroundColor: '#ecfdf3' },
+  paymentBannerCancel: { backgroundColor: '#fffbeb' },
+  paymentBannerText: { flex: 1, fontSize: 14, fontWeight: '700', color: menuUi.navy },
   liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',

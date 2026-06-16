@@ -26,9 +26,17 @@ type Props = {
   visible: boolean;
   item: HotelKitchenMenuItemWithImages | null;
   onClose: () => void;
+  onAddToCart?: () => void;
+  cartQuantity?: number;
 };
 
-export function PublicKitchenMenuDishDetailModal({ visible, item, onClose }: Props) {
+export function PublicKitchenMenuDishDetailModal({
+  visible,
+  item,
+  onClose,
+  onAddToCart,
+  cartQuantity = 0,
+}: Props) {
   const { t } = useTranslation();
   const { width, height } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -206,6 +214,24 @@ export function PublicKitchenMenuDishDetailModal({ visible, item, onClose }: Pro
                   </Text>
                 </View>
               ) : null}
+
+              {onAddToCart ? (
+                <Pressable
+                  style={[styles.addCartBtn, cartQuantity > 0 && styles.addCartBtnActive]}
+                  onPress={onAddToCart}
+                >
+                  <Ionicons
+                    name={cartQuantity > 0 ? 'cart' : 'add-circle-outline'}
+                    size={22}
+                    color={cartQuantity > 0 ? '#fff' : menuUi.navy}
+                  />
+                  <Text style={[styles.addCartBtnText, cartQuantity > 0 && styles.addCartBtnTextActive]}>
+                    {cartQuantity > 0
+                      ? t('publicKitchenMenuInCart', { count: cartQuantity })
+                      : t('publicKitchenMenuAddToCart')}
+                  </Text>
+                </Pressable>
+              ) : null}
             </ScrollView>
           </View>
         </Pressable>
@@ -356,4 +382,26 @@ const styles = StyleSheet.create({
   descText: { fontSize: 15, lineHeight: 24, color: menuUi.webText, fontWeight: '500' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   metaText: { fontSize: 13, color: menuUi.webMuted, fontWeight: '600' },
+  addCartBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 24,
+    backgroundColor: menuUi.accent,
+    borderRadius: 16,
+    paddingVertical: 16,
+    ...menuUi.shadowMd,
+  },
+  addCartBtnActive: {
+    backgroundColor: menuUi.navy,
+  },
+  addCartBtnText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: menuUi.navy,
+  },
+  addCartBtnTextActive: {
+    color: '#fff',
+  },
 });

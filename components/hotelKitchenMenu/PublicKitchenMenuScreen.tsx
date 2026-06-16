@@ -37,6 +37,19 @@ import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMe
 import { PublicKitchenMenuWebLayout } from '@/components/hotelKitchenMenu/PublicKitchenMenuWebLayout';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
+import {
+  cartLineFromItem,
+  loadPublicMenuCart,
+  mergeCartLine,
+  savePublicMenuCart,
+  setCartQuantity,
+  type PublicMenuCartLine,
+} from '@/lib/publicKitchenMenuCart';
+import {
+  applyPublicMenuLang,
+  readPublicMenuLang,
+  type PublicMenuLang,
+} from '@/lib/publicKitchenMenuLang';
 
 type Props = {
   orgSlug: string;
@@ -75,6 +88,57 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [updateToast, setUpdateToast] = useState(false);
+  const [menuLang, setMenuLang] = useState<PublicMenuLang>('en');
+  const [cartLines, setCartLines] = useState<PublicMenuCartLine[]>([]);
+  const [paymentBanner, setPaymentBanner] = useState<'success' | 'cancel' | null>(null);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    const lang = readPublicMenuLang();
+    setMenuLang(lang);
+    applyPublicMenuLang(lang);
+  }, [isWeb]);
+
+  useEffect(() => {
+    if (!slugKey) return;
+    setCartLines(loadPublicMenuCart(slugKey));
+  }, [slugKey]);
+
+  useEffect(() => {
+    if (!slugKey || !isWeb) return;
+    savePublicMenuCart(slugKey, cartLines);
+  }, [slugKey, cartLines, isWeb]);
+
+  useEffect(() => {
+    if (!isWeb || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    if (payment === 'success' || payment === 'cancel') {
+      setPaymentBanner(payment);
+      params.delete('payment');
+      params.delete('id');
+      params.delete('token');
+      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
+      window.history.replaceState({}, '', next);
+    }
+  }, [isWeb]);
+
+  const handleMenuLangChange = useCallback((lang: PublicMenuLang) => {
+    setMenuLang(lang);
+    applyPublicMenuLang(lang);
+  }, []);
+
+  const handleAddToCart = useCallback((item: HotelKitchenMenuItemWithImages) => {
+    setCartLines((prev) => mergeCartLine(prev, cartLineFromItem(item, 1)));
+  }, []);
+
+  const handleUpdateCartQuantity = useCallback((itemId: string, quantity: number) => {
+    setCartLines((prev) => setCartQuantity(prev, itemId, quantity));
+  }, []);
+
+  const handleCartCleared = useCallback(() => {
+    setCartLines([]);
+  }, []);
 
   const webColumns = width >= 1080 ? 2 : 1;
   const webColumnGap = 14;
@@ -228,6 +292,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   if (isWeb) {
     return (
       <PublicKitchenMenuWebLayout
+        orgSlug={slugKey}
         org={org}
         items={items}
         filtered={filtered}
@@ -248,6 +313,14 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         hasActiveFilters={hasActiveFilters}
         updateToast={updateToast}
         onUpdateToastHidden={() => setUpdateToast(false)}
+        menuLang={menuLang}
+        onMenuLangChange={handleMenuLangChange}
+        cartLines={cartLines}
+        onAddToCart={handleAddToCart}
+        onUpdateCartQuantity={handleUpdateCartQuantity}
+        onCartCleared={handleCartCleared}
+        paymentBanner={paymentBanner}
+        onDismissPaymentBanner={() => setPaymentBanner(null)}
       />
     );
   }

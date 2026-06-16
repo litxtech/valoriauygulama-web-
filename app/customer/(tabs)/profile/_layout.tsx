@@ -1,17 +1,33 @@
 import { TouchableOpacity, Text } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useNavigation } from 'expo-router';
+import type { NavigationProp, ParamListBase } from '@react-navigation/native';
 import { theme } from '@/constants/theme';
+import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
+import { customerStackScrollSafeGestureOptions } from '@/lib/customerStackNavigation';
 import { useTranslation } from 'react-i18next';
 
 function ProfileBackButton() {
   const router = useRouter();
+  const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const { t } = useTranslation();
+  const onPress = () => {
+    if ((navigation.getState()?.routes?.length ?? 0) > 1) {
+      navigation.goBack();
+      return;
+    }
+    router.replace('/customer/profile');
+  };
   return (
-    <TouchableOpacity onPress={() => router.replace('/customer/profile')} style={{ marginLeft: 8, paddingRight: 6 }} activeOpacity={0.7}>
+    <TouchableOpacity onPress={onPress} style={{ marginLeft: 8, paddingRight: 6 }} activeOpacity={0.7}>
       <Text style={{ fontSize: 17, color: theme.colors.primary }}>{t('back')}</Text>
     </TouchableOpacity>
   );
 }
+
+const profileSubScreenOptions = {
+  ...customerStackScrollSafeGestureOptions,
+  headerLeft: () => <ProfileBackButton />,
+} as const;
 
 export default function ProfileLayout() {
   const { t } = useTranslation();
@@ -21,15 +37,17 @@ export default function ProfileLayout() {
         headerShown: true,
         headerBackTitle: t('back'),
         headerTitleStyle: { fontSize: 17, fontWeight: '600' },
+        contentStyle: { backgroundColor: P.bg },
+        ...customerStackScrollSafeGestureOptions,
       }}
     >
-      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="index" options={{ headerShown: false, contentStyle: { backgroundColor: P.bg } }} />
       <Stack.Screen
         name="edit"
         options={{
           title: t('screenEditProfile'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
+          ...profileSubScreenOptions,
         }}
       />
       <Stack.Screen
@@ -37,7 +55,7 @@ export default function ProfileLayout() {
         options={{
           title: t('screenDeleteAccount'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
+          ...profileSubScreenOptions,
         }}
       />
       <Stack.Screen
@@ -45,7 +63,7 @@ export default function ProfileLayout() {
         options={{
           title: t('notifications'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
+          ...profileSubScreenOptions,
         }}
       />
       <Stack.Screen
@@ -53,7 +71,7 @@ export default function ProfileLayout() {
         options={{
           title: t('blockedUsersTitle'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
+          ...profileSubScreenOptions,
         }}
       />
       <Stack.Screen
@@ -61,9 +79,9 @@ export default function ProfileLayout() {
         options={{
           title: t('customerProfileMyPostsMenuTitle'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
           headerTitleAlign: 'center',
           headerLargeTitle: false,
+          ...profileSubScreenOptions,
         }}
       />
       <Stack.Screen
@@ -71,7 +89,7 @@ export default function ProfileLayout() {
         options={{
           title: t('customerProfileSettingsTitle'),
           headerBackTitle: t('back'),
-          headerLeft: () => <ProfileBackButton />,
+          ...profileSubScreenOptions,
         }}
       />
     </Stack>

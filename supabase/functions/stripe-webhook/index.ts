@@ -248,7 +248,7 @@ Deno.serve(async (req: Request) => {
           });
         }
       }
-    } else if (row.organization_id && row.reference_type !== "guest_extra_order") {
+    } else if (row.organization_id && row.reference_type !== "guest_extra_order" && row.reference_type !== "kitchen_menu_order") {
       await notifyOrgAdminsPayment(admin, {
         organizationId: row.organization_id as string,
         requestId,
@@ -297,6 +297,39 @@ Deno.serve(async (req: Request) => {
         });
       }
     }
+    if (row.reference_type === "kitchen_menu_order" && row.reference_id) {
+      await admin
+        .from("kitchen_menu_orders")
+        .update({ status: "paid", paid_at: new Date().toISOString(), payment_request_id: requestId })
+        .eq("id", row.reference_id)
+        .in("status", ["pending_payment"]);
+
+      const meta =
+        typeof row.metadata === "object" && row.metadata != null && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {};
+      const roomNo = typeof meta.room_number === "string" ? meta.room_number.trim() : "";
+      const tableNo = typeof meta.table_number === "string" ? meta.table_number.trim() : "";
+      const customerName =
+        typeof meta.customer_name === "string" ? meta.customer_name.trim() : "";
+      const itemsSummary = typeof meta.items_summary === "string" ? meta.items_summary.trim() : "";
+      let adminBody = paymentTitle;
+      if (roomNo) adminBody = `Room ${roomNo} · ${adminBody}`;
+      else if (tableNo) adminBody = `Table ${tableNo} · ${adminBody}`;
+      if (customerName) adminBody += ` · ${customerName}`;
+      if (itemsSummary) adminBody += ` · ${itemsSummary}`;
+
+      if (row.organization_id) {
+        await notifyOrgAdminsPayment(admin, {
+          organizationId: row.organization_id as string,
+          requestId,
+          amountLabel,
+          serviceKind: row.service_kind as string,
+          paymentTitle: adminBody,
+          guestName: customerName || guestNameForAdmin || undefined,
+        });
+      }
+    }
   }
 
   if (
@@ -331,6 +364,13 @@ Deno.serve(async (req: Request) => {
       if (payRow?.reference_type === "guest_extra_order" && payRow.reference_id) {
         await admin
           .from("guest_extra_orders")
+          .update({ status: nextStatus === "expired" ? "expired" : "cancelled" })
+          .eq("id", payRow.reference_id)
+          .eq("status", "pending_payment");
+      }
+      if (payRow?.reference_type === "kitchen_menu_order" && payRow.reference_id) {
+        await admin
+          .from("kitchen_menu_orders")
           .update({ status: nextStatus === "expired" ? "expired" : "cancelled" })
           .eq("id", payRow.reference_id)
           .eq("status", "pending_payment");

@@ -86,7 +86,7 @@ function CustomerProfileBackToHome() {
   const { t } = useTranslation();
   return (
     <TouchableOpacity
-      onPress={() => router.push('/customer' as Href)}
+      onPress={() => router.replace('/customer' as Href)}
       style={profileHeaderStyles.roundBtn}
       activeOpacity={0.85}
       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}

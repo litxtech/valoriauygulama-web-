@@ -72,7 +72,7 @@ function StaffProfileBackToHome() {
   const { t } = useTranslation();
   return (
     <TouchableOpacity
-      onPress={() => router.push('/staff' as Href)}
+      onPress={() => router.replace('/staff' as Href)}
       style={styles.profileBackBtn}
       activeOpacity={0.85}
       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
