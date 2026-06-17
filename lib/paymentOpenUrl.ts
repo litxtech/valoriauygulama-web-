@@ -1,33 +1,36 @@
-import { resolveShareablePublicOrigin } from '@/lib/appPublicUrl';
-import {
-  PUBLIC_PAYMENT_PATH,
-  PUBLIC_PAYMENT_QR_PATH,
-} from '@/constants/publicWebPaths';
+import { supabaseUrl } from '@/lib/supabase';
 
 export const PAYMENT_BRAND_NAME = 'Valoria Hotel';
 
-function paymentPublicBase(baseOverride?: string | null): string {
-  return resolveShareablePublicOrigin(baseOverride);
+function paymentFunctionsBase(): string {
+  const base = (supabaseUrl ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '');
+  return base ? `${base}/functions/v1` : '';
 }
 
-/** Tek seferlik ödeme köprüsü — valoria.tr/payment?t=… */
-export function paymentRequestOpenUrl(publicToken: string, baseOverride?: string | null): string {
+/** Tek seferlik ödeme — Supabase Edge → Stripe */
+export function paymentRequestOpenUrl(publicToken: string, _baseOverride?: string | null): string {
+  const base = paymentFunctionsBase();
+  if (!base) return '';
   const q = `t=${encodeURIComponent(publicToken.trim())}`;
-  return `${paymentPublicBase(baseOverride)}/${PUBLIC_PAYMENT_PATH}?${q}`;
+  return `${base}/open-payment?${q}`;
 }
 
-/** Sabit QR köprüsü — valoria.tr/payment/qr?t=… */
-export function paymentQrStandOpenUrl(publicToken: string, baseOverride?: string | null): string {
+/** Sabit QR — Supabase Edge → Stripe */
+export function paymentQrStandOpenUrl(publicToken: string, _baseOverride?: string | null): string {
+  const base = paymentFunctionsBase();
+  if (!base) return '';
   const q = `t=${encodeURIComponent(publicToken.trim())}`;
-  return `${paymentPublicBase(baseOverride)}/${PUBLIC_PAYMENT_QR_PATH}?${q}`;
+  return `${base}/open-payment-qr?${q}`;
 }
 
-/** Tek seferlik ödeme için paylaşım/QR: Stripe URL değil, Valoria köprü linki */
+/** Paylaşım / QR: doğrudan Supabase Edge linki */
 export function paymentShareUrl(
   publicToken: string,
   payUrl?: string | null,
-  baseOverride?: string | null
+  _baseOverride?: string | null
 ): string {
-  if (publicToken?.trim()) return paymentRequestOpenUrl(publicToken.trim(), baseOverride);
-  return payUrl?.trim() ?? '';
+  if (publicToken?.trim()) return paymentRequestOpenUrl(publicToken.trim());
+  const fallback = payUrl?.trim() ?? '';
+  if (!fallback || fallback.includes('checkout.stripe.com')) return '';
+  return fallback;
 }

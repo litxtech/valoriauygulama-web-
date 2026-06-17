@@ -117,12 +117,15 @@ export function applyPublicWebRoute(
   return false;
 }
 
-export function isPublicWebPath(pathname: string): boolean {
+export function isPublicWebPath(pathname: string, search?: string): boolean {
   const p = (pathname || '').replace(/\/$/, '') || '/';
+  if (p === '/guest' || p.startsWith('/guest/')) return true;
+  if (p === '/sozlesme' || p === '/sözleşme') return true;
   if (p.includes('/guest/sign-one') || p.includes('/guest/success')) return true;
   if (p === '/maliye' || p.startsWith('/maliye/')) return true;
   if (isPaymentPublicPath(p)) return true;
-  return resolvePublicWebRoute(pathname) != null;
+  if (search?.includes('token=') && p === '/guest') return true;
+  return resolvePublicWebRoute(pathname, search) != null;
 }
 
 /** Vercel statik export: expo-router bazen [slug] paramını boş bırakır; adres çubuğundan oku. */

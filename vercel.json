@@ -18,20 +18,36 @@
       "destination": "/maliye/index.html"
     },
     {
+      "source": "/payment/qr/",
+      "destination": "/payment/qr/index.html"
+    },
+    {
       "source": "/payment/qr",
-      "destination": "/api/payment/qr"
+      "destination": "/payment/qr/index.html"
+    },
+    {
+      "source": "/payment/",
+      "destination": "/payment/index.html"
     },
     {
       "source": "/payment",
-      "destination": "/api/payment"
+      "destination": "/payment/index.html"
+    },
+    {
+      "source": "/odeme/qr/",
+      "destination": "/odeme/qr/index.html"
     },
     {
       "source": "/odeme/qr",
-      "destination": "/api/odeme/qr"
+      "destination": "/odeme/qr/index.html"
+    },
+    {
+      "source": "/odeme/",
+      "destination": "/odeme/index.html"
     },
     {
       "source": "/odeme",
-      "destination": "/api/odeme"
+      "destination": "/odeme/index.html"
     },
     {
       "source": "/:path*",

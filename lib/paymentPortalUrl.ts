@@ -1,11 +1,14 @@
 import { supabaseUrl } from '@/lib/supabase';
-import { resolveShareablePublicOrigin } from '@/lib/appPublicUrl';
 import {
   LEGACY_PAYMENT_PATH,
   LEGACY_PAYMENT_QR_PATH,
   PUBLIC_PAYMENT_PATH,
   PUBLIC_PAYMENT_QR_PATH,
 } from '@/constants/publicWebPaths';
+import {
+  paymentQrStandOpenUrl,
+  paymentRequestOpenUrl,
+} from '@/lib/paymentOpenUrl';
 
 export type PaymentEdgeFunction = 'open-payment' | 'open-payment-qr';
 
@@ -15,50 +18,41 @@ export function buildPaymentEdgeBase(edgeFunction: PaymentEdgeFunction): string 
   return `${base}/functions/v1/${edgeFunction}`;
 }
 
-/** Tarayıcı yönlendirmesi — sorgu dizesi (?t=…) korunur */
+/** Supabase Edge tam URL — misafir / QR paylaşımı */
 export function buildPaymentEdgeUrl(edgeFunction: PaymentEdgeFunction, search?: string): string {
   const edgeBase = buildPaymentEdgeBase(edgeFunction);
   if (!edgeBase) return '';
   const raw = (search ?? '').trim();
   if (!raw) return edgeBase;
-  return raw.startsWith('?') ? `${edgeBase}${raw}` : `${edgeBase}?${raw.replace(/^\?/, '')}`;
+  return raw.startsWith('?') ? edgeBase + raw : `${edgeBase}?${raw.replace(/^\?/, '')}`;
+}
+
+/** Eski valoria.tr /payment yolları → Supabase Edge (Unmatched Route önlemi) */
+export function navigateToPaymentBridge(pathname: string, search?: string): void {
+  if (typeof window === 'undefined') return;
+  const fn = resolvePaymentEdgeFunctionFromPath(pathname);
+  if (!fn) return;
+  const target = buildPaymentEdgeUrl(fn, search);
+  if (!target) return;
+  window.location.replace(target);
 }
 
 export function buildPaymentWebBridgeUrl(kind: 'single' | 'qr', token?: string): string {
-  const base = resolveShareablePublicOrigin();
-  const path = kind === 'qr' ? PUBLIC_PAYMENT_QR_PATH : PUBLIC_PAYMENT_PATH;
   const t = token?.trim();
-  return t ? `${base}/${path}?t=${encodeURIComponent(t)}` : `${base}/${path}`;
+  return kind === 'qr'
+    ? paymentQrStandOpenUrl(t ?? '')
+    : paymentRequestOpenUrl(t ?? '');
 }
 
-function paymentBridgePathFromPathname(pathname: string): string {
-  const p = (pathname || '').replace(/\/$/, '') || '/';
-  if (p === `/${PUBLIC_PAYMENT_QR_PATH}` || p === `/${LEGACY_PAYMENT_QR_PATH}`) {
-    return PUBLIC_PAYMENT_QR_PATH;
-  }
-  if (p === `/${LEGACY_PAYMENT_PATH}`) {
-    return LEGACY_PAYMENT_PATH;
-  }
-  return PUBLIC_PAYMENT_PATH;
-}
-
-/** Misafir köprüsü — valoria.tr/payment/qr?t=… (Vercel → Edge → Stripe) */
 export function buildPaymentPublicBridgeUrl(pathname: string, search?: string): string {
-  const base = resolveShareablePublicOrigin();
-  const path = paymentBridgePathFromPathname(pathname);
-  const q = (search ?? '').trim();
-  if (!q) return `${base}/${path}`;
-  return `${base}/${path}${q.startsWith('?') ? q : `?${q.replace(/^\?/, '')}`}`;
+  const fn = resolvePaymentEdgeFunctionFromPath(pathname);
+  if (!fn) return '';
+  return buildPaymentEdgeUrl(fn, search);
 }
 
 export function paymentPublicBridgeFromToken(kind: 'single' | 'qr', token?: string | null): string {
-  const path =
-    kind === 'qr'
-      ? PUBLIC_PAYMENT_QR_PATH
-      : PUBLIC_PAYMENT_PATH;
-  const base = resolveShareablePublicOrigin();
   const t = token?.trim();
-  return t ? `${base}/${path}?t=${encodeURIComponent(t)}` : `${base}/${path}`;
+  return kind === 'qr' ? paymentQrStandOpenUrl(t ?? '') : paymentRequestOpenUrl(t ?? '');
 }
 
 export function isPaymentPublicPath(pathname: string): boolean {

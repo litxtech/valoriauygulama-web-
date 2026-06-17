@@ -341,7 +341,7 @@ export default function HomeScreen() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
       const normalized = pathname.replace(/\/$/, '') || '/';
-      if (isPublicWebPath(pathname)) return;
+      if (isPublicWebPath(pathname, window.location.search || '')) return;
       if (normalized === '/') return;
       if (
         pathname.includes('/guest/sign-one') ||

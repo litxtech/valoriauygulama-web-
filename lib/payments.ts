@@ -98,10 +98,7 @@ export async function createPaymentRequest(input: CreatePaymentRequestInput): Pr
   if (!payload?.id || !payload?.pay_url) {
     throw new Error('Ödeme oturumu alınamadı');
   }
-  const open_url =
-    typeof payload.open_url === 'string' && payload.open_url.trim()
-      ? payload.open_url.trim()
-      : paymentRequestOpenUrl(payload.public_token);
+  const open_url = paymentRequestOpenUrl(payload.public_token);
   return { ...payload, open_url };
 }
 

@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, usePathname } from 'expo-router';
 import {
-  buildPaymentPublicBridgeUrl,
-  isPaymentPublicPath,
+  navigateToPaymentBridge,
   paymentPublicBridgeFromToken,
   resolvePaymentEdgeFunctionFromPath,
   type PaymentEdgeFunction,
@@ -24,7 +23,7 @@ function bridgeKindFromPath(pathname: string, edgeFunction: PaymentEdgeFunction)
   return fn === 'open-payment-qr' ? 'qr' : 'single';
 }
 
-/** Expo köprüsü — valoria.tr/payment/qr üzerinden Stripe Checkout'a gider (Supabase URL gösterilmez) */
+/** Supabase Edge köprüsü — eski valoria.tr /payment yolları buraya yönlendirilir */
 export function PaymentWebBridgeRedirect({ edgeFunction }: Props) {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ t?: string; token?: string }>();
@@ -44,23 +43,17 @@ export function PaymentWebBridgeRedirect({ edgeFunction }: Props) {
       return;
     }
 
-    const kind = bridgeKindFromPath(pathname, edgeFunction);
-    const token = (params.t ?? params.token ?? '').trim();
-    const target =
-      Platform.OS === 'web'
-        ? buildPaymentPublicBridgeUrl(pathname, search)
-        : paymentPublicBridgeFromToken(kind, token || undefined);
-
-    if (!target) {
-      setError('Ödeme servisi yapılandırılmamış.');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      navigateToPaymentBridge(pathname || '/payment/qr', search);
       return;
     }
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const current = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-      if (current !== target) {
-        window.location.replace(target);
-      }
+    const kind = bridgeKindFromPath(pathname, edgeFunction);
+    const token = (params.t ?? params.token ?? '').trim();
+    const target = paymentPublicBridgeFromToken(kind, token || undefined);
+
+    if (!target) {
+      setError('Ödeme servisi yapılandırılmamış.');
       return;
     }
 

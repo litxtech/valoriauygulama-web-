@@ -29,16 +29,16 @@ export function paymentPublicBase(): string {
 
 export function paymentRequestOpenUrl(publicToken: string): string {
   const q = `t=${encodeURIComponent(publicToken)}`;
-  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_PATH}?${q}`;
+  return `${paymentFunctionsBase()}/open-payment?${q}`;
 }
 
 export function paymentQrStandOpenUrl(publicToken: string): string {
   const q = `t=${encodeURIComponent(publicToken)}`;
-  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_QR_PATH}?${q}`;
+  return `${paymentFunctionsBase()}/open-payment-qr?${q}`;
 }
 
 export function paymentQrStandPostUrl(): string {
-  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_QR_PATH}`;
+  return `${paymentFunctionsBase()}/open-payment-qr`;
 }
 
 type OrgBrand = { name?: string | null; finance_report_brand?: string | null } | null | undefined;
@@ -334,6 +334,7 @@ export function htmlResponse(html: string, status = 200): Response {
       "Content-Type": "text/html; charset=UTF-8",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
@@ -345,6 +346,8 @@ export function redirectResponse(targetUrl: string, status = 302): Response {
     headers: {
       Location: targetUrl,
       "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "Location",
     },
   });
 }

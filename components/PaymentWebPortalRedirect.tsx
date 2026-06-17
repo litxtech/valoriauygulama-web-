@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
-import { buildPaymentPublicBridgeUrl, isPaymentPublicPath } from '@/lib/paymentPortalUrl';
+import { isPaymentPublicPath, navigateToPaymentBridge } from '@/lib/paymentPortalUrl';
 
-/** Web: yerel/Expo adresinden valoria.tr köprüsüne — oradan Stripe Checkout */
+/** Web: eski valoria.tr /payment/* → Supabase Edge */
 export function PaymentWebPortalRedirect() {
   const [error, setError] = useState<string | null>(null);
 
@@ -19,16 +19,7 @@ export function PaymentWebPortalRedirect() {
       return;
     }
 
-    const target = buildPaymentPublicBridgeUrl(path, search);
-    if (!target) {
-      setError('Ödeme servisi yapılandırılmamış.');
-      return;
-    }
-
-    const current = `${window.location.origin}${path}${search}`;
-    if (current !== target) {
-      window.location.replace(target);
-    }
+    navigateToPaymentBridge(path, search);
   }, []);
 
   if (error) {

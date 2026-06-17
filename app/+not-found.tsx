@@ -1,19 +1,10 @@
-import { Link, usePathname } from 'expo-router';
+import { Link } from 'expo-router';
 import { View, Text, StyleSheet } from 'react-native';
-import { PaymentWebBridgeRedirect } from '@/components/PaymentWebBridgeRedirect';
-import {
-  isPaymentPublicPath,
-  resolvePaymentEdgeFunctionFromPath,
-} from '@/lib/paymentPortalUrl';
+import { usePublicWebRouteRedirect } from '@/components/PublicWebRouteFallback';
 
 export default function NotFoundScreen() {
-  const pathname = usePathname();
-  const normalized = (pathname || '').replace(/\/$/, '') || '/';
-
-  if (isPaymentPublicPath(normalized)) {
-    const fn = resolvePaymentEdgeFunctionFromPath(normalized) ?? 'open-payment';
-    return <PaymentWebBridgeRedirect edgeFunction={fn} />;
-  }
+  const redirect = usePublicWebRouteRedirect();
+  if (redirect) return redirect;
 
   return (
     <View style={styles.container}>

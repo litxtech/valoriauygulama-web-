@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, AppState, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, AppState, ActivityIndicator, Platform } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CameraView, Camera } from 'expo-camera';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
@@ -10,6 +10,10 @@ import {
   relaunchAndroidModernBarcodeScanner,
   useAndroidModernBarcodeScanner,
 } from '@/lib/androidModernBarcodeScan';
+import {
+  bootstrapGuestCheckinToken,
+  readGuestCheckinTokenFromLocation,
+} from '@/lib/guestCheckinFromToken';
 
 type PermStatus = 'granted' | 'denied' | 'undetermined';
 
@@ -20,13 +24,44 @@ export default function GuestScanScreen() {
   const [scanned, setScanned] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [webTokenBootstrapping, setWebTokenBootstrapping] = useState(() =>
+    Platform.OS === 'web' ? Boolean(readGuestCheckinTokenFromLocation()) : false
+  );
   const router = useRouter();
+  const params = useLocalSearchParams<{ token?: string }>();
   const { setQR, reset } = useGuestFlowStore();
   const { t } = useTranslation();
 
   useEffect(() => {
-    reset();
-  }, []);
+    let cancelled = false;
+    const urlToken =
+      Platform.OS === 'web'
+        ? readGuestCheckinTokenFromLocation() ?? (typeof params.token === 'string' ? params.token : null)
+        : typeof params.token === 'string'
+          ? params.token
+          : null;
+
+    if (!urlToken) {
+      reset();
+      return;
+    }
+
+    setWebTokenBootstrapping(true);
+    void bootstrapGuestCheckinToken(urlToken, setQR).then((res) => {
+      if (cancelled) return;
+      setWebTokenBootstrapping(false);
+      if (res.ok) {
+        router.replace('/guest/language');
+      } else {
+        setError(t('invalidQR'));
+        reset();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.token, reset, router, setQR, t]);
 
   const refreshPermission = useCallback(async () => {
     try {
@@ -119,6 +154,15 @@ export default function GuestScanScreen() {
       void handleBarCodeScanned(result);
     }
   );
+
+  if (webTokenBootstrapping) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="small" color="#b8860b" />
+        <Text style={styles.message}>{t('loading')}</Text>
+      </View>
+    );
+  }
 
   if (permStatus === null) {
     return (

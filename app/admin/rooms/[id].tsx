@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { DesignableQR, FramedQR, type QRDesign, type QRCodeRef, type QRFrameStyle, QR_FRAME_LABELS } from '@/components/DesignableQR';
-import { FIXED_CONTRACT_QR_URL } from '@/constants/contractQr';
+import { buildCheckinQrUrl, fetchPublicQrSettings } from '@/lib/appPublicUrl';
 import { useAuthStore } from '@/stores/authStore';
 import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
@@ -131,20 +131,11 @@ export default function RoomDetail() {
       } else {
         setCurrentGuest(null);
       }
-      const { data: appSettings } = await supabase.from('app_settings').select('key, value').in('key', ['checkin_qr_base_url', 'contract_qr_base_url']);
-      const settingsMap: Record<string, string> = {};
-      (appSettings ?? []).forEach((r: { key: string; value: unknown }) => {
-        const v = r.value;
-        if (v != null && String(v).trim()) settingsMap[r.key] = String(v).trim();
-      });
-      const checkinBaseRaw = settingsMap.checkin_qr_base_url || process.env.EXPO_PUBLIC_APP_URL || '';
-      const checkinBase = checkinBaseRaw.trim() || 'valoria://';
-
+      const qrSettings = await fetchPublicQrSettings(true);
       const { data: qr } = await supabase.from('room_qr_codes').select('token').eq('room_id', id).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (qr?.token) {
-        const isAppScheme = checkinBase === 'valoria://' || checkinBase === 'valoria' || checkinBase.startsWith('valoria://');
-        setQrValue(isAppScheme ? `valoria://guest?token=${encodeURIComponent(qr.token)}` : `${checkinBase.replace(/\/$/, '')}/guest?token=${encodeURIComponent(qr.token)}`);
-        setContractQrValue(FIXED_CONTRACT_QR_URL);
+        setQrValue(buildCheckinQrUrl(qr.token, qrSettings.checkinBase));
+        setContractQrValue(qrSettings.contractQrUrl);
       }
 
       const { data: settings } = await supabase
@@ -231,17 +222,9 @@ export default function RoomDetail() {
       Alert.alert('Hata', error.message);
       return;
     }
-    const { data: appSettings } = await supabase.from('app_settings').select('key, value').in('key', ['checkin_qr_base_url', 'contract_qr_base_url']);
-    const settingsMap: Record<string, string> = {};
-    (appSettings ?? []).forEach((r: { key: string; value: unknown }) => {
-      const v = r.value;
-      if (v != null && String(v).trim()) settingsMap[r.key] = String(v).trim();
-    });
-    const checkinBaseRaw = settingsMap.checkin_qr_base_url || process.env.EXPO_PUBLIC_APP_URL || '';
-    const checkinBase = checkinBaseRaw.trim() || 'valoria://';
-    const isAppScheme = checkinBase === 'valoria://' || checkinBase === 'valoria' || checkinBase.startsWith('valoria://');
-    setQrValue(isAppScheme ? `valoria://guest?token=${encodeURIComponent(String(data))}` : `${checkinBase.replace(/\/$/, '')}/guest?token=${encodeURIComponent(String(data))}`);
-    setContractQrValue(FIXED_CONTRACT_QR_URL);
+    const qrSettings = await fetchPublicQrSettings(true);
+    setQrValue(buildCheckinQrUrl(String(data), qrSettings.checkinBase));
+    setContractQrValue(qrSettings.contractQrUrl);
   };
 
   const loadPendingAcceptances = useCallback(async () => {

@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import type { Href } from 'expo-router';
 import {
   DEFAULT_CONTRACT_QR_LANG,
@@ -34,7 +35,9 @@ export function publicPaymentNewHref(
   mode: PublicPaymentQrMode,
   opts?: { admin?: boolean; serviceKind?: string }
 ): Href {
-  const base = opts?.admin ? '/admin/payments/new' : '/staff/payments/new';
+  /** Web SPA: /admin yığını erken yönlendirme / unmatched route veriyor; personel rotası kullan */
+  const base =
+    Platform.OS === 'web' ? '/staff/payments/new' : opts?.admin ? '/admin/payments/new' : '/staff/payments/new';
   return {
     pathname: base,
     params: {

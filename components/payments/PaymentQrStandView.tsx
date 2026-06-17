@@ -29,7 +29,6 @@ import {
 } from '@/lib/paymentQrStands';
 import { paymentKindLabel, paymentText } from '@/lib/paymentsI18n';
 import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
-import { fetchPublicAppOriginFromSettings } from '@/lib/appPublicUrl';
 
 const ACCENT = '#635bff';
 
@@ -56,13 +55,6 @@ export function PaymentQrStandView() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
-  const [shareBase, setShareBase] = useState<string | null>(null);
-
-  useEffect(() => {
-    void fetchPublicAppOriginFromSettings()
-      .then(setShareBase)
-      .catch(() => setShareBase(null));
-  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -107,7 +99,7 @@ export function PaymentQrStandView() {
     });
   }, [id, load]);
 
-  const openUrl = row ? paymentQrStandOpenUrl(row.public_token, shareBase) : '';
+  const openUrl = row ? paymentQrStandOpenUrl(row.public_token) : '';
   const isActive = row?.status === 'active';
   const isVariable = row ? isVariablePaymentQrStand(row) : false;
 

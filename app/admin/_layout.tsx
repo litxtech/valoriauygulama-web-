@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { View, TouchableOpacity, Platform, StyleSheet, Text, BackHandler, InteractionManager } from 'react-native';
-import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, type Href } from 'expo-router';
+import { Stack, useRouter, useNavigation, useFocusEffect, usePathname, useRootNavigationState, type Href } from 'expo-router';
+import { safeRouterReplace } from '@/lib/safeRouter';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -40,6 +41,8 @@ export default function AdminLayout() {
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
+  const rootNavigationState = useRootNavigationState();
+  const navigationReady = rootNavigationState?.key != null;
   const adminRootExitInFlightRef = useRef(false);
 
   /**
@@ -228,6 +231,7 @@ export default function AdminLayout() {
   ), [router, staff]);
 
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading) return;
     const canEnterAdmin =
       canAccessManagedContractsAdminRoutes(staff) ||
@@ -238,37 +242,40 @@ export default function AdminLayout() {
       if (Platform.OS === 'android') {
         log.warn('AdminLayout', 'redirecting non-admin user', { hasStaff: !!staff, role: staff?.role ?? null });
       }
-      router.replace('/');
+      safeRouterReplace(router, '/');
       return;
     }
-  }, [loading, staff, router]);
+  }, [navigationReady, loading, staff, router]);
 
   /** Tam panel yetkisi olmayan; yalnızca bölüm kuralı oluşturma yetkisi — sadece ilgili rotalar */
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading || !staff) return;
     if (canAccessAdminShell(staff) || canManageManagedContracts(staff)) return;
     const p = pathname ?? '';
     if (canCreateDepartmentRules(staff) && !isDepartmentRulesAdminPath(p)) {
-      router.replace('/admin/department-rules' as Href);
+      safeRouterReplace(router, '/admin/department-rules' as Href);
       return;
     }
     if (canAccessAdminPayments(staff) && !p.startsWith('/admin/payments')) {
-      router.replace('/admin/payments' as Href);
+      safeRouterReplace(router, '/admin/payments' as Href);
     }
-  }, [loading, staff, pathname, router]);
+  }, [navigationReady, loading, staff, pathname, router]);
 
   /** Yetkisiz admin alt rotasına doğrudan girilirse panele yönlendir */
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading || !staff || isAdminRootPath) return;
     if (isGorevAtaOnlyUser(staff)) return;
     const p = pathname ?? '';
     if (!p.startsWith('/admin')) return;
     if (canAccessAdminRoute(staff, p)) return;
-    router.replace('/admin' as Href);
-  }, [loading, staff, pathname, router, isAdminRootPath]);
+    safeRouterReplace(router, '/admin' as Href);
+  }, [navigationReady, loading, staff, pathname, router, isAdminRootPath]);
 
   /** Yalnızca görev yetkisi olan personel: yetkisiz admin rotasında görev ekranına yönlendir */
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading || !staff) return;
     if (!isGorevAtaOnlyUser(staff)) return;
     const p = pathname ?? '';
@@ -277,8 +284,8 @@ export default function AdminLayout() {
     if (Platform.OS === 'android') {
       log.warn('AdminLayout', 'gorev-ata-only redirect', { from: p, to: '/admin/tasks' });
     }
-    router.replace('/admin/tasks');
-  }, [loading, staff, pathname, router]);
+    safeRouterReplace(router, '/admin/tasks');
+  }, [navigationReady, loading, staff, pathname, router]);
 
   const headerOpts = {
     headerStyle: {

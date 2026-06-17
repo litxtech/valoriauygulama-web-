@@ -12,6 +12,7 @@ import { BarcodeScannerView } from '@/components/BarcodeScannerView';
 import { useFocusEffect } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
+import { buildCheckinQrUrl, fetchPublicQrSettings, type PublicQrSettings } from '@/lib/appPublicUrl';
 
 export default function DigitalKeyScreen() {
   const { t } = useTranslation();
@@ -20,6 +21,7 @@ export default function DigitalKeyScreen() {
   const [checkIn, setCheckIn] = useState<string>('—');
   const [checkOut, setCheckOut] = useState<string>('—');
   const [roomToken, setRoomToken] = useState<string | null>(null);
+  const [qrSettings, setQrSettings] = useState<PublicQrSettings | null>(null);
   const [showScan, setShowScan] = useState(false);
   const [doorRoomInput, setDoorRoomInput] = useState('');
   const [openDoorLoading, setOpenDoorLoading] = useState(false);
@@ -34,6 +36,10 @@ export default function DigitalKeyScreen() {
   const [nfcListening, setNfcListening] = useState(false);
   const insets = useSafeAreaInsets();
   const openDoorWithRoomRef = useRef<(roomNum: string) => Promise<void>>(() => Promise.resolve());
+
+  useEffect(() => {
+    void fetchPublicQrSettings(true).then(setQrSettings).catch(() => setQrSettings(null));
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web') {
@@ -51,7 +57,7 @@ export default function DigitalKeyScreen() {
     const email = user?.email ?? '';
     const part = email.split('@')[0];
     return part ? part.charAt(0).toUpperCase() + part.slice(1) : t('guestDefaultName');
-  }, [user?.email, user?.user_metadata?.full_name, user?.user_metadata?.name]);
+  }, [user?.email, user?.user_metadata?.full_name, user?.user_metadata?.name, t]);
 
   useEffect(() => {
     (async () => {
@@ -99,19 +105,12 @@ export default function DigitalKeyScreen() {
   }, [user?.id, user?.email]);
 
   const urls = useMemo(() => {
-    if (!roomToken) return { checkinUrl: null, contractUrl: null };
-    const defaultAppBase = 'https://valoriahotel-el4r.vercel.app';
-    const appBase = (process.env.EXPO_PUBLIC_APP_URL ?? defaultAppBase).replace(/\/$/, '');
-    const checkinUrl = `${appBase}/guest?token=${encodeURIComponent(roomToken)}`;
-    const defaultContractBase = 'https://valoriahotel-el4r.vercel.app/guest/sign-one';
-    let contractBase =
-      process.env.EXPO_PUBLIC_PUBLIC_CONTRACT_URL ??
-      (process.env.EXPO_PUBLIC_SUPABASE_URL ? `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/public-contract` : null) ??
-      defaultContractBase;
-    if (contractBase.includes('valoria.app')) contractBase = defaultContractBase;
-    const base = String(contractBase).replace(/\?.*$/, '').replace(/\/$/, '');
-    return { checkinUrl, contractUrl: `${base}?t=${encodeURIComponent(roomToken)}&l=tr` };
-  }, [roomToken]);
+    if (!roomToken || !qrSettings) return { checkinUrl: null, contractUrl: null };
+    return {
+      checkinUrl: buildCheckinQrUrl(roomToken, qrSettings.checkinBase),
+      contractUrl: qrSettings.contractQrUrl,
+    };
+  }, [roomToken, qrSettings]);
 
   const isValid = !!roomToken;
 

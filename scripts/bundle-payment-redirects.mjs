@@ -1,12 +1,12 @@
 /**
- * Expo web export sonrası ödeme köprü sayfalarını dist/ altına yazar (yerel önizleme).
- * Canlıda Vercel /payment → api/payment edge proxy kullanır.
+ * Expo web export sonrası ödeme köprü sayfalarını dist/ altına yazar.
+ * Eski valoria.tr /payment/* linkleri → tam sayfa Supabase Edge yönlendirmes.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(fileURLToPath(import_meta.url));
 const root = path.join(__dirname, '..');
 const dist = path.join(root, 'dist');
 
@@ -15,13 +15,14 @@ if (!fs.existsSync(dist)) {
   process.exit(1);
 }
 
-function bridgeHtml(publicPath, title) {
-  const publicBase = (
-    process.env.EXPO_PUBLIC_APP_URL ||
-    process.env.PAYMENT_PUBLIC_BASE_URL ||
-    'https://valoria.tr'
+function bridgeHtml(edgeFunction, title) {
+  const supabaseUrl = (
+    process.env.EXPO_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    ''
   ).replace(/\/$/, '');
-  const targetBase = `${publicBase}/${publicPath}`;
+  const edgeUrl = supabaseUrl ? `${supabaseUrl}/functions/v1/${edgeFunction}` : '';
+
   return `<!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -31,37 +32,48 @@ function bridgeHtml(publicPath, title) {
 <meta name="robots" content="noindex"/>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0}
-  .box{text-align:center;padding:24px}
-  .spinner{width:32px;height:32px;border:3px solid #334155;border-top-color:#635bff;border-radius:50%;animation:spin .8s linear infinite;margin:16px auto}
-  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 <script>
 (function(){
-  var base=${JSON.stringify(targetBase)};
+  var edgeUrl=${JSON.stringify(edgeUrl)};
   var q=window.location.search||"";
-  if(!q){var p=new URLSearchParams(window.location.search);if(!p.get("t")){document.body.innerHTML="<p>Ödeme bağlantısı eksik.</p>";return;}}
-  window.location.replace(base+q);
+  if(!q||(!new URLSearchParams(q).get("t")&&!new URLSearchParams(q).get("token"))){
+    document.body.innerHTML="<p>Ödeme bağlantısı eksik.</p>";return;
+  }
+  if(!edgeUrl){document.body.innerHTML="<p>Ödeme servisi yapılandırılmamış.</p>";return;}
+  window.location.replace(edgeUrl+q);
 })();
 </script>
 </head>
 <body>
-  <div class="box">
-    <p>Stripe güvenli ödeme sayfasına yönlendiriliyorsunuz…</p>
-    <div class="spinner" aria-hidden="true"></div>
-  </div>
+  <p>Stripe güvenli ödeme sayfasına yönlendiriliyorsunuz…</p>
 </body>
 </html>`;
 }
 
-function writePaymentBridge(dirName, qrDirName, singlePath, qrPath, singleTitle, qrTitle) {
+function writePaymentBridge(dirName, qrDirName, singleFn, qrFn, singleTitle, qrTitle) {
   const baseDir = path.join(dist, dirName);
   const qrDir = path.join(baseDir, qrDirName);
   fs.mkdirSync(qrDir, { recursive: true });
-  fs.writeFileSync(path.join(baseDir, 'index.html'), bridgeHtml(singlePath, singleTitle));
-  fs.writeFileSync(path.join(qrDir, 'index.html'), bridgeHtml(qrPath, qrTitle));
+  fs.writeFileSync(path.join(baseDir, 'index.html'), bridgeHtml(singleFn, singleTitle));
+  fs.writeFileSync(path.join(qrDir, 'index.html'), bridgeHtml(qrFn, qrTitle));
 }
 
-writePaymentBridge('payment', 'qr', 'payment', 'payment/qr', 'Valoria — Ödeme', 'Valoria — Ödeme QR');
-writePaymentBridge('odeme', 'qr', 'odeme', 'odeme/qr', 'Valoria — Ödeme', 'Valoria — Ödeme QR');
+writePaymentBridge(
+  'payment',
+  'qr',
+  'open-payment',
+  'open-payment-qr',
+  'Valoria — Ödeme',
+  'Valoria — Ödeme QR'
+);
+writePaymentBridge(
+  'odeme',
+  'qr',
+  'open-payment',
+  'open-payment-qr',
+  'Valoria — Ödeme',
+  'Valoria — Ödeme QR'
+);
 
 console.log('[bundle-payment-redirects] dist/payment + dist/odeme köprü sayfaları hazır');

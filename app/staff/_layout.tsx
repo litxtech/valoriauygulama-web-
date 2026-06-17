@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, BackHandler, InteractionManager } from 'react-native';
-import { useRouter, Stack, useNavigation, usePathname } from 'expo-router';
+import { useRouter, Stack, useNavigation, usePathname, useRootNavigationState } from 'expo-router';
+import { safeRouterReplace } from '@/lib/safeRouter';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -77,6 +78,8 @@ export default function StaffLayout() {
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
+  const rootNavigationState = useRootNavigationState();
+  const navigationReady = rootNavigationState?.key != null;
   const { t } = useTranslation();
   const { staff, loading, staffCheckComplete, signOut } = useAuthStore();
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -105,12 +108,13 @@ export default function StaffLayout() {
   // Root _layout'ta initAuthListener zaten loadSession çağırıyor; burada tekrar çağırmak
   // loading: true yapıp layout'u null döndürüyor ve arkadaki lobi görünüyordu.
   useEffect(() => {
+    if (!navigationReady) return;
     if (loading) return;
     if (!staffCheckComplete) return;
     if (!staff) {
-      router.replace('/');
+      safeRouterReplace(router, '/');
     }
-  }, [loading, staff, staffCheckComplete, router]);
+  }, [navigationReady, loading, staff, staffCheckComplete, router]);
 
   useEffect(() => {
     if (!staff?.id || !isDeleted) return;
@@ -127,10 +131,10 @@ export default function StaffLayout() {
       } catch (_) {}
       await signOut();
       setConfirmingLogout(false);
-      router.replace('/');
+      safeRouterReplace(router, '/');
     };
     doConfirm();
-  }, [staff?.id, isDeleted]);
+  }, [staff?.id, isDeleted, router, signOut]);
 
   // Beğeni/yorum bildirimleri anında badge güncellensin (tüm hook'lar erken return'den önce çağrılmalı)
   useEffect(() => {
@@ -175,7 +179,12 @@ export default function StaffLayout() {
   );
 
   if (loading || !staffCheckComplete || !staff) {
-    return null;
+    return (
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="payments" options={{ headerShown: false }} />
+      </Stack>
+    );
   }
 
   if (isDeleted) {

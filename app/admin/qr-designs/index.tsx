@@ -12,14 +12,15 @@ import {
 import { supabase, supabaseUrl } from '@/lib/supabase';
 import { QrHubSection } from '@/components/admin/QrHubSection';
 import {
+  buildCheckinQrUrl,
   buildPublicContractUrl,
   buildPublicMaliyeUrl,
   buildPublicMenuUrl,
-  fetchPublicAppOriginFromSettings,
+  fetchPublicQrSettings,
   invalidatePublicAppOriginCache,
+  resolvePublicAppOrigin,
 } from '@/lib/appPublicUrl';
 import { DEFAULT_PUBLIC_APP_ORIGIN, APP_PUBLIC_BASE_URL_SETTING_KEY } from '@/constants/appOrigin';
-import { resolvePublicAppOrigin } from '@/lib/appPublicUrl';
 import {
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
@@ -68,30 +69,23 @@ export default function QrHubPage() {
   const [maliyeDuration, setMaliyeDuration] = useState('24 hours');
   const [maliyeLastUrl, setMaliyeLastUrl] = useState('');
   const [maliyeBusy, setMaliyeBusy] = useState(false);
+  const [contractQrUrl, setContractQrUrl] = useState('');
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
-    const origin = await fetchPublicAppOriginFromSettings(true);
-    setPublicBaseUrl(origin);
-
-    const { data } = await supabase
-      .from('app_settings')
-      .select('key, value')
-      .in('key', ['contract_qr_base_url', 'checkin_qr_base_url', 'maliye_qr_base_url']);
-    const map: Record<string, string> = {};
-    (data ?? []).forEach((r: { key: string; value: unknown }) => {
-      if (r.value != null && String(r.value).trim()) map[r.key] = String(r.value).trim();
-    });
-    setContractBase(
-      normalizePublicContractBaseUrl(map.contract_qr_base_url || defaultContractBase(origin))
-    );
-    setCheckinBase(map.checkin_qr_base_url || defaultCheckinBase(origin));
-    setMaliyeBase(
-      map.maliye_qr_base_url?.replace(/\/functions\/v1\/public-maliye\/?$/i, `/${PUBLIC_MALIYE_PATH}`) ||
-        defaultMaliyeBase(origin)
-    );
+    const qrSettings = await fetchPublicQrSettings(true);
+    setPublicBaseUrl(qrSettings.origin);
+    setContractBase(qrSettings.contractBase);
+    setCheckinBase(qrSettings.checkinBase);
+    setMaliyeBase(qrSettings.maliyeBase);
+    setContractQrUrl(qrSettings.contractQrUrl);
     setLoading(false);
   }, []);
+
+  useEffect(() => {
+    if (!contractBase.trim()) return;
+    setContractQrUrl(buildPublicContractUrl(undefined, contractBase));
+  }, [contractBase]);
 
   useEffect(() => {
     void loadOrganizations(true);
@@ -111,10 +105,7 @@ export default function QrHubPage() {
 
   const menuUrl = selectedOrg?.slug ? buildPublicMenuUrl(selectedOrg.slug, publicBaseUrl) : '';
 
-  const contractQrUrl = buildPublicContractUrl(undefined, publicBaseUrl);
-  const checkinQrSample = checkinBase.trim()
-    ? `${checkinBase.replace(/\/$/, '')}/guest?token=ORNEK-TOKEN`
-    : `${defaultCheckinBase(publicBaseUrl)}/guest?token=ORNEK-TOKEN`;
+  const checkinQrSample = buildCheckinQrUrl('ORNEK-TOKEN', checkinBase.trim() || publicBaseUrl);
 
   const maliyeQrUrl = buildPublicMaliyeUrl(
     FIXED_MALIYE_QR_TOKEN,

@@ -142,7 +142,10 @@ async function createPaymentQrStandOnce(input: {
   const payload = data as CreatePaymentQrStandResult & { error?: string };
   if (payload?.error) throw new Error(payload.error);
   if (!payload?.id || !payload?.open_url) throw new Error('Sabit QR oluşturulamadı');
-  return payload;
+  return {
+    ...payload,
+    open_url: paymentQrStandOpenUrl(payload.public_token),
+  };
 }
 
 export async function closePaymentQrStand(standId: string): Promise<void> {

@@ -24,6 +24,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
+import { fetchPublicAppOriginFromSettings, fetchPublicQrSettings } from '@/lib/appPublicUrl';
 import { WebPublicRouteRedirect } from '@/components/WebPublicRouteRedirect';
 import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
@@ -227,6 +228,11 @@ function RootLayoutInner() {
       () => setShowSplashLogo(false)
     );
   }).current;
+
+  useEffect(() => {
+    void fetchPublicAppOriginFromSettings(true);
+    void fetchPublicQrSettings(true);
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -666,15 +672,24 @@ function RootLayoutInner() {
       }
     };
 
-    // Web: /guest/sign-one derin link (menü/sözleşme/maliye → WebPublicRouteRedirect)
+    // Web: QR derin linkleri (sözleşme, check-in token)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const href = window.location.href;
       const path = window.location.pathname || '';
-      if (
-        (path.includes('/guest/sign-one') || href.includes('/guest/sign-one')) &&
-        !path.includes('/guest/success')
-      ) {
-        handleUrl(href);
+      if (path.includes('/guest/success')) {
+        // success sayfasına dokunma
+      } else {
+        const parsed = parseCheckinUrl(href);
+        if (
+          parsed &&
+          (path.includes('/guest/sign-one') ||
+            href.includes('/guest/sign-one') ||
+            (parsed.type === 'token' && parsed.token) ||
+            parsed.type === 'sign-one' ||
+            parsed.type === 'contract')
+        ) {
+          handleUrl(href);
+        }
       }
     }
 

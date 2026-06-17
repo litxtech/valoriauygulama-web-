@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { appSettingToString, appSettingsRowsToMap } from '@/lib/appSettings';
 import {
   APP_PUBLIC_BASE_URL_SETTING_KEY,
   DEFAULT_PUBLIC_APP_ORIGIN,
@@ -9,20 +10,29 @@ import {
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
+  normalizePublicContractBaseUrl,
 } from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
+import { paymentQrStandOpenUrl, paymentRequestOpenUrl } from '@/lib/paymentOpenUrl';
 
-function settingValueToString(raw: unknown): string {
-  if (raw == null) return '';
-  if (typeof raw === 'string') return raw.trim();
-  try {
-    const parsed = JSON.parse(String(raw));
-    if (typeof parsed === 'string') return parsed.trim();
-  } catch {
-    // jsonb string primitive
-  }
-  return String(raw).replace(/^"|"$/g, '').trim();
-}
+export type PublicQrSettings = {
+  origin: string;
+  checkinBase: string;
+  contractBase: string;
+  maliyeBase: string;
+  contractQrUrl: string;
+  paymentBase: string;
+  samplePaymentQrUrl: string;
+  samplePaymentUrl: string;
+};
+
+const QR_SETTING_KEYS = [
+  'contract_qr_base_url',
+  'checkin_qr_base_url',
+  'maliye_qr_base_url',
+] as const;
+
+let cachedQrSettings: { value: PublicQrSettings; at: number } | null = null;
 
 /** Yerel ağ / geliştirme adresi — misafire paylaşılan QR ve linklerde kullanılmaz. */
 export function isLocalOrPrivateOrigin(origin: string): boolean {
@@ -57,7 +67,30 @@ export function resolvePublicAppOrigin(override?: string | null): string {
   return DEFAULT_PUBLIC_APP_ORIGIN;
 }
 
-/** Ödeme QR / paylaşım linki — asla 192.168 veya Metro adresi dönmez. */
+/** Önbellekteki canlı kök — fetchPublicAppOriginFromSettings sonrası tüm linkler aynı origin kullanır */
+export function getShareablePublicOrigin(override?: string | null): string {
+  if (override?.trim() && !isLocalOrPrivateOrigin(override)) {
+    return override.trim().replace(/\/$/, '');
+  }
+  if (cachedOrigin?.value) return cachedOrigin.value;
+  return resolveShareablePublicOrigin(null);
+}
+
+/** Supabase / eski Edge / localhost URL → güvenli canlı adres */
+export function sanitizePublicOriginUrl(url: string, fallback = DEFAULT_PUBLIC_APP_ORIGIN): string {
+  const u = (url ?? '').trim();
+  if (!u) return fallback.replace(/\/$/, '');
+  if (u.includes('supabase.co') || u.includes('/functions/v1/')) return fallback.replace(/\/$/, '');
+  try {
+    const parsed = new URL(u.includes('://') ? u : `https://${u}`);
+    if (isLocalOrPrivateOrigin(parsed.origin)) return fallback.replace(/\/$/, '');
+    return u.replace(/\/$/, '');
+  } catch {
+    return fallback.replace(/\/$/, '');
+  }
+}
+
+/** @deprecated getShareablePublicOrigin kullanın — env/varsayılan, önbellek yok */
 export function resolveShareablePublicOrigin(override?: string | null): string {
   if (override?.trim() && !isLocalOrPrivateOrigin(override)) {
     return override.trim().replace(/\/$/, '');
@@ -79,7 +112,7 @@ export async function fetchPublicAppOriginFromSettings(force?: boolean): Promise
     .select('value')
     .eq('key', APP_PUBLIC_BASE_URL_SETTING_KEY)
     .maybeSingle();
-  const fromDb = settingValueToString((data as { value?: unknown } | null)?.value);
+  const fromDb = appSettingToString((data as { value?: unknown } | null)?.value);
   const resolved = resolveShareablePublicOrigin(fromDb || null);
   cachedOrigin = { value: resolved, at: Date.now() };
   return resolved;
@@ -87,11 +120,60 @@ export async function fetchPublicAppOriginFromSettings(force?: boolean): Promise
 
 export function invalidatePublicAppOriginCache(): void {
   cachedOrigin = null;
+  cachedQrSettings = null;
+}
+
+function defaultContractBase(origin: string): string {
+  return `${origin.replace(/\/$/, '')}/${PUBLIC_CONTRACT_PATH}`;
+}
+
+function defaultMaliyeBase(origin: string): string {
+  return `${origin.replace(/\/$/, '')}/${PUBLIC_MALIYE_PATH}`;
+}
+
+/** Menü, check-in, sözleşme, maliye QR — Supabase app_settings (60 sn önbellek) */
+export async function fetchPublicQrSettings(force?: boolean): Promise<PublicQrSettings> {
+  if (!force && cachedQrSettings && Date.now() - cachedQrSettings.at < CACHE_MS) {
+    return cachedQrSettings.value;
+  }
+  const origin = await fetchPublicAppOriginFromSettings(force);
+  const { data } = await supabase.from('app_settings').select('key, value').in('key', [...QR_SETTING_KEYS]);
+  const map = appSettingsRowsToMap(data as { key: string; value: unknown }[] | null);
+  const checkinBase = sanitizePublicOriginUrl(map.checkin_qr_base_url || origin, origin);
+  const contractBase = normalizePublicContractBaseUrl(
+    sanitizePublicOriginUrl(map.contract_qr_base_url || defaultContractBase(origin), defaultContractBase(origin))
+  );
+  const maliyeBase =
+    sanitizePublicOriginUrl(
+      map.maliye_qr_base_url?.replace(/\/functions\/v1\/public-maliye\/?$/i, '')?.replace(/\?.*$/, '') || '',
+      defaultMaliyeBase(origin)
+    ) || defaultMaliyeBase(origin);
+  const paymentBase = origin;
+  const value: PublicQrSettings = {
+    origin,
+    checkinBase,
+    contractBase,
+    maliyeBase,
+    contractQrUrl: buildPublicContractUrl(undefined, contractBase),
+    paymentBase,
+    samplePaymentQrUrl: paymentQrStandOpenUrl('ORNEK-TOKEN'),
+    samplePaymentUrl: paymentRequestOpenUrl('ORNEK-TOKEN'),
+  };
+  cachedQrSettings = { value, at: Date.now() };
+  return value;
+}
+
+/** Oda check-in QR tam URL — Supabase checkin_qr_base_url */
+export function buildCheckinQrUrl(token: string, checkinBase: string): string {
+  const base = checkinBase.trim().replace(/\/$/, '') || DEFAULT_PUBLIC_APP_ORIGIN;
+  const isAppScheme = base === 'valoria://' || base === 'valoria' || base.startsWith('valoria://');
+  const encoded = encodeURIComponent(token.trim());
+  return isAppScheme ? `valoria://guest?token=${encoded}` : `${base}/guest?token=${encoded}`;
 }
 
 export function buildPublicMenuUrl(orgSlug: string, baseOverride?: string | null): string {
   const slug = orgSlug.trim().toLowerCase();
-  const base = resolvePublicAppOrigin(baseOverride);
+  const base = getShareablePublicOrigin(baseOverride);
   return `${base}/${PUBLIC_MENU_PATH}/${encodeURIComponent(slug)}`;
 }
 
@@ -99,21 +181,42 @@ export function buildPublicContractUrl(
   opts?: { token?: string; lang?: string },
   baseOverride?: string | null
 ): string {
-  const base = resolvePublicAppOrigin(baseOverride);
   const params = new URLSearchParams();
   params.set('t', (opts?.token ?? DEFAULT_CONTRACT_QR_TOKEN).trim());
   params.set('l', (opts?.lang ?? DEFAULT_CONTRACT_QR_LANG).trim());
-  return `${base}/${PUBLIC_CONTRACT_PATH}?${params.toString()}`;
+  const query = params.toString();
+
+  const raw = (baseOverride ?? '').trim();
+  if (raw) {
+    const normalized = normalizePublicContractBaseUrl(raw);
+    if (
+      /\/sozlesme$/iu.test(normalized) ||
+      /\/sözleşme$/iu.test(normalized) ||
+      normalized.includes('/guest/sign-one')
+    ) {
+      return `${normalized.replace(/\/$/, '')}?${query}`;
+    }
+  }
+
+  const origin = getShareablePublicOrigin(raw || null);
+  return `${origin}/${PUBLIC_CONTRACT_PATH}?${query}`;
 }
 
 export function buildPublicMaliyeUrl(
   token: string = FIXED_MALIYE_QR_TOKEN,
   baseOverride?: string | null
 ): string {
-  const base = resolvePublicAppOrigin(baseOverride);
   const params = new URLSearchParams();
   params.set('token', token.trim());
-  return `${base}/${PUBLIC_MALIYE_PATH}?${params.toString()}`;
+  const query = params.toString();
+
+  const raw = (baseOverride ?? '').trim().replace(/\?.*$/, '').replace(/\/$/, '');
+  if (raw && (raw.endsWith(`/${PUBLIC_MALIYE_PATH}`) || raw.includes('/maliye'))) {
+    return `${raw}?${query}`;
+  }
+
+  const origin = getShareablePublicOrigin(raw || null);
+  return `${origin}/${PUBLIC_MALIYE_PATH}?${query}`;
 }
 
 /** @deprecated buildPublicMenuUrl kullanın */
