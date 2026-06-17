@@ -9,7 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
@@ -77,7 +77,10 @@ export function PaymentNewForm({ successBasePath, initialMode, initialServiceKin
           description: description.trim() || null,
           serviceKind,
         });
-        router.replace(`${successBasePath}/stand/${result.id}`);
+        router.replace({
+          pathname: `${successBasePath}/stand/[id]`,
+          params: { id: result.id },
+        } as Href);
       } else {
         const result = await createPaymentRequest({
           amount: parsed!,
@@ -86,7 +89,10 @@ export function PaymentNewForm({ successBasePath, initialMode, initialServiceKin
           description: description.trim() || null,
           serviceKind,
         });
-        router.replace(`${successBasePath}/${result.id}`);
+        router.replace({
+          pathname: `${successBasePath}/[id]`,
+          params: { id: result.id },
+        } as Href);
       }
     } catch (e) {
       const msg =

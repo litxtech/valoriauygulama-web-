@@ -33,7 +33,7 @@ import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
 import { invokeNotifyNewGuestAccount } from '@/lib/notifyNewGuestAccount';
 import { hasPolicyConsent } from '@/lib/policyConsent';
 import { isPublicWebPath } from '@/lib/publicWebRoute';
-import { publicContractHref, publicMenuHref } from '@/lib/publicPortalNav';
+import { publicContractHref, publicMenuHref, publicPaymentNewHref } from '@/lib/publicPortalNav';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
 import { hasPendingNotificationData } from '@/lib/notificationNavigation';
@@ -340,12 +340,20 @@ export default function HomeScreen() {
     if (hasPendingNotificationData()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
+      const normalized = pathname.replace(/\/$/, '') || '/';
       if (isPublicWebPath(pathname)) return;
+      if (normalized === '/') return;
       if (
         pathname.includes('/guest/sign-one') ||
         pathname.includes('/guest/success') ||
         pathname === '/maliye' ||
-        pathname.startsWith('/maliye/')
+        pathname.startsWith('/maliye/') ||
+        pathname === '/payment' ||
+        pathname === '/payment/qr' ||
+        pathname === '/odeme' ||
+        pathname === '/odeme/qr' ||
+        pathname.startsWith('/staff/payments') ||
+        pathname.startsWith('/admin/payments')
       ) {
         return;
       }
@@ -661,6 +669,56 @@ export default function HomeScreen() {
                   </View>
                   <Text style={[styles.portalTileTitle, { color: '#134e4a' }]}>{t('homePortalMaliye')}</Text>
                   <Text style={[styles.portalTileHint, { color: '#0f766e' }]}>{t('homePortalMaliyeHint')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('homePortalPayments')}</Text>
+            <View style={styles.portalRow}>
+              <TouchableOpacity
+                style={styles.portalTile}
+                onPress={() =>
+                  safeRouterPush(
+                    router,
+                    publicPaymentNewHref('standing', { admin: staff?.role === 'admin' })
+                  )
+                }
+                activeOpacity={0.82}
+              >
+                <LinearGradient
+                  colors={['#ede9fe', '#ddd6fe', '#c4b5fd']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.portalTileGradient}
+                >
+                  <View style={styles.portalIconCircle}>
+                    <Ionicons name="qr-code" size={26} color="#635bff" />
+                  </View>
+                  <Text style={[styles.portalTileTitle, { color: '#4c1d95' }]}>{t('homePortalPaymentFixed')}</Text>
+                  <Text style={[styles.portalTileHint, { color: '#5b21b6' }]}>{t('homePortalPaymentFixedHint')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.portalTile}
+                onPress={() =>
+                  safeRouterPush(
+                    router,
+                    publicPaymentNewHref('standing_variable', { admin: staff?.role === 'admin' })
+                  )
+                }
+                activeOpacity={0.82}
+              >
+                <LinearGradient
+                  colors={['#eef2ff', '#e0e7ff', '#c7d2fe']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.portalTileGradient}
+                >
+                  <View style={styles.portalIconCircle}>
+                    <Ionicons name="create-outline" size={26} color="#4f46e5" />
+                  </View>
+                  <Text style={[styles.portalTileTitle, { color: '#312e81' }]}>{t('homePortalPaymentVariable')}</Text>
+                  <Text style={[styles.portalTileHint, { color: '#4338ca' }]}>{t('homePortalPaymentVariableHint')}</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -995,6 +1053,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     textAlign: 'center',
   },
+  portalPanelLabelSpaced: { marginTop: 18 },
   portalRow: { flexDirection: 'row', gap: 10 },
   portalTile: {
     flex: 1,

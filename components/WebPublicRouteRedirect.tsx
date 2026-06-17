@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
 import { Redirect, usePathname } from 'expo-router';
 import { MaliyeWebPortalRedirect } from '@/components/MaliyeWebPortalRedirect';
+import { PaymentWebPortalRedirect } from '@/components/PaymentWebPortalRedirect';
 import { resolvePublicWebRoute } from '@/lib/publicWebRoute';
+import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
 /**
  * Web QR yolları (/menü, /sözleşme, /maliye, /guest/sign-one).
@@ -16,6 +18,11 @@ export function WebPublicRouteRedirect() {
 
   const winPath = window.location.pathname || '';
   const winSearch = window.location.search || '';
+  const winNormalized = winPath.replace(/\/$/, '') || '/';
+
+  if (isPaymentPublicPath(winNormalized)) {
+    return <PaymentWebPortalRedirect />;
+  }
 
   if (winPath.includes('/guest/success')) {
     return null;

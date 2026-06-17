@@ -23,8 +23,7 @@ export async function proxyPaymentEdge(request, edgeFunction) {
   const headers = new Headers();
   const ua = request.headers.get('user-agent');
   if (ua) headers.set('user-agent', ua);
-  const accept = request.headers.get('accept');
-  if (accept) headers.set('accept', accept);
+  headers.set('accept', request.headers.get('accept') || 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8');
   if (anonKey) {
     headers.set('apikey', anonKey);
     headers.set('authorization', `Bearer ${anonKey}`);
@@ -63,7 +62,22 @@ export async function proxyPaymentEdge(request, edgeFunction) {
   });
   outHeaders.set('cache-control', 'no-store');
 
-  return new Response(upstream.body, {
+  if (method === 'HEAD' || upstream.status >= 300 && upstream.status < 400) {
+    return new Response(null, { status: upstream.status, headers: outHeaders });
+  }
+
+  const bodyText = await upstream.text();
+  const trimmed = bodyText.trimStart();
+  const looksHtml =
+    trimmed.startsWith('<!DOCTYPE') ||
+    trimmed.startsWith('<html') ||
+    trimmed.startsWith('<HTML');
+
+  if (looksHtml && !String(outHeaders.get('content-type') ?? '').includes('text/html')) {
+    outHeaders.set('content-type', 'text/html; charset=utf-8');
+  }
+
+  return new Response(bodyText, {
     status: upstream.status,
     headers: outHeaders,
   });

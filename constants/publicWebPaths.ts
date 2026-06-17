@@ -2,10 +2,13 @@
 export const PUBLIC_MENU_PATH = 'menu';
 export const PUBLIC_CONTRACT_PATH = 'sozlesme';
 export const PUBLIC_MALIYE_PATH = 'maliye';
-/** Misafire paylaşılan Stripe köprü linki — valoria.tr/odeme?t=… */
-export const PUBLIC_PAYMENT_PATH = 'odeme';
-/** Sabit ödeme QR — valoria.tr/odeme/qr?t=… */
-export const PUBLIC_PAYMENT_QR_PATH = 'odeme/qr';
+/** Misafire paylaşılan Stripe köprü linki — valoria.tr/payment?t=… */
+export const PUBLIC_PAYMENT_PATH = 'payment';
+/** Sabit ödeme QR — valoria.tr/payment/qr?t=… */
+export const PUBLIC_PAYMENT_QR_PATH = 'payment/qr';
+/** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
+export const LEGACY_PAYMENT_PATH = 'odeme';
+export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';
 
 /** Basılı eski QR’lar (Türkçe segment) — uygulama yönlendirme ile destekler */
 export const LEGACY_MENU_PATH_TR = 'menü';

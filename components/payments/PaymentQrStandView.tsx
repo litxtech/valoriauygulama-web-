@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Share,
   Alert,
+  FlatList,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
@@ -18,39 +19,70 @@ import { formatPaymentAmount } from '@/lib/payments';
 import {
   closePaymentQrStand,
   fetchPaymentQrStand,
+  fetchPaymentQrStandPaidPayments,
   fetchPaymentQrStandStats,
   isVariablePaymentQrStand,
   paymentQrStandOpenUrl,
   subscribePaymentQrStand,
+  type PaymentQrStandPaidRow,
   type PaymentQrStandRow,
 } from '@/lib/paymentQrStands';
 import { paymentKindLabel, paymentText } from '@/lib/paymentsI18n';
 import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
+import { fetchPublicAppOriginFromSettings } from '@/lib/appPublicUrl';
 
 const ACCENT = '#635bff';
+
+function formatPaidAt(iso: string | null, fallback: string): string {
+  const raw = iso ?? fallback;
+  try {
+    return new Date(raw).toLocaleString('tr-TR', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return raw;
+  }
+}
 
 export function PaymentQrStandView() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [row, setRow] = useState<PaymentQrStandRow | null>(null);
+  const [paidRows, setPaidRows] = useState<PaymentQrStandPaidRow[]>([]);
   const [paidCount, setPaidCount] = useState(0);
   const [paidTotal, setPaidTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [shareBase, setShareBase] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchPublicAppOriginFromSettings()
+      .then(setShareBase)
+      .catch(() => setShareBase(null));
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoadError(null);
     try {
-      const [stand, stats] = await Promise.all([fetchPaymentQrStand(id), fetchPaymentQrStandStats(id)]);
+      const [stand, stats, payments] = await Promise.all([
+        fetchPaymentQrStand(id),
+        fetchPaymentQrStandStats(id),
+        fetchPaymentQrStandPaidPayments(id),
+      ]);
       if (!stand) {
         setRow(null);
+        setPaidRows([]);
         setLoadError('Sabit QR kaydı bulunamadı.');
         return;
       }
       setRow(stand);
       setPaidCount(stats.paid_count);
       setPaidTotal(stats.paid_total);
+      setPaidRows(payments);
     } catch (e) {
       const msg = (e as Error).message || 'Yüklenemedi';
       setLoadError(
@@ -75,7 +107,7 @@ export function PaymentQrStandView() {
     });
   }, [id, load]);
 
-  const openUrl = row ? paymentQrStandOpenUrl(row.public_token) : '';
+  const openUrl = row ? paymentQrStandOpenUrl(row.public_token, shareBase) : '';
   const isActive = row?.status === 'active';
   const isVariable = row ? isVariablePaymentQrStand(row) : false;
 
@@ -108,6 +140,134 @@ export function PaymentQrStandView() {
     ]);
   };
 
+  const listHeader = useMemo(() => {
+    if (!row) return null;
+    return (
+      <View style={styles.headerBlock}>
+        <LinearGradient
+          colors={isActive ? ['#635bff18', '#635bff06'] : ['#94a3b822', '#94a3b808']}
+          style={styles.glow}
+        />
+
+        <View style={[styles.statusBanner, isActive ? styles.statusActive : styles.statusClosed]}>
+          <Ionicons
+            name={isActive ? 'radio-button-on' : 'close-circle'}
+            size={20}
+            color={isActive ? '#16a34a' : '#64748b'}
+          />
+          <Text style={[styles.statusText, isActive && styles.statusTextActive]}>
+            {isActive ? paymentText('paymentsStandingActive') : paymentText('paymentsStandingClosed')}
+          </Text>
+        </View>
+
+        <Text style={styles.amount}>
+          {isVariable
+            ? paymentText('paymentsStandingVariableAmount')
+            : formatPaymentAmount(Number(row.amount), row.currency)}
+        </Text>
+        <Text style={styles.title}>{row.title}</Text>
+        {row.description ? <Text style={styles.desc}>{row.description}</Text> : null}
+        <Text style={styles.kind}>
+          {paymentKindLabel(row.service_kind)} ·{' '}
+          {isVariable ? paymentText('paymentsQrModeStandingVariable') : paymentText('paymentsQrModeStanding')}
+        </Text>
+
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>{paidCount}</Text>
+            <Text style={styles.statLabel}>Ödeme</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>{formatPaymentAmount(paidTotal, row.currency)}</Text>
+            <Text style={styles.statLabel}>Toplam</Text>
+          </View>
+        </View>
+
+        {isActive && openUrl ? (
+          <View style={styles.qrWrap}>
+            <View style={styles.qrCard}>
+              <QRCode value={openUrl} size={220} backgroundColor="#fff" color="#111" />
+            </View>
+            <Text style={styles.hint}>
+              {isVariable ? paymentText('paymentsStandingVariableScanHint') : paymentText('paymentsStandingScanHint')}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.closedBox}>
+            <Ionicons name="lock-closed-outline" size={32} color="#64748b" />
+            <Text style={styles.closedText}>QR kapatıldı — yeni ödeme alınamaz</Text>
+          </View>
+        )}
+
+        {openUrl ? (
+          <View style={styles.actions}>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => void copyLink()}>
+              <Ionicons name="copy-outline" size={18} color={ACCENT} />
+              <Text style={styles.actionText}>{paymentText('paymentsCopyLink')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => void shareLink()}>
+              <Ionicons name="share-outline" size={18} color={ACCENT} />
+              <Text style={styles.actionText}>{paymentText('paymentsShareLink')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {isActive ? (
+          <TouchableOpacity style={styles.closeBtn} onPress={closeQr} disabled={closing}>
+            {closing ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="stop-circle-outline" size={20} color="#fff" />
+                <Text style={styles.closeBtnText}>{paymentText('paymentsCloseQr')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
+
+        <Text style={styles.paymentsSectionTitle}>Alınan ödemeler</Text>
+        {paidRows.length === 0 ? (
+          <View style={styles.emptyPayments}>
+            <Ionicons name="receipt-outline" size={28} color={theme.colors.textMuted} />
+            <Text style={styles.emptyPaymentsText}>Henüz tahsilat yok</Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  }, [
+    row,
+    isActive,
+    isVariable,
+    paidCount,
+    paidTotal,
+    openUrl,
+    paidRows.length,
+    closing,
+    copyLink,
+    shareLink,
+    closeQr,
+  ]);
+
+  const renderPaidRow = useCallback(
+    ({ item }: { item: PaymentQrStandPaidRow }) => (
+      <View style={styles.paidRow}>
+        <View style={styles.paidRowTop}>
+          <Text style={styles.paidAmount}>{formatPaymentAmount(Number(item.amount), item.currency)}</Text>
+          <Text style={styles.paidDate}>{formatPaidAt(item.paid_at, item.created_at)}</Text>
+        </View>
+        <Text style={styles.paidTitle} numberOfLines={2}>
+          {item.title}
+        </Text>
+        {item.description ? (
+          <Text style={styles.paidDesc} numberOfLines={3}>
+            {item.description}
+          </Text>
+        ) : null}
+      </View>
+    ),
+    []
+  );
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -136,93 +296,22 @@ export function PaymentQrStandView() {
   }
 
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={isActive ? ['#635bff18', '#635bff06'] : ['#94a3b822', '#94a3b808']}
-        style={styles.glow}
-      />
-
-      <View style={[styles.statusBanner, isActive ? styles.statusActive : styles.statusClosed]}>
-        <Ionicons
-          name={isActive ? 'radio-button-on' : 'close-circle'}
-          size={20}
-          color={isActive ? '#16a34a' : '#64748b'}
-        />
-        <Text style={[styles.statusText, isActive && styles.statusTextActive]}>
-          {isActive ? paymentText('paymentsStandingActive') : paymentText('paymentsStandingClosed')}
-        </Text>
-      </View>
-
-      <Text style={styles.amount}>
-        {isVariable
-          ? paymentText('paymentsStandingVariableAmount')
-          : formatPaymentAmount(Number(row.amount), row.currency)}
-      </Text>
-      <Text style={styles.title}>{row.title}</Text>
-      {row.description ? <Text style={styles.desc}>{row.description}</Text> : null}
-      <Text style={styles.kind}>
-        {paymentKindLabel(row.service_kind)} ·{' '}
-        {isVariable ? paymentText('paymentsQrModeStandingVariable') : paymentText('paymentsQrModeStanding')}
-      </Text>
-
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{paidCount}</Text>
-          <Text style={styles.statLabel}>Ödeme</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{formatPaymentAmount(paidTotal, row.currency)}</Text>
-          <Text style={styles.statLabel}>Toplam</Text>
-        </View>
-      </View>
-
-      {isActive && openUrl ? (
-        <View style={styles.qrWrap}>
-          <View style={styles.qrCard}>
-            <QRCode value={openUrl} size={220} backgroundColor="#fff" color="#111" />
-          </View>
-          <Text style={styles.hint}>
-            {isVariable ? paymentText('paymentsStandingVariableScanHint') : paymentText('paymentsStandingScanHint')}
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.closedBox}>
-          <Ionicons name="lock-closed-outline" size={32} color="#64748b" />
-          <Text style={styles.closedText}>QR kapatıldı — yeni ödeme alınamaz</Text>
-        </View>
-      )}
-
-      {openUrl ? (
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => void copyLink()}>
-            <Ionicons name="copy-outline" size={18} color={ACCENT} />
-            <Text style={styles.actionText}>{paymentText('paymentsCopyLink')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => void shareLink()}>
-            <Ionicons name="share-outline" size={18} color={ACCENT} />
-            <Text style={styles.actionText}>{paymentText('paymentsShareLink')}</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      {isActive ? (
-        <TouchableOpacity style={styles.closeBtn} onPress={closeQr} disabled={closing}>
-          {closing ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="stop-circle-outline" size={20} color="#fff" />
-              <Text style={styles.closeBtnText}>{paymentText('paymentsCloseQr')}</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      ) : null}
-    </View>
+    <FlatList
+      style={styles.container}
+      contentContainerStyle={styles.listContent}
+      data={paidRows}
+      keyExtractor={(item) => item.id}
+      renderItem={renderPaidRow}
+      ListHeaderComponent={listHeader}
+      keyboardShouldPersistTaps="handled"
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary, padding: 20, alignItems: 'center' },
+  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
+  listContent: { paddingHorizontal: 20, paddingBottom: 32 },
+  headerBlock: { alignItems: 'center', paddingTop: 8, position: 'relative' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
   errorTitle: { fontSize: 15, fontWeight: '600', color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 22 },
   retryBtn: {
@@ -236,7 +325,7 @@ const styles = StyleSheet.create({
     backgroundColor: ACCENT,
   },
   retryBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  glow: { ...StyleSheet.absoluteFillObject },
+  glow: { ...StyleSheet.absoluteFillObject, borderRadius: 0 },
   statusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -266,7 +355,7 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 18, fontWeight: '900', color: theme.colors.text },
   statLabel: { fontSize: 11, color: theme.colors.textMuted, marginTop: 2 },
-  qrWrap: { alignItems: 'center', marginTop: 20, gap: 12 },
+  qrWrap: { alignItems: 'center', marginTop: 20, gap: 12, width: '100%' },
   qrCard: { padding: 16, backgroundColor: '#fff', borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 12, elevation: 4 },
   hint: { fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20, paddingHorizontal: 8 },
   closedBox: { alignItems: 'center', gap: 10, marginTop: 24, padding: 24 },
@@ -297,4 +386,38 @@ const styles = StyleSheet.create({
     backgroundColor: '#64748b',
   },
   closeBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  paymentsSectionTitle: {
+    alignSelf: 'stretch',
+    fontSize: 16,
+    fontWeight: '800',
+    color: theme.colors.text,
+    marginTop: 28,
+    marginBottom: 10,
+  },
+  emptyPayments: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 24,
+    marginBottom: 8,
+  },
+  emptyPaymentsText: { fontSize: 13, color: theme.colors.textMuted },
+  paidRow: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  paidRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 6,
+  },
+  paidAmount: { fontSize: 18, fontWeight: '900', color: '#16a34a' },
+  paidDate: { fontSize: 11, color: theme.colors.textMuted, fontWeight: '600' },
+  paidTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.text },
+  paidDesc: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 4, lineHeight: 18 },
 });

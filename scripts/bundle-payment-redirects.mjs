@@ -1,6 +1,6 @@
 /**
- * Expo web export sonrası ödeme köprü sayfalarını dist/ altına yazar.
- * valoria.tr/odeme ve /odeme/qr → Supabase Edge (Expo SPA yerine)
+ * Expo web export sonrası ödeme köprü sayfalarını dist/ altına yazar (yerel önizleme).
+ * Canlıda Vercel /payment → api/payment edge proxy kullanır.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,24 +10,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 const dist = path.join(root, 'dist');
 
-const supabaseUrl = (
-  process.env.EXPO_PUBLIC_SUPABASE_URL ||
-  process.env.SUPABASE_URL ||
-  ''
-).replace(/\/$/, '');
-
 if (!fs.existsSync(dist)) {
   console.error('[bundle-payment-redirects] dist/ yok — önce expo export -p web');
   process.exit(1);
 }
 
-if (!supabaseUrl) {
-  console.warn('[bundle-payment-redirects] SUPABASE_URL yok — köprü sayfaları atlandı');
-  process.exit(0);
-}
-
-function bridgeHtml(edgeFunction, title) {
-  const targetBase = `${supabaseUrl}/functions/v1/${edgeFunction}`;
+function bridgeHtml(publicPath, title) {
+  const publicBase = (
+    process.env.EXPO_PUBLIC_APP_URL ||
+    process.env.PAYMENT_PUBLIC_BASE_URL ||
+    'https://valoria.tr'
+  ).replace(/\/$/, '');
+  const targetBase = `${publicBase}/${publicPath}`;
   return `<!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -52,17 +46,22 @@ function bridgeHtml(edgeFunction, title) {
 </head>
 <body>
   <div class="box">
-    <p>Güvenli ödeme sayfasına yönlendiriliyorsunuz…</p>
+    <p>Stripe güvenli ödeme sayfasına yönlendiriliyorsunuz…</p>
     <div class="spinner" aria-hidden="true"></div>
   </div>
 </body>
 </html>`;
 }
 
-const odemeDir = path.join(dist, 'odeme');
-const qrDir = path.join(odemeDir, 'qr');
-fs.mkdirSync(qrDir, { recursive: true });
-fs.writeFileSync(path.join(odemeDir, 'index.html'), bridgeHtml('open-payment', 'Valoria — Ödeme'));
-fs.writeFileSync(path.join(qrDir, 'index.html'), bridgeHtml('open-payment-qr', 'Valoria — Ödeme QR'));
+function writePaymentBridge(dirName, qrDirName, singlePath, qrPath, singleTitle, qrTitle) {
+  const baseDir = path.join(dist, dirName);
+  const qrDir = path.join(baseDir, qrDirName);
+  fs.mkdirSync(qrDir, { recursive: true });
+  fs.writeFileSync(path.join(baseDir, 'index.html'), bridgeHtml(singlePath, singleTitle));
+  fs.writeFileSync(path.join(qrDir, 'index.html'), bridgeHtml(qrPath, qrTitle));
+}
 
-console.log('[bundle-payment-redirects] dist/odeme/index.html + dist/odeme/qr/index.html hazır');
+writePaymentBridge('payment', 'qr', 'payment', 'payment/qr', 'Valoria — Ödeme', 'Valoria — Ödeme QR');
+writePaymentBridge('odeme', 'qr', 'odeme', 'odeme/qr', 'Valoria — Ödeme', 'Valoria — Ödeme QR');
+
+console.log('[bundle-payment-redirects] dist/payment + dist/odeme köprü sayfaları hazır');

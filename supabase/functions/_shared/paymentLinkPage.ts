@@ -2,8 +2,8 @@
 
 export const PAYMENT_BRAND_NAME = "Valoria Hotel";
 export const PAYMENT_BRAND_TAGLINE = "Güvenli ödeme";
-export const PUBLIC_PAYMENT_PATH = "odeme";
-export const PUBLIC_PAYMENT_QR_PATH = "odeme/qr";
+export const PUBLIC_PAYMENT_PATH = "payment";
+export const PUBLIC_PAYMENT_QR_PATH = "payment/qr";
 
 const PREVIEW_BOT =
   /facebookexternalhit|whatsapp|telegrambot|twitterbot|linkedinbot|slackbot|discordbot|applebot|googlebot|bingpreview|embedly|preview|facebot|ia_archiver/i;
@@ -18,22 +18,27 @@ export function paymentFunctionsBase(): string {
   return `${base}/functions/v1`;
 }
 
-/** Canlı site köprüsü — örn. https://valoria.tr (Supabase URL yerine paylaşımda görünür) */
-export function paymentPublicBase(): string | null {
+/** Canlı site köprüsü — örn. https://valoria.tr (QR ve paylaşımda görünür) */
+export function paymentPublicBase(): string {
   const custom = Deno.env.get("PAYMENT_PUBLIC_BASE_URL")?.trim().replace(/\/$/, "");
   if (custom) return custom;
   const appUrl = Deno.env.get("APP_PUBLIC_BASE_URL")?.trim().replace(/\/$/, "");
-  return appUrl || null;
+  if (appUrl) return appUrl;
+  return "https://valoria.tr";
 }
 
 export function paymentRequestOpenUrl(publicToken: string): string {
   const q = `t=${encodeURIComponent(publicToken)}`;
-  return `${paymentFunctionsBase()}/open-payment?${q}`;
+  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_PATH}?${q}`;
 }
 
 export function paymentQrStandOpenUrl(publicToken: string): string {
   const q = `t=${encodeURIComponent(publicToken)}`;
-  return `${paymentFunctionsBase()}/open-payment-qr?${q}`;
+  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_QR_PATH}?${q}`;
+}
+
+export function paymentQrStandPostUrl(): string {
+  return `${paymentPublicBase()}/${PUBLIC_PAYMENT_QR_PATH}`;
 }
 
 type OrgBrand = { name?: string | null; finance_report_brand?: string | null } | null | undefined;

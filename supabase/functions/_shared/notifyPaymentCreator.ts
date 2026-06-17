@@ -6,10 +6,13 @@ type PaymentRow = {
   id: string;
   created_by_staff_id: string | null;
   title: string | null;
+  description: string | null;
   amount: number | string;
   currency: string | null;
   service_kind: string | null;
   status: string;
+  reference_type: string | null;
+  reference_id: string | null;
 };
 
 function amountLabel(amount: number | string, currency: string | null): string {
@@ -56,7 +59,9 @@ export async function notifyPaymentCreator(
 ): Promise<void> {
   const { data: row } = await admin
     .from("payment_requests")
-    .select("id, created_by_staff_id, title, amount, currency, service_kind, status")
+    .select(
+      "id, created_by_staff_id, title, description, amount, currency, service_kind, status, reference_type, reference_id"
+    )
     .eq("id", paymentRequestId)
     .maybeSingle();
 
@@ -65,22 +70,29 @@ export async function notifyPaymentCreator(
   const typed = row as PaymentRow;
   const label = amountLabel(typed.amount, typed.currency);
   const paymentTitle = (typed.title ?? "").trim() || "Ödeme";
+  const desc = (typed.description ?? "").trim();
   const { title, body, notificationType } = copyForOutcome(outcome, paymentTitle, label);
+  const bodyWithDesc =
+    outcome === "paid" && desc ? `${paymentTitle} · ${desc}` : body;
 
+  const isQrStand = typed.reference_type === "qr_stand" && typed.reference_id;
   const pushData = {
-    url: `/staff/payments/${paymentRequestId}`,
-    screen: "staff_payment",
+    url: isQrStand
+      ? `/staff/payments/stand/${typed.reference_id}`
+      : `/staff/payments/${paymentRequestId}`,
+    screen: isQrStand ? "staff_payment_qr_stand" : "staff_payment",
     paymentRequestId,
     notificationType,
     feature_key: "payment",
     paymentOutcome: outcome,
     serviceKind: typed.service_kind ?? undefined,
+    ...(isQrStand ? { qrStandId: typed.reference_id } : {}),
   };
 
   const { error: insErr } = await admin.from("notifications").insert({
     staff_id: typed.created_by_staff_id,
-    title,
-    body,
+    title: isQrStand && outcome === "paid" ? `QR ödeme alındı · ${label}` : title,
+    body: bodyWithDesc,
     notification_type: notificationType,
     category: "staff",
     data: pushData,
@@ -101,8 +113,8 @@ export async function notifyPaymentCreator(
       },
       body: JSON.stringify({
         staffIds: [typed.created_by_staff_id],
-        title,
-        body,
+        title: isQrStand && outcome === "paid" ? `QR ödeme alındı · ${label}` : title,
+        body: bodyWithDesc,
         data: pushData,
       }),
     });

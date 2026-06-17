@@ -26,3 +26,20 @@ export function publicContractHref(): Href {
 export function publicMaliyeHref(): Href {
   return { pathname: '/maliye', params: { token: FIXED_MALIYE_QR_TOKEN } } as Href;
 }
+
+export type PublicPaymentQrMode = 'standing' | 'standing_variable';
+
+/** valoria.tr — personel ödeme QR oluşturma (sabit / serbest) */
+export function publicPaymentNewHref(
+  mode: PublicPaymentQrMode,
+  opts?: { admin?: boolean; serviceKind?: string }
+): Href {
+  const base = opts?.admin ? '/admin/payments/new' : '/staff/payments/new';
+  return {
+    pathname: base,
+    params: {
+      mode,
+      kind: opts?.serviceKind ?? 'food',
+    },
+  } as Href;
+}

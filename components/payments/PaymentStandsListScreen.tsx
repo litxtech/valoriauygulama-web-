@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
@@ -111,7 +111,12 @@ export function PaymentStandsListScreen({ basePath }: Props) {
           <TouchableOpacity
             style={styles.row}
             activeOpacity={0.85}
-            onPress={() => router.push(`${basePath}/stand/${item.id}` as never)}
+            onPress={() =>
+              router.push({
+                pathname: `${basePath}/stand/[id]`,
+                params: { id: item.id },
+              } as Href)
+            }
           >
             <View style={[styles.statusDot, item.status === 'active' ? styles.statusActive : styles.statusClosed]} />
             <View style={styles.rowBody}>

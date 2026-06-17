@@ -40,6 +40,16 @@ export type PaymentQrStandStats = {
   paid_total: number;
 };
 
+export type PaymentQrStandPaidRow = {
+  id: string;
+  amount: number;
+  currency: string;
+  title: string;
+  description: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
 export type CreatePaymentQrStandResult = {
   id: string;
   public_token: string;
@@ -184,6 +194,23 @@ export async function fetchPaymentQrStandStats(standId: string): Promise<Payment
     paid_count: rows.length,
     paid_total: rows.reduce((s, r) => s + Number(r.amount ?? 0), 0),
   };
+}
+
+export async function fetchPaymentQrStandPaidPayments(
+  standId: string,
+  limit = 50
+): Promise<PaymentQrStandPaidRow[]> {
+  const { data, error } = await supabase
+    .from('payment_requests')
+    .select('id, amount, currency, title, description, paid_at, created_at')
+    .eq('reference_type', 'qr_stand')
+    .eq('reference_id', standId)
+    .eq('status', 'paid')
+    .order('paid_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throwPaymentQrDbError(error);
+  return (data ?? []) as PaymentQrStandPaidRow[];
 }
 
 export function subscribePaymentQrStand(

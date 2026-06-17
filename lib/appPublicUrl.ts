@@ -24,15 +24,46 @@ function settingValueToString(raw: unknown): string {
   return String(raw).replace(/^"|"$/g, '').trim();
 }
 
+/** Yerel ağ / geliştirme adresi — misafire paylaşılan QR ve linklerde kullanılmaz. */
+export function isLocalOrPrivateOrigin(origin: string): boolean {
+  const raw = origin.trim().toLowerCase();
+  if (!raw) return true;
+  if (raw.startsWith('exp://') || raw.startsWith('exps://')) return true;
+  try {
+    const url = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    const host = url.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^10\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+    if (host.endsWith('.local')) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
 /** Tarayıcı / env / varsayılan — anlık (önbellek yok) */
 export function resolvePublicAppOrigin(override?: string | null): string {
-  if (override?.trim()) return override.trim().replace(/\/$/, '');
+  if (override?.trim() && !isLocalOrPrivateOrigin(override)) {
+    return override.trim().replace(/\/$/, '');
+  }
   if (typeof window !== 'undefined' && window.location?.origin) {
     const o = window.location.origin.replace(/\/$/, '');
-    if (!o.includes('localhost') && !o.includes('127.0.0.1')) return o;
+    if (!isLocalOrPrivateOrigin(o)) return o;
   }
   const env = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/$/, '');
-  if (env) return env;
+  if (env && !isLocalOrPrivateOrigin(env)) return env;
+  return DEFAULT_PUBLIC_APP_ORIGIN;
+}
+
+/** Ödeme QR / paylaşım linki — asla 192.168 veya Metro adresi dönmez. */
+export function resolveShareablePublicOrigin(override?: string | null): string {
+  if (override?.trim() && !isLocalOrPrivateOrigin(override)) {
+    return override.trim().replace(/\/$/, '');
+  }
+  const env = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/$/, '');
+  if (env && !isLocalOrPrivateOrigin(env)) return env;
   return DEFAULT_PUBLIC_APP_ORIGIN;
 }
 
@@ -49,7 +80,7 @@ export async function fetchPublicAppOriginFromSettings(force?: boolean): Promise
     .eq('key', APP_PUBLIC_BASE_URL_SETTING_KEY)
     .maybeSingle();
   const fromDb = settingValueToString((data as { value?: unknown } | null)?.value);
-  const resolved = resolvePublicAppOrigin(fromDb || null);
+  const resolved = resolveShareablePublicOrigin(fromDb || null);
   cachedOrigin = { value: resolved, at: Date.now() };
   return resolved;
 }

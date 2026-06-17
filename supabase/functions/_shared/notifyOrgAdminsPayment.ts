@@ -32,6 +32,7 @@ export type NotifyOrgAdminsPaymentOpts = {
   staffName?: string;
   creatorStaffName?: string;
   tipId?: string;
+  qrStandId?: string;
 };
 
 export type PaymentRequestPaidRow = {
@@ -41,6 +42,7 @@ export type PaymentRequestPaidRow = {
   created_by_staff_id: string | null;
   guest_id: string | null;
   title: string | null;
+  description: string | null;
   amount: number | string;
   currency: string | null;
   service_kind: string | null;
@@ -83,6 +85,11 @@ export function buildAdminPaymentNotificationBody(
     if (customerName) body += ` · ${customerName}`;
     else if (guestName) body += ` · ${guestName}`;
     if (itemsSummary) body += ` · ${itemsSummary}`;
+  } else if (ref === "qr_stand") {
+    const desc = (row.description ?? "").trim();
+    if (desc) body += ` · ${desc}`;
+    if (creatorStaffName) body += ` · QR: ${creatorStaffName}`;
+    body += " · Sabit QR noktası";
   } else {
     if (guestName) body += ` · Misafir: ${guestName}`;
     if (staffName) body += ` · Personel: ${staffName}`;
@@ -115,15 +122,20 @@ export async function notifyOrgAdminsPayment(
 
   const lane = paymentLane(opts.serviceKind);
   const isTip = lane === "tips";
+  const isQrStand = !!opts.qrStandId;
   const notificationType = isTip ? "admin_tip_payment" : "admin_payment_received";
   const featureKey = isTip ? "staff_tip" : "payment";
   const amountStr = amountLabel(opts.amount, opts.currency);
-  const title = `Ödeme alındı · ${laneTitleTr(lane)} · ${amountStr}`;
+  const title = isQrStand
+    ? `QR ödeme alındı · ${amountStr}`
+    : `Ödeme alındı · ${laneTitleTr(lane)} · ${amountStr}`;
   const body = opts.paymentTitle.trim() || "Ödeme tamamlandı";
 
   const pushData = {
-    url: `/admin/payments/${opts.requestId}`,
-    screen: "admin_payment_detail",
+    url: isQrStand
+      ? `/admin/payments/stand/${opts.qrStandId}`
+      : `/admin/payments/${opts.requestId}`,
+    screen: isQrStand ? "admin_payment_qr_stand" : "admin_payment_detail",
     paymentRequestId: opts.requestId,
     notificationType,
     feature_key: featureKey,
@@ -131,6 +143,7 @@ export async function notifyOrgAdminsPayment(
     serviceKind: opts.serviceKind,
     amount: amountStr,
     ...(opts.tipId ? { tipId: opts.tipId } : {}),
+    ...(opts.qrStandId ? { qrStandId: opts.qrStandId } : {}),
   };
 
   const { data: admins } = await admin

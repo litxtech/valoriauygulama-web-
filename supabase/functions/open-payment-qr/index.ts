@@ -14,9 +14,9 @@ import {
   formatAmountLabel,
   htmlResponse,
   isLinkPreviewBot,
-  paymentFunctionsBase,
   paymentLandingHtml,
   paymentQrStandOpenUrl,
+  paymentQrStandPostUrl,
   PAYMENT_BRAND_NAME,
   paymentVariableAmountFormHtml,
   redirectResponse,
@@ -31,7 +31,7 @@ async function loadStand(admin: ReturnType<typeof createClient>, publicToken: st
   return admin
     .from("payment_qr_stands")
     .select(
-      "id, organization_id, amount, amount_mode, currency, title, description, service_kind, status, public_token, organizations(name, finance_report_brand)"
+      "id, organization_id, amount, amount_mode, currency, title, description, service_kind, status, public_token, created_by_staff_id, organizations(name, finance_report_brand)"
     )
     .eq("public_token", publicToken)
     .maybeSingle();
@@ -136,7 +136,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (isVariable) {
-    const postUrl = `${paymentFunctionsBase()}/open-payment-qr`;
+    const postUrl = paymentQrStandPostUrl();
     const postApiKey = paymentAnonKey();
 
     if (req.method === "POST") {

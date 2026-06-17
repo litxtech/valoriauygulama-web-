@@ -18,12 +18,20 @@
       "destination": "/maliye/index.html"
     },
     {
+      "source": "/payment/qr",
+      "destination": "/api/payment/qr"
+    },
+    {
+      "source": "/payment",
+      "destination": "/api/payment"
+    },
+    {
       "source": "/odeme/qr",
-      "destination": "/odeme/qr/index.html"
+      "destination": "/api/odeme/qr"
     },
     {
       "source": "/odeme",
-      "destination": "/odeme/index.html"
+      "destination": "/api/odeme"
     },
     {
       "source": "/:path*",

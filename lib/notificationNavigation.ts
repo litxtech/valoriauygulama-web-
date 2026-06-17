@@ -237,8 +237,17 @@ function resolveByNotificationType(
     case 'admin_payment_received':
     case 'admin_tip_payment': {
       const payId = pickStr(data, 'paymentRequestId', 'payment_request_id');
+      const qrStandId = pickStr(data, 'qrStandId', 'qr_stand_id');
       const screen = pickStr(data, 'screen');
       const url = pickStr(data, 'url');
+      if (qrStandId || screen === 'admin_payment_qr_stand' || url.includes('/payments/stand/')) {
+        const standId = qrStandId || url.match(/\/payments\/stand\/([^/?]+)/)?.[1];
+        if (standId) return `/admin/payments/stand/${standId}` as Href;
+      }
+      if (screen === 'staff_payment_qr_stand' || url.includes('/payments/stand/')) {
+        const standId = qrStandId || url.match(/\/payments\/stand\/([^/?]+)/)?.[1];
+        if (standId) return `/staff/payments/stand/${standId}` as Href;
+      }
       if (screen === 'staff_payment' || url.startsWith('/staff/payments')) {
         if (payId) return `/staff/payments/${payId}` as Href;
         return '/staff/payments';

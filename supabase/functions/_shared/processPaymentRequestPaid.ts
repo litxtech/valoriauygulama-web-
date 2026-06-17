@@ -27,7 +27,7 @@ async function loadPaymentRow(
   const { data: row } = await admin
     .from("payment_requests")
     .select(
-      "id, status, organization_id, created_by_staff_id, guest_id, title, amount, currency, service_kind, reference_type, reference_id, metadata"
+      "id, status, organization_id, created_by_staff_id, guest_id, title, description, amount, currency, service_kind, reference_type, reference_id, metadata"
     )
     .eq("id", requestId)
     .maybeSingle();
@@ -116,6 +116,25 @@ async function resolvePaymentPartyNames(
     );
   }
 
+  if (row.reference_type === "qr_stand" && row.reference_id && !row.created_by_staff_id) {
+    lookups.push(
+      admin
+        .from("payment_qr_stands")
+        .select("created_by_staff_id")
+        .eq("id", row.reference_id)
+        .maybeSingle()
+        .then(async ({ data: stand }) => {
+          if (!stand?.created_by_staff_id) return;
+          const { data: s } = await admin
+            .from("staff")
+            .select("full_name")
+            .eq("id", stand.created_by_staff_id)
+            .maybeSingle();
+          creatorStaffName = ((s?.full_name as string) ?? "").trim();
+        })
+    );
+  }
+
   await Promise.all(lookups);
   return { guestName, creatorStaffName, staffName };
 }
@@ -146,6 +165,10 @@ async function notifyAdminsForPaidPayment(
     staffName: names.staffName || undefined,
     creatorStaffName: names.creatorStaffName || undefined,
     tipId,
+    qrStandId:
+      row.reference_type === "qr_stand" && row.reference_id
+        ? String(row.reference_id)
+        : undefined,
   });
 }
 

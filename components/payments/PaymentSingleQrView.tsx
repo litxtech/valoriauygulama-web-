@@ -25,6 +25,7 @@ import {
 } from '@/lib/payments';
 import { paymentKindLabel, paymentStatusLabel, paymentText } from '@/lib/paymentsI18n';
 import { paymentShareUrl } from '@/lib/paymentOpenUrl';
+import { fetchPublicAppOriginFromSettings } from '@/lib/appPublicUrl';
 
 const ACCENT = '#635bff';
 
@@ -33,6 +34,13 @@ export function PaymentSingleQrView() {
   const [row, setRow] = useState<PaymentRequestRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [shareBase, setShareBase] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchPublicAppOriginFromSettings()
+      .then(setShareBase)
+      .catch(() => setShareBase(null));
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -55,7 +63,7 @@ export function PaymentSingleQrView() {
     });
   }, [id, row]);
 
-  const shareLinkUrl = row ? paymentShareUrl(row.public_token, row.pay_url) : '';
+  const shareLinkUrl = row ? paymentShareUrl(row.public_token, row.pay_url, shareBase) : '';
 
   const copyLink = async () => {
     if (!shareLinkUrl) return;
@@ -79,7 +87,7 @@ export function PaymentSingleQrView() {
   const archived = isPaymentArchived(row);
   const isPaid = row.status === 'paid';
   const isPending = row.status === 'pending' && !archived;
-  const payUrl = !archived && row ? paymentShareUrl(row.public_token, row.pay_url) : '';
+  const payUrl = !archived && row ? paymentShareUrl(row.public_token, row.pay_url, shareBase) : '';
 
   const onCancel = () => {
     Alert.alert(paymentText('paymentsCancelLink'), paymentText('paymentsCancelLinkConfirm'), [

@@ -8,6 +8,7 @@ import {
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
 } from '@/constants/publicWebPaths';
+import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
 export type PublicWebRoute =
   | { kind: 'menu'; slug: string }
@@ -120,6 +121,7 @@ export function isPublicWebPath(pathname: string): boolean {
   const p = (pathname || '').replace(/\/$/, '') || '/';
   if (p.includes('/guest/sign-one') || p.includes('/guest/success')) return true;
   if (p === '/maliye' || p.startsWith('/maliye/')) return true;
+  if (isPaymentPublicPath(p)) return true;
   return resolvePublicWebRoute(pathname) != null;
 }
 

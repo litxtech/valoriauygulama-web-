@@ -20,6 +20,7 @@ export type QrStandRow = {
   service_kind: string | null;
   public_token: string;
   amount_mode?: string | null;
+  created_by_staff_id?: string | null;
   organizations?: OrgBrand;
 };
 
@@ -57,7 +58,7 @@ export async function createQrStandCheckout(
       service_kind: serviceKind,
       reference_type: "qr_stand",
       reference_id: stand.id,
-      created_by_staff_id: null,
+      created_by_staff_id: stand.created_by_staff_id ?? null,
       metadata: {
         qr_stand_id: stand.id,
         qr_stand_token: stand.public_token,
