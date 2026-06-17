@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { createPaymentRequest } from '@/lib/payments';
-import { createPaymentQrStand } from '@/lib/paymentQrStands';
+import { createPaymentQrStand, paymentQrStandCreateUserMessage } from '@/lib/paymentQrStands';
 import {
   PAYMENT_CURRENCIES,
   PAYMENT_SERVICE_KINDS,
@@ -89,7 +89,11 @@ export function PaymentNewForm({ successBasePath, initialMode, initialServiceKin
         router.replace(`${successBasePath}/${result.id}`);
       }
     } catch (e) {
-      Alert.alert('Hata', (e as Error)?.message || paymentText('paymentsErrorStripe'));
+      const msg =
+        qrMode === 'standing' || qrMode === 'standing_variable'
+          ? paymentQrStandCreateUserMessage(e)
+          : (e as Error)?.message || paymentText('paymentsErrorStripe');
+      Alert.alert('Hata', msg);
     } finally {
       setSubmitting(false);
     }

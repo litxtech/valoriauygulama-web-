@@ -103,7 +103,6 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
   { key: 'mutfak_operasyon_yonetim', label: 'Mutfak operasyon yönetimi (admin)', section: 'kitchen', defaultEnabled: false },
   { key: 'reception_mutfak_muhasebe', label: 'Reception mutfak muhasebe', section: 'kitchen', defaultEnabled: false },
   { key: 'yemek_listesi_olustur', label: 'Aylık yemek listesi düzenleme', section: 'kitchen', defaultEnabled: false },
-  { key: 'yemek_listesi_mutfak_onay', label: 'Günlük yemek listesi mutfak onayı', section: 'kitchen', defaultEnabled: false },
   { key: 'otel_mutfak_menu', label: 'Otel mutfağı menüsü yönetimi', section: 'kitchen', defaultEnabled: false },
   { key: 'kahvalti_teyit_olustur', label: 'Kahvaltı teyidi oluşturma', section: 'kitchen', defaultEnabled: false },
   { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitleri (mutfak) görüntüleme', section: 'kitchen', defaultEnabled: false },

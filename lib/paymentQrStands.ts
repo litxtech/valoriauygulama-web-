@@ -2,8 +2,15 @@ import { supabase } from '@/lib/supabase';
 import { paymentQrStandOpenUrl } from '@/lib/paymentOpenUrl';
 import { invokeEdgeWithAuth } from '@/lib/invokeEdgeWithAuth';
 import { getEdgeFunctionErrorMessage, parseEdgeFunctionErrorBody } from '@/lib/functionsError';
-import { sanitizeSupabaseErrorMessage } from '@/lib/supabaseTransientErrors';
+import {
+  extractErrorMessage,
+  isSupabaseUnavailableError,
+  sanitizeSupabaseErrorMessage,
+  sleepMs,
+} from '@/lib/supabaseTransientErrors';
 import type { PaymentServiceKind } from '@/lib/paymentsI18n';
+
+const CREATE_QR_MAX_ATTEMPTS = 4;
 
 function throwPaymentQrDbError(error: { message?: string }): never {
   throw new Error(sanitizeSupabaseErrorMessage(error.message));
@@ -55,6 +62,50 @@ export function isVariablePaymentQrStand(row: Pick<PaymentQrStandRow, 'amount_mo
 }
 
 export async function createPaymentQrStand(input: {
+  amount?: number;
+  amountMode?: PaymentQrStandAmountMode;
+  currency?: string;
+  title: string;
+  description?: string | null;
+  serviceKind?: PaymentServiceKind;
+}): Promise<CreatePaymentQrStandResult> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= CREATE_QR_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await createPaymentQrStandOnce(input);
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(extractErrorMessage(e));
+      const msg = lastError.message;
+      const retryable =
+        isSupabaseUnavailableError(msg) ||
+        /non-2xx|502|503|504|522|524|schema cache|pgrst204|amount_mode/i.test(msg);
+      if (attempt < CREATE_QR_MAX_ATTEMPTS && retryable) {
+        await sleepMs(500 + attempt * 450);
+        continue;
+      }
+      throw lastError;
+    }
+  }
+
+  throw lastError ?? new Error('QR oluşturulamadı');
+}
+
+/** Kullanıcıya gösterilecek kısa oluşturma hatası. */
+export function paymentQrStandCreateUserMessage(reason: unknown): string {
+  const raw = extractErrorMessage(reason).replace(/edge\s*/gi, '').trim();
+  if (isSupabaseUnavailableError(raw)) {
+    return 'Sunucu geçici yanıt vermiyor (522). Wi‑Fi ile birkaç saniye sonra tekrar deneyin.';
+  }
+  if (/amount_mode|schema cache|pgrst204/i.test(raw)) {
+    return 'Ödeme servisi güncelleniyor. Bir dakika bekleyip tekrar deneyin.';
+  }
+  const cleaned = sanitizeSupabaseErrorMessage(raw);
+  if (cleaned.length > 140) return `${cleaned.slice(0, 140)}…`;
+  return cleaned || 'QR oluşturulamadı';
+}
+
+async function createPaymentQrStandOnce(input: {
   amount?: number;
   amountMode?: PaymentQrStandAmountMode;
   currency?: string;

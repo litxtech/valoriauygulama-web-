@@ -1,7 +1,8 @@
 // Sabit QR ödeme noktası oluştur — QR kapatılana kadar tekrar kullanılır
 // amount_mode=variable → serbest tutar; müşteri taradıktan sonra tutar girer
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { paymentQrStandOpenUrl, resolveStaffCaller } from "../_shared/paymentQrStandAuth.ts";
+import { paymentQrStandOpenUrl } from "../_shared/paymentLinkPage.ts";
+import { resolveStaffCaller } from "../_shared/paymentQrStandAuth.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

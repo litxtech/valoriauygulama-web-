@@ -20,19 +20,6 @@ export type MealMenuMonthMeta = {
   pdf_footer_note?: string | null;
 };
 
-export type MealKitchenConfirmation = {
-  id: string;
-  menu_id: string;
-  meal_date: string;
-  confirmed_by_staff_id: string;
-  prepared_meals: boolean;
-  took_samples: boolean;
-  preserved_samples: boolean;
-  note: string | null;
-  confirmed_at: string;
-  confirmed_by?: { full_name: string | null } | null;
-};
-
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -122,63 +109,16 @@ export async function fetchMealMenuForMonth(
   return { menu, days: mergeMenuDaysForMonth(viewMonth, dayRows) };
 }
 
-/** Liste ekranı: personel join yok, daha hızlı. */
-export async function fetchKitchenConfirmationsForMenuLite(
-  menuId: string
-): Promise<Record<string, MealKitchenConfirmation>> {
-  const { data, error } = await supabase
-    .from('staff_meal_menu_day_confirmations')
-    .select(
-      'id, menu_id, meal_date, confirmed_by_staff_id, prepared_meals, took_samples, preserved_samples, note, confirmed_at'
-    )
-    .eq('menu_id', menuId);
-
-  if (error) throw new Error(error.message);
-  const map: Record<string, MealKitchenConfirmation> = {};
-  for (const raw of data ?? []) {
-    const row = raw as MealKitchenConfirmation;
-    map[row.meal_date.slice(0, 10)] = row;
-  }
-  return map;
-}
-
-export async function fetchKitchenConfirmationsForMenu(menuId: string): Promise<Record<string, MealKitchenConfirmation>> {
-  const { data, error } = await supabase
-    .from('staff_meal_menu_day_confirmations')
-    .select(
-      'id, menu_id, meal_date, confirmed_by_staff_id, prepared_meals, took_samples, preserved_samples, note, confirmed_at, staff:confirmed_by_staff_id(full_name)'
-    )
-    .eq('menu_id', menuId);
-
-  if (error) throw new Error(error.message);
-  const map: Record<string, MealKitchenConfirmation> = {};
-  for (const raw of data ?? []) {
-    const row = raw as MealKitchenConfirmation & { staff?: { full_name: string | null } | null };
-    map[row.meal_date.slice(0, 10)] = {
-      ...row,
-      confirmed_by: row.staff ? { full_name: row.staff.full_name } : null,
-    };
-  }
-  return map;
-}
-
 export type StaffMealMenuBrowseBundle = {
   menu: MealMenuMonthMeta | null;
   days: MealMenuDayRow[];
-  confirmations: Record<string, MealKitchenConfirmation>;
 };
 
-/** Menü verisi önce, mutfak onayları paralel tamamlanır. */
 export async function fetchStaffMealMenuBrowse(
   organizationId: string,
   viewMonth: Date
 ): Promise<StaffMealMenuBrowseBundle> {
-  const { menu, days } = await fetchMealMenuForMonth(organizationId, viewMonth);
-  if (!menu?.id) {
-    return { menu, days, confirmations: {} };
-  }
-  const confirmations = await fetchKitchenConfirmationsForMenuLite(menu.id);
-  return { menu, days, confirmations };
+  return fetchMealMenuForMonth(organizationId, viewMonth);
 }
 
 export async function fetchPastMealMenuMonths(organizationId: string, limit = 24): Promise<MealMenuMonthMeta[]> {
@@ -193,35 +133,6 @@ export async function fetchPastMealMenuMonths(organizationId: string, limit = 24
 
   if (error) throw new Error(error.message);
   return (data ?? []) as MealMenuMonthMeta[];
-}
-
-export type SubmitKitchenConfirmInput = {
-  organizationId: string;
-  menuId: string;
-  mealDate: string;
-  staffId: string;
-  preparedMeals: boolean;
-  tookSamples: boolean;
-  preservedSamples: boolean;
-  note?: string;
-};
-
-export async function submitKitchenConfirmation(input: SubmitKitchenConfirmInput): Promise<void> {
-  const { error } = await supabase.from('staff_meal_menu_day_confirmations').upsert(
-    {
-      organization_id: input.organizationId,
-      menu_id: input.menuId,
-      meal_date: input.mealDate,
-      confirmed_by_staff_id: input.staffId,
-      prepared_meals: input.preparedMeals,
-      took_samples: input.tookSamples,
-      preserved_samples: input.preservedSamples,
-      note: input.note?.trim() || null,
-      confirmed_at: new Date().toISOString(),
-    },
-    { onConflict: 'organization_id,meal_date' }
-  );
-  if (error) throw new Error(error.message);
 }
 
 export function summarizeMonthDays(days: MealMenuDayRow[]) {

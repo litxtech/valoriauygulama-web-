@@ -1,10 +1,9 @@
-import type { MealKitchenConfirmation, MealMenuDayRow, MealMenuMonthMeta } from '@/lib/staffMealMenu';
+import type { MealMenuDayRow, MealMenuMonthMeta } from '@/lib/staffMealMenu';
 import { periodMonthFromDate } from '@/lib/staffMealMenu';
 
 export type StaffMealMenuBrowseCache = {
   menu: MealMenuMonthMeta | null;
   days: MealMenuDayRow[];
-  confirmations: Record<string, MealKitchenConfirmation>;
 };
 
 type Entry = { at: number; data: StaffMealMenuBrowseCache };

@@ -10,19 +10,15 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { formatTrShortDayLabelFromYmd } from '@/lib/mealMenuDate';
 import {
   fetchPastMealMenuMonths,
   fetchMealMenuForMonth,
-  fetchKitchenConfirmationsForMenu,
   rowToMealFields,
   mealDayHasContent,
   summarizeMonthDays,
-  type MealKitchenConfirmation,
   type MealMenuMonthMeta,
   type MealMenuDayRow,
 } from '@/lib/staffMealMenu';
@@ -50,7 +46,6 @@ export default function StaffMealMenuHistoryScreen() {
   const [months, setMonths] = useState<MealMenuMonthMeta[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
   const [days, setDays] = useState<MealMenuDayRow[]>([]);
-  const [confirmations, setConfirmations] = useState<Record<string, MealKitchenConfirmation>>({});
   const [loadingMonths, setLoadingMonths] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,17 +63,11 @@ export default function StaffMealMenuHistoryScreen() {
     setLoadingDetail(true);
     try {
       const vm = viewMonthFromPeriod(period);
-      const { menu, days: dayRows } = await fetchMealMenuForMonth(staff.organization_id, vm);
+      const { days: dayRows } = await fetchMealMenuForMonth(staff.organization_id, vm);
       setDays(dayRows);
-      if (menu?.id) {
-        setConfirmations(await fetchKitchenConfirmationsForMenu(menu.id));
-      } else {
-        setConfirmations({});
-      }
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Yüklenemedi');
       setDays([]);
-      setConfirmations({});
     } finally {
       setLoadingDetail(false);
     }
@@ -124,7 +113,6 @@ export default function StaffMealMenuHistoryScreen() {
     [days]
   );
   const summary = useMemo(() => summarizeMonthDays(days), [days]);
-  const confirmCount = Object.keys(confirmations).length;
 
   return (
     <View style={styles.root}>
@@ -169,10 +157,7 @@ export default function StaffMealMenuHistoryScreen() {
               <View style={styles.detailHead}>
                 <Text style={styles.detailTitle}>{monthLabelFromPeriod(selectedPeriod)}</Text>
                 <Text style={styles.detailMeta}>
-                  {t('staffMealHistoryMeta', {
-                    days: summary.withContent,
-                    confirms: confirmCount,
-                  })}
+                  {t('staffMealHistoryMeta', { days: summary.withContent })}
                 </Text>
               </View>
             ) : null}
@@ -180,50 +165,18 @@ export default function StaffMealMenuHistoryScreen() {
             {loadingDetail ? (
               <ActivityIndicator color={theme.colors.primary} style={{ marginVertical: 20 }} />
             ) : (
-              filledDays.map((r) => {
+              filledDays.map((r, index) => {
                 const ymd = r.meal_date.slice(0, 10);
-                const conf = confirmations[ymd];
                 return (
                   <View key={ymd} style={styles.dayBlock}>
                     <MealDayViewCard
+                      index={index}
                       ymd={ymd}
                       fields={rowToMealFields(r)}
                       isToday={false}
                       palette={staffMealPalette}
                       compact
                     />
-                    {conf ? (
-                      <View style={styles.confDetail}>
-                        <View style={styles.confHead}>
-                          <Ionicons name="checkmark-done-circle" size={20} color="#16a34a" />
-                          <Text style={styles.confHeadText}>{t('staffMealKitchenConfirmed')}</Text>
-                        </View>
-                        <Text style={styles.confLine}>
-                          {formatTrShortDayLabelFromYmd(ymd)} ·{' '}
-                          {new Date(conf.confirmed_at).toLocaleString('tr-TR', {
-                            day: '2-digit',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                        {conf.confirmed_by?.full_name ? (
-                          <Text style={styles.confLine}>
-                            {t('staffMealKitchenConfirmedBy', { name: conf.confirmed_by.full_name })}
-                          </Text>
-                        ) : null}
-                        <View style={styles.confChecks}>
-                          <ConfCheck ok={conf.prepared_meals} label={t('staffMealKitchenCheckPrepared')} />
-                          <ConfCheck ok={conf.took_samples} label={t('staffMealKitchenCheckSamples')} />
-                          <ConfCheck ok={conf.preserved_samples} label={t('staffMealKitchenCheckPreserved')} />
-                        </View>
-                        {conf.note?.trim() ? (
-                          <Text style={styles.confNote}>{conf.note.trim()}</Text>
-                        ) : null}
-                      </View>
-                    ) : (
-                      <Text style={styles.noConf}>{t('staffMealHistoryNoConfirm')}</Text>
-                    )}
                   </View>
                 );
               })
@@ -231,15 +184,6 @@ export default function StaffMealMenuHistoryScreen() {
           </>
         )}
       </ScrollView>
-    </View>
-  );
-}
-
-function ConfCheck({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <View style={styles.confCheckRow}>
-      <Ionicons name={ok ? 'checkmark-circle' : 'close-circle'} size={16} color={ok ? '#16a34a' : '#94a3b8'} />
-      <Text style={styles.confCheckLabel}>{label}</Text>
     </View>
   );
 }
@@ -265,28 +209,4 @@ const styles = StyleSheet.create({
   detailTitle: { fontSize: 20, fontWeight: '800', color: theme.colors.text },
   detailMeta: { fontSize: 13, color: theme.colors.textMuted, marginTop: 4 },
   dayBlock: { marginBottom: 16 },
-  confDetail: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginTop: -6,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-  },
-  confHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  confHeadText: { fontWeight: '700', color: '#166534' },
-  confLine: { fontSize: 12, color: theme.colors.textSecondary, marginBottom: 4 },
-  confChecks: { marginTop: 6, gap: 4 },
-  confCheckRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  confCheckLabel: { fontSize: 13, color: theme.colors.text },
-  confNote: {
-    marginTop: 8,
-    fontSize: 13,
-    color: theme.colors.text,
-    fontStyle: 'italic',
-    backgroundColor: theme.colors.backgroundSecondary,
-    padding: 8,
-    borderRadius: 8,
-  },
-  noConf: { fontSize: 12, color: theme.colors.textMuted, marginTop: 4, marginLeft: 4 },
 });

@@ -42,4 +42,4 @@ export async function resolveStaffCaller(
   };
 }
 
-import { paymentQrStandOpenUrl } from "../_shared/paymentLinkPage.ts";
+export { paymentQrStandOpenUrl } from "../_shared/paymentLinkPage.ts";

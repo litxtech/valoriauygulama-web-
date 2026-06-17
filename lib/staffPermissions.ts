@@ -203,7 +203,7 @@ export function isKitchenStaffMember(
   return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
 }
 
-/** Mutfak günlük onay push / panel ile aynı departmanlar (274). */
+/** Mutfak departmanları (kahvaltı teyidi, sabah brifing vb.). */
 export const MEAL_MENU_KITCHEN_DEPARTMENTS = new Set([
   'kitchen',
   'kitchen_staff',
@@ -212,18 +212,6 @@ export const MEAL_MENU_KITCHEN_DEPARTMENTS = new Set([
   'head_chef',
   'pastry',
 ]);
-
-/** Günlük mutfak onayı paneli: yalnızca mutfak personeli veya `yemek_listesi_mutfak_onay` yetkisi. */
-export function isMealMenuKitchenStaff(staff: StaffPermissionSlice): boolean {
-  if (!staff) return false;
-  if (staff.app_permissions?.yemek_listesi_mutfak_onay === true) return true;
-  const dept = (staff.department ?? '').trim().toLowerCase();
-  return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
-}
-
-export function canSubmitMealMenuKitchenConfirm(staff: StaffPermissionSlice): boolean {
-  return isMealMenuKitchenStaff(staff);
-}
 
 /** Personel uygulaması: Teknik QR / Akıllı envanter modülüne giriş (QR okuma + talimatlar). */
 export function hasTechnicalAssetsStaffAccess(staff: StaffPermissionSlice): boolean {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { ScrollView, TouchableOpacity, Text, StyleSheet, View, Dimensions } from 'react-native';
+import { ScrollView, TouchableOpacity, Text, StyleSheet, View, Dimensions, Animated } from 'react-native';
 import { parseYmd } from '@/lib/mealMenuUi';
 import { formatTrShortDayLabelFromYmd } from '@/lib/mealMenuDate';
 
@@ -9,7 +9,6 @@ type DayChip = {
   isToday: boolean;
   isPast: boolean;
   isFuture: boolean;
-  kitchenConfirmed?: boolean;
 };
 
 type Props = {
@@ -23,6 +22,77 @@ type Props = {
   compact?: boolean;
 };
 
+function AnimatedDayChip({
+  d,
+  selected,
+  compact,
+  primaryColor,
+  mutedColor,
+  borderColor,
+  onPress,
+}: {
+  d: DayChip;
+  selected: boolean;
+  compact: boolean;
+  primaryColor: string;
+  mutedColor: string;
+  borderColor: string;
+  onPress: () => void;
+}) {
+  const scale = useRef(new Animated.Value(selected ? 1.06 : 1)).current;
+  const { day, weekdayShort } = parseYmd(d.ymd);
+  const chipStyle = compact ? styles.chipCompact : styles.chip;
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: selected ? 1.06 : 1,
+      useNativeDriver: true,
+      speed: 24,
+      bounciness: selected ? 7 : 4,
+    }).start();
+  }, [selected, scale]);
+
+  const chipBg = selected
+    ? primaryColor
+    : d.hasContent
+      ? '#fff7ed'
+      : d.isToday
+        ? '#fffbeb'
+        : '#fff';
+  const chipBorder = selected
+    ? primaryColor
+    : d.hasContent
+      ? '#fdba74'
+      : d.isToday
+        ? '#b8860b'
+        : borderColor;
+
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85}>
+      <Animated.View
+        style={[
+          chipStyle,
+          { borderColor: chipBorder, backgroundColor: chipBg },
+          d.isToday && !selected && styles.chipToday,
+          { transform: [{ scale }] },
+        ]}
+      >
+        <Text style={[compact ? styles.dowCompact : styles.dow, { color: selected ? '#fff' : mutedColor }]}>
+          {weekdayShort}
+        </Text>
+        <Text style={[compact ? styles.numCompact : styles.num, { color: selected ? '#fff' : '#0f172a' }]}>
+          {day}
+        </Text>
+        <View style={compact ? styles.dotsCompact : styles.dots}>
+          {d.hasContent ? (
+            <View style={[styles.dot, { backgroundColor: selected ? '#fff' : '#ea580c' }]} />
+          ) : null}
+        </View>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
 export function MealMonthDayPicker({
   days,
   selectedYmd,
@@ -32,7 +102,6 @@ export function MealMonthDayPicker({
   borderColor,
   compact = false,
 }: Props) {
-  const chipStyle = compact ? styles.chipCompact : styles.chip;
   const rowStyle = compact ? styles.rowCompact : styles.row;
   const scrollRef = useRef<ScrollView>(null);
   const chipStride = (compact ? 40 : 52) + (compact ? 5 : 8);
@@ -64,41 +133,21 @@ export function MealMonthDayPicker({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={rowStyle}
       >
-        {days.map((d) => {
-          const selected = d.ymd === selectedYmd;
-          const { day, weekdayShort } = parseYmd(d.ymd);
-          return (
-            <TouchableOpacity
-              key={d.ymd}
-              onPress={() => {
-                onSelect(d.ymd);
-                scrollToSelected(true);
-              }}
-              activeOpacity={0.85}
-              style={[
-                chipStyle,
-                { borderColor: selected ? primaryColor : borderColor },
-                selected && { backgroundColor: primaryColor },
-                d.isToday && !selected && styles.chipToday,
-              ]}
-            >
-              <Text style={[compact ? styles.dowCompact : styles.dow, { color: selected ? '#fff' : mutedColor }]}>
-                {weekdayShort}
-              </Text>
-              <Text style={[compact ? styles.numCompact : styles.num, { color: selected ? '#fff' : '#0f172a' }]}>
-                {day}
-              </Text>
-              <View style={compact ? styles.dotsCompact : styles.dots}>
-                {d.hasContent ? (
-                  <View style={[styles.dot, { backgroundColor: selected ? '#fff' : '#ea580c' }]} />
-                ) : null}
-                {d.kitchenConfirmed ? (
-                  <View style={[styles.dot, { backgroundColor: selected ? '#bbf7d0' : '#16a34a' }]} />
-                ) : null}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+        {days.map((d) => (
+          <AnimatedDayChip
+            key={d.ymd}
+            d={d}
+            selected={d.ymd === selectedYmd}
+            compact={compact}
+            primaryColor={primaryColor}
+            mutedColor={mutedColor}
+            borderColor={borderColor}
+            onPress={() => {
+              onSelect(d.ymd);
+              scrollToSelected(true);
+            }}
+          />
+        ))}
       </ScrollView>
       <Text
         style={[compact ? styles.hintCompact : styles.hint, { color: mutedColor }]}

@@ -19,7 +19,11 @@ import {
   type MealMenuPdfDay,
 } from '@/lib/mealMenuPdf';
 import { fetchMealMenuForMonth } from '@/lib/staffMealMenu';
-import { invalidateStaffMealMenuCache } from '@/lib/staffMealMenuCache';
+import {
+  invalidateStaffMealMenuCache,
+  setStaffMealMenuCache,
+  staffMealMenuCacheKey,
+} from '@/lib/staffMealMenuCache';
 import {
   groupDayKeysByWeek,
   menuStatsFromDaysMap,
@@ -45,6 +49,7 @@ import {
 import { MealMenuPdfSettingsCard } from '@/components/mealMenu/MealMenuPdfSettingsCard';
 import { MealMenuAiAssistant } from '@/components/mealMenu/MealMenuAiAssistant';
 import { MealMonthDayPicker } from '@/components/mealMenu/MealMonthDayPicker';
+import { useStaffMealMenuLive } from '@/hooks/useStaffMealMenuLive';
 
 const MONTHS_TR = [
   'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
@@ -204,6 +209,12 @@ export function MealMenuEditor({
     setRefreshing(false);
   };
 
+  const refreshLive = useCallback(() => {
+    void load();
+  }, [load]);
+
+  useStaffMealMenuLive(effectiveOrgId, menuId, refreshLive);
+
   const createMenu = async (): Promise<boolean> => {
     if (!effectiveOrgId || !staffId) return false;
     if (editableKeys.length === 0) {
@@ -273,6 +284,11 @@ export function MealMenuEditor({
       if (metaErr) throw new Error(metaErr.message);
 
       invalidateStaffMealMenuCache(effectiveOrgId ?? undefined);
+      if (effectiveOrgId) {
+        const cacheKey = staffMealMenuCacheKey(effectiveOrgId, viewMonth);
+        const fresh = await fetchMealMenuForMonth(effectiveOrgId, viewMonth);
+        setStaffMealMenuCache(cacheKey, fresh);
+      }
       Alert.alert('Kaydedildi', 'Aylık yemek listesi güncellendi.');
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Kaydedilemedi');

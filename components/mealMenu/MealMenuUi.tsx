@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,8 +7,12 @@ import {
   TouchableOpacity,
   TextInput,
   Switch,
+  Animated,
+  Easing,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { StaggerFadeIn } from '@/components/points';
 import {
   MEAL_SLOTS,
   type MealFields,
@@ -17,6 +22,130 @@ import {
   fillStatusLabel,
 } from '@/lib/mealMenuUi';
 import { formatTrFullDayLabelFromYmd, formatTrShortDayLabelFromYmd } from '@/lib/mealMenuDate';
+
+type MealDayCardTheme = {
+  bg: string;
+  border: string;
+  wash: readonly [string, string, ...string[]];
+  badgeGradient: readonly [string, string, ...string[]] | null;
+  badgeText: string;
+  badgeSubtext: string;
+};
+
+function mealDayCardTheme(
+  fields: MealFields,
+  opts: {
+    isToday: boolean;
+    status: 'empty' | 'partial' | 'full';
+    isWeekend: boolean;
+    palette: Palette;
+  }
+): MealDayCardTheme {
+  const { isToday, status, isWeekend, palette } = opts;
+
+  let theme: MealDayCardTheme;
+
+  if (status === 'full') {
+    theme = {
+      bg: '#ecfdf5',
+      border: '#6ee7b7',
+      wash: ['#ecfdf5', '#d1fae5', '#eff6ff'],
+      badgeGradient: ['#059669', '#10b981'],
+      badgeText: '#fff',
+      badgeSubtext: 'rgba(255,255,255,0.9)',
+    };
+  } else if (status === 'partial') {
+    const hasDinner = !!fields.dinner.trim();
+    const wash: string[] = ['#fff7ed', '#fffbeb'];
+    if (hasDinner) wash.push('#eef2ff');
+    theme = {
+      bg: '#fff7ed',
+      border: '#fdba74',
+      wash: wash as MealDayCardTheme['wash'],
+      badgeGradient: ['#ea580c', '#f59e0b'],
+      badgeText: '#fff',
+      badgeSubtext: 'rgba(255,255,255,0.9)',
+    };
+  } else if (isWeekend) {
+    theme = {
+      bg: '#faf5ff',
+      border: '#c4b5fd',
+      wash: ['#faf5ff', '#f5f3ff'],
+      badgeGradient: ['#7c3aed', '#a78bfa'],
+      badgeText: '#fff',
+      badgeSubtext: 'rgba(255,255,255,0.9)',
+    };
+  } else {
+    theme = {
+      bg: '#f8fafc',
+      border: '#e2e8f0',
+      wash: ['#f8fafc', '#f1f5f9'],
+      badgeGradient: null,
+      badgeText: palette.text,
+      badgeSubtext: palette.textMuted,
+    };
+  }
+
+  if (isToday) {
+    return {
+      ...theme,
+      border: palette.primary,
+      wash: [theme.wash[0], theme.wash[1] ?? theme.wash[0], '#fffbeb'] as MealDayCardTheme['wash'],
+      badgeGradient: theme.badgeGradient ?? [palette.primary, '#d97706', '#fbbf24'],
+      badgeText: '#fff',
+      badgeSubtext: 'rgba(255,255,255,0.88)',
+    };
+  }
+
+  return theme;
+}
+
+function MealSlotIndicators({ fields, compact }: { fields: MealFields; compact?: boolean }) {
+  return (
+    <View style={[indicatorStyles.row, compact && indicatorStyles.rowCompact]}>
+      {MEAL_SLOTS.map((slot) => {
+        const filled = !!fields[slot.key]?.trim();
+        return (
+          <View
+            key={slot.key}
+            style={[
+              indicatorStyles.chip,
+              compact && indicatorStyles.chipCompact,
+              filled ? { backgroundColor: slot.tint } : indicatorStyles.chipEmpty,
+            ]}
+          >
+            <Ionicons
+              name={slot.icon}
+              size={compact ? 10 : 11}
+              color={filled ? slot.iconColor : '#cbd5e1'}
+            />
+            {!compact ? (
+              <Text style={[indicatorStyles.chipText, { color: filled ? slot.iconColor : '#94a3b8' }]}>
+                {slot.shortLabel}
+              </Text>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const indicatorStyles = StyleSheet.create({
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 4 },
+  rowCompact: { gap: 4, marginTop: 2 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  chipCompact: { paddingHorizontal: 5, paddingVertical: 2 },
+  chipEmpty: { backgroundColor: '#f1f5f9' },
+  chipText: { fontSize: 10, fontWeight: '700' },
+});
 
 type Palette = {
   primary: string;
@@ -234,12 +363,14 @@ function MealDayDateBadge({
   status,
   palette,
   compact,
+  theme,
 }: {
   ymd: string;
   isToday: boolean;
   status: 'empty' | 'partial' | 'full';
   palette: Palette;
   compact?: boolean;
+  theme?: MealDayCardTheme;
 }) {
   const { day, weekdayShort, isWeekend } = parseYmd(ymd);
   const statusColor = status === 'full' ? '#059669' : status === 'partial' ? '#d97706' : palette.textMuted;
@@ -247,22 +378,52 @@ function MealDayDateBadge({
   const boxStyle = compact ? badgeStyles.dateBoxCompact : badgeStyles.dateBox;
   const dayNumStyle = compact ? badgeStyles.dayNumCompact : badgeStyles.dayNum;
   const dowStyle = compact ? badgeStyles.dowCompact : badgeStyles.dow;
-  return (
-    <View style={colStyle}>
-      <View
+  const cardTheme = theme ?? mealDayCardTheme(
+    { breakfast: '', lunch: '', dinner: '' },
+    { isToday, status, isWeekend, palette }
+  );
+
+  const dateContent = (
+    <>
+      <Text style={[dayNumStyle, { color: cardTheme.badgeGradient ? cardTheme.badgeText : isToday ? '#fff' : palette.text }]}>
+        {day}
+      </Text>
+      <Text
         style={[
-          boxStyle,
+          dowStyle,
           {
-            backgroundColor: isToday ? palette.primary : isWeekend ? palette.surfaceSecondary : palette.surface,
-            borderColor: isToday ? palette.primary : palette.border,
+            color: cardTheme.badgeGradient
+              ? cardTheme.badgeSubtext
+              : isToday
+                ? 'rgba(255,255,255,0.85)'
+                : palette.textMuted,
           },
         ]}
       >
-        <Text style={[dayNumStyle, { color: isToday ? '#fff' : palette.text }]}>{day}</Text>
-        <Text style={[dowStyle, { color: isToday ? 'rgba(255,255,255,0.85)' : palette.textMuted }]}>
-          {weekdayShort}
-        </Text>
-      </View>
+        {weekdayShort}
+      </Text>
+    </>
+  );
+
+  return (
+    <View style={colStyle}>
+      {cardTheme.badgeGradient ? (
+        <LinearGradient colors={[...cardTheme.badgeGradient]} style={[boxStyle, badgeStyles.dateBoxGradient]}>
+          {dateContent}
+        </LinearGradient>
+      ) : (
+        <View
+          style={[
+            boxStyle,
+            {
+              backgroundColor: isToday ? palette.primary : isWeekend ? '#f5f3ff' : palette.surface,
+              borderColor: isToday ? palette.primary : isWeekend ? '#c4b5fd' : palette.border,
+            },
+          ]}
+        >
+          {dateContent}
+        </View>
+      )}
       {!compact ? (
         <>
           <View style={[badgeStyles.statusDot, { backgroundColor: statusColor }]} />
@@ -279,21 +440,84 @@ function MealSlotReadRow({
   slotKey,
   text,
   compact,
+  animate,
+  delay = 0,
 }: {
   slotKey: MealSlotKey;
   text: string;
   compact?: boolean;
+  animate?: boolean;
+  delay?: number;
 }) {
   const slot = MEAL_SLOTS.find((s) => s.key === slotKey)!;
+  const opacity = useRef(new Animated.Value(animate ? 0 : 1)).current;
+  const slide = useRef(new Animated.Value(animate ? 10 : 0)).current;
+
+  useEffect(() => {
+    if (!animate) return;
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 340,
+        delay,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(slide, {
+        toValue: 0,
+        delay,
+        useNativeDriver: true,
+        speed: 18,
+        bounciness: 5,
+      }),
+    ]).start();
+  }, [animate, delay, opacity, slide]);
+
   return (
-    <View style={[slotStyles.readRow, { backgroundColor: slot.tint, borderColor: slot.border }, compact && slotStyles.readRowCompact]}>
-      <View style={[slotStyles.iconWrap, { backgroundColor: '#fff' }]}>
+    <Animated.View
+      style={[
+        slotStyles.readRow,
+        {
+          backgroundColor: slot.tint,
+          borderLeftColor: slot.iconColor,
+        },
+        compact && slotStyles.readRowCompact,
+        animate && { opacity, transform: [{ translateY: slide }] },
+      ]}
+    >
+      <LinearGradient colors={[slot.tint, '#ffffff']} style={slotStyles.iconWrap}>
         <Ionicons name={slot.icon} size={compact ? 16 : 18} color={slot.iconColor} />
-      </View>
+      </LinearGradient>
       <View style={slotStyles.readBody}>
-        <Text style={slotStyles.readLabel}>{slot.label}</Text>
+        <Text style={[slotStyles.readLabel, { color: slot.iconColor }]}>{slot.label}</Text>
         <Text style={slotStyles.readText}>{text.trim()}</Text>
       </View>
+    </Animated.View>
+  );
+}
+
+function MealDayCardShell({
+  isToday,
+  palette,
+  compact,
+  children,
+}: {
+  isToday: boolean;
+  palette: Palette;
+  compact?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View style={dayStyles.cardShell}>
+      {isToday ? (
+        <LinearGradient
+          colors={[palette.primary, palette.accent ?? palette.primary, '#fbbf24']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[dayStyles.todayStrip, compact && dayStyles.todayStripCompact]}
+        />
+      ) : null}
+      {children}
     </View>
   );
 }
@@ -518,6 +742,8 @@ type MealDayViewCardProps = {
   showWhenEmpty?: boolean;
   emptyMessage?: string;
   selected?: boolean;
+  /** Liste giriş animasyonu için sıra */
+  index?: number;
 };
 
 export function MealDayViewCard({
@@ -529,51 +755,97 @@ export function MealDayViewCard({
   showWhenEmpty = false,
   emptyMessage = 'Bu gün için menü henüz girilmedi.',
   selected = false,
+  index,
 }: MealDayViewCardProps) {
   const slots = MEAL_SLOTS.filter((s) => fields[s.key]?.trim());
   if (slots.length === 0 && !showWhenEmpty) return null;
   const title = compact ? formatTrShortDayLabelFromYmd(ymd) : formatTrFullDayLabelFromYmd(ymd);
   const cardStyle = compact ? dayStyles.cardCompact : dayStyles.card;
   const topStyle = compact ? dayStyles.cardTopCompact : dayStyles.cardTop;
-  return (
+  const status = dayFillStatus(fields);
+  const animateSlots = slots.length > 0;
+  const { isWeekend } = parseYmd(ymd);
+  const cardTheme = mealDayCardTheme(fields, { isToday, status, isWeekend, palette });
+
+  const card = (
     <View
       style={[
         cardStyle,
+        dayStyles.cardElevated,
+        dayStyles.cardOverflow,
         {
-          backgroundColor: palette.surface,
-          borderColor: selected || isToday ? palette.primary : palette.border,
+          backgroundColor: cardTheme.bg,
+          borderColor: isToday || selected ? palette.primary : cardTheme.border,
+          borderWidth: isToday || selected ? 2 : 1,
         },
-        (isToday || selected) && dayStyles.cardToday,
       ]}
     >
-      <View style={topStyle}>
-        <MealDayDateBadge
-          ymd={ymd}
-          isToday={isToday}
-          status={dayFillStatus(fields)}
-          palette={palette}
-          compact={compact}
-        />
-        <View style={dayStyles.cardTitleCol}>
-          <Text style={[compact ? dayStyles.cardTitleCompact : dayStyles.cardTitle, { color: palette.text }]} numberOfLines={1}>
-            {title}
-          </Text>
-          {isToday && compact ? (
-            <View style={[dayStyles.todayChip, { backgroundColor: palette.primary }]}>
-              <Text style={dayStyles.todayChipText}>Bugün</Text>
-            </View>
-          ) : null}
+      <LinearGradient
+        colors={[...cardTheme.wash]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={dayStyles.cardWash}
+        pointerEvents="none"
+      />
+      <MealDayCardShell isToday={isToday} palette={palette} compact={compact}>
+        <View style={topStyle}>
+          <MealDayDateBadge
+            ymd={ymd}
+            isToday={isToday}
+            status={status}
+            palette={palette}
+            compact={compact}
+            theme={cardTheme}
+          />
+          <View style={dayStyles.cardTitleCol}>
+            <Text style={[compact ? dayStyles.cardTitleCompact : dayStyles.cardTitle, { color: palette.text }]} numberOfLines={1}>
+              {title}
+            </Text>
+            {isToday && compact ? (
+              <View style={[dayStyles.todayChip, { backgroundColor: palette.primary }]}>
+                <Text style={dayStyles.todayChipText}>Bugün</Text>
+              </View>
+            ) : null}
+            {status !== 'empty' ? (
+              <MealSlotIndicators fields={fields} compact={compact} />
+            ) : null}
+            {!compact && status !== 'empty' ? (
+              <View style={[dayStyles.statusPill, { backgroundColor: status === 'full' ? '#dcfce7' : '#ffedd5' }]}>
+                <View style={[dayStyles.statusPillDot, { backgroundColor: status === 'full' ? '#059669' : '#d97706' }]} />
+                <Text style={[dayStyles.statusPillText, { color: status === 'full' ? '#166534' : '#9a3412' }]}>
+                  {fillStatusLabel(status)}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
-      </View>
-      {slots.length === 0 ? (
-        <Text style={[dayStyles.emptyDayText, { color: palette.textMuted }]}>{emptyMessage}</Text>
-      ) : (
-        slots.map((slot) => (
-          <MealSlotReadRow key={slot.key} slotKey={slot.key} text={fields[slot.key]} compact={compact} />
-        ))
-      )}
+        {slots.length === 0 ? (
+          <View style={dayStyles.emptyDayWrap}>
+            <Ionicons name="restaurant-outline" size={compact ? 18 : 22} color="#94a3b8" />
+            <Text style={[dayStyles.emptyDayText, { color: '#64748b' }]}>{emptyMessage}</Text>
+          </View>
+        ) : (
+          <View style={dayStyles.slotsWrap}>
+            {slots.map((slot, slotIndex) => (
+              <MealSlotReadRow
+                key={slot.key}
+                slotKey={slot.key}
+                text={fields[slot.key]}
+                compact={compact}
+                animate={animateSlots}
+                delay={80 + slotIndex * 70}
+              />
+            ))}
+          </View>
+        )}
+      </MealDayCardShell>
     </View>
   );
+
+  if (index != null) {
+    return <StaggerFadeIn index={index}>{card}</StaggerFadeIn>;
+  }
+  return card;
 }
 
 // —— Boş durum ——
@@ -904,6 +1176,7 @@ const badgeStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  dateBoxGradient: { borderWidth: 0 },
   dayNum: { fontSize: 20, fontWeight: '800', lineHeight: 24 },
   dayNumCompact: { fontSize: 15, fontWeight: '800', lineHeight: 18 },
   dow: { fontSize: 10, fontWeight: '600', marginTop: 2 },
@@ -918,9 +1191,9 @@ const slotStyles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 10,
     padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 8,
+    paddingLeft: 10,
+    borderRadius: 10,
+    borderLeftWidth: 4,
   },
   readRowCompact: { padding: 10, marginBottom: 0 },
   iconWrap: {
@@ -929,6 +1202,7 @@ const slotStyles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   readBody: { flex: 1 },
   readLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 },
@@ -974,20 +1248,52 @@ const slotStyles = StyleSheet.create({
 });
 
 const dayStyles = StyleSheet.create({
+  cardShell: { position: 'relative' },
+  cardOverflow: { overflow: 'hidden' },
+  cardWash: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.88,
+  },
+  cardElevated: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  todayStrip: {
+    height: 3,
+    borderRadius: 999,
+    marginBottom: 8,
+  },
+  todayStripCompact: {
+    height: 3,
+    marginBottom: 6,
+  },
+  slotsWrap: { gap: 8 },
+  statusPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    marginTop: 2,
+  },
+  statusPillDot: { width: 6, height: 6, borderRadius: 3 },
+  statusPillText: { fontSize: 10, fontWeight: '700' },
   card: {
     borderRadius: 16,
     padding: 14,
     marginBottom: 10,
-    borderWidth: 1,
   },
   cardCompact: {
     borderRadius: 12,
     padding: 10,
     marginBottom: 8,
-    borderWidth: 1,
   },
-  cardToday: { borderWidth: 2 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12 },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 10 },
   cardTopCompact: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   cardTitleCol: { flex: 1, gap: 4 },
   cardTitle: { fontSize: 14, fontWeight: '600', lineHeight: 20 },
@@ -999,7 +1305,16 @@ const dayStyles = StyleSheet.create({
     borderRadius: 6,
   },
   todayChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  emptyDayText: { fontSize: 13, lineHeight: 18, marginTop: 2, fontStyle: 'italic' },
+  emptyDayWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    backgroundColor: 'rgba(241,245,249,0.6)',
+    borderRadius: 10,
+  },
+  emptyDayText: { fontSize: 13, lineHeight: 18, flex: 1, fontStyle: 'italic' },
   compactCard: {
     borderRadius: 12,
     padding: 10,
