@@ -142,7 +142,7 @@ export default function MapPostDetailSheet({ visible, postId, onClose, onPostDel
       .from('feed_posts')
       .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, lat, lng, location_label, staff:staff_id(full_name, department, verification_badge, profile_image), guest:guest_id(full_name, photo_url)')
       .eq('id', postId)
-      .eq('visibility', 'customers')
+      .in('visibility', ['customers', 'guests_only'])
       .maybeSingle();
     if (e) {
       setPost(null);

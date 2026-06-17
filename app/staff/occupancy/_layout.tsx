@@ -31,15 +31,7 @@ export default function StaffOccupancyLayout() {
             ),
           }}
         />
-        <Stack.Screen
-          name="breakfast-briefing"
-          options={{
-            title: 'Sabah kahvaltı sayısı',
-            headerLeft: () => (
-              <StaffStackBackButton fallback="/staff/occupancy/operations" accessibilityLabel={t('back')} />
-            ),
-          }}
-        />
+        <Stack.Screen name="breakfast-briefing" options={{ title: 'Sabah kahvaltı sayısı' }} />
         <Stack.Screen name="checkin" options={{ title: 'Giriş bekleyen', headerShown: false }} />
         <Stack.Screen name="rooms/index" options={{ title: 'Odalar', headerShown: false }} />
         <Stack.Screen name="rooms/[id]" options={{ title: 'Oda detayı' }} />

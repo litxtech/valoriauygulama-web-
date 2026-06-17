@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef } from 'react';
+import { useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { View, StyleSheet, Platform, Animated, type LayoutChangeEvent } from 'react-native';
 import { BottomTabBar, BottomTabBarHeightCallbackContext } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -17,6 +17,8 @@ export type FloatingIslandTabBarProps = BottomTabBarProps & {
   surfaceColor?: string;
   borderColor?: string;
   hidden?: boolean;
+  /** Tab slotu dışında, barın tam ortasında yüzen aksiyon (ör. kimlik çekim FAB). */
+  centerAction?: ReactNode;
 };
 
 /**
@@ -27,6 +29,7 @@ export function FloatingIslandTabBar({
   surfaceColor,
   borderColor: borderColorProp,
   hidden = false,
+  centerAction,
   insets: navInsets,
   ...props
 }: FloatingIslandTabBarProps) {
@@ -88,6 +91,7 @@ export function FloatingIslandTabBar({
             }}
           />
         </GlassTabBarShell>
+        {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
       </Animated.View>
     );
   }
@@ -117,6 +121,7 @@ export function FloatingIslandTabBar({
             }}
           />
         </GlassTabBarShell>
+        {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
       </View>
     </Animated.View>
   );
@@ -127,6 +132,7 @@ const styles = StyleSheet.create({
     width: '100%',
     borderTopWidth: StyleSheet.hairlineWidth,
     elevation: 8,
+    overflow: 'visible',
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.08,
@@ -137,10 +143,20 @@ const styles = StyleSheet.create({
   },
   shadowHost: {
     borderRadius: ISLAND_RADIUS,
+    overflow: 'visible',
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
     shadowRadius: 14,
+  },
+  centerActionSlot: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? -30 : -26,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 30,
+    pointerEvents: 'box-none',
   },
   shadowHostNight: {
     shadowColor: '#000',

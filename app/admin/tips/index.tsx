@@ -160,6 +160,19 @@ export default function AdminTipsScreen() {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.hubLink}
+        onPress={() => router.push('/admin/payments')}
+        activeOpacity={0.88}
+      >
+        <Ionicons name="grid-outline" size={18} color="#4338ca" />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.hubLinkTitle}>Tahsilat Merkezi</Text>
+          <Text style={styles.hubLinkSub}>Tüm ödeme ve QR işlemleri tek menüde</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color="#4338ca" />
+      </TouchableOpacity>
+
       <View style={styles.infoBox}>
         <Ionicons name="information-circle-outline" size={18} color="#b8860b" />
         <Text style={styles.infoText}>
@@ -318,6 +331,20 @@ export default function AdminTipsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  hubLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    margin: 12,
+    marginBottom: 0,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  hubLinkTitle: { fontSize: 14, fontWeight: '800', color: '#4338ca' },
+  hubLinkSub: { fontSize: 11, color: '#6366f1', marginTop: 2 },
   infoBox: {
     flexDirection: 'row',
     gap: 8,

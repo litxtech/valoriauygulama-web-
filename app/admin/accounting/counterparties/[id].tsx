@@ -23,7 +23,6 @@ import {
   counterpartyInitials,
   resolveCounterpartyTypeMeta,
   formatCounterpartyBalance,
-  formatCounterpartyFlow,
 } from '@/lib/financeCounterpartyUi';
 import {
   fetchCounterpartyBalanceMap,
@@ -47,7 +46,14 @@ import {
 } from '@/lib/financeCounterpartyReport';
 import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
 import { CounterpartyAgreementsSection } from '@/components/admin/CounterpartyAgreementsSection';
-import { fetchCounterpartyAgreements, type CounterpartyAgreementRow } from '@/lib/financeCounterpartyAgreements';
+import { CounterpartyQuickPaySheet } from '@/components/admin/CounterpartyQuickPaySheet';
+import { CounterpartyQuickCollectSheet } from '@/components/admin/CounterpartyQuickCollectSheet';
+import {
+  fetchCounterpartyAgreements,
+  defaultAgreementMovementKind,
+  agreementKindLabels,
+  type CounterpartyAgreementRow,
+} from '@/lib/financeCounterpartyAgreements';
 import {
   loadFinanceMovementReceiptInput,
   mailFinanceMovementReceiptToPrinter,
@@ -65,6 +71,7 @@ type CpRow = {
   phone: string | null;
   notes: string | null;
   profile_image: string | null;
+  linked_staff_id: string | null;
 };
 
 type MovRow = {
@@ -102,13 +109,22 @@ export default function CounterpartyDetailScreen() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [agreements, setAgreements] = useState<CounterpartyAgreementRow[]>([]);
   const [receiptBusy, setReceiptBusy] = useState<'pdf' | 'print' | 'mail' | 'whatsapp' | null>(null);
+  const [paySheetOpen, setPaySheetOpen] = useState(false);
+  const [payAgreementId, setPayAgreementId] = useState<string | null>(null);
+  const [collectSheetOpen, setCollectSheetOpen] = useState(false);
+  const [collectAgreementId, setCollectAgreementId] = useState<string | null>(null);
+  const [newDebtTick, setNewDebtTick] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [linkedStaffName, setLinkedStaffName] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     const { data: c, error: e1 } = await supabase
       .from('finance_counterparties')
-      .select('id, organization_id, name, party_type, party_type_label, phone, notes, profile_image')
+      .select(
+        'id, organization_id, name, party_type, party_type_label, phone, notes, profile_image, linked_staff_id'
+      )
       .eq('id', id)
       .single();
 
@@ -119,6 +135,16 @@ export default function CounterpartyDetailScreen() {
     }
     const row = c as CpRow;
     setCp(row);
+    if (row.linked_staff_id) {
+      const { data: staffRow } = await supabase
+        .from('staff')
+        .select('full_name')
+        .eq('id', row.linked_staff_id)
+        .maybeSingle();
+      setLinkedStaffName((staffRow as { full_name?: string | null } | null)?.full_name?.trim() ?? null);
+    } else {
+      setLinkedStaffName(null);
+    }
 
     const scope = scopeFilter === 'all' ? null : scopeFilter;
     const [{ data: m }, balMap, agreementRows] = await Promise.all([
@@ -170,6 +196,7 @@ export default function CounterpartyDetailScreen() {
   }
 
   const meta = resolveCounterpartyTypeMeta(cp.party_type, cp.party_type_label);
+  const debtLabels = agreementKindLabels(defaultAgreementMovementKind(cp.party_type));
   const net = income - expense;
   const balance = formatCounterpartyBalance(net);
   const defaultScope: FinanceLedgerScope =
@@ -302,6 +329,24 @@ export default function CounterpartyDetailScreen() {
     void pickAndUploadPhoto();
   };
 
+  const openQuickPay = (agreement?: CounterpartyAgreementRow) => {
+    setPayAgreementId(agreement?.id ?? null);
+    setPaySheetOpen(true);
+  };
+
+  const openQuickCollect = (agreement?: CounterpartyAgreementRow) => {
+    setCollectAgreementId(agreement?.id ?? null);
+    setCollectSheetOpen(true);
+  };
+
+  const openIncome = () => {
+    openQuickCollect();
+  };
+
+  const openDebtsTotal = agreements
+    .filter((a) => a.status === 'open' || a.status === 'partial')
+    .reduce((s, a) => s + a.amount_remaining, 0);
+
   return (
     <>
       <ScrollView
@@ -354,19 +399,82 @@ export default function CounterpartyDetailScreen() {
                   <Ionicons name="call-outline" size={13} color={adminTheme.colors.textMuted} /> {cp.phone}
                 </Text>
               ) : null}
-              {cp.notes?.trim() ? (
-                <Text style={styles.notes} numberOfLines={2}>
-                  {cp.notes.trim()}
+              {linkedStaffName ? (
+                <Text style={styles.linkedStaff}>
+                  <Ionicons name="notifications-outline" size={13} color="#7c3aed" /> Bildirim: {linkedStaffName}
                 </Text>
               ) : null}
             </View>
           </View>
+
+          <View style={styles.balanceStrip}>
+            {openDebtsTotal > 0 ? (
+              <View style={styles.balanceMain}>
+                <Text style={styles.balanceLbl}>Açık borç toplamı</Text>
+                <Text style={styles.balanceValDebt}>{fmtMoneyTry(openDebtsTotal)}</Text>
+              </View>
+            ) : (
+              <View style={styles.balanceMain}>
+                <Text style={styles.balanceLbl}>Genel durum</Text>
+                <Text
+                  style={[
+                    styles.balanceVal,
+                    balance.tone === 'positive' && styles.in,
+                    balance.tone === 'negative' && styles.out,
+                  ]}
+                >
+                  {balance.tone === 'zero' ? 'Dengede' : balance.text}
+                </Text>
+              </View>
+            )}
+            <View style={styles.balanceSide}>
+              <Text style={styles.balanceSideLbl}>Ödenen</Text>
+              <Text style={[styles.balanceSideVal, styles.out]}>{fmtMoneyTry(expense)}</Text>
+              <Text style={[styles.balanceSideLbl, { marginTop: 6 }]}>Alınan</Text>
+              <Text style={[styles.balanceSideVal, styles.in]}>{fmtMoneyTry(income)}</Text>
+            </View>
+          </View>
         </View>
 
+        <Text style={styles.hubTitle}>Ne yapmak istiyorsunuz?</Text>
+        <View style={styles.hubRow}>
+          <TouchableOpacity
+            style={[styles.hubCard, styles.hubDebt]}
+            onPress={() => setNewDebtTick((t) => t + 1)}
+            activeOpacity={0.88}
+          >
+            <Ionicons name="document-text-outline" size={22} color="#7c3aed" />
+            <Text style={styles.hubCardTitle}>{debtLabels.debtOpen}</Text>
+            <Text style={styles.hubCardSub}>
+              {cp.party_type === 'customer' ? 'Günü birlik vb.' : 'Yeni iş / kayıt'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.hubCard, styles.hubPay]}
+            onPress={() => openQuickPay()}
+            activeOpacity={0.88}
+          >
+            <Ionicons name="arrow-up-circle" size={22} color="#dc2626" />
+            <Text style={styles.hubCardTitle}>Ödeme yap</Text>
+            <Text style={styles.hubCardSub}>Para ver</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.hubCard, styles.hubIncome]}
+            onPress={openIncome}
+            activeOpacity={0.88}
+          >
+            <Ionicons name="arrow-down-circle" size={22} color="#16a34a" />
+            <Text style={styles.hubCardTitle}>Tahsilat</Text>
+            <Text style={styles.hubCardSub}>Para al</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.debtsSectionTitle}>Açık {debtLabels.debtNoun.toLowerCase()}lar</Text>
         <CounterpartyAgreementsSection
           counterpartyId={cp.id}
           organizationId={cp.organization_id}
           personName={cp.name}
+          partyType={cp.party_type}
           partyTypeLabel={meta.label}
           phone={cp.phone}
           profileImageUrl={cp.profile_image}
@@ -376,76 +484,75 @@ export default function CounterpartyDetailScreen() {
           reportFooter={reportFooter}
           documentBrandTitle={documentBrandTitle}
           createdByStaffId={me?.id ?? null}
+          createdByStaffName={me?.full_name ?? null}
+          linkedStaffId={cp.linked_staff_id}
+          linkedStaffName={linkedStaffName}
+          openNewDebtRequest={newDebtTick}
+          onPayDebt={(row) => openQuickPay(row)}
+          onCollectDebt={(row) => openQuickCollect(row)}
+          hideHeader
         />
 
-        <Text style={styles.dividerLabel}>Genel cari özeti</Text>
-        <Text style={styles.dividerHint}>Tüm tahsilat ve ödemeler (plan dışı dahil)</Text>
+        <TouchableOpacity style={styles.historyHead} onPress={() => setHistoryOpen((v) => !v)} activeOpacity={0.85}>
+          <Text style={styles.historyTitle}>İşlem geçmişi ({movements.length})</Text>
+          <Ionicons
+            name={historyOpen ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={adminTheme.colors.textMuted}
+          />
+        </TouchableOpacity>
 
-        <View style={styles.scopeRow}>
-          {(['all', 'hotel', 'personal'] as ScopeFilter[]).map((s) => (
-            <TouchableOpacity
-              key={s}
-              style={[styles.scopeChip, scopeFilter === s && styles.scopeChipOn]}
-              onPress={() => setScopeFilter(s)}
-            >
-              <Text style={[styles.scopeChipText, scopeFilter === s && styles.scopeChipTextOn]}>
-                {s === 'all' ? 'Tümü' : LEDGER_SCOPE_LABELS[s]}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.statsRow}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLbl}>Ödenen</Text>
-            <Text style={[styles.statVal, styles.out]}>{fmtMoneyTry(expense)}</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLbl}>Alınan</Text>
-            <Text style={[styles.statVal, styles.in]}>{fmtMoneyTry(income)}</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLbl}>Net</Text>
-            <Text
-              style={[
-                styles.statVal,
-                balance.tone === 'positive' && styles.in,
-                balance.tone === 'negative' && styles.out,
-              ]}
-              numberOfLines={2}
-            >
-              {fmtMoneyTry(net)}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.flowHint}>{formatCounterpartyFlow(income, expense)}</Text>
-        {balance.tone !== 'zero' ? (
-          <Text
-            style={[
-              styles.balanceLine,
-              balance.tone === 'positive' && styles.in,
-              balance.tone === 'negative' && styles.out,
-            ]}
-          >
-            {balance.text}
-          </Text>
+        {historyOpen ? (
+          movements.length === 0 ? (
+            <Text style={styles.muted}>Henüz kayıt yok.</Text>
+          ) : (
+            movements.map((m) => (
+              <TouchableOpacity
+                key={m.id}
+                style={styles.movItem}
+                onPress={() => openMovementMenu(m)}
+                activeOpacity={0.85}
+              >
+                <View
+                  style={[styles.movIcon, m.kind === 'income' ? styles.movIconIn : styles.movIconOut]}
+                >
+                  <Ionicons
+                    name={m.kind === 'income' ? 'arrow-down' : 'arrow-up'}
+                    size={16}
+                    color={m.kind === 'income' ? '#16a34a' : '#dc2626'}
+                  />
+                </View>
+                <View style={styles.movBody}>
+                  <View style={styles.movTop}>
+                    <Text style={styles.movKind}>{m.kind === 'income' ? 'Tahsilat' : 'Ödeme'}</Text>
+                    <Text style={[styles.movAmt, m.kind === 'income' ? styles.in : styles.out]}>
+                      {m.kind === 'income' ? '+' : '−'}
+                      {fmtMoneyTry(Number(m.amount))}
+                    </Text>
+                  </View>
+                  <Text style={styles.movMeta}>
+                    {formatDateShort(m.movement_date)} · {resolveCategoryLabel(m.category)}
+                  </Text>
+                  {m.agreement_id && agreementTitleById[m.agreement_id] ? (
+                    <Text style={styles.planTag} numberOfLines={1}>
+                      Borç: {agreementTitleById[m.agreement_id]}
+                    </Text>
+                  ) : null}
+                </View>
+                <Ionicons name="ellipsis-vertical" size={18} color={adminTheme.colors.textMuted} />
+              </TouchableOpacity>
+            ))
+          )
         ) : null}
 
-        <View style={styles.reportSection}>
-          <TouchableOpacity
-            style={styles.reportToggle}
-            onPress={() => setReportOpen((v) => !v)}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="document-text-outline" size={18} color={adminTheme.colors.primary} />
-            <Text style={styles.reportToggleText}>Rapor / PDF / yazdır</Text>
-            <Ionicons
-              name={reportOpen ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={adminTheme.colors.textMuted}
-            />
+        {reportOpen ? null : (
+          <TouchableOpacity style={styles.reportLink} onPress={() => setReportOpen(true)} activeOpacity={0.85}>
+            <Ionicons name="document-text-outline" size={16} color={adminTheme.colors.primary} />
+            <Text style={styles.reportLinkText}>Rapor / PDF</Text>
           </TouchableOpacity>
-          {reportOpen ? (
+        )}
+        {reportOpen ? (
+          <View style={styles.reportSection}>
             <FinanceReportExportButtons
               compact
               disabled={!cp}
@@ -472,92 +579,35 @@ export default function CounterpartyDetailScreen() {
                 );
               }}
             />
-          ) : null}
-        </View>
-
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionIncome]}
-            onPress={() =>
-              router.push({
-                pathname: '/admin/accounting/movements/new',
-                params: {
-                  kind: 'income',
-                  counterpartyId: cp.id,
-                  ledgerScope: scopeFilter === 'all' ? defaultScope : scopeFilter,
-                },
-              } as never)
-            }
-          >
-            <Ionicons name="arrow-down-circle" size={20} color="#fff" />
-            <Text style={styles.actionBtnText}>Tahsilat</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionExpense]}
-            onPress={() =>
-              router.push({
-                pathname: '/admin/accounting/movements/new',
-                params: {
-                  kind: 'expense',
-                  counterpartyId: cp.id,
-                  ledgerScope: scopeFilter === 'all' ? defaultScope : scopeFilter,
-                },
-              } as never)
-            }
-          >
-            <Ionicons name="arrow-up-circle" size={20} color="#fff" />
-            <Text style={styles.actionBtnText}>Ödeme</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionTitle}>Tüm işlem geçmişi</Text>
-        {movements.length === 0 ? (
-          <Text style={styles.muted}>Henüz kayıt yok.</Text>
-        ) : (
-          movements.map((m) => (
-            <TouchableOpacity
-              key={m.id}
-              style={styles.movItem}
-              onPress={() => openMovementMenu(m)}
-              activeOpacity={0.85}
-            >
-              <View
-                style={[styles.movIcon, m.kind === 'income' ? styles.movIconIn : styles.movIconOut]}
-              >
-                <Ionicons
-                  name={m.kind === 'income' ? 'arrow-down' : 'arrow-up'}
-                  size={16}
-                  color={m.kind === 'income' ? '#16a34a' : '#dc2626'}
-                />
-              </View>
-              <View style={styles.movBody}>
-                <View style={styles.movTop}>
-                  <Text style={styles.movKind}>{m.kind === 'income' ? 'Tahsilat' : 'Ödeme'}</Text>
-                  <Text style={[styles.movAmt, m.kind === 'income' ? styles.in : styles.out]}>
-                    {m.kind === 'income' ? '+' : '−'}
-                    {fmtMoneyTry(Number(m.amount))}
-                  </Text>
-                </View>
-                <Text style={styles.movMeta}>
-                  {formatDateShort(m.movement_date)} · {resolveCategoryLabel(m.category)} ·{' '}
-                  {LEDGER_SCOPE_LABELS[m.ledger_scope] ?? LEDGER_SCOPE_LABELS.hotel}
-                </Text>
-                {m.agreement_id && agreementTitleById[m.agreement_id] ? (
-                  <Text style={styles.planTag} numberOfLines={1}>
-                    Plan: {agreementTitleById[m.agreement_id]}
-                  </Text>
-                ) : null}
-                {m.description?.trim() ? (
-                  <Text style={styles.movDesc} numberOfLines={1}>
-                    {m.description.trim()}
-                  </Text>
-                ) : null}
-              </View>
-              <Ionicons name="ellipsis-vertical" size={18} color={adminTheme.colors.textMuted} />
-            </TouchableOpacity>
-          ))
-        )}
+          </View>
+        ) : null}
       </ScrollView>
+
+      <CounterpartyQuickCollectSheet
+        visible={collectSheetOpen}
+        person={cp}
+        defaultLedgerScope={defaultScope}
+        staffId={me?.id}
+        preselectedAgreementId={collectAgreementId}
+        onClose={() => {
+          setCollectSheetOpen(false);
+          setCollectAgreementId(null);
+        }}
+        onSaved={load}
+      />
+
+      <CounterpartyQuickPaySheet
+        visible={paySheetOpen}
+        person={cp}
+        defaultLedgerScope={defaultScope}
+        staffId={me?.id}
+        preselectedAgreementId={payAgreementId}
+        onClose={() => {
+          setPaySheetOpen(false);
+          setPayAgreementId(null);
+        }}
+        onSaved={load}
+      />
 
       <ImageLightboxModal
         visible={imageLightbox}
@@ -630,60 +680,56 @@ export default function CounterpartyDetailScreen() {
                   <Ionicons name="create-outline" size={20} color={adminTheme.colors.primary} />
                   <Text style={styles.menuItemText}>Düzenle</Text>
                 </TouchableOpacity>
-                {menuMovement.kind === 'expense' ? (
-                  <>
-                    <View style={styles.menuDivider} />
-                    <Text style={styles.menuSectionLabel}>Belge</Text>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => runMovementReceipt('pdf')}
-                      disabled={!!receiptBusy}
-                    >
-                      {receiptBusy === 'pdf' ? (
-                        <ActivityIndicator size="small" color={adminTheme.colors.primary} />
-                      ) : (
-                        <Ionicons name="document-text-outline" size={20} color={adminTheme.colors.primary} />
-                      )}
-                      <Text style={styles.menuItemText}>PDF</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => runMovementReceipt('print')}
-                      disabled={!!receiptBusy}
-                    >
-                      {receiptBusy === 'print' ? (
-                        <ActivityIndicator size="small" color={adminTheme.colors.primary} />
-                      ) : (
-                        <Ionicons name="print-outline" size={20} color={adminTheme.colors.primary} />
-                      )}
-                      <Text style={styles.menuItemText}>Yazdır</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => runMovementReceipt('mail')}
-                      disabled={!!receiptBusy}
-                    >
-                      {receiptBusy === 'mail' ? (
-                        <ActivityIndicator size="small" color={adminTheme.colors.primary} />
-                      ) : (
-                        <Ionicons name="mail-outline" size={20} color={adminTheme.colors.primary} />
-                      )}
-                      <Text style={styles.menuItemText}>Yazıcı mail</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.menuItem}
-                      onPress={() => runMovementReceipt('whatsapp')}
-                      disabled={!!receiptBusy}
-                    >
-                      {receiptBusy === 'whatsapp' ? (
-                        <ActivityIndicator size="small" color="#25D366" />
-                      ) : (
-                        <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-                      )}
-                      <Text style={styles.menuItemText}>WhatsApp</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : null}
+                <View style={styles.menuDivider} />
+                <Text style={styles.menuSectionLabel}>Belge</Text>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => runMovementReceipt('pdf')}
+                  disabled={!!receiptBusy}
+                >
+                  {receiptBusy === 'pdf' ? (
+                    <ActivityIndicator size="small" color={adminTheme.colors.primary} />
+                  ) : (
+                    <Ionicons name="document-text-outline" size={20} color={adminTheme.colors.primary} />
+                  )}
+                  <Text style={styles.menuItemText}>PDF</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => runMovementReceipt('print')}
+                  disabled={!!receiptBusy}
+                >
+                  {receiptBusy === 'print' ? (
+                    <ActivityIndicator size="small" color={adminTheme.colors.primary} />
+                  ) : (
+                    <Ionicons name="print-outline" size={20} color={adminTheme.colors.primary} />
+                  )}
+                  <Text style={styles.menuItemText}>Yazdır</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => runMovementReceipt('mail')}
+                  disabled={!!receiptBusy}
+                >
+                  {receiptBusy === 'mail' ? (
+                    <ActivityIndicator size="small" color={adminTheme.colors.primary} />
+                  ) : (
+                    <Ionicons name="mail-outline" size={20} color={adminTheme.colors.primary} />
+                  )}
+                  <Text style={styles.menuItemText}>Yazıcı mail</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => runMovementReceipt('whatsapp')}
+                  disabled={!!receiptBusy}
+                >
+                  {receiptBusy === 'whatsapp' ? (
+                    <ActivityIndicator size="small" color="#25D366" />
+                  ) : (
+                    <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+                  )}
+                  <Text style={styles.menuItemText}>WhatsApp</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.menuItem}
                   onPress={() => deleteMovement(menuMovement.id)}
@@ -756,73 +802,73 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 11, fontWeight: '600' },
   phone: { fontSize: 13, color: adminTheme.colors.textMuted, marginTop: 8 },
-  notes: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 4 },
-  scopeRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
-  scopeChip: {
-    flex: 1,
-    paddingVertical: 7,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: adminTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  scopeChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-  scopeChipText: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
-  scopeChipTextOn: { color: '#fff' },
-  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
-  statBox: {
-    flex: 1,
-    backgroundColor: adminTheme.colors.surface,
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  statLbl: { fontSize: 10, fontWeight: '700', color: adminTheme.colors.textMuted, textTransform: 'uppercase' },
-  statVal: { fontSize: 14, fontWeight: '800', marginTop: 4 },
-  in: { color: '#16a34a' },
-  out: { color: '#dc2626' },
-  flowHint: { fontSize: 12, color: adminTheme.colors.textMuted, marginBottom: 4 },
-  balanceLine: { fontSize: 13, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
-  reportSection: { marginBottom: 12 },
-  reportToggle: {
+  linkedStaff: { fontSize: 12, color: '#7c3aed', marginTop: 6, fontWeight: '600' },
+  balanceStrip: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: adminTheme.colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: adminTheme.colors.border,
+    gap: 12,
   },
-  reportToggleText: { flex: 1, fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
-  actionRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  actionBtn: {
+  balanceMain: { flex: 1 },
+  balanceLbl: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
+  balanceVal: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text, marginTop: 4 },
+  balanceValDebt: { fontSize: 22, fontWeight: '900', color: '#dc2626', marginTop: 4 },
+  balanceSide: {
+    alignItems: 'flex-end',
+    paddingLeft: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: adminTheme.colors.border,
+  },
+  balanceSideLbl: { fontSize: 10, fontWeight: '600', color: adminTheme.colors.textMuted },
+  balanceSideVal: { fontSize: 13, fontWeight: '800' },
+  hubTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: adminTheme.colors.textMuted,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  hubRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  hubCard: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 11,
-    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 4,
   },
-  actionIncome: { backgroundColor: '#16a34a' },
-  actionExpense: { backgroundColor: '#dc2626' },
-  actionBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  dividerLabel: {
+  hubDebt: { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' },
+  hubPay: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  hubIncome: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  hubCardTitle: { fontSize: 12, fontWeight: '800', color: adminTheme.colors.text, textAlign: 'center' },
+  hubCardSub: { fontSize: 10, color: adminTheme.colors.textMuted, textAlign: 'center' },
+  debtsSectionTitle: {
     fontSize: 15,
     fontWeight: '800',
     color: adminTheme.colors.text,
-    marginTop: 4,
-    marginBottom: 2,
+    marginBottom: 8,
   },
-  dividerHint: { fontSize: 11, color: adminTheme.colors.textMuted, marginBottom: 10 },
+  historyHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    marginBottom: 10,
+    paddingVertical: 4,
+  },
+  historyTitle: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },
+  reportLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  reportLinkText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.primary },
   planTag: { fontSize: 11, color: '#7c3aed', fontWeight: '600', marginTop: 2 },
-  sectionTitle: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textMuted, marginBottom: 8 },
-  movItemWrap: { marginBottom: 8 },
-  movReceiptActions: { paddingHorizontal: 4, marginBottom: 4 },
   movItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -848,7 +894,9 @@ const styles = StyleSheet.create({
   movKind: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.text },
   movAmt: { fontSize: 15, fontWeight: '800' },
   movMeta: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4 },
-  movDesc: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 2 },
+  in: { color: '#16a34a' },
+  out: { color: '#dc2626' },
+  reportSection: { marginTop: 8, marginBottom: 12 },
   menuOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',

@@ -417,6 +417,9 @@ export default function StaffListScreen() {
                       <Ionicons name="ban-outline" size={18} color={adminTheme.colors.warning} />
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => router.push(`/admin/staff/profile/${row.id}`)} hitSlop={8}>
+                    <Ionicons name="person-circle-outline" size={18} color={adminTheme.colors.primary} />
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.actionBtn} onPress={() => { setPasswordTarget(row); setNewPassword(''); }} hitSlop={8}>
                     <Ionicons name="key-outline" size={18} color={adminTheme.colors.primary} />
                   </TouchableOpacity>

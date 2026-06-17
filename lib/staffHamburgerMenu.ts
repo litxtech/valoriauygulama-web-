@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { canSeeBreakfastModule } from '@/lib/breakfastConfirm';
+import { breakfastRecordsNavHref, canSeeBreakfastModule } from '@/lib/breakfastConfirm';
 import {
   breakfastBriefingViewPath,
   canManageBreakfastBriefing,
   canViewBreakfastBriefing,
 } from '@/lib/breakfastMorningBriefing';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
-import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import {
   canAccessDocumentManagement,
   canAccessIncidentReports,
@@ -20,7 +20,6 @@ import {
   canAccessKitchenReceptionAccounting,
   isKitchenStaffMember,
   hasTechnicalAssetsStaffAccess,
-  isGorevAtaOnlyUser,
   canAccessOccupancyOps,
   canAccessGuestComplaints,
   canViewManagedContracts,
@@ -31,34 +30,42 @@ import {
   canAccessAdminPayments,
   hasStaffAppPermission,
   canAccessAdminShell,
+  canAccessQuickNotes,
   type StaffPermissionSlice,
 } from '@/lib/staffPermissions';
-import { canAccessAdminRoute } from '@/lib/adminRoutePermissions';
+import { canAccessAdminRoute, isGorevAtaOnlyUser } from '@/lib/adminRoutePermissions';
 import { canAccessFnbHub } from '@/lib/fnbHub';
 import { staffMenuLabel } from '@/lib/staffMenuI18n';
 import { filterStaffMenuSectionsByHidden, filterStaffMenuSectionsByOrgFeatures } from '@/lib/staffMenuVisibility';
 import type { OrganizationUiFeaturesConfig } from '@/lib/organizationUiFeatures';
+import {
+  finalizeStaffHamburgerSections,
+  resolveHamburgerHubItemIds,
+  resolveHamburgerPrimaryItemId,
+} from '@/lib/staffHamburgerLayoutConfig';
+import { buildPaymentHubHamburgerItems } from '@/lib/paymentHubMenu';
+import type {
+  StaffHamburgerMenuItem,
+  StaffHamburgerMenuLayout,
+  StaffHamburgerMenuSection,
+  StaffHamburgerMenuSectionId,
+  StaffHamburgerHubItemId,
+} from '@/lib/staffHamburgerTypes';
+import { STAFF_HAMBURGER_HUB_ITEM_IDS } from '@/lib/staffHamburgerTypes';
+
+export type {
+  StaffHamburgerMenuItem,
+  StaffHamburgerMenuLayout,
+  StaffHamburgerMenuSection,
+  StaffHamburgerMenuSectionId,
+  StaffHamburgerHubItemId,
+};
+export { STAFF_HAMBURGER_HUB_ITEM_IDS };
 
 export type StaffHamburgerStaff = StaffPermissionSlice & {
   kbs_access_enabled?: boolean;
   department?: string | null;
   hidden_menu_item_ids?: string[] | null;
-};
-
-export type StaffHamburgerMenuItem = {
-  id: string;
-  label: string;
-  href: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  accent: string;
-};
-
-export type StaffHamburgerMenuSectionId = 'fnb' | 'kitchen' | 'nav' | 'staff' | 'hotel' | 'ops' | 'admin';
-
-export type StaffHamburgerMenuSection = {
-  id: StaffHamburgerMenuSectionId;
-  title: string;
-  items: StaffHamburgerMenuItem[];
 };
 
 const ACCENTS: Record<string, string> = {
@@ -73,6 +80,7 @@ const ACCENTS: Record<string, string> = {
   meal_hist: '#64748b',
   emergency: '#dc2626',
   board: '#2563eb',
+  announcement_compose: '#7c3aed',
   messages: '#2563eb',
   cleaning: '#0f766e',
   guests: '#0ea5e9',
@@ -84,6 +92,7 @@ const ACCENTS: Record<string, string> = {
   kbs: '#0f766e',
   tech: '#b8860b',
   admin: '#7c3aed',
+  admin_notes: '#6366f1',
   perf: '#4f46e5',
   assign: '#db2777',
   accounting: '#7c3aed',
@@ -108,6 +117,7 @@ const ACCENTS: Record<string, string> = {
   finance: '#0369a1',
   audits: '#7c3aed',
   staff_month_best: '#d97706',
+  payments: '#635bff',
 };
 
 function normHref(href: string): string {
@@ -126,6 +136,7 @@ function createBuilder(): { push: MenuBuilder['push']; sections: Record<StaffHam
     nav: [],
     staff: [],
     hotel: [],
+    payments: [],
     ops: [],
     admin: [],
   };
@@ -188,9 +199,10 @@ export function buildStaffHamburgerMenuSections(
   const isFullAdmin = isAdmin && !isGorevAtaOnlyUser(staff);
   const perms = staff.app_permissions ?? {};
   const isKitchenStaff = isKitchenStaffMember(staff) && canAccessKitchenOps(staff);
+  const hasFnbHub = canAccessFnbHub(staff);
 
-  // —— F&B Merkezi (mutfak + satış + menü — yetkiye göre kısayollar) ——
-  if (canAccessFnbHub(staff)) {
+  // —— F&B Merkezi (tek giriş — alt modüller hub ekranında) ——
+  if (hasFnbHub) {
     push('fnb', {
       id: 'fnb_hub',
       label: t('fnbHubTitle'),
@@ -198,49 +210,6 @@ export function buildStaffHamburgerMenuSections(
       icon: 'grid-outline',
       accent: '#ea580c',
     });
-    if (canAccessReservationSales(staff)) {
-      push('fnb', {
-        id: 'fnb_sales_new',
-        label: t('fnbHubSalesNew'),
-        href: '/staff/sales/new',
-        icon: 'add-circle-outline',
-        accent: ACCENTS.sales,
-      });
-    }
-    if (canAccessKitchenOps(staff)) {
-      push('fnb', {
-        id: 'fnb_kitchen_revenue',
-        label: t('fnbHubKitchenRevenue'),
-        href: '/staff/kitchen-ops/revenue/new',
-        icon: 'cash-outline',
-        accent: '#059669',
-      });
-    }
-    if (canManageHotelKitchenMenu(staff)) {
-      push('fnb', {
-        id: 'fnb_menu_manage',
-        label: t('hotelKitchenMenuManageCta'),
-        href: '/staff/hotel-menu/manage',
-        icon: 'restaurant-outline',
-        accent: ACCENTS.meal_edit,
-      });
-      push('fnb', {
-        id: 'fnb_menu_theme',
-        label: t('hotelKitchenMenuThemeTitle'),
-        href: '/staff/fnb-hub/menu-theme',
-        icon: 'color-palette-outline',
-        accent: '#7c3aed',
-      });
-    }
-    if (canAccessKitchenReceptionAccounting(staff)) {
-      push('fnb', {
-        id: 'fnb_reception',
-        label: t('staffKitchenAccountingControl'),
-        href: '/staff/kitchen-ops/reception',
-        icon: 'checkmark-done-outline',
-        accent: '#6366f1',
-      });
-    }
   }
 
   // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
@@ -329,14 +298,26 @@ export function buildStaffHamburgerMenuSections(
     icon: 'warning-outline',
     accent: ACCENTS.emergency,
   });
-  push('nav', { id: 'home', label: t('staffHome'), href: '/staff', icon: 'home-outline', accent: ACCENTS.home });
   push('nav', { id: 'map', label: t('mapTab'), href: '/staff/map', icon: 'map-outline', accent: ACCENTS.map });
   push('nav', { id: 'board', label: t('staffBoardTitle'), href: '/staff/board', icon: 'eye-outline', accent: ACCENTS.board });
+  if (canAccessAdminRoute(staff, '/admin/announcements/compose')) {
+    push('nav', {
+      id: 'announcement_compose',
+      label: t('staffAnnouncementCompose'),
+      href: '/admin/announcements/compose',
+      icon: 'megaphone-outline',
+      accent: ACCENTS.announcement_compose,
+    });
+    push('nav', {
+      id: 'engagement_tracking',
+      label: 'Okuma takibi',
+      href: '/admin/engagement',
+      icon: 'analytics-outline',
+      accent: '#4f46e5',
+    });
+  }
 
   // —— Personel İşleri (personeli doğrudan ilgilendiren) ——
-  if (hasStaffAppPermission(staff, 'gorevler_goruntule')) {
-    push('staff', { id: 'tasks', label: t('tasks'), href: '/staff/tasks', icon: 'checkbox-outline', accent: ACCENTS.tasks });
-  }
   if (hasStaffAppPermission(staff, 'mesai_takibi')) {
     push('staff', {
       id: 'attendance',
@@ -356,13 +337,20 @@ export function buildStaffHamburgerMenuSections(
     });
   }
   push('staff', {
+    id: 'staff_points',
+    label: 'Alınan puanlarım',
+    href: '/staff/points',
+    icon: 'ribbon-outline',
+    accent: '#ca8a04',
+  });
+  push('staff', {
     id: 'meal',
     label: t('staffMealMenuTitle'),
     href: '/staff/meal-menu',
     icon: 'fast-food-outline',
     accent: ACCENTS.meal,
   });
-  if (canManageStaffMealMenu(staff)) {
+  if (canManageStaffMealMenu(staff) && !isKitchenStaff) {
     push('staff', {
       id: 'meal_edit',
       label: t('profileUiMealMenuManage'),
@@ -378,7 +366,7 @@ export function buildStaffHamburgerMenuSections(
     icon: 'time-outline',
     accent: ACCENTS.meal_hist,
   });
-  if (canSeeBreakfastModule(staff)) {
+  if (canSeeBreakfastModule(staff) && !isKitchenStaff) {
     push('staff', {
       id: 'breakfast_staff',
       label: t('profileUiBreakfastUpload'),
@@ -454,15 +442,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.assign,
     });
   }
-  if (canStaffCreateAssignments(staff) && canAccessKitchenOps(staff) && !isAdmin) {
-    push('staff', {
-      id: 'kitchen_ops_gorev',
-      label: t('staffKitchenOpsTitle'),
-      href: '/staff/kitchen-ops',
-      icon: 'restaurant-outline',
-      accent: ACCENTS.kitchen_ops,
-    });
-  }
   if (canManageManagedContracts(staff)) {
     push('staff', {
       id: 'managed_contracts_prepare',
@@ -520,15 +499,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.contracts,
     });
   }
-  if (canStaffUseMrzScan(staff)) {
-    push('staff', {
-      id: 'passports',
-      label: t('staffPassportsTitle'),
-      href: '/staff/profile/passports',
-      icon: 'id-card-outline',
-      accent: ACCENTS.mrz,
-    });
-  }
   if (canStaffUseIdCapture(staff)) {
     push('hotel', {
       id: 'id_capture',
@@ -537,6 +507,8 @@ export function buildStaffHamburgerMenuSections(
       icon: 'camera-outline',
       accent: ACCENTS.kbs,
     });
+  }
+  if (canStaffViewKbsCaptureHistory(staff)) {
     push('hotel', {
       id: 'id_capture_history',
       label: t('staffKitchenIdCapturedList'),
@@ -554,7 +526,7 @@ export function buildStaffHamburgerMenuSections(
     icon: 'restaurant-outline',
     accent: ACCENTS.meal,
   });
-  if (canManageHotelKitchenMenu(staff)) {
+  if (canManageHotelKitchenMenu(staff) && !hasFnbHub) {
     push('hotel', {
       id: 'hotel_kitchen_menu_manage',
       label: t('hotelKitchenMenuManageCta'),
@@ -584,23 +556,10 @@ export function buildStaffHamburgerMenuSections(
       accent: '#0ea5e9',
     });
   }
-  if (hasStaffAppPermission(staff, 'odeme_al_qr')) {
-    push('hotel', {
-      id: 'payments',
-      label: 'Ödeme al (QR)',
-      href: '/staff/payments',
-      icon: 'qr-code-outline',
-      accent: '#635bff',
-    });
-  }
-  if (canAccessAdminPayments(staff)) {
-    push('hotel', {
-      id: 'payments_admin',
-      label: 'Yapılan ödemeler',
-      href: '/admin/payments',
-      icon: 'card-outline',
-      accent: '#635bff',
-    });
+  if (hasStaffAppPermission(staff, 'odeme_al_qr') || canAccessAdminPayments(staff)) {
+    for (const item of buildPaymentHubHamburgerItems(staff)) {
+      push('payments', item);
+    }
   }
   if (canAccessOccupancyOps(staff)) {
     push('hotel', {
@@ -680,7 +639,13 @@ export function buildStaffHamburgerMenuSections(
     });
   }
   if (hasStaffAppPermission(staff, 'stok_giris')) {
-    push('ops', { id: 'stock', label: t('stockTab'), href: '/staff/stock', icon: 'cube-outline', accent: ACCENTS.stock });
+    push('ops', {
+      id: 'stock_quick_current',
+      label: t('staffHotelCurrentStock'),
+      href: '/staff/stock',
+      icon: 'layers-outline',
+      accent: '#2563eb',
+    });
     push('ops', {
       id: 'my_stock',
       label: t('myStocks'),
@@ -689,7 +654,7 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.my_stock,
     });
   }
-  if (canAccessKitchenOps(staff)) {
+  if (canAccessKitchenOps(staff) && !hasFnbHub && !isKitchenStaff) {
     push('ops', {
       id: 'kitchen_ops',
       label: t('staffKitchenOpsTitle'),
@@ -698,7 +663,7 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.kitchen_ops,
     });
   }
-  if (canAccessKitchenReceptionAccounting(staff)) {
+  if (canAccessKitchenReceptionAccounting(staff) && !hasFnbHub) {
     push('ops', {
       id: 'kitchen_reception',
       label: t('staffKitchenAccountingControl'),
@@ -725,7 +690,7 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.incident,
     });
   }
-  if (canAccessReservationSales(staff)) {
+  if (canAccessReservationSales(staff) && !hasFnbHub) {
     push('ops', {
       id: 'sales',
       label: t('profileUiSalesCommission'),
@@ -771,9 +736,19 @@ export function buildStaffHamburgerMenuSections(
 
   // —— Yönetim ——
   const showAdminHub = canAccessAdminShell(staff) || canAccessAdminPayments(staff) || canManageManagedContracts(staff) || canCreateDepartmentRules(staff);
+  if (canAccessQuickNotes(staff)) {
+    const isAdminRole = staff.role === 'admin';
+    push(isAdminRole ? 'admin' : 'staff', {
+      id: 'admin_notes',
+      label: 'Not Al',
+      href: isAdminRole ? '/admin/notes' : '/staff/admin-notes',
+      icon: 'create-outline',
+      accent: ACCENTS.admin_notes,
+    });
+  }
   if (showAdminHub) {
     push('admin', { id: 'admin_tab', label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: ACCENTS.admin });
-    if (canAccessKitchenOps(staff)) {
+    if (canAccessKitchenOps(staff) && !hasFnbHub && !isKitchenStaff) {
       push('admin', {
         id: 'kitchen_ops',
         label: t('staffKitchenOpsTitle'),
@@ -781,6 +756,8 @@ export function buildStaffHamburgerMenuSections(
         icon: 'restaurant-outline',
         accent: ACCENTS.kitchen_ops,
       });
+    }
+    if (canAccessKitchenOps(staff)) {
       push('admin', {
         id: 'kitchen_ops_manage',
         label: t('staffKitchenOpsManagement'),
@@ -805,6 +782,15 @@ export function buildStaffHamburgerMenuSections(
         href: '/admin/performance',
         icon: 'trophy-outline',
         accent: ACCENTS.staff_month_best,
+      });
+    }
+    if (canAccessAdminRoute(staff, '/admin/attendance')) {
+      push('admin', {
+        id: 'attendance_admin',
+        label: t('adminAttMenuLabel'),
+        href: '/admin/attendance',
+        icon: 'time-outline',
+        accent: ACCENTS.attendance,
       });
     }
     push('admin', {
@@ -834,7 +820,7 @@ export function buildStaffHamburgerMenuSections(
       push('admin', {
         id: 'breakfast_admin',
         label: t('profileUiBreakfastRecords'),
-        href: '/admin/breakfast-confirm',
+        href: breakfastRecordsNavHref(staff),
         icon: 'cafe-outline',
         accent: ACCENTS.breakfast,
       });
@@ -914,13 +900,6 @@ export function buildStaffHamburgerMenuSections(
       icon: 'swap-horizontal-outline',
       accent: ACCENTS.debts,
     });
-    push('admin', {
-      id: 'tips_admin',
-      label: 'Bahşişler',
-      href: '/admin/tips',
-      icon: 'gift-outline',
-      accent: '#b8860b',
-    });
   }
 
   if (isKbsUiEnabled() && (isAdmin || staff.kbs_access_enabled !== false)) {
@@ -944,29 +923,24 @@ export function buildStaffHamburgerMenuSections(
     nav: t('staffMenuSectionNav'),
     staff: t('staffMenuSectionStaff'),
     hotel: t('staffMenuSectionHotel'),
+    payments: 'Tahsilat & Ödeme',
     ops: t('staffMenuSectionOps'),
     admin: t('staffMenuSectionAdmin'),
   };
 
-  const built = (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'ops', 'admin'] as const)
+  const built = (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'payments', 'ops', 'admin'] as const)
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
 
   const afterHidden = filterStaffMenuSectionsByHidden(built, staff);
-  return filterStaffMenuSectionsByOrgFeatures(afterHidden, orgUiFeatures);
+  const afterFeatures = filterStaffMenuSectionsByOrgFeatures(afterHidden, orgUiFeatures);
+  return finalizeStaffHamburgerSections(afterFeatures, orgUiFeatures?.hamburger);
 }
 
 /** Düz liste (geriye uyumluluk) */
 export function flattenStaffHamburgerMenu(sections: StaffHamburgerMenuSection[]) {
-  return sections.flatMap((s) => s.items);
+  return sections.flatMap((s) => s.items ?? []);
 }
-
-export type StaffHamburgerMenuLayout = {
-  /** Tam genişlik üst buton (ör. acil durum) */
-  primary: StaffHamburgerMenuItem | null;
-  /** Gezinti / modüller / yönetim — primary hariç */
-  sections: StaffHamburgerMenuSection[];
-};
 
 /** Menü: acil üstte; kalan öğeler bölüm başlıklarıyla. */
 export function buildStaffHamburgerMenuLayout(
@@ -975,17 +949,18 @@ export function buildStaffHamburgerMenuLayout(
   orgUiFeatures?: OrganizationUiFeaturesConfig | null
 ): StaffHamburgerMenuLayout {
   const rawSections = buildStaffHamburgerMenuSections(t, staff, orgUiFeatures);
+  const layout = orgUiFeatures?.hamburger;
   const all = flattenStaffHamburgerMenu(rawSections);
-  const emergencyItem = all.find((i) => i.id === 'emergency') ?? null;
-  const kitchenPrimary =
-    staff && isKitchenStaffMember(staff) && canAccessKitchenOps(staff)
-      ? all.find((i) => i.id === 'kitchen_ops') ?? null
-      : null;
-
-  /** Acil durum her zaman anasayfa ve diğer menülerin üstünde (admin + personel). */
-  const primary = emergencyItem ?? kitchenPrimary ?? null;
+  const primaryId = resolveHamburgerPrimaryItemId(layout);
+  const primary = primaryId ? all.find((i) => i.id === primaryId) ?? null : null;
   const used = new Set<string>();
   if (primary) used.add(primary.id);
+
+  const hubIds = resolveHamburgerHubItemIds(layout);
+  const hubs = hubIds
+    .map((id) => all.find((i) => i.id === id))
+    .filter((i): i is StaffHamburgerMenuItem => !!i && !used.has(i.id));
+  for (const h of hubs) used.add(h.id);
 
   const sections = rawSections
     .map((section) => ({
@@ -994,5 +969,5 @@ export function buildStaffHamburgerMenuLayout(
     }))
     .filter((s) => s.items.length > 0);
 
-  return { primary, sections };
+  return { primary, hubs, sections };
 }

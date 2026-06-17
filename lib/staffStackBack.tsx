@@ -75,7 +75,7 @@ export function resolveStaffBackFallback(pathname: string | null): Href {
     return STAFF_TABS_FALLBACK;
   }
   if (segments[0] === 'staff' && segments[1] === 'occupancy' && segments.length >= 3) {
-    if (joined === 'staff/occupancy/daily') {
+    if (joined === 'staff/occupancy/daily' || joined === 'staff/occupancy/breakfast-briefing') {
       return '/staff/occupancy/operations' as Href;
     }
     if (joined === 'staff/occupancy/operations') {

@@ -27,7 +27,6 @@ import { theme } from '@/constants/theme';
 import { copyUriToCacheForUpload } from '@/lib/uploadMedia';
 import { ensureKbsOpsRoom, type KbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
 import { saveKbsCaptureItemsParallel, type KbsCaptureSaveItem } from '@/lib/kbsCaptureSave';
-import { enqueueKbsCaptureOcrBatch } from '@/lib/kbsCaptureOcrQueue';
 import { notifyKbsDocumentCaptured } from '@/lib/kbsCaptureNotify';
 import { fetchKbsCapturedDocuments } from '@/lib/kbsCaptureHistory';
 import { setKbsCaptureHistoryCache } from '@/lib/kbsCaptureHistoryCache';
@@ -45,19 +44,6 @@ import {
   startKbsCapturePrewarm,
   warmKbsCaptureOpsContext,
 } from '@/lib/kbsCapturePrewarm';
-import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
-import {
-  getIdCardFrontVisionScannerCached,
-  preloadIdCardFrontVisionScanner,
-  type IdCardFrontVisionScannerComponent,
-} from '@/lib/scanner/idCardFrontVisionScannerLoader';
-import type {
-  IdCardFrontLockedPayload,
-  IdCardFrontVisionScannerRef,
-  IdCardFrontVisionUiState,
-} from '@/components/kbs/idCardFrontVisionTypes';
-import { MRZ_FRAME_BORDER } from '@/lib/scanner/mrzFrameTheme';
-import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
 
 type CaptureItem = {
   id: string;
@@ -117,24 +103,7 @@ export default function KbsCaptureIdScreen() {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [splitting, setSplitting] = useState(false);
   const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
-  const [torchEnabled, setTorchEnabled] = useState(false);
-  const [frontScanResetToken, setFrontScanResetToken] = useState(0);
-  const [frontLiveUi, setFrontLiveUi] = useState<IdCardFrontVisionUiState>({
-    frameKind: 'hunting',
-    hint: '',
-    showSpinner: false,
-    successGlow: false,
-  });
-  const [FrontVisionScanner, setFrontVisionScanner] = useState<IdCardFrontVisionScannerComponent | null>(
-    () => getIdCardFrontVisionScannerCached()
-  );
   const captureLockRef = useRef(false);
-  const frontVisionRef = useRef<IdCardFrontVisionScannerRef>(null);
-  const frontLiveEnqueueAtRef = useRef(0);
-  const visionOk = isMrzVisionScannerAvailable();
-  /** Canlı otomatik: kimlik görününce fotoğraf + tam OCR. Sorun olursa MRZ modu veya galeri. */
-  const useLiveFrontScan = captureSide === 'front' && visionOk;
-  const useExpoCamera = !useLiveFrontScan;
 
   const setGuestName = useCallback((itemId: string, field: 'firstName' | 'lastName', value: string) => {
     setGuestNamesById((prev) => ({
@@ -167,65 +136,6 @@ export default function KbsCaptureIdScreen() {
       void requestPermission();
     }
   }, [permission?.granted, permission?.canAskAgain, requestPermission]);
-
-  useEffect(() => {
-    if (!useLiveFrontScan || FrontVisionScanner) return;
-    let cancelled = false;
-    void preloadIdCardFrontVisionScanner().then((Comp) => {
-      if (!cancelled && Comp) setFrontVisionScanner(() => Comp);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [useLiveFrontScan, FrontVisionScanner]);
-
-  const applyPrewarmNamesToGuest = useCallback(async (itemId: string) => {
-    const { awaitKbsCapturePrewarm } = await import('@/lib/kbsCapturePrewarm');
-    const ready = await awaitKbsCapturePrewarm(itemId);
-    const p = ready?.ocr?.parsed;
-    if (!p) return;
-    const fn = p.firstName?.trim();
-    const ln = p.lastName?.trim();
-    if (!fn && !ln) return;
-    setGuestNamesById((prev) => ({
-      ...prev,
-      [itemId]: {
-        firstName: fn || prev[itemId]?.firstName || '',
-        lastName: ln || prev[itemId]?.lastName || '',
-      },
-    }));
-  }, []);
-
-  const handleFrontLiveLocked = useCallback(async (payload: IdCardFrontLockedPayload) => {
-    const now = Date.now();
-    if (now - frontLiveEnqueueAtRef.current < 2000) return;
-    frontLiveEnqueueAtRef.current = now;
-
-    const uri = await uriForQueue(payload.imageUri);
-    const id = newCaptureId();
-    setQueue((q) => [
-      ...q,
-      { id, imageUri: uri, captureSource: 'camera', captureSide: 'front' },
-    ]);
-    startKbsCapturePrewarm({
-      itemId: id,
-      imageUri: uri,
-      captureSide: 'front',
-      prefetchedParsed: payload.parsed,
-    });
-    const fn = payload.parsed.firstName?.trim();
-    const ln = payload.parsed.lastName?.trim();
-    if (fn || ln) {
-      setGuestNamesById((prev) => ({
-        ...prev,
-        [id]: { firstName: fn ?? '', lastName: ln ?? '' },
-      }));
-    } else {
-      void applyPrewarmNamesToGuest(id);
-    }
-    void triggerMrzSuccessHaptic(0, true);
-    setFrontScanResetToken((n) => n + 1);
-  }, [applyPrewarmNamesToGuest]);
 
   useEffect(() => {
     warmKbsCaptureOpsContext();
@@ -276,10 +186,9 @@ export default function KbsCaptureIdScreen() {
           imageUri: row.imageUri,
           captureSide: row.captureSide,
         });
-        void applyPrewarmNamesToGuest(row.id);
       }
     },
-    [applyPrewarmNamesToGuest]
+    []
   );
 
   const enqueueCapturedImage = useCallback(
@@ -335,11 +244,6 @@ export default function KbsCaptureIdScreen() {
     }, 350);
     return () => clearTimeout(t);
   }, [roomModalVisible, roomNoTrimmed, resolveRoom]);
-
-  const handleVisionManualCapture = useCallback(() => {
-    if (captureLockRef.current || saving || splitting) return;
-    frontVisionRef.current?.captureNow();
-  }, [saving, splitting]);
 
   const handleCapture = async () => {
     if (captureLockRef.current || !cameraRef.current || !cameraReady) return;
@@ -444,17 +348,6 @@ export default function KbsCaptureIdScreen() {
       const saved = await saveKbsCaptureItemsParallel(saveItems, room, (msg) => setSaveStatus(msg));
       const savedDocIds = saved.map((s) => s.guestDocumentId);
       markKbsCapturesJustSaved(savedDocIds);
-      const needsOcr = saved.filter((s) => !s.ocrApplied);
-      if (needsOcr.length > 0) {
-        enqueueKbsCaptureOcrBatch(
-          needsOcr.map((s) => ({
-            docId: s.guestDocumentId,
-            guestId: s.guestId,
-            imageUrl: s.frontImageUrl,
-            localUri: s.localUri,
-          }))
-        );
-      }
 
       clearKbsCapturePrewarmAll();
       setQueue([]);
@@ -481,9 +374,7 @@ export default function KbsCaptureIdScreen() {
     }
   };
 
-  const cameraActive =
-    isFocused && !roomModalVisible && !saving && (useLiveFrontScan || permission?.granted);
-  const liveFrontActive = cameraActive && useLiveFrontScan;
+  const cameraActive = isFocused && !roomModalVisible && !saving && permission?.granted;
 
   const queueStrip = (
     <ScrollView
@@ -512,22 +403,7 @@ export default function KbsCaptureIdScreen() {
 
   return (
     <View style={styles.root}>
-      {liveFrontActive ? (
-        FrontVisionScanner ? (
-          <FrontVisionScanner
-            ref={frontVisionRef}
-            enabled={liveFrontActive}
-            torchEnabled={torchEnabled}
-            resetToken={frontScanResetToken}
-            onUiStateChange={setFrontLiveUi}
-            onLocked={(p) => void handleFrontLiveLocked(p)}
-          />
-        ) : (
-          <View style={styles.cameraPlaceholder}>
-            <ActivityIndicator color="#fff" size="large" />
-          </View>
-        )
-      ) : cameraActive && useExpoCamera ? (
+      {cameraActive ? (
         <CameraView
           ref={cameraRef}
           style={StyleSheet.absoluteFillObject}
@@ -567,15 +443,6 @@ export default function KbsCaptureIdScreen() {
           </Pressable>
           <Text style={styles.title}>Kimlik / Pasaport</Text>
           <View style={styles.topBarRight}>
-            {useLiveFrontScan ? (
-              <Pressable
-                style={styles.iconBtn}
-                onPress={() => setTorchEnabled((v) => !v)}
-                accessibilityLabel={torchEnabled ? t('kbsTorchOff') : t('kbsTorchOn')}
-              >
-                <Ionicons name={torchEnabled ? 'flash' : 'flash-off'} size={22} color="#fff" />
-              </Pressable>
-            ) : null}
             <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel={t('kbsCapturedListA11y')}>
               <Ionicons name="albums" size={18} color="#fff" />
               <Text style={styles.capturedListBtnText}>Çekilenler</Text>
@@ -586,10 +453,7 @@ export default function KbsCaptureIdScreen() {
         <View style={styles.sideModeRow}>
           <Pressable
             style={[styles.sideModeBtn, captureSide === 'front' && styles.sideModeBtnActive]}
-            onPress={() => {
-              setCaptureSide('front');
-              setFrontScanResetToken((n) => n + 1);
-            }}
+            onPress={() => setCaptureSide('front')}
             accessibilityRole="button"
             accessibilityState={{ selected: captureSide === 'front' }}
           >
@@ -599,10 +463,7 @@ export default function KbsCaptureIdScreen() {
           </Pressable>
           <Pressable
             style={[styles.sideModeBtn, captureSide === 'mrz_back' && styles.sideModeBtnActive]}
-            onPress={() => {
-              setCaptureSide('mrz_back');
-              setFrontScanResetToken((n) => n + 1);
-            }}
+            onPress={() => setCaptureSide('mrz_back')}
             accessibilityRole="button"
             accessibilityState={{ selected: captureSide === 'mrz_back' }}
           >
@@ -616,34 +477,11 @@ export default function KbsCaptureIdScreen() {
           <Text style={styles.stepBadgeText}>
             {queue.length > 0
               ? `${queue.length} belge · İleri: oda no`
-              : useLiveFrontScan && frontLiveUi.hint
-                ? frontLiveUi.hint
-                : captureSide === 'mrz_back'
-                  ? t('kbsMrzFrameHint')
-                  : t('kbsFrontFrameHint')}
+              : captureSide === 'mrz_back'
+                ? t('kbsMrzFrameHint')
+                : t('kbsFrontFrameHint')}
           </Text>
         </View>
-
-        {useLiveFrontScan ? (
-          <View style={styles.idFrontGuide} pointerEvents="none">
-            <View
-              style={[
-                styles.idFrontGuideFrame,
-                {
-                  borderColor:
-                    frontLiveUi.successGlow || frontLiveUi.frameKind === 'success'
-                      ? '#22c55e'
-                      : frontLiveUi.frameKind === 'reading' || frontLiveUi.frameKind === 'signal'
-                        ? '#fbbf24'
-                        : MRZ_FRAME_BORDER.hunting,
-                },
-              ]}
-            />
-            {frontLiveUi.showSpinner ? (
-              <ActivityIndicator style={styles.idFrontGuideSpinner} color="#fbbf24" />
-            ) : null}
-          </View>
-        ) : null}
 
         {captureSide === 'mrz_back' ? (
           <View style={styles.mrzGuide} pointerEvents="none">
@@ -666,31 +504,14 @@ export default function KbsCaptureIdScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.bottomCenter}>
-            {useLiveFrontScan ? (
-              <View style={styles.bottomCenterLive}>
-                <View style={styles.liveAutoBadge}>
-                  <Ionicons name="scan-outline" size={22} color="#fff" />
-                  <Text style={styles.liveAutoBadgeText}>Otomatik</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.captureBtn}
-                  onPress={handleVisionManualCapture}
-                  disabled={saving || splitting || !cameraActive}
-                  accessibilityLabel={t('kbsCaptureIdManualA11y')}
-                >
-                  <View style={styles.captureInner} />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.captureBtn}
-                onPress={() => void handleCapture()}
-                disabled={saving || splitting || !cameraReady || !cameraActive}
-                accessibilityLabel={t('kbsCaptureIdA11y')}
-              >
-                <View style={styles.captureInner} />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.captureBtn}
+              onPress={() => void handleCapture()}
+              disabled={saving || splitting || !cameraReady || !cameraActive}
+              accessibilityLabel={t('kbsCaptureIdA11y')}
+            >
+              <View style={styles.captureInner} />
+            </TouchableOpacity>
           </View>
           <View style={[styles.bottomSide, styles.bottomSideEnd]}>
             <TouchableOpacity style={styles.forwardBtn} onPress={openRoomModal} disabled={saving}>

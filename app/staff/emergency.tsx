@@ -3,7 +3,12 @@ import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
-import { listEmergencyLocations, notifyStaffEmergency, type EmergencyLocation } from '@/lib/staffEmergency';
+import {
+  buildStaffEmergencyConfirmBody,
+  listEmergencyLocations,
+  notifyStaffEmergency,
+  type EmergencyLocation,
+} from '@/lib/staffEmergency';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 
@@ -94,10 +99,14 @@ export default function StaffEmergencyScreen() {
       Alert.alert(t('staffEmergencyMissingInfoTitle'), t('staffEmergencySelectLocation'));
       return;
     }
-    Alert.alert(
-      t('staffEmergencyConfirmTitle'),
-      t('staffEmergencyConfirmBody', { location: selectedLocation.name }),
-      [
+    const confirmBody = buildStaffEmergencyConfirmBody({
+      location: selectedLocation.name,
+      note,
+      withoutNote: (location) => t('staffEmergencyConfirmBody', { location }),
+      withNote: (location, noteText) =>
+        t('staffEmergencyConfirmBodyWithNote', { location, note: noteText }),
+    });
+    Alert.alert(t('staffEmergencyConfirmTitle'), confirmBody, [
         { text: t('cancel'), style: 'cancel' },
         {
           text: t('staffEmergencySendCta'),

@@ -41,6 +41,7 @@ import { PressableScale } from '@/components/premium/PressableScale';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintStore';
+import { recordStaffAssignmentView, recordStaffTasksTabOpen } from '@/lib/staffAssignmentViews';
 
 type Room = {
   id: string;
@@ -294,8 +295,14 @@ export default function StaffTasksTabScreen() {
     useCallback(() => {
       if (!staff?.id) return;
       void markTasksTabOpened(staff.id);
-    }, [staff?.id, markTasksTabOpened])
+      void recordStaffTasksTabOpen(staff.id, staff.organization_id);
+    }, [staff?.id, staff?.organization_id, markTasksTabOpened])
   );
+
+  useEffect(() => {
+    if (!staff?.id || !expandedId) return;
+    void recordStaffAssignmentView(expandedId, staff.id);
+  }, [expandedId, staff?.id]);
 
   /** Sekmeye her dönüşte tam yenileme flicker üretir; cache + TTL yeterli */
 

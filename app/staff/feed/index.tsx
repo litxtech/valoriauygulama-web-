@@ -1772,6 +1772,7 @@ export default function StaffHomeScreen() {
           hasUnseen={!!staffStory?.has_unseen}
           profileHidden={!!s.profile_hidden_by_admin && staff?.role !== 'admin'}
           presenceStatus={resolveStaffPresenceStatus({ isOnline: s.is_online, workStatus: s.work_status })}
+          compact
           onPress={() => {
             if (hasStory) {
               openStoryByStaffId(s.id);
@@ -1820,12 +1821,6 @@ export default function StaffHomeScreen() {
             isNight && { backgroundColor: 'transparent', borderBottomColor: palette.cardBorder },
           ]}
         >
-          <View style={styles.staffSectionHead}>
-            <Text style={[styles.staffAvatarsSectionLabel, isNight && { color: palette.text }]}>
-              Aktif Ekip
-            </Text>
-            <Text style={[styles.staffSectionSub, isNight && { color: palette.muted }]}>Story: 24 saat</Text>
-          </View>
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -1986,6 +1981,8 @@ export default function StaffHomeScreen() {
                   viewersListEnabled={canOpenViewersList}
                   commentPreview={commentPreview}
                   deletingPost={deletingPostId === p.id}
+                  socialHeader
+                  horizontalInset={12}
                   onAuthorPress={
                     p.staff_id
                       ? () => openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id)
@@ -2894,7 +2891,7 @@ export default function StaffHomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: pds.pageBg },
   scroll: { flex: 1 },
-  content: { paddingTop: pds.staffFeedBelowHeaderGap, paddingBottom: 120 },
+  content: { paddingTop: 4, paddingBottom: 120 },
   hero: {
     marginHorizontal: 16,
     marginTop: 10,
@@ -2925,27 +2922,13 @@ const styles = StyleSheet.create({
   },
   staffAvatarsSection: {
     backgroundColor: pds.pageBg,
-    paddingTop: 0,
-    paddingBottom: 12,
+    paddingTop: 4,
+    paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E7EB',
   },
-  staffSectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  staffAvatarsSectionLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.colors.primary,
-    letterSpacing: 0.3,
-  },
-  staffSectionSub: { fontSize: 12, fontWeight: '700', color: theme.colors.textMuted },
   staffAvatarsScroll: {},
-  staffAvatarsScrollContent: { paddingLeft: 16, paddingRight: 24, alignItems: 'center' },
+  staffAvatarsScrollContent: { paddingLeft: 12, paddingRight: 16, alignItems: 'center' },
   staffAvatarCard: { width: 72, marginRight: 24, alignItems: 'center' },
   staffAvatarCardInner: { alignItems: 'center' },
   staffAvatarRing: {

@@ -21,6 +21,7 @@ import {
 } from '@/lib/staffStackBack';
 import { prefetchStaffMealMenuBrowse } from '@/lib/staffMealMenuCache';
 import { StaffHamburgerNavigationHost } from '@/components/header/StaffHamburgerNavigationHost';
+import { useStaffAccountStatusRealtime } from '@/hooks/useStaffAccountStatusRealtime';
 
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
@@ -82,8 +83,10 @@ export default function StaffLayout() {
 
   const isBanned = staff?.banned_until && new Date(staff.banned_until) > new Date();
   const isDeleted = !!staff?.deleted_at;
+  const isAccountLocked = staff?.account_locked === true;
 
-  useStaffPresence(isBanned || isDeleted ? undefined : staff?.id);
+  useStaffAccountStatusRealtime();
+  useStaffPresence(isBanned || isDeleted || isAccountLocked ? undefined : staff?.id);
 
   // MRZ modülü yalnızca KBS ekranlarında lazy yüklenir (staff/kbs/*, scan.tsx).
 
@@ -208,6 +211,21 @@ export default function StaffLayout() {
     );
   }
 
+  if (isAccountLocked) {
+    return (
+      <View style={styles.blockScreen}>
+        <View style={styles.blockCard}>
+          <Text style={styles.blockEmoji}>🔒</Text>
+          <Text style={styles.blockTitle}>{t('accountLockedTitle')}</Text>
+          <Text style={styles.blockMessage}>{t('accountLockedMessage')}</Text>
+          <TouchableOpacity style={styles.blockBtn} onPress={() => router.replace('/')}>
+            <Text style={styles.blockBtnText}>{t('goToLobby')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <>
       <PersonnelWarningGate staffId={staff.id} subjectDisplayName={staff.full_name} />
@@ -290,6 +308,10 @@ export default function StaffLayout() {
       />
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="points/index" options={{ title: 'Alınan puanlarım', headerBackTitle: t('back') }} />
+      <Stack.Screen name="admin-notes/index" options={{ title: 'Not Al', headerBackTitle: t('back') }} />
+      <Stack.Screen name="admin-notes/new" options={{ title: 'Yeni not', headerBackTitle: t('back') }} />
+      <Stack.Screen name="admin-notes/[id]" options={{ title: 'Not detayı', headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/index" options={{ title: t('screenDocumentManagement'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/all" options={{ title: feedSharedText('staffStackDocAll'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerBackTitle: t('back') }} />
@@ -365,7 +387,7 @@ export default function StaffLayout() {
       <Stack.Screen name="salary-history" options={{ title: t('salaryHistory'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />
-      <Stack.Screen name="breakfast-briefing/index" options={{ title: 'Sabah kahvaltı sayısı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="breakfast-briefing" options={{ headerShown: false }} />
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />
@@ -378,6 +400,7 @@ export default function StaffLayout() {
       <Stack.Screen name="technical-assets" options={{ headerShown: false }} />
       <Stack.Screen name="warnings" options={{ title: t('staffOfficialWarningsNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="board" options={{ title: t('staffBoardTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="announcement-action" options={{ headerShown: false }} />
     </Stack>
     </>
   );

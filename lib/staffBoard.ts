@@ -1,6 +1,11 @@
 import { supabase } from '@/lib/supabase';
 import { notifyStaffBoardAnnouncementPush } from '@/lib/notificationService';
 import i18n from '@/i18n';
+import {
+  announcementMediaLegacyFields,
+  parseAnnouncementMediaPayload,
+  type AnnouncementMediaPayload,
+} from '@/lib/announcementMedia';
 
 /** Okunduktan sonra header gözü bu süre boyunca kalır, sonra gizlenir. */
 export const BOARD_EYE_HIDE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -20,6 +25,9 @@ export type StaffAnnouncementRow = {
   expires_at: string | null;
   read_at: string | null;
   action_url: string | null;
+  action_text: string | null;
+  image_url: string | null;
+  media_payload: AnnouncementMediaPayload | null;
   staff_assignment_id: string | null;
 };
 
@@ -34,7 +42,7 @@ export async function fetchStaffAnnouncements(staffId: string): Promise<StaffAnn
   const { data: rows, error } = await supabase
     .from('announcements')
     .select(
-      'id, title, content, priority, created_at, expires_at, is_active, target_type, target_staff_id, action_url, staff_assignment_id'
+      'id, title, content, priority, created_at, expires_at, is_active, target_type, target_staff_id, action_url, action_text, image_url, media_payload, staff_assignment_id'
     )
     .in('target_type', ['all', 'staff'])
     .or(`target_staff_id.is.null,target_staff_id.eq.${staffId}`)
@@ -65,6 +73,9 @@ export async function fetchStaffAnnouncements(staffId: string): Promise<StaffAnn
     expires_at: r.expires_at ?? null,
     read_at: readMap.get(r.id) ?? null,
     action_url: (r as { action_url?: string | null }).action_url ?? null,
+    action_text: (r as { action_text?: string | null }).action_text ?? null,
+    image_url: (r as { image_url?: string | null }).image_url ?? null,
+    media_payload: parseAnnouncementMediaPayload((r as { media_payload?: unknown }).media_payload),
     staff_assignment_id: (r as { staff_assignment_id?: string | null }).staff_assignment_id ?? null,
   }));
 }
@@ -137,7 +148,9 @@ export async function publishStaffBoardAnnouncement(params: {
   organizationId?: string | null;
   /** Toplu bildirim ekranı zaten push gönderdiyse true */
   skipPush?: boolean;
+  mediaPayload?: AnnouncementMediaPayload | null;
 }): Promise<{ id?: string; error?: string }> {
+  const legacy = announcementMediaLegacyFields(params.mediaPayload ?? null);
   const { data, error } = await supabase
     .from('announcements')
     .insert({
@@ -149,6 +162,10 @@ export async function publishStaffBoardAnnouncement(params: {
       created_by: params.createdByStaffId,
       created_by_type: params.createdByType ?? 'admin',
       is_active: true,
+      image_url: legacy.image_url,
+      action_url: legacy.action_url,
+      action_text: legacy.action_text,
+      media_payload: params.mediaPayload ?? null,
     })
     .select('id')
     .maybeSingle();

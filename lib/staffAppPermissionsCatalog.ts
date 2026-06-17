@@ -54,6 +54,7 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
   { key: 'personel_ekle', label: 'Personel ekleyebilir', section: 'tasks_staff', defaultEnabled: false },
   { key: 'personel_listesi', label: 'Personel listesini yönetebilir', section: 'tasks_staff', defaultEnabled: false },
   { key: 'puan_yonetimi', label: 'Puan yönetimi', section: 'tasks_staff', defaultEnabled: false },
+  { key: 'not_al', label: 'Not Al', description: 'Anlık not oluşturur. Yönetici notlarını göremez; yönetici personel notlarını görür.', section: 'tasks_staff', defaultEnabled: false },
 
   // —— Misafir & konaklama ——
   { key: 'doluluk_operasyon', label: 'Doluluk / oda operasyonları', description: 'Giriş-çıkış, oda atama, konaklama merkezi.', section: 'guests_rooms', defaultEnabled: false },
@@ -108,7 +109,7 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
   { key: 'kahvalti_teyit_departman', label: 'Kahvaltı teyitleri (mutfak) görüntüleme', section: 'kitchen', defaultEnabled: false },
   { key: 'kahvalti_teyit_onayla', label: 'Kahvaltı teyit onaylama', section: 'kitchen', defaultEnabled: false },
   { key: 'kahvalti_teyit_paylas', label: 'Kahvaltı teyit paylaşımı', section: 'kitchen', defaultEnabled: false },
-  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit raporları (salt okunur)', section: 'kitchen', defaultEnabled: false },
+  { key: 'kahvalti_rapor', label: 'Kahvaltı teyit kayıt geçmişi (tüm kayıtlar, salt okunur)', section: 'kitchen', defaultEnabled: false },
 
   // —— Sözleşme & kurallar ——
   { key: 'tum_sozlesmeler', label: 'Tüm misafir sözleşmeleri', section: 'contracts_rules', defaultEnabled: false },

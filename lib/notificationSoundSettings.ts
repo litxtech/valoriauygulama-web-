@@ -61,7 +61,7 @@ export async function ensureOrgNotificationSoundSettings(organizationId: string)
 
 export async function fetchOrgNotificationSoundSettings(
   organizationId: string,
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; seedDefaults?: boolean }
 ): Promise<NotificationSoundSettingRow[]> {
   if (!organizationId) return [];
   const now = Date.now();
@@ -81,7 +81,9 @@ export async function fetchOrgNotificationSoundSettings(
     // ignore
   }
 
-  await ensureOrgNotificationSoundSettings(organizationId);
+  if (opts?.seedDefaults) {
+    await ensureOrgNotificationSoundSettings(organizationId);
+  }
   let data: NotificationSoundSettingRow[] | null = null;
   let error: { message?: string } | null = null;
   try {

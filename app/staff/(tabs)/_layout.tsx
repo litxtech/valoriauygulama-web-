@@ -1,3 +1,4 @@
+/* @refresh reset */
 import { useEffect, useLayoutEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
@@ -12,7 +13,7 @@ import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar, getAppTabBarColors } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
-import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
+import { StaffIdCaptureCenterTabIcon } from '@/components/AppTabBarCenterIdCaptureButton';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -34,7 +35,7 @@ import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { hapticSelection } from '@/lib/hapticsSafe';
-import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
 import {
   scheduleStaffMessagingUnreadRefresh,
   subscribeMessagingUnreadLive,
@@ -118,10 +119,10 @@ function GlassHeaderBackground() {
 }
 
 export default function StaffTabsLayout() {
-  return <StaffTabsLayoutInner />;
+  return <StaffMainTabsLayout />;
 }
 
-function StaffTabsLayoutInner() {
+function StaffMainTabsLayout() {
   const { t } = useTranslation();
   const { isNight, colors: premiumColors } = usePremiumTheme();
   const tabBarColors = getAppTabBarColors(isNight);
@@ -147,9 +148,8 @@ function StaffTabsLayoutInner() {
   const router = useRouter();
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
-  const canKbsMrz = canStaffUseMrzScan(staff);
   const canIdCapture = canStaffUseIdCapture(staff);
-  const showHeaderFabMenu = canCreateFeed || canKbsMrz;
+  const showHeaderFabMenu = canCreateFeed;
   const badgeRefreshInFlightRef = useRef(false);
   const badgeRefreshLastAtRef = useRef(0);
 
@@ -327,14 +327,9 @@ function StaffTabsLayoutInner() {
     });
   }, [staff?.id, refreshTabBadges]);
 
-  const shareFabLabel =
-    canCreateFeed && canKbsMrz
-      ? t('staffFabCreateAll')
-      : canCreateFeed
-        ? t('staffFabCreatePostOrStory')
-        : t('staffFabCreateMrzOnly');
+  const shareFabLabel = t('staffFabCreatePostOrStory');
 
-  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu, canKbsMrz, canIdCapture);
+  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu);
 
   const renderFeedHeaderLeft = useCallback(
     () => (
@@ -347,17 +342,7 @@ function StaffTabsLayoutInner() {
     [showHeaderFabMenu, shareFabLabel]
   );
 
-  const renderFeedHeaderRight = useCallback(
-    () => (
-      <StaffFeedHeaderRight
-        showMrz={canKbsMrz}
-        onMrzPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)}
-        showIdCapture={canIdCapture}
-        onIdCapturePress={() => router.push('/staff/kbs/capture-id' as never)}
-      />
-    ),
-    [canKbsMrz, canIdCapture, router]
-  );
+  const renderFeedHeaderRight = useCallback(() => <StaffFeedHeaderRight />, []);
 
   const isStaffFeedTab = (routeName: string) => routeName === 'index';
 
@@ -521,15 +506,43 @@ function StaffTabsLayoutInner() {
         }}
       />
       <Tabs.Screen
+        name="id-capture"
+        options={{
+          href: canIdCapture ? undefined : null,
+          title: t('staffKitchenIdCapture'),
+          headerShown: false,
+          tabBarActiveTintColor: tabBarColors.fallbackActive,
+          tabBarLabel: t('staffTabIdCapture'),
+          tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 4 },
+          tabBarIcon: ({ focused }) => <StaffIdCaptureCenterTabIcon focused={focused} />,
+        }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push('/staff/kbs/capture-id' as Href);
+            hapticSelection();
+          },
+        }}
+      />
+      <Tabs.Screen
         name="messages"
         options={{
           href: tabHrefs.messages,
           title: t('messages'),
           headerTitle: t('teamChat'),
           tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarShowLabel: false,
+          tabBarLabel: t('messages'),
+          tabBarBadge:
+            unreadMessagesCount > 0 ? (unreadMessagesCount > 99 ? '99+' : unreadMessagesCount) : undefined,
+          tabBarBadgeStyle: { backgroundColor: theme.colors.error },
           tabBarIcon: ({ focused }) => (
-            <CenterMessageTabBarIcon focused={focused} unreadCount={unreadMessagesCount} />
+            <TabBarScaledIcon focused={focused}>
+              <Ionicons
+                name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
+                size={TAB_ICON_SIZE}
+                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
+              />
+            </TabBarScaledIcon>
           ),
         }}
       />
@@ -558,13 +571,6 @@ function StaffTabsLayoutInner() {
           title: t('kbsNavOperation'),
           headerTitle: t('kbsNavOperation'),
           href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="id-capture"
-        options={{
-          href: null,
-          headerShown: false,
         }}
       />
       <Tabs.Screen
@@ -648,7 +654,6 @@ function StaffTabsLayoutInner() {
       visible={fabVisible}
       onClose={() => setFabVisible(false)}
       canCreateFeed={canCreateFeed}
-      canKbsMrz={canKbsMrz}
       onPost={() => {
         setFabVisible(false);
         router.push('/staff/feed/new' as never);
@@ -656,10 +661,6 @@ function StaffTabsLayoutInner() {
       onStory={() => {
         setFabVisible(false);
         router.push('/staff/feed/story-new' as never);
-      }}
-      onMrz={() => {
-        setFabVisible(false);
-        router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never);
       }}
     />
     </>

@@ -26,7 +26,7 @@ export default function AdminSmartOpsHub() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Operasyon Merkezi</Text>
       <Text style={styles.subtitle}>
-        Zamanlı görevler, checklist teyitleri, gecikme eskalasyonu ve canlı durum takibi.
+        Zamanlı görevler, bildirim şablonları, toplu duyuru, sesler ve canlı durum takibi.
       </Text>
 
       <AdminOrganizationPicker canUseAll={canUseAll} ownOrganizationId={staff?.organization_id} />
@@ -75,6 +75,26 @@ export default function AdminSmartOpsHub() {
           <View style={styles.cardText}>
             <Text style={styles.cardTitle}>Toplu duyuru (klasik)</Text>
             <Text style={styles.cardDesc}>Anlık push — zamanlı operasyon değil</Text>
+          </View>
+        </TouchableOpacity>
+      </Link>
+
+      <Link href="/admin/notifications/sounds" asChild>
+        <TouchableOpacity style={styles.card}>
+          <Ionicons name="volume-high-outline" size={28} color="#0d9488" />
+          <View style={styles.cardText}>
+            <Text style={styles.cardTitle}>Bildirim sesleri</Text>
+            <Text style={styles.cardDesc}>Kanal ve olay bazlı ses dosyaları</Text>
+          </View>
+        </TouchableOpacity>
+      </Link>
+
+      <Link href="/admin/notifications/event-log" asChild>
+        <TouchableOpacity style={styles.card}>
+          <Ionicons name="analytics-outline" size={28} color="#4f46e5" />
+          <View style={styles.cardText}>
+            <Text style={styles.cardTitle}>Bildirim log & takip</Text>
+            <Text style={styles.cardDesc}>Gönderim geçmişi ve teslimat durumu</Text>
           </View>
         </TouchableOpacity>
       </Link>

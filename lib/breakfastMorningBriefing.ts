@@ -207,11 +207,63 @@ function buildPushBody(params: {
   note?: string | null;
 }): string {
   const lines = [
-    `Kahvaltı: ${params.breakfastGuestCount} kişi`,
-    `Otel nüfusu: ${params.hotelGuestCount} kişi`,
+    `🍳 Kahvaltı servisi: ${params.breakfastGuestCount} kişi`,
+    `🏨 Konaklayan misafir: ${params.hotelGuestCount} kişi`,
   ];
-  if (params.note?.trim()) lines.push(`Not: ${params.note.trim()}`);
+  if (params.note?.trim()) lines.push(`📝 ${params.note.trim()}`);
   return lines.join('\n');
+}
+
+export type BreakfastBriefingNotifSnapshot = {
+  breakfastGuestCount: number;
+  hotelGuestCount: number;
+  recordDate: string | null;
+  note: string | null;
+};
+
+/** Bildirim listesi / detay kartı için sayıları çıkarır. */
+export function breakfastBriefingFromNotification(
+  data: Record<string, unknown> | null | undefined,
+  body: string | null | undefined
+): BreakfastBriefingNotifSnapshot | null {
+  const breakfastFromData = Number(data?.breakfastGuestCount);
+  const hotelFromData = Number(data?.hotelGuestCount);
+  if (
+    Number.isFinite(breakfastFromData) &&
+    breakfastFromData >= 0 &&
+    Number.isFinite(hotelFromData) &&
+    hotelFromData >= 0
+  ) {
+    return {
+      breakfastGuestCount: breakfastFromData,
+      hotelGuestCount: hotelFromData,
+      recordDate: typeof data?.recordDate === 'string' ? data.recordDate : null,
+      note: extractBriefingNoteFromBody(body),
+    };
+  }
+
+  if (!body?.trim()) return null;
+  const breakfastMatch = body.match(/(?:kahvalt[ıi]\s*(?:servisi)?|kahvaltı)\s*:?\s*(\d+)/i);
+  const hotelMatch = body.match(/(?:otel\s*nüfusu|konaklayan)\s*:?\s*(\d+)/i);
+  const b = breakfastMatch ? parseInt(breakfastMatch[1], 10) : NaN;
+  const h = hotelMatch ? parseInt(hotelMatch[1], 10) : NaN;
+  if (!Number.isFinite(b) || !Number.isFinite(h)) return null;
+  return {
+    breakfastGuestCount: b,
+    hotelGuestCount: h,
+    recordDate: typeof data?.recordDate === 'string' ? data.recordDate : null,
+    note: extractBriefingNoteFromBody(body),
+  };
+}
+
+function extractBriefingNoteFromBody(body: string | null | undefined): string | null {
+  if (!body?.trim()) return null;
+  const noteLine = body
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => /^not\s*:/i.test(l) || /^📝/.test(l));
+  if (!noteLine) return null;
+  return noteLine.replace(/^not\s*:\s*/i, '').replace(/^📝\s*/, '').trim() || null;
 }
 
 export async function submitBreakfastBriefing(params: {
@@ -271,7 +323,7 @@ export async function submitBreakfastBriefing(params: {
 
   const staffIds = await resolveStaffIdsForTargets(organizationId, targets);
   const dateLabel = formatBriefingDateLabel(recordDate);
-  const title = `Sabah kahvaltı — ${dateLabel}`;
+  const title = `☕ Kahvaltı brifingi — ${dateLabel}`;
   const body = buildPushBody({
     breakfastGuestCount,
     hotelGuestCount,

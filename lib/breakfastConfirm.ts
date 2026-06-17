@@ -5,6 +5,7 @@
 import { supabase } from '@/lib/supabase';
 import type { StaffPermissionSlice } from '@/lib/staffPermissions';
 import { MEAL_MENU_KITCHEN_DEPARTMENTS } from '@/lib/staffPermissions';
+import { isGorevAtaOnlyUser } from '@/lib/adminRoutePermissions';
 
 /** DB `staff_department_is_kitchen` ile uyumlu (350). */
 export const BREAKFAST_DEPARTMENTS = new Set([...MEAL_MENU_KITCHEN_DEPARTMENTS, 'restaurant']);
@@ -149,6 +150,25 @@ export function canBreakfastOwnHistoryUi(staff: StaffPermissionSlice): boolean {
   return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_olustur');
 }
 
+/** Liste / geçmiş ekranına erişim (oluştur, departman, onay veya rapor yetkisi). */
+export function canBreakfastAccessListUi(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  return canSeeBreakfastModule(staff);
+}
+
+/** Teyit ekranında geçmiş / liste kısayolu gösterilsin mi */
+export function shouldShowBreakfastListShortcutUi(staff: StaffPermissionSlice): boolean {
+  return canBreakfastAccessListUi(staff);
+}
+
+export function breakfastListShortcutLabel(staff: StaffPermissionSlice): 'report' | 'all' | 'own' {
+  if (!staff) return 'own';
+  if (isBreakfastReportOnlyUi(staff)) return 'report';
+  if (canBreakfastViewAllRecordsUi(staff)) return 'all';
+  return 'own';
+}
+
 /** Listede onay/red veya departman düzenlemesi yapılabilir mi. */
 export function canBreakfastListMutateUi(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
@@ -166,4 +186,16 @@ export function canBreakfastShareUi(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
   if (staff.role === 'admin') return true;
   return appPermissionTruthy(staff.app_permissions as Record<string, unknown> | undefined, 'kahvalti_teyit_paylas');
+}
+
+/** Hamburger / bildirim: tam admin panel mi, personel teyit ekranı mı */
+export function breakfastRecordsNavHref(staff: StaffPermissionSlice): string {
+  if (!staff) return '/staff/breakfast-confirm';
+  if (staff.role === 'admin') return '/admin/breakfast-confirm';
+  if (isGorevAtaOnlyUser(staff)) {
+    return canBreakfastViewAllRecordsUi(staff)
+      ? '/staff/breakfast-confirm/list'
+      : '/staff/breakfast-confirm';
+  }
+  return '/admin/breakfast-confirm';
 }

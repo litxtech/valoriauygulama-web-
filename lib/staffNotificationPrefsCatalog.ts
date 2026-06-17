@@ -140,7 +140,7 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('accounting_document', 'staffNotifAccountingTitle', 'staffNotifAccountingHint', {
     soundFeatureKey: 'accounting_document',
-    matchExact: ['staff_debt'],
+    matchExact: ['staff_debt', 'finance_counterparty_agreement'],
     matchPrefix: ['finance', 'maliye'],
     matchContains: ['accounting', 'document'],
   }),

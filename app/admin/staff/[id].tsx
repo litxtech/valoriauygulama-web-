@@ -160,6 +160,8 @@ type StaffDetail = {
   profile_hidden_by_admin?: boolean | null;
   tips_enabled?: boolean | null;
   hidden_menu_item_ids?: unknown;
+  account_locked?: boolean | null;
+  account_lock_reason?: string | null;
 };
 
 type StaffRelatedDocument = {
@@ -351,6 +353,10 @@ export default function EditStaffScreen() {
   const [menuRestrictionsExpanded, setMenuRestrictionsExpanded] = useState(false);
   const [hiddenMenuItemIds, setHiddenMenuItemIds] = useState<string[]>([]);
   const [supportsHiddenMenuColumn, setSupportsHiddenMenuColumn] = useState(true);
+  const [accountLocked, setAccountLocked] = useState(false);
+  const [accountLockReason, setAccountLockReason] = useState('');
+  const [lockingAccount, setLockingAccount] = useState(false);
+  const [supportsAccountLockedColumn, setSupportsAccountLockedColumn] = useState(true);
 
   const loadPersonnelWarnings = useCallback(async () => {
     if (!id) return;
@@ -486,6 +492,21 @@ export default function EditStaffScreen() {
       setDrivesVehicle(s.drives_vehicle === true);
       setProfileHiddenByAdmin(s.profile_hidden_by_admin === true);
       setHiddenMenuItemIds(normalizeHiddenMenuItemIds(s.hidden_menu_item_ids));
+
+      const lockRes = await supabase
+        .from('staff')
+        .select('account_locked, account_lock_reason')
+        .eq('id', id)
+        .maybeSingle();
+      if (lockRes.error && isSchemaColMissing(String(lockRes.error.message ?? ''), 'account_locked')) {
+        setSupportsAccountLockedColumn(false);
+        setAccountLocked(false);
+        setAccountLockReason('');
+      } else if (!lockRes.error && lockRes.data) {
+        setSupportsAccountLockedColumn(true);
+        setAccountLocked(lockRes.data.account_locked === true);
+        setAccountLockReason(typeof lockRes.data.account_lock_reason === 'string' ? lockRes.data.account_lock_reason : '');
+      }
     })().finally(() => setLoading(false));
   }, [id]);
 
@@ -545,6 +566,64 @@ export default function EditStaffScreen() {
     );
   };
 
+  const applyAccountLock = async (locked: boolean) => {
+    if (!id || !supportsAccountLockedColumn) return;
+    setLockingAccount(true);
+    try {
+      const payload = locked
+        ? {
+            account_locked: true,
+            account_locked_at: new Date().toISOString(),
+            account_locked_by: adminActor?.id ?? null,
+            account_lock_reason: accountLockReason.trim() || null,
+          }
+        : {
+            account_locked: false,
+            account_locked_at: null,
+            account_locked_by: null,
+            account_lock_reason: null,
+          };
+      const { error } = await supabase.from('staff').update(payload).eq('id', id);
+      if (error) throw error;
+      setAccountLocked(locked);
+      if (!locked) setAccountLockReason('');
+      Alert.alert(
+        'Başarılı',
+        locked
+          ? 'Hesap kilitlendi. Personelin ekranında anında "Hesabınız kitlendi" mesajı görünür.'
+          : 'Hesap kilidi kaldırıldı. Personel uygulamaya devam edebilir.'
+      );
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message ?? 'Hesap kilitleme işlemi tamamlanamadı.');
+    } finally {
+      setLockingAccount(false);
+    }
+  };
+
+  const lockStaffAccount = () => {
+    if (!id || !supportsAccountLockedColumn) return;
+    if (id === adminActor?.id) {
+      Alert.alert('Uyarı', 'Kendi hesabınızı kilitleyemezsiniz.');
+      return;
+    }
+    Alert.alert(
+      'Hesabı kilitle',
+      'Personelin uygulamasında anında "Hesabınız kitlendi" ekranı görünür. Devam edilsin mi?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        { text: 'Kilitle', style: 'destructive', onPress: () => void applyAccountLock(true) },
+      ]
+    );
+  };
+
+  const unlockStaffAccount = () => {
+    if (!id || !supportsAccountLockedColumn) return;
+    Alert.alert('Kilidi kaldır', 'Personel hesabına tekrar erişebilir. Devam edilsin mi?', [
+      { text: 'İptal', style: 'cancel' },
+      { text: 'Kilidi kaldır', onPress: () => void applyAccountLock(false) },
+    ]);
+  };
+
 
   const toggleHiddenMenuItem = (itemId: string) => {
     setHiddenMenuItemIds((prev) =>
@@ -553,15 +632,13 @@ export default function EditStaffScreen() {
   };
 
   const menuCatalogBySection = useMemo(() => {
-    const grouped: Record<StaffMenuCatalogSection, typeof STAFF_MENU_CATALOG> = {
-      nav: [],
-      staff: [],
-      hotel: [],
-      ops: [],
-      admin: [],
-    };
+    const grouped = {} as Record<StaffMenuCatalogSection, (typeof STAFF_MENU_CATALOG)[number][]>;
+    for (const section of Object.keys(STAFF_MENU_SECTION_LABELS_TR) as StaffMenuCatalogSection[]) {
+      grouped[section] = [];
+    }
     for (const entry of STAFF_MENU_CATALOG) {
-      grouped[entry.section].push(entry);
+      const bucket = grouped[entry.section];
+      if (bucket) bucket.push(entry);
     }
     return grouped;
   }, []);
@@ -934,7 +1011,21 @@ export default function EditStaffScreen() {
                   <Text style={styles.heroPillTextAdmin}>Admin</Text>
                 </View>
               ) : null}
+              {accountLocked ? (
+                <View style={[styles.heroPill, styles.heroPillLocked]}>
+                  <Text style={styles.heroPillTextLocked}>Kilitli</Text>
+                </View>
+              ) : null}
             </View>
+            <TouchableOpacity
+              style={styles.heroProfileBtn}
+              onPress={() => router.push(`/admin/staff/profile/${id}`)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="person-circle-outline" size={18} color={adminTheme.colors.primary} />
+              <Text style={styles.heroProfileBtnText}>Profili düzenle</Text>
+              <Ionicons name="chevron-forward" size={16} color={adminTheme.colors.textMuted} />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -949,6 +1040,70 @@ export default function EditStaffScreen() {
               placeholderTextColor={adminTheme.colors.textMuted}
             />
           </Field>
+        </SectionCard>
+
+        <SectionCard
+          title="Hesap kilitleme"
+          subtitle="Anında uygulanır; personelin ekranında kilit bildirimi görünür."
+          icon="lock-closed-outline"
+        >
+          {!supportsAccountLockedColumn ? (
+            <Text style={styles.hintInline}>
+              Veritabanı migration 438 uygulanmadı; hesap kilitleme kullanılamaz.
+            </Text>
+          ) : accountLocked ? (
+            <>
+              <View style={styles.lockStatusBanner}>
+                <Ionicons name="lock-closed" size={20} color="#b45309" />
+                <Text style={styles.lockStatusText}>Bu hesap şu an kilitli.</Text>
+              </View>
+              {accountLockReason.trim() ? (
+                <Text style={styles.hintInline}>Gerekçe: {accountLockReason.trim()}</Text>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.unlockButton, lockingAccount && styles.lockButtonDisabled]}
+                onPress={unlockStaffAccount}
+                disabled={lockingAccount}
+                activeOpacity={0.88}
+              >
+                {lockingAccount ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="lock-open-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.lockButtonText}>Hesabın kilidini kaldır</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Field label="Kilitleme gerekçesi (opsiyonel)">
+                <TextInput
+                  style={styles.input}
+                  value={accountLockReason}
+                  onChangeText={setAccountLockReason}
+                  placeholder="Örn: güvenlik incelemesi"
+                  placeholderTextColor={adminTheme.colors.textMuted}
+                />
+              </Field>
+              <TouchableOpacity
+                style={[styles.lockButton, lockingAccount && styles.lockButtonDisabled]}
+                onPress={lockStaffAccount}
+                disabled={lockingAccount}
+                activeOpacity={0.88}
+              >
+                {lockingAccount ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="lock-closed-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.lockButtonText}>Hesabı kilitle</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
         </SectionCard>
 
         <SectionCard title="Kimlik ve iletişim" subtitle="Temel kişisel bilgiler ve adres." icon="person-outline">
@@ -1407,7 +1562,7 @@ export default function EditStaffScreen() {
             />
           </TouchableOpacity>
           {menuRestrictionsExpanded && supportsHiddenMenuColumn
-            ? (['nav', 'staff', 'hotel', 'ops', 'admin'] as StaffMenuCatalogSection[]).map((sectionId) => (
+            ? (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'payments', 'ops', 'admin'] as StaffMenuCatalogSection[]).map((sectionId) => (
                 <View key={sectionId} style={{ marginTop: 10 }}>
                   <Text style={styles.menuSectionHeading}>{STAFF_MENU_SECTION_LABELS_TR[sectionId]}</Text>
                   {menuCatalogBySection[sectionId].map((entry) => {
@@ -1766,10 +1921,58 @@ const styles = StyleSheet.create({
   heroPillOn: { backgroundColor: adminTheme.colors.successLight },
   heroPillOff: { backgroundColor: adminTheme.colors.surfaceTertiary },
   heroPillAdmin: { backgroundColor: adminTheme.colors.infoLight },
+  heroPillLocked: { backgroundColor: '#fef3c7' },
   heroPillText: { fontSize: 12, fontWeight: '700' },
   heroPillTextOn: { color: adminTheme.colors.success },
   heroPillTextOff: { color: adminTheme.colors.textMuted },
   heroPillTextAdmin: { color: adminTheme.colors.info, fontSize: 12, fontWeight: '700' },
+  heroPillTextLocked: { color: '#b45309', fontSize: 12, fontWeight: '700' },
+  lockStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    marginBottom: 8,
+  },
+  lockStatusText: { flex: 1, fontSize: 14, fontWeight: '700', color: '#92400e' },
+  lockButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: '#dc2626',
+    marginTop: 4,
+  },
+  unlockButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: adminTheme.colors.primary,
+    marginTop: 4,
+  },
+  lockButtonDisabled: { opacity: 0.65 },
+  lockButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  heroProfileBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: adminTheme.radius.md,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  heroProfileBtnText: { flex: 1, fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
   switchLabel: {
     flex: 1,
     fontSize: 14,

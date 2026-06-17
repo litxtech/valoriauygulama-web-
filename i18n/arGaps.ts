@@ -11,4 +11,6 @@ export const arGaps: Record<string, string> = {
   staffBoardHistoryEmpty: 'لا إعلانات سابقة بعد.',
   staffBoardAcknowledge: 'قرأتُ وفهمت',
   staffBoardReadAt: 'قُرئ: {{time}}',
+  staffBoardSubtitleShort: 'القواعد والإعلانات والمهام',
+  staffBoardOpenLink: 'فتح الصفحة المرتبطة',
 };

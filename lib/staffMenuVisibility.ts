@@ -1,5 +1,6 @@
 import type { StaffHamburgerMenuItem, StaffHamburgerMenuSection } from '@/lib/staffHamburgerMenu';
 import { isStaffMenuItemHidden, normalizeHiddenMenuItemIds } from '@/lib/staffMenuCatalog';
+import { APP_FEATURE_BY_ID } from '@/lib/appFeatureCatalog';
 import { isFeatureVisibleInPlacement, type OrganizationUiFeaturesConfig } from '@/lib/organizationUiFeatures';
 
 export type StaffMenuVisibilitySlice = {
@@ -36,6 +37,20 @@ export function filterStaffMenuItemsByHidden(
 /** İşletme özellik yapılandırmasına göre hamburger öğelerini filtreler */
 function menuItemFeatureId(itemId: string): string {
   if (itemId === 'kitchen_ops' || itemId.startsWith('kitchen_quick_')) return 'kitchen_ops';
+  if (itemId.startsWith('payments_')) {
+    const adminOnly = new Set([
+      'payments_tips_lane',
+      'payments_tips_confirm',
+      'payments_kitchen_lane',
+      'payments_hotel_lane',
+      'payments_room_service',
+      'payments_guest_extras',
+      'payments_accounting',
+      'payments_accounting_hub',
+    ]);
+    if (adminOnly.has(itemId)) return 'payments_admin';
+    return 'payments';
+  }
   return itemId;
 }
 
@@ -47,9 +62,11 @@ export function filterStaffMenuSectionsByOrgFeatures(
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) =>
-        isFeatureVisibleInPlacement(config, menuItemFeatureId(item.id), 'hamburger')
-      ),
+      items: section.items.filter((item) => {
+        const featureId = menuItemFeatureId(item.id);
+        if (!APP_FEATURE_BY_ID.has(featureId)) return true;
+        return isFeatureVisibleInPlacement(config, featureId, 'hamburger');
+      }),
     }))
     .filter((s) => s.items.length > 0);
 }

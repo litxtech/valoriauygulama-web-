@@ -17,15 +17,23 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { notifyAdmins } from '@/lib/notificationService';
+import {
+  notifyAllStaffForAttendanceAction,
+  type StaffAttendanceNotifyEvent,
+} from '@/lib/staffAttendanceNotifications';
 import { useAuthStore } from '@/stores/authStore';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { PressableScale } from '@/components/premium/PressableScale';
+import { LiveShiftDuration } from '@/components/attendance/LiveShiftDuration';
 import {
   attendanceEventIcon,
   attendanceStatusVisual,
+  attendanceTrackingLabel,
   formatAttendanceTime,
+  formatDurationBetween,
+  formatDurationFromHours,
 } from '@/lib/attendancePresentation';
+import { resolveAttendanceTodayUiState } from '@/lib/attendanceTodayState';
 import {
   addStaffAttendanceEvent,
   checkInStaffAttendance,
@@ -94,19 +102,6 @@ export default function StaffAttendanceScreen() {
     [t]
   );
 
-  const locationStatusLabel = useCallback(
-    (locationStatus: string) => {
-      const labels: Record<string, string> = {
-        verified: t('staffAttLocVerified'),
-        outside_hotel_radius: t('staffAttLocOutside'),
-        missing: t('staffAttLocMissing'),
-        unavailable: t('staffAttLocUnavailable'),
-      };
-      return labels[locationStatus] ?? locationStatus;
-    },
-    [t]
-  );
-
   const loadQueue = useCallback(async (): Promise<OfflineQueuedAction[]> => {
     const raw = await AsyncStorage.getItem(OFFLINE_QUEUE_KEY);
     if (!raw) return [];
@@ -165,23 +160,11 @@ export default function StaffAttendanceScreen() {
     };
   }, [t]);
 
-  const notifyAdminForAttendanceAction = useCallback(
-    async (actionLabel: string, note?: string) => {
-      const staffName = staff?.full_name?.trim() || t('staffFeedSomeone');
-      const title = t('staffAttNotifyTitle');
-      const bodyBase = `${staffName}: ${actionLabel}`;
-      const body = note ? `${bodyBase} — ${note}` : bodyBase;
-      await notifyAdmins({
-        title,
-        body,
-        data: {
-          url: '/admin/attendance',
-          notificationType: 'staff_attendance_action',
-          screen: 'admin',
-        },
-      });
+  const notifyStaffForAttendanceAction = useCallback(
+    async (event: StaffAttendanceNotifyEvent, note?: string) => {
+      await notifyAllStaffForAttendanceAction(staff, event, t, note);
     },
-    [staff?.full_name, t]
+    [staff, t]
   );
 
   const handleAction = useCallback(
@@ -205,11 +188,11 @@ export default function StaffAttendanceScreen() {
         };
         if (type === 'check_in') {
           await checkInStaffAttendance(payload);
-          void notifyAdminForAttendanceAction(t('staffAttNotifyCheckedIn'), noteText || undefined);
+          void notifyStaffForAttendanceAction('check_in', noteText || undefined);
           Alert.alert(t('staffAttSuccess'), t('staffAttCheckInRecorded'));
         } else {
           await checkOutStaffAttendance(payload);
-          void notifyAdminForAttendanceAction(t('staffAttNotifyCheckedOut'), noteText || undefined);
+          void notifyStaffForAttendanceAction('check_out', noteText || undefined);
           Alert.alert(t('staffAttSuccess'), t('staffAttCheckOutRecorded'));
         }
         setActionNote('');
@@ -226,7 +209,7 @@ export default function StaffAttendanceScreen() {
         setBusy(false);
       }
     },
-    [actionNote, appendQueue, flushOfflineQueue, getLocationPayload, notifyAdminForAttendanceAction, q, t]
+    [actionNote, appendQueue, flushOfflineQueue, getLocationPayload, notifyStaffForAttendanceAction, q, t]
   );
 
   const addQuickEvent = useCallback(
@@ -237,8 +220,8 @@ export default function StaffAttendanceScreen() {
       try {
         setBusy(true);
         await addStaffAttendanceEvent(eventType, note);
-        void notifyAdminForAttendanceAction(
-          eventType === 'late_notice' ? t('staffAttNotifyLate') : t('staffAttNotifyManual'),
+        void notifyStaffForAttendanceAction(
+          eventType === 'late_notice' ? 'late_notice' : 'manual_request',
           note
         );
         setActionNote('');
@@ -256,12 +239,21 @@ export default function StaffAttendanceScreen() {
         setBusy(false);
       }
     },
-    [actionNote, appendQueue, notifyAdminForAttendanceAction, q, t]
+    [actionNote, appendQueue, notifyStaffForAttendanceAction, q, t]
   );
 
   const events = q.data?.events ?? [];
-  const hasCheckIn = !!report.check_in_at;
-  const hasCheckOut = !!report.check_out_at;
+  const ui = resolveAttendanceTodayUiState(q.data);
+  const checkInAt = ui.checkInAt;
+  const checkOutAt = ui.checkOutAt;
+  const summaryCheckInAt = checkInAt ?? ui.firstCheckInAt;
+  const isOnShift = ui.isOnShift;
+  const canStart = ui.canStart;
+  const canEnd = ui.canEnd;
+  const trackingLabel = attendanceTrackingLabel(
+    isOnShift ? 'on_shift' : canStart ? 'not_started' : 'finished',
+    lang === 'tr'
+  );
 
   return (
     <ScrollView
@@ -291,50 +283,55 @@ export default function StaffAttendanceScreen() {
             <Ionicons name={statusVisual.icon} size={28} color="#fff" />
           </View>
           <View style={styles.heroStatusCol}>
-            <Text style={styles.heroStatusLabel}>{t('staffAttTodayStatus')}</Text>
+            <Text style={styles.heroStatusLabel}>{trackingLabel}</Text>
             <Text style={styles.heroStatusValue}>{statusLabel}</Text>
+            {isOnShift && checkInAt ? (
+              <View style={styles.heroLiveRow}>
+                <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.9)" />
+                <LiveShiftDuration startedAt={checkInAt} textStyle={styles.heroLiveText} />
+              </View>
+            ) : null}
           </View>
         </View>
       </LinearGradient>
 
-      {/* Özet kutular */}
-      <View style={styles.statsGrid}>
-        <View style={[styles.statTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-          <Ionicons name="log-in-outline" size={20} color="#16a34a" />
-          <Text style={[styles.statTileLabel, { color: palette.muted }]}>{t('staffAttCheckIn')}</Text>
-          <Text style={[styles.statTileValue, { color: palette.text }]}>
-            {formatAttendanceTime(report.check_in_at, localeCode)}
+      {/* Özet */}
+      <View style={[styles.summaryCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryLabel, { color: palette.muted }]}>{t('staffAttCheckIn')}</Text>
+          <Text style={[styles.summaryValue, { color: palette.text }]}>
+            {formatAttendanceTime(summaryCheckInAt, localeCode)}
           </Text>
         </View>
-        <View style={[styles.statTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-          <Ionicons name="log-out-outline" size={20} color="#f59e0b" />
-          <Text style={[styles.statTileLabel, { color: palette.muted }]}>{t('staffAttCheckOut')}</Text>
-          <Text style={[styles.statTileValue, { color: palette.text }]}>
-            {formatAttendanceTime(report.check_out_at, localeCode)}
+        <View style={[styles.summaryDivider, { backgroundColor: palette.cardBorder }]} />
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryLabel, { color: palette.muted }]}>{t('staffAttCheckOut')}</Text>
+          <Text style={[styles.summaryValue, { color: palette.text }]}>
+            {formatAttendanceTime(checkOutAt, localeCode)}
           </Text>
         </View>
-        <View style={[styles.statTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-          <Ionicons name="hourglass-outline" size={20} color={palette.indigo} />
-          <Text style={[styles.statTileLabel, { color: palette.muted }]}>{t('staffAttTotalHours')}</Text>
-          <Text style={[styles.statTileValue, { color: palette.text }]}>
-            {report.total_hours != null ? `${report.total_hours.toFixed(1)}s` : '—'}
-          </Text>
-        </View>
-        <View style={[styles.statTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-          <Ionicons name="alarm-outline" size={20} color="#ea580c" />
-          <Text style={[styles.statTileLabel, { color: palette.muted }]}>{t('staffAttLateMinutes')}</Text>
-          <Text style={[styles.statTileValue, { color: palette.text }]}>
-            {report.late_minutes != null ? `${report.late_minutes} dk` : '—'}
-          </Text>
+        <View style={[styles.summaryDivider, { backgroundColor: palette.cardBorder }]} />
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryLabel, { color: palette.muted }]}>{t('staffAttTotalHours')}</Text>
+          {isOnShift && checkInAt ? (
+            <LiveShiftDuration
+              startedAt={checkInAt}
+              textStyle={[styles.summaryValue, { color: palette.text }]}
+            />
+          ) : (
+            <Text style={[styles.summaryValue, { color: palette.text }]}>
+              {formatDurationFromHours(report.total_hours, lang === 'tr')}
+            </Text>
+          )}
         </View>
       </View>
 
       {/* Ana aksiyonlar */}
       <View style={styles.actionRow}>
         <PressableScale
-          style={styles.actionHalf}
+          style={[styles.actionHalf, !canStart ? styles.actionDimmed : undefined]}
           onPress={() => handleAction('check_in')}
-          disabled={busy || hasCheckOut || (hasCheckIn && !hasCheckOut)}
+          disabled={busy || !canStart}
         >
           <LinearGradient colors={['#2563eb', '#6366f1']} style={styles.actionBtn}>
             <Ionicons name="play-circle" size={26} color="#fff" />
@@ -342,9 +339,9 @@ export default function StaffAttendanceScreen() {
           </LinearGradient>
         </PressableScale>
         <PressableScale
-          style={styles.actionHalf}
+          style={[styles.actionHalf, !canEnd ? styles.actionDimmed : undefined]}
           onPress={() => handleAction('check_out')}
-          disabled={busy || !hasCheckIn || hasCheckOut}
+          disabled={busy || !canEnd}
         >
           <LinearGradient colors={['#0f766e', '#14b8a6']} style={styles.actionBtn}>
             <Ionicons name="stop-circle" size={26} color="#fff" />
@@ -383,17 +380,6 @@ export default function StaffAttendanceScreen() {
         </PressableScale>
       </View>
 
-      {/* Bilgi notları */}
-      <View style={[styles.infoCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-        <View style={styles.infoHead}>
-          <Ionicons name="information-circle-outline" size={20} color={palette.indigo} />
-          <Text style={[styles.infoTitle, { color: palette.text }]}>{t('staffAttInfoTitle')}</Text>
-        </View>
-        <Text style={[styles.infoLine, { color: palette.subtext }]}>• {t('staffAttInfo1')}</Text>
-        <Text style={[styles.infoLine, { color: palette.subtext }]}>• {t('staffAttInfo2')}</Text>
-        <Text style={[styles.infoLine, { color: palette.subtext }]}>• {t('staffAttInfo3')}</Text>
-      </View>
-
       {/* Zaman çizelgesi */}
       <Text style={[styles.sectionLabel, { color: palette.text, marginTop: 4 }]}>{t('staffAttTimelineTitle')}</Text>
       {events.length === 0 ? (
@@ -406,10 +392,11 @@ export default function StaffAttendanceScreen() {
           <TimelineRow
             key={item.id}
             item={item}
+            previousTime={idx > 0 ? events[idx - 1]?.event_time ?? null : null}
             isLast={idx === events.length - 1}
             localeCode={localeCode}
+            isTr={lang === 'tr'}
             eventTypeLabel={eventTypeLabel}
-            locationStatusLabel={locationStatusLabel}
             palette={palette}
           />
         ))
@@ -420,21 +407,24 @@ export default function StaffAttendanceScreen() {
 
 function TimelineRow({
   item,
+  previousTime,
   isLast,
   localeCode,
+  isTr,
   eventTypeLabel,
-  locationStatusLabel,
   palette,
 }: {
   item: AttendanceEvent;
+  previousTime: string | null;
   isLast: boolean;
   localeCode: string;
+  isTr: boolean;
   eventTypeLabel: (t: string) => string;
-  locationStatusLabel: (s: string) => string;
   palette: ReturnType<typeof usePersonelDesign>;
 }) {
   const icon = attendanceEventIcon(item.event_type);
   const isCheckIn = item.event_type === 'check_in';
+  const gapLabel = formatDurationBetween(previousTime, item.event_time, isTr);
 
   return (
     <View style={styles.timelineRow}>
@@ -450,13 +440,10 @@ function TimelineRow({
           <View style={{ flex: 1 }}>
             <Text style={[styles.timelineTitle, { color: palette.text }]}>{eventTypeLabel(item.event_type)}</Text>
             <Text style={[styles.timelineMeta, { color: palette.muted }]}>
-              {locationStatusLabel(item.location_status)}
-              {typeof item.distance_to_hotel_m === 'number' ? ` · ${Math.round(item.distance_to_hotel_m)}m` : ''}
+              {formatAttendanceTime(item.event_time, localeCode)}
+              {gapLabel ? ` · +${gapLabel}` : ''}
             </Text>
           </View>
-          <Text style={[styles.timelineTime, { color: palette.text }]}>
-            {formatAttendanceTime(item.event_time, localeCode)}
-          </Text>
         </View>
         {item.note ? (
           <Text style={[styles.timelineNote, { color: palette.subtext, borderTopColor: palette.cardBorder }]}>
@@ -509,20 +496,24 @@ const styles = StyleSheet.create({
   },
   heroStatusCol: { flex: 1 },
   heroStatusLabel: { color: 'rgba(255,255,255,0.88)', fontSize: 13, fontWeight: '600' },
-  heroStatusValue: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: 2 },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  statTile: {
-    width: '47%',
-    flexGrow: 1,
+  heroStatusValue: { color: '#fff', fontSize: 22, fontWeight: '900', marginTop: 2 },
+  heroLiveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  heroLiveText: { color: '#fff', fontSize: 18, fontWeight: '900' },
+  summaryCard: {
+    flexDirection: 'row',
     borderRadius: 16,
     borderWidth: 1,
-    padding: 14,
-    gap: 4,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: 'center',
   },
-  statTileLabel: { fontSize: 11, fontWeight: '600', marginTop: 4 },
-  statTileValue: { fontSize: 20, fontWeight: '800' },
+  summaryItem: { flex: 1, alignItems: 'center', gap: 4 },
+  summaryLabel: { fontSize: 11, fontWeight: '600' },
+  summaryValue: { fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  summaryDivider: { width: 1, alignSelf: 'stretch' },
   actionRow: { flexDirection: 'row', gap: 10 },
   actionHalf: { flex: 1 },
+  actionDimmed: { opacity: 0.42 },
   actionBtn: {
     borderRadius: 18,
     paddingVertical: 18,
@@ -555,10 +546,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   quickLabel: { fontSize: 13, fontWeight: '700', color: '#334155', textAlign: 'center' },
-  infoCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8 },
-  infoHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  infoTitle: { fontSize: 14, fontWeight: '800' },
-  infoLine: { fontSize: 13, lineHeight: 19 },
   emptyBox: {
     borderRadius: 16,
     borderWidth: 1,
@@ -581,8 +568,7 @@ const styles = StyleSheet.create({
   timelineHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   timelineIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   timelineTitle: { fontSize: 14, fontWeight: '700' },
-  timelineMeta: { fontSize: 11, marginTop: 2 },
-  timelineTime: { fontSize: 14, fontWeight: '800' },
+  timelineMeta: { fontSize: 12, marginTop: 2, fontWeight: '600' },
   timelineNote: {
     marginTop: 10,
     paddingTop: 10,

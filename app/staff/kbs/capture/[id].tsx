@@ -3,9 +3,10 @@ import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
-import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
+import { canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import {
   fetchKbsCapturedDocumentById,
+  filterKbsCapturesForViewer,
   type KbsCapturedDocumentRow,
 } from '@/lib/kbsCaptureHistory';
 import { getKbsCaptureHistoryCache, setKbsCaptureHistoryCache } from '@/lib/kbsCaptureHistoryCache';
@@ -32,14 +33,17 @@ export default function KbsCaptureDetailScreen() {
     const cached = getKbsCaptureHistoryCache()?.find((r) => r.id === id);
     if (cached) setRow(cached);
     const fresh = await fetchKbsCapturedDocumentById(id);
-    if (fresh) {
-      setRow(fresh);
+    const scoped = fresh ? filterKbsCapturesForViewer([fresh], staff, staff?.auth_id)[0] ?? null : null;
+    if (scoped) {
+      setRow(scoped);
       const cache = getKbsCaptureHistoryCache();
       if (cache) {
-        setKbsCaptureHistoryCache(cache.map((r) => (r.id === id ? fresh : r)));
+        setKbsCaptureHistoryCache(cache.map((r) => (r.id === id ? scoped : r)));
       }
+    } else if (!cached) {
+      setRow(null);
     }
-  }, [id]);
+  }, [id, staff]);
 
   useEffect(() => {
     void load().finally(() => setLoading(false));
@@ -62,7 +66,7 @@ export default function KbsCaptureDetailScreen() {
     };
   }, [id, load]);
 
-  if (!canStaffUseIdCapture(staff)) {
+  if (!canStaffViewKbsCaptureHistory(staff)) {
     return <Redirect href="/staff" />;
   }
 

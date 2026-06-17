@@ -18,6 +18,13 @@ import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { fmtMoneyTry } from '@/lib/financeLedger';
 import { formatDateShort } from '@/lib/date';
+import { FinanceReportExportButtons } from '@/components/admin/FinanceReportExportButtons';
+import {
+  buildDebtListReportHtml,
+  debtListRowToReportRow,
+  resolveFinanceReportFooter,
+} from '@/lib/financeCounterpartyReport';
+import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
 import {
   DEBT_CATEGORY_META,
   DEBT_STATUS_META,
@@ -41,6 +48,7 @@ export default function AdminDebtsIndex() {
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
+  const organizations = useAdminOrgStore((s) => s.organizations);
   const [rows, setRows] = useState<DebtListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -117,6 +125,9 @@ export default function AdminDebtsIndex() {
     }
     return list;
   }, [rows, statusFilter, toneFilter, search]);
+
+  const pickerOrgId = orgFilter && orgFilter !== 'all' ? orgFilter : me?.organization_id;
+  const debtReportRows = useMemo(() => filtered.map(debtListRowToReportRow), [filtered]);
 
   if (loading && !refreshing) {
     return (
@@ -255,6 +266,29 @@ export default function AdminDebtsIndex() {
           {filtered.length} kayıt
           {filtered.length !== rows.length ? ` · ${rows.length} toplam` : ''}
         </Text>
+
+        {orgFilter && orgFilter !== 'all' && filtered.length > 0 ? (
+          <FinanceReportExportButtons
+            compact
+            fileName="cari-borc-alacak-liste"
+            mailSubject="Borç / alacak listesi"
+            shareDialogTitle="Borç / alacak listesi"
+            defaultKindFilter="all"
+            getHtml={(kind) =>
+              buildDebtListReportHtml(
+                {
+                  rows: debtReportRows,
+                  receivableTotal: summary.receivableTotal,
+                  payableTotal: summary.payableTotal,
+                  footer: resolveFinanceReportFooter(
+                    footerOptsFromOrganization(organizations.find((o) => o.id === pickerOrgId))
+                  ),
+                },
+                kind
+              )
+            }
+          />
+        ) : null}
 
         {(!orgFilter || orgFilter === 'all') && (
           <View style={styles.emptyBox}>

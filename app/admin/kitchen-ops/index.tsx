@@ -21,10 +21,13 @@ import { fetchDaySummary, fetchUnresolvedAlertCount } from '@/lib/kitchenOps/api
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 
 const LINKS = [
+  { href: '/admin/kitchen-ops/finance-access', icon: 'shield-checkmark-outline' as const, label: 'Finans erişimi', color: '#4f46e5' },
+  { href: '/admin/kitchen-ops/revenue-notify', icon: 'notifications-outline' as const, label: 'Hasılat bildirimleri', color: '#0d9488' },
   { href: '/admin/kitchen-ops/reports', icon: 'bar-chart-outline' as const, label: 'Raporlar', color: '#2563eb' },
   { href: '/admin/kitchen-ops/reception', icon: 'checkmark-done-outline' as const, label: 'Reception Kontrol', color: '#059669' },
   { href: '/admin/kitchen-ops/categories', icon: 'grid-outline' as const, label: 'Kategoriler', color: '#7c3aed' },
   { href: '/admin/kitchen-ops/settings', icon: 'settings-outline' as const, label: 'Limitler & Ayarlar', color: '#b45309' },
+  { href: '/staff/kitchen-ops/finance-bridge', icon: 'git-compare-outline' as const, label: 'Mutfak ↔ Resepsiyon Finans', color: '#4f46e5' },
   { href: '/staff/kitchen-ops', icon: 'restaurant-outline' as const, label: 'Mutfak Paneli', color: '#ea580c' },
   { href: '/staff/kitchen-ops/shortages', icon: 'clipboard-outline' as const, label: 'Mutfak Eksikleri', color: '#E67E22' },
 ];

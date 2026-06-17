@@ -2,6 +2,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getStripe } from "../_shared/stripeClient.ts";
 import { applyStaffTipPaymentConfirmed } from "../_shared/staffTipConfirm.ts";
+import { processPaymentRequestPaid } from "../_shared/processPaymentRequestPaid.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -154,6 +155,13 @@ Deno.serve(async (req: Request) => {
     if (!result.ok) {
       return json({ error: "Bahşiş onaylanamadı", error_code: result.skipped ?? "FAILED" }, 500);
     }
+
+    await processPaymentRequestPaid({
+      admin,
+      supabaseUrl,
+      serviceKey,
+      requestId: paymentRequestId,
+    });
 
     return json({
       ok: true,

@@ -19,11 +19,11 @@
     },
     {
       "source": "/odeme/qr",
-      "destination": "/api/odeme/qr"
+      "destination": "/odeme/qr/index.html"
     },
     {
       "source": "/odeme",
-      "destination": "/api/odeme"
+      "destination": "/odeme/index.html"
     },
     {
       "source": "/:path*",
@@ -31,6 +31,24 @@
     }
   ],
   "headers": [
+    {
+      "source": "/menu/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/((?!_expo|assets|maliye|favicon).*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
     {
       "source": "/maliye/index.html",
       "headers": [

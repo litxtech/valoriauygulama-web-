@@ -45,6 +45,28 @@ import {
 } from '@/lib/staffAssignmentNotification';
 import { resolveNotificationHref } from '@/lib/notificationNavigation';
 import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
+import { breakfastBriefingFromNotification } from '@/lib/breakfastMorningBriefing';
+import { BreakfastBriefingNotifCard } from '@/components/breakfast/BreakfastBriefingNotifCard';
+import { StaffEmergencyNotifCard } from '@/components/emergency/StaffEmergencyNotifCard';
+import { CounterpartyAgreementNotifCard } from '@/components/finance/CounterpartyAgreementNotifCard';
+import {
+  counterpartyAgreementNotifFromData,
+  isCounterpartyAgreementNotification,
+} from '@/lib/financeCounterpartyAgreementNotify';
+import {
+  isStaffEmergencyAlertNotification,
+  staffEmergencyAlertFromData,
+} from '@/lib/staffEmergency';
+import {
+  buildAnnouncementActionHref,
+  hasStaffNotificationAction,
+  parseStaffNotificationAction,
+} from '@/lib/staffNotificationActions';
+import { StaffAnnouncementActionPanel } from '@/components/staff/StaffAnnouncementActionPanel';
+
+function isBreakfastBriefingNotification(n: { notification_type: string | null }): boolean {
+  return n.notification_type === 'breakfast_morning_briefing';
+}
 
 function missingNotificationPreview(body: string | null | undefined, maxLines = 6): string | null {
   if (!body?.trim()) return null;
@@ -83,6 +105,10 @@ type NotifRow = {
     lostFoundItemId?: string;
     subjectStaffId?: string;
     subject_staff_id?: string;
+    breakfastGuestCount?: number;
+    hotelGuestCount?: number;
+    recordDate?: string;
+    briefingId?: string;
     assignmentId?: string;
   } | null;
 };
@@ -193,6 +219,34 @@ function createStaffNotifStyles(p: PersonelDesignPalette) {
   },
   rowRead: { opacity: 0.85 },
   rowCategory: { fontSize: 12, color: '#b8860b', fontWeight: '600', marginBottom: 4 },
+  briefingTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  briefingTypePillText: { fontSize: 10, fontWeight: '800', color: '#b45309', letterSpacing: 0.4 },
+  emergencyTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  emergencyTypePillText: { fontSize: 10, fontWeight: '800', color: '#dc2626', letterSpacing: 0.4 },
   rowTitle: { fontSize: 16, fontWeight: '600', color: p.text, marginBottom: 4 },
   rowBody: { fontSize: 14, color: p.subtext, marginBottom: 8 },
   rowTime: { fontSize: 12, color: p.muted },
@@ -649,6 +703,9 @@ export default function StaffNotificationsScreen() {
     }
   };
 
+  const staffEmergencySnapshot = (n: NotifRow) =>
+    staffEmergencyAlertFromData((n.data ?? {}) as Record<string, unknown>, n.body);
+
   const displayTitle = (n: NotifRow) => {
     const shown = displayFor(n);
     if (isMissingNotification(n)) return shown.title?.trim() || t('staffNotifMissingReport');
@@ -656,10 +713,18 @@ export default function StaffNotificationsScreen() {
   };
 
   const displayBody = (n: NotifRow) => {
+    if (isBreakfastBriefingNotification(n)) return null;
+    if (isStaffEmergencyAlertNotification(n.notification_type)) return null;
     const shown = displayFor(n);
     if (isMissingNotification(n)) return missingNotificationPreview(shown.body);
     return shown.body?.trim() || null;
   };
+
+  const breakfastBriefingSnapshot = (n: NotifRow) =>
+    breakfastBriefingFromNotification(
+      (n.data ?? {}) as Record<string, unknown>,
+      displayFor(n).body ?? n.body
+    );
 
   const onNotificationPress = (n: NotifRow) => {
     if (!n.read_at) markRead(n.id);
@@ -708,6 +773,24 @@ export default function StaffNotificationsScreen() {
     if (isStaffMealMenuDailyNotification((n.data ?? {}) as Record<string, unknown>)) {
       router.push(staffMealMenuNotificationHref((n.data ?? {}) as Record<string, unknown>));
       return;
+    }
+    if (isBreakfastBriefingNotification(n)) {
+      router.push('/staff/breakfast-briefing' as never);
+      return;
+    }
+    if (
+      n.notification_type === 'staff_feature_intro' ||
+      (n.notification_type === 'staff_board_announcement' && hasStaffNotificationAction(n.data))
+    ) {
+      const action = parseStaffNotificationAction((n.data ?? {}) as Record<string, unknown>);
+      if (action?.videoUrl) {
+        router.push(buildAnnouncementActionHref((n.data ?? {}) as Record<string, unknown>));
+        return;
+      }
+      if (action?.openScreen) {
+        router.push(action.openScreen as never);
+        return;
+      }
     }
     if (isStaffAssignmentNotification(n.notification_type, n.data)) {
       setSelectedNotification(n);
@@ -890,17 +973,45 @@ export default function StaffNotificationsScreen() {
       ) : (
         list.map((n) => {
           const isTaskNotif = isStaffAssignmentNotification(n.notification_type, n.data);
+          const briefingSnap = isBreakfastBriefingNotification(n) ? breakfastBriefingSnapshot(n) : null;
+          const emergencySnap = isStaffEmergencyAlertNotification(n.notification_type)
+            ? staffEmergencySnapshot(n)
+            : null;
+          const agreementSnap = isCounterpartyAgreementNotification(n.notification_type)
+            ? counterpartyAgreementNotifFromData((n.data ?? {}) as Record<string, unknown>)
+            : null;
           return (
           <View key={n.id} style={[styles.row, n.read_at ? styles.rowRead : null]}>
             <TouchableOpacity
               onPress={() => onNotificationPress(n)}
               activeOpacity={0.8}
             >
-              {categoryLabel(n.category) ? (
+              {isBreakfastBriefingNotification(n) ? (
+                <View style={styles.briefingTypePill}>
+                  <Ionicons name="cafe-outline" size={12} color="#b45309" />
+                  <Text style={styles.briefingTypePillText}>KAHVALTI BRİFİNGİ</Text>
+                </View>
+              ) : emergencySnap ? (
+                <View style={styles.emergencyTypePill}>
+                  <Ionicons name="warning" size={12} color="#dc2626" />
+                  <Text style={styles.emergencyTypePillText}>{t('staffNotifCatEmergency').toUpperCase()}</Text>
+                </View>
+              ) : agreementSnap ? (
+                <View style={styles.briefingTypePill}>
+                  <Ionicons name="wallet-outline" size={12} color="#7c3aed" />
+                  <Text style={[styles.briefingTypePillText, { color: '#5b21b6' }]}>BORÇ / ALACAK</Text>
+                </View>
+              ) : categoryLabel(n.category) ? (
                 <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
               ) : null}
               <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
-              {displayBody(n) ? (
+              {briefingSnap ? (
+                <BreakfastBriefingNotifCard snapshot={briefingSnap} compact />
+              ) : emergencySnap ? (
+                <StaffEmergencyNotifCard payload={emergencySnap} compact />
+              ) : agreementSnap ? (
+                <CounterpartyAgreementNotifCard snapshot={agreementSnap} compact />
+              ) : displayBody(n) ? (
                 <Text style={styles.rowBody} numberOfLines={isMissingNotification(n) ? 8 : 4}>
                   {displayBody(n)}
                 </Text>
@@ -948,12 +1059,36 @@ export default function StaffNotificationsScreen() {
               </TouchableOpacity>
             </View>
             {!!selectedNotification?.body &&
+              !isBreakfastBriefingNotification(selectedNotification) &&
+              !isStaffEmergencyAlertNotification(selectedNotification.notification_type) &&
+              !isCounterpartyAgreementNotification(selectedNotification.notification_type) &&
               !(
                 selectedNotification.notification_type === 'staff_personnel_warning' &&
                 personnelWarningDetail
               ) && (
                 <Text style={styles.detailBody}>{displayFor(selectedNotification).body}</Text>
               )}
+            {selectedNotification && isStaffEmergencyAlertNotification(selectedNotification.notification_type) ? (
+              <StaffEmergencyNotifCard payload={staffEmergencySnapshot(selectedNotification)} />
+            ) : null}
+            {selectedNotification && isCounterpartyAgreementNotification(selectedNotification.notification_type) ? (
+              (() => {
+                const snap = counterpartyAgreementNotifFromData(
+                  (selectedNotification.data ?? {}) as Record<string, unknown>
+                );
+                return snap ? <CounterpartyAgreementNotifCard snapshot={snap} /> : null;
+              })()
+            ) : null}
+            {selectedNotification && isBreakfastBriefingNotification(selectedNotification) ? (
+              (() => {
+                const snap = breakfastBriefingSnapshot(selectedNotification);
+                return snap ? (
+                  <BreakfastBriefingNotifCard snapshot={snap} />
+                ) : (
+                  <Text style={styles.detailBody}>{displayFor(selectedNotification).body}</Text>
+                );
+              })()
+            ) : null}
             {!!selectedNotification && (
               <Text style={styles.detailMeta}>
                 {t('staffNotifDate', { date: fmtDate(selectedNotification.created_at) })}
@@ -1204,6 +1339,27 @@ export default function StaffNotificationsScreen() {
                   <Text style={styles.detailLinkBtnText}>{t('staffNotifOpenTasksPage')}</Text>
                 </TouchableOpacity>
               </View>
+            ) : selectedNotification && hasStaffNotificationAction(selectedNotification.data) ? (
+              (() => {
+                const action = parseStaffNotificationAction(
+                  (selectedNotification.data ?? {}) as Record<string, unknown>
+                );
+                return (
+                  <StaffAnnouncementActionPanel
+                    compact
+                    title={displayTitle(selectedNotification)}
+                    body={displayBody(selectedNotification) ?? displayFor(selectedNotification).body}
+                    videoUrl={action?.videoUrl}
+                    videoTitle={action?.videoTitle}
+                    openScreen={action?.openScreen}
+                    actionLabel={action?.actionLabel}
+                    onOpenScreen={(href) => {
+                      setDetailVisible(false);
+                      router.push(href as never);
+                    }}
+                  />
+                );
+              })()
             ) : null}
           </View>
         </View>

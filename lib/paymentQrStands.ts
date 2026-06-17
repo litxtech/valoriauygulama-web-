@@ -9,11 +9,14 @@ function throwPaymentQrDbError(error: { message?: string }): never {
   throw new Error(sanitizeSupabaseErrorMessage(error.message));
 }
 
+export type PaymentQrStandAmountMode = 'fixed' | 'variable';
+
 export type PaymentQrStandRow = {
   id: string;
   public_token: string;
   organization_id: string;
-  amount: number;
+  amount: number | null;
+  amount_mode: PaymentQrStandAmountMode;
   currency: string;
   title: string;
   description: string | null;
@@ -34,27 +37,35 @@ export type CreatePaymentQrStandResult = {
   id: string;
   public_token: string;
   open_url: string;
-  amount: number;
+  amount: number | null;
+  amount_mode: PaymentQrStandAmountMode;
   currency: string;
   title: string;
   description: string | null;
   service_kind: PaymentServiceKind;
   status: 'active';
-  qr_mode: 'standing';
+  qr_mode: 'standing' | 'standing_variable';
 };
 
 /** Sabit QR — WhatsApp/iMessage önizlemesinde işletme adı görünür */
 export { paymentQrStandOpenUrl };
 
+export function isVariablePaymentQrStand(row: Pick<PaymentQrStandRow, 'amount_mode'>): boolean {
+  return row.amount_mode === 'variable';
+}
+
 export async function createPaymentQrStand(input: {
-  amount: number;
+  amount?: number;
+  amountMode?: PaymentQrStandAmountMode;
   currency?: string;
   title: string;
   description?: string | null;
   serviceKind?: PaymentServiceKind;
 }): Promise<CreatePaymentQrStandResult> {
+  const amountMode = input.amountMode ?? 'fixed';
   const { data, error } = await invokeEdgeWithAuth('create-payment-qr-stand', {
-    amount: input.amount,
+    amount: amountMode === 'fixed' ? input.amount : null,
+    amount_mode: amountMode,
     currency: input.currency ?? 'try',
     title: input.title.trim(),
     description: input.description?.trim() || null,
@@ -88,7 +99,9 @@ export async function closePaymentQrStand(standId: string): Promise<void> {
 export async function fetchPaymentQrStand(id: string): Promise<PaymentQrStandRow | null> {
   const { data, error } = await supabase.from('payment_qr_stands').select('*').eq('id', id).maybeSingle();
   if (error) throwPaymentQrDbError(error);
-  return (data as PaymentQrStandRow | null) ?? null;
+  if (!data) return null;
+  const row = data as PaymentQrStandRow;
+  return { ...row, amount_mode: row.amount_mode ?? 'fixed' };
 }
 
 export async function fetchPaymentQrStands(orgId: string | null, limit = 40): Promise<PaymentQrStandRow[]> {
@@ -100,7 +113,10 @@ export async function fetchPaymentQrStands(orgId: string | null, limit = 40): Pr
   if (orgId) q = q.eq('organization_id', orgId);
   const { data, error } = await q;
   if (error) throwPaymentQrDbError(error);
-  return (data ?? []) as PaymentQrStandRow[];
+  return (data ?? []).map((row) => ({
+    ...(row as PaymentQrStandRow),
+    amount_mode: (row as PaymentQrStandRow).amount_mode ?? 'fixed',
+  }));
 }
 
 export async function fetchPaymentQrStandStats(standId: string): Promise<PaymentQrStandStats> {

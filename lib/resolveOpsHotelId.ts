@@ -10,7 +10,7 @@ const ENSURE_MSG: Record<string, string> = {
     'Sunucuda ensure_my_ops_app_user fonksiyonu yok. Migration 304_ops_ensure_app_user_mrz_staff.sql uygulayın.',
   NO_STAFF_ROW: 'Personel kaydı bulunamadı. Yöneticinizle iletişime geçin.',
   STAFF_ROLE_NOT_OPS_ELIGIBLE:
-    'Bu hesap için KBS/MRZ otel bağlantısı tanımlı değil. Yöneticiden «Pasaport / MRZ tarama» iznini açmasını isteyin.',
+    'Bu hesap için otel (ops) bağlantısı tanımlı değil. Yöneticiden «Kimlik / pasaport çekim» veya «Pasaport / MRZ tarama» iznini açmasını isteyin.',
   USER_ID_REQUIRED: 'Oturum geçersiz.',
   AUTH: 'Oturum yok',
 };

@@ -2,6 +2,7 @@ import type { StaffPermissionSlice } from '@/lib/staffPermissions';
 import {
   canAccessKitchenOps,
   canAccessKitchenReceptionAccounting,
+  canAccessKitchenFinance,
   canAccessReservationSales,
   canManageHotelKitchenMenu,
   canManageKitchenOps,
@@ -33,11 +34,12 @@ export type FnbHubPrimaryAction = {
 const FNB_PRIMARY_IDS = new Set<FnbHubPrimaryAction['id']>(['kitchen_revenue', 'menu_theme', 'live_menu']);
 
 /** Mutfak + satış + menü tek merkez — en az bir alt modül yetkisi gerekir. */
-export function canAccessFnbHub(staff: StaffPermissionSlice): boolean {
+export function canAccessFnbHub(staff: StaffPermissionSlice, financeStaffIds?: string[] | null): boolean {
   if (!staff) return false;
   return (
     canAccessKitchenOps(staff) ||
     canManageKitchenOps(staff) ||
+    canAccessKitchenFinance(staff, financeStaffIds) ||
     canAccessReservationSales(staff) ||
     canManageHotelKitchenMenu(staff) ||
     canAccessKitchenReceptionAccounting(staff) ||
@@ -45,7 +47,11 @@ export function canAccessFnbHub(staff: StaffPermissionSlice): boolean {
   );
 }
 
-export function buildFnbHubQuickActions(staff: StaffPermissionSlice): FnbHubQuickAction[] {
+export function buildFnbHubQuickActions(
+  staff: StaffPermissionSlice,
+  opts?: { financeStaffIds?: string[] | null }
+): FnbHubQuickAction[] {
+  const financeStaffIds = opts?.financeStaffIds;
   const actions: FnbHubQuickAction[] = [
     {
       id: 'sales_new',
@@ -63,7 +69,16 @@ export function buildFnbHubQuickActions(staff: StaffPermissionSlice): FnbHubQuic
       href: '/staff/kitchen-ops/revenue/new',
       icon: 'cash-outline',
       color: '#059669',
-      visible: canAccessKitchenOps(staff),
+      visible: canAccessKitchenFinance(staff, financeStaffIds),
+    },
+    {
+      id: 'kitchen_finance_bridge',
+      label: 'Mutfak ↔ Resepsiyon Finans',
+      desc: 'Hasılat, gider, ödeme ve temiz kalan',
+      href: '/staff/kitchen-ops/finance-bridge',
+      icon: 'git-compare-outline',
+      color: '#4f46e5',
+      visible: canAccessKitchenFinance(staff, financeStaffIds) || canAccessKitchenReceptionAccounting(staff),
     },
     {
       id: 'menu_manage',
@@ -126,10 +141,19 @@ export function buildFnbHubQuickActions(staff: StaffPermissionSlice): FnbHubQuic
       id: 'meal_menu',
       label: 'Personel yemek listesi',
       desc: 'Aylık personel menüsü düzenle',
-      href: '/staff/meal-menu-edit',
+      href: staff?.role === 'admin' ? '/admin/meal-menu' : '/staff/meal-menu-edit',
       icon: 'fast-food-outline',
       color: '#c2410c',
       visible: hasStaffAppPermission(staff, 'yemek_listesi_olustur'),
+    },
+    {
+      id: 'dining_venues',
+      label: 'Yemek & mekanlar',
+      desc: 'Restoran, bar ve servis noktaları',
+      href: '/admin/dining-venues',
+      icon: 'storefront-outline',
+      color: '#db2777',
+      visible: staff?.role === 'admin' || hasStaffAppPermission(staff, 'dining_venues'),
     },
   ];
   return actions.filter((a) => a.visible);
@@ -137,9 +161,10 @@ export function buildFnbHubQuickActions(staff: StaffPermissionSlice): FnbHubQuic
 
 export function buildFnbHubPrimaryActions(
   staff: StaffPermissionSlice,
-  opts?: { variant?: 'staff' | 'admin'; publicMenuUrl?: string | null }
+  opts?: { variant?: 'staff' | 'admin'; publicMenuUrl?: string | null; financeStaffIds?: string[] | null }
 ): FnbHubPrimaryAction[] {
   const variant = opts?.variant ?? 'staff';
+  const financeStaffIds = opts?.financeStaffIds;
   const themeHref = variant === 'admin' ? '/admin/fnb-hub/menu-theme' : '/staff/fnb-hub/menu-theme';
   const publicMenuUrl = opts?.publicMenuUrl ?? null;
 
@@ -152,7 +177,7 @@ export function buildFnbHubPrimaryActions(
       icon: 'cash',
       color: '#059669',
       bg: '#ecfdf5',
-      visible: canAccessKitchenOps(staff),
+      visible: canAccessKitchenFinance(staff, financeStaffIds),
     },
     {
       id: 'menu_theme',
@@ -181,7 +206,7 @@ export function buildFnbHubPrimaryActions(
 
 export function buildFnbHubSecondaryActions(
   staff: StaffPermissionSlice,
-  opts?: { variant?: 'staff' | 'admin'; publicMenuUrl?: string | null }
+  opts?: { variant?: 'staff' | 'admin'; publicMenuUrl?: string | null; financeStaffIds?: string[] | null }
 ): FnbHubQuickAction[] {
-  return buildFnbHubQuickActions(staff).filter((a) => !FNB_PRIMARY_IDS.has(a.id as FnbHubPrimaryAction['id']));
+  return buildFnbHubQuickActions(staff, opts).filter((a) => !FNB_PRIMARY_IDS.has(a.id as FnbHubPrimaryAction['id']));
 }

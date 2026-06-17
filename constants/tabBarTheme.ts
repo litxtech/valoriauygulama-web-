@@ -15,6 +15,11 @@ export const appTabBar = {
     size: 36,
     icon: 20,
   },
+  /** Orta kimlik çekim kamera butonu (mesaj butonu ile aynı ölçü — etiket taşmasın). */
+  centerIdCapture: {
+    size: 36,
+    icon: 20,
+  },
 } as const;
 
 /** Karanlık mod tab bar — #666/#777 kullanılmaz */
@@ -24,6 +29,7 @@ export const appTabBarNight = {
   inactive: '#A7B0C0',
   fallbackActive: '#7C5CFF',
   centerMessage: appTabBar.centerMessage,
+  centerIdCapture: appTabBar.centerIdCapture,
 } as const;
 
 export type AppTabBarColors = typeof appTabBar;
@@ -62,6 +68,7 @@ export const appTabBarStaff = {
   tasks: '#CA8A04',
   stock: '#7C3AED',
   messages: '#EC4899',
+  'id-capture': '#2563EB',
   kbs: '#0D9488',
   acceptances: '#EA580C',
   admin: '#B91C1C',

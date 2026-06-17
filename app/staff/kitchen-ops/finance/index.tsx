@@ -6,7 +6,8 @@ import type { KitchenDaySummary } from '@/lib/kitchenOps/types';
 import { EMPTY_KITCHEN_DAY_SUMMARY } from '@/lib/kitchenOps/types';
 import { KitchenMoneyStat } from '@/components/kitchenOps/KitchenUi';
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
-import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
+import { KitchenFinancePrintBar } from '@/components/kitchenOps/KitchenPrintBar';
+import { KitchenFinanceAccessGate } from '@/components/kitchenOps/KitchenFinanceAccessGate';
 
 export default function KitchenFinanceScreen() {
   const [summary, setSummary] = useState<KitchenDaySummary>(EMPTY_KITCHEN_DAY_SUMMARY);
@@ -36,10 +37,15 @@ export default function KitchenFinanceScreen() {
   }, [load]);
 
   if (loading) {
-    return <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>;
+    return (
+      <KitchenFinanceAccessGate>
+        <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>
+      </KitchenFinanceAccessGate>
+    );
   }
 
   return (
+    <KitchenFinanceAccessGate>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -60,7 +66,7 @@ export default function KitchenFinanceScreen() {
           <Text style={styles.errorRetry}>Yeniden dene</Text>
         </Pressable>
       ) : null}
-      <KitchenPrintBar kind="finance_daily" />
+      <KitchenFinancePrintBar defaultOpen />
       <Text style={styles.title}>Bugünkü Finans Özeti</Text>
       <View style={styles.grid}>
         <KitchenMoneyStat label="Toplam hasılat" amount={summary.total_revenue} />
@@ -79,6 +85,7 @@ export default function KitchenFinanceScreen() {
         </Text>
       </View>
     </ScrollView>
+    </KitchenFinanceAccessGate>
   );
 }
 

@@ -1,15 +1,23 @@
-import { memo, useEffect, useMemo } from 'react';
-import { Platform, View, StyleSheet } from 'react-native';
+import { memo, useEffect, useMemo, useCallback } from 'react';
+import { Alert, Platform, View, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { StaffQuickMenuSheet } from '@/components/header/StaffQuickMenuSheet';
+import { supabase } from '@/lib/supabase';
+import { canAccessAdminRoute } from '@/lib/adminRoutePermissions';
 import { buildStaffHamburgerMenuLayout, flattenStaffHamburgerMenu } from '@/lib/staffHamburgerMenu';
+import { getMyAttendanceToday } from '@/lib/staffAttendance';
 import { staffRoleLabel } from '@/lib/staffAssignments';
 import { useAuthStore } from '@/stores/authStore';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
 import { useStaffHamburgerRecentsStore } from '@/stores/staffHamburgerRecentsStore';
 import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActions';
+import { useStaffMenuRealtime } from '@/hooks/useStaffMenuRealtime';
+import { useStaffHamburgerTheme } from '@/hooks/useStaffHamburgerTheme';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
+import { safeRouterReplace } from '@/lib/safeRouter';
 
 const IS_ANDROID = Platform.OS === 'android';
 const MENU_PREMOUNT_DELAY_MS = IS_ANDROID ? 0 : 400;
@@ -19,7 +27,9 @@ const MENU_PREMOUNT_DELAY_MS = IS_ANDROID ? 0 : 400;
  */
 export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay() {
   const { t } = useTranslation();
+  const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
+  const signOut = useAuthStore((s) => s.signOut);
   const orgUiConfig = useOrganizationUiFeaturesStore((s) => s.config);
   const visible = useStaffHamburgerUiStore((s) => s.visible);
   const navigatingAway = useStaffHamburgerUiStore((s) => s.navigatingAway);
@@ -27,6 +37,8 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   const sheetEverMounted = useStaffHamburgerUiStore((s) => s.sheetEverMounted);
   const markSheetMounted = useStaffHamburgerUiStore((s) => s.markSheetMounted);
   const { closeMenu, navigateFromMenu } = useStaffHamburgerMenuActions();
+  useStaffMenuRealtime();
+  const menuTheme = useStaffHamburgerTheme();
   const hydrateRecents = useStaffHamburgerRecentsStore((s) => s.hydrate);
   const recents = useStaffHamburgerRecentsStore((s) => s.recents);
   const resolveRecents = useStaffHamburgerRecentsStore((s) => s.resolveRecents);
@@ -86,8 +98,14 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   const allMenuItems = useMemo(() => {
     if (!menuLayout) return [];
     const flat = flattenStaffHamburgerMenu(menuLayout.sections);
-    if (!menuLayout.primary) return flat;
-    return [menuLayout.primary, ...flat.filter((item) => item.id !== menuLayout.primary?.id)];
+    const hubItems = menuLayout.hubs ?? [];
+    const primary = menuLayout.primary;
+    const merged = [
+      ...(primary ? [primary] : []),
+      ...hubItems.filter((item) => item.id !== primary?.id),
+      ...flat.filter((item) => item.id !== primary?.id && !hubItems.some((h) => h.id === item.id)),
+    ];
+    return merged;
   }, [menuLayout]);
 
   const recentItems = useMemo(
@@ -99,6 +117,66 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
     () => allMenuItems.find((item) => item.id === 'profile') ?? null,
     [allMenuItems]
   );
+
+  const showAttendanceShortcuts = useMemo(
+    () => allMenuItems.some((item) => item.id === 'attendance'),
+    [allMenuItems]
+  );
+
+  const showAdminAttendancePanel = useMemo(() => {
+    if (!staff) return false;
+    return (
+      canAccessAdminRoute(
+        {
+          role: staff.role,
+          app_permissions: staff.app_permissions,
+        },
+        '/admin/attendance'
+      ) || allMenuItems.some((item) => item.id === 'attendance_admin')
+    );
+  }, [allMenuItems, staff]);
+
+  useQuery({
+    queryKey: ['staff-attendance', 'today'],
+    queryFn: getMyAttendanceToday,
+    enabled: !!staff?.id && showAttendanceShortcuts,
+    staleTime: 60_000,
+    refetchOnMount: 'always',
+  });
+
+  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' });
+  useQuery({
+    queryKey: ['admin-attendance', 'day', todayKey],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('staff_attendance_daily_report')
+        .select('*')
+        .eq('work_date', todayKey)
+        .order('full_name', { ascending: true });
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    },
+    enabled: !!staff?.id && showAdminAttendancePanel,
+    staleTime: 30_000,
+    refetchOnMount: 'always',
+  });
+
+  const handleSignOutPress = useCallback(() => {
+    Alert.alert(t('signOut'), t('signOutConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('signOut'),
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            closeMenu();
+            await signOut();
+            safeRouterReplace(router, '/');
+          })();
+        },
+      },
+    ]);
+  }, [t, closeMenu, signOut, router]);
 
   if (!sheetEverMounted) return null;
 
@@ -119,8 +197,13 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
           navigateFromMenu('/staff/profile');
         }}
         layout={menuLayout}
+        menuTheme={menuTheme}
         recentItems={recentItems}
+        showAttendanceShortcuts={showAttendanceShortcuts}
+        showAdminAttendancePanel={showAdminAttendancePanel}
+        onAdminAttendanceNavigate={closeMenu}
         onSelect={navigateFromMenu}
+        onSignOutPress={handleSignOutPress}
       />
     </View>
   );

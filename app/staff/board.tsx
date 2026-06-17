@@ -9,9 +9,8 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffBoardStore } from '@/stores/staffBoardStore';
@@ -25,6 +24,7 @@ import {
 import { formatDateTime } from '@/lib/date';
 import { pds } from '@/constants/personelDesignSystem';
 import { TaskCompletionSheet } from '@/components/TaskCompletionSheet';
+import { StaffAnnouncementDetailSheet } from '@/components/staff/StaffAnnouncementDetailSheet';
 import { completeStaffAssignment } from '@/lib/staffAssignmentComplete';
 import { dispatchTaskCompletionNotify } from '@/lib/staffAssignmentCreate';
 import {
@@ -36,10 +36,12 @@ import {
 export default function StaffBoardScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const params = useLocalSearchParams<{ boardAnnouncementId?: string }>();
   const staff = useAuthStore((s) => s.staff);
   const { announcements, loading, loadList, refresh } = useStaffBoardStore();
   const [refreshing, setRefreshing] = useState(false);
   const [ackBusy, setAckBusy] = useState<string | null>(null);
+  const [detailRow, setDetailRow] = useState<StaffAnnouncementRow | null>(null);
   const [completeTarget, setCompleteTarget] = useState<StaffAssignmentBrief | null>(null);
   const [completeBoardRowId, setCompleteBoardRowId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
@@ -52,6 +54,13 @@ export default function StaffBoardScreen() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const openId = typeof params.boardAnnouncementId === 'string' ? params.boardAnnouncementId : '';
+    if (!openId || loading || announcements.length === 0) return;
+    const row = announcements.find((a) => a.id === openId);
+    if (row) setDetailRow(row);
+  }, [params.boardAnnouncementId, announcements, loading]);
 
   const unread = useMemo(() => announcements.filter((a) => !a.read_at), [announcements]);
   const history = useMemo(() => announcements.filter((a) => !!a.read_at), [announcements]);
@@ -67,6 +76,10 @@ export default function StaffBoardScreen() {
     router.push('/staff/tasks');
   }, [router]);
 
+  const openDetail = useCallback((row: StaffAnnouncementRow) => {
+    setDetailRow(row);
+  }, []);
+
   const acknowledge = async (row: StaffAnnouncementRow) => {
     if (!staff?.id || ackBusy) return;
     setAckBusy(row.id);
@@ -74,6 +87,7 @@ export default function StaffBoardScreen() {
     await loadList(staff.id);
     await refresh(staff.id);
     setAckBusy(null);
+    setDetailRow((prev) => (prev?.id === row.id ? { ...prev, read_at: new Date().toISOString() } : prev));
   };
 
   const startCompleteFromBoard = async (row: StaffAnnouncementRow) => {
@@ -90,8 +104,10 @@ export default function StaffBoardScreen() {
       await markStaffAnnouncementRead(staff.id, row.id);
       await loadList(staff.id);
       Alert.alert(t('staffTasks_savedTitle'), t('staffNotifTaskCompleted'));
+      setDetailRow(null);
       return;
     }
+    setDetailRow(null);
     setCompleteBoardRowId(row.id);
     setCompleteTarget(brief);
   };
@@ -137,41 +153,34 @@ export default function StaffBoardScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={pds.indigo} />}
       >
-        <LinearGradient colors={['#1e3a8a', '#2563eb', '#3b82f6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        <View style={styles.hero}>
           <View style={styles.heroIconWrap}>
-            <Ionicons name="eye" size={28} color="#fff" />
+            <Ionicons name="megaphone-outline" size={18} color="#2563eb" />
           </View>
-          <Text style={styles.heroTitle}>{t('staffBoardTitle')}</Text>
-          <Text style={styles.heroSub}>{t('staffBoardSubtitle')}</Text>
-          {unread.length > 0 ? (
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>{t('staffBoardUnread', { count: unread.length })}</Text>
-            </View>
-          ) : null}
-        </LinearGradient>
+          <View style={styles.heroTextCol}>
+            <Text style={styles.heroTitle}>{t('staffBoardTitle')}</Text>
+            {unread.length > 0 ? (
+              <Text style={styles.heroSub}>{t('staffBoardUnread', { count: unread.length })}</Text>
+            ) : (
+              <Text style={styles.heroSubMuted}>{t('staffBoardSubtitleShort')}</Text>
+            )}
+          </View>
+        </View>
 
         {loading && announcements.length === 0 ? (
-          <ActivityIndicator style={{ marginTop: 32 }} color={pds.indigo} />
+          <ActivityIndicator style={{ marginTop: 24 }} color={pds.indigo} />
         ) : null}
 
         {unread.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>{t('staffBoardCurrent')}</Text>
             {unread.map((row) => (
-              <AnnouncementCard
-                key={row.id}
-                row={row}
-                highlight
-                busy={ackBusy === row.id}
-                onAcknowledge={() => acknowledge(row)}
-                onCompleteTask={() => void startCompleteFromBoard(row)}
-                onOpenTasks={goTasks}
-              />
+              <AnnouncementCard key={row.id} row={row} highlight onPress={() => openDetail(row)} />
             ))}
           </View>
         ) : (
           <View style={styles.emptyCurrent}>
-            <Ionicons name="checkmark-circle-outline" size={40} color="#22c55e" />
+            <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
             <Text style={styles.emptyCurrentText}>{t('staffBoardAllRead')}</Text>
           </View>
         )}
@@ -180,33 +189,41 @@ export default function StaffBoardScreen() {
           <View style={styles.sectionHead}>
             <Text style={styles.sectionLabel}>{t('staffBoardHistory')}</Text>
             <TouchableOpacity onPress={onRefresh} style={styles.refreshChip} activeOpacity={0.85}>
-              <Ionicons name="refresh-outline" size={16} color={pds.indigo} />
-              <Text style={styles.refreshChipText}>{t('refresh')}</Text>
+              <Ionicons name="refresh-outline" size={14} color={pds.indigo} />
             </TouchableOpacity>
           </View>
           {history.length === 0 ? (
             <Text style={styles.historyEmpty}>{t('staffBoardHistoryEmpty')}</Text>
           ) : (
             history.map((row) => (
-              <AnnouncementCard
-                key={row.id}
-                row={row}
-                onPress={() => {
-                  if (isTaskAssignmentBoardRow(row)) {
-                    goTasks();
-                    return;
-                  }
-                  if (!row.read_at) void acknowledge(row);
-                }}
-              />
+              <AnnouncementCard key={row.id} row={row} onPress={() => openDetail(row)} />
             ))
           )}
         </View>
-
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.88}>
-          <Text style={styles.backBtnText}>{t('back')}</Text>
-        </TouchableOpacity>
       </ScrollView>
+
+      <StaffAnnouncementDetailSheet
+        visible={!!detailRow}
+        row={detailRow}
+        busy={detailRow ? ackBusy === detailRow.id : false}
+        onClose={() => setDetailRow(null)}
+        onAcknowledge={
+          detailRow && !detailRow.read_at && !isTaskAssignmentBoardRow(detailRow)
+            ? () => void acknowledge(detailRow)
+            : undefined
+        }
+        onCompleteTask={
+          detailRow && isTaskAssignmentBoardRow(detailRow)
+            ? () => void startCompleteFromBoard(detailRow)
+            : undefined
+        }
+        onOpenTasks={goTasks}
+        onOpenActionUrl={(href) => {
+          setDetailRow(null);
+          router.push(href as Href);
+        }}
+      />
+
       <TaskCompletionSheet
         visible={!!completeTarget}
         taskTitle={completeTarget?.title ?? ''}
@@ -224,205 +241,154 @@ export default function StaffBoardScreen() {
 function AnnouncementCard({
   row,
   highlight,
-  busy,
-  onAcknowledge,
-  onCompleteTask,
-  onOpenTasks,
   onPress,
 }: {
   row: StaffAnnouncementRow;
   highlight?: boolean;
-  busy?: boolean;
-  onAcknowledge?: () => void;
-  onCompleteTask?: () => void;
-  onOpenTasks?: () => void;
-  onPress?: () => void;
+  onPress: () => void;
 }) {
-  const { t } = useTranslation();
   const accent = priorityAccent(row.priority, row);
   const read = !!row.read_at;
   const isTask = isTaskAssignmentBoardRow(row);
+  const hasMedia =
+    !!row.media_payload?.images?.length ||
+    !!row.media_payload?.videoUrl ||
+    !!row.media_payload?.websiteUrl ||
+    !!row.image_url;
 
   return (
     <TouchableOpacity
-      activeOpacity={onPress ? 0.9 : 1}
+      activeOpacity={0.9}
       onPress={onPress}
       style={[styles.card, highlight && styles.cardHighlight, read && styles.cardRead]}
     >
-      <View style={styles.cardTop}>
-        <View style={[styles.priorityPill, { backgroundColor: `${accent}18`, borderColor: `${accent}55` }]}>
-          <Text style={[styles.priorityText, { color: accent }]}>{priorityLabel(row.priority, row)}</Text>
+      <View style={styles.cardRow}>
+        <View style={styles.cardMain}>
+          <View style={styles.cardTop}>
+            <View style={[styles.priorityPill, { backgroundColor: `${accent}14`, borderColor: `${accent}44` }]}>
+              <Text style={[styles.priorityText, { color: accent }]}>{priorityLabel(row.priority, row)}</Text>
+            </View>
+            {isTask ? (
+              <View style={styles.taskChip}>
+                <Ionicons name="clipboard-outline" size={11} color="#2563eb" />
+              </View>
+            ) : null}
+            {hasMedia ? (
+              <View style={styles.mediaChip}>
+                <Ionicons name="attach-outline" size={11} color="#7c3aed" />
+              </View>
+            ) : null}
+            <Text style={styles.cardDate}>{formatDateTime(row.created_at)}</Text>
+          </View>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {row.title}
+          </Text>
+          <Text style={styles.cardPreview} numberOfLines={2}>
+            {row.content}
+          </Text>
         </View>
-        <Text style={styles.cardDate}>{formatDateTime(row.created_at)}</Text>
+        <Ionicons name="chevron-forward" size={18} color="#94a3b8" style={styles.cardChevron} />
       </View>
-      <Text style={styles.cardTitle}>{row.title}</Text>
-      <Text style={styles.cardBody}>{row.content}</Text>
-      {highlight && isTask && onCompleteTask ? (
-        <View style={styles.taskActions}>
-          <TouchableOpacity
-            style={[styles.completeBtn, busy && styles.ackBtnBusy]}
-            onPress={onCompleteTask}
-            disabled={busy}
-            activeOpacity={0.88}
-          >
-            {busy ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
-                <Text style={styles.completeBtnText}>{t('staffBoardCompleteTask')}</Text>
-              </>
-            )}
-          </TouchableOpacity>
-          {onOpenTasks ? (
-            <TouchableOpacity style={styles.openTasksBtn} onPress={onOpenTasks} activeOpacity={0.88}>
-              <Text style={styles.openTasksBtnText}>{t('staffBoardOpenTask')}</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : highlight && onAcknowledge ? (
-        <TouchableOpacity
-          style={[styles.ackBtn, busy && styles.ackBtnBusy]}
-          onPress={onAcknowledge}
-          disabled={busy}
-          activeOpacity={0.88}
-        >
-          {busy ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <>
-              <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
-              <Text style={styles.ackBtnText}>{t('staffBoardAcknowledge')}</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      ) : read ? (
-        <Text style={styles.readMark}>{t('staffBoardReadAt', { time: formatDateTime(row.read_at!) })}</Text>
-      ) : null}
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f1f5f9' },
-  content: { padding: 16, paddingBottom: 40 },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  content: { padding: 14, paddingBottom: 32 },
   hero: {
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 20,
-    overflow: 'hidden',
-  },
-  heroIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  heroTitle: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: 0.2 },
-  heroSub: { marginTop: 6, fontSize: 14, color: 'rgba(255,255,255,0.9)', lineHeight: 20 },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    marginTop: 12,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  heroBadgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  section: { marginBottom: 16 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionLabel: { fontSize: 13, fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 },
-  refreshChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
+    gap: 10,
     backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
   },
-  refreshChipText: { fontSize: 12, fontWeight: '700', color: pds.indigo },
-  emptyCurrent: {
+  heroIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#eff6ff',
     alignItems: 'center',
-    paddingVertical: 28,
-    marginBottom: 16,
+    justifyContent: 'center',
+  },
+  heroTextCol: { flex: 1, minWidth: 0 },
+  heroTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  heroSub: { marginTop: 2, fontSize: 12, fontWeight: '600', color: '#2563eb' },
+  heroSubMuted: { marginTop: 2, fontSize: 11, color: '#64748b', lineHeight: 15 },
+  section: { marginBottom: 12 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  sectionLabel: { fontSize: 11, fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 },
+  refreshChip: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#fff',
-    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
   },
-  emptyCurrentText: { marginTop: 10, fontSize: 15, fontWeight: '600', color: '#334155' },
-  historyEmpty: { fontSize: 14, color: '#94a3b8', paddingVertical: 12 },
+  emptyCurrent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#bbf7d0',
+  },
+  emptyCurrentText: { fontSize: 12, fontWeight: '600', color: '#166534' },
+  historyEmpty: { fontSize: 13, color: '#94a3b8', paddingVertical: 8 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 10,
+    borderRadius: 12,
+    padding: 11,
+    marginBottom: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
   },
   cardHighlight: {
-    borderColor: '#2563eb',
-    borderWidth: 1.5,
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 4,
+    borderColor: '#93c5fd',
+    backgroundColor: '#f8fbff',
   },
-  cardRead: { opacity: 0.92 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  cardRead: { opacity: 0.94 },
+  cardRow: { flexDirection: 'row', alignItems: 'center' },
+  cardMain: { flex: 1, minWidth: 0 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   priorityPill: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderWidth: 1,
   },
-  priorityText: { fontSize: 11, fontWeight: '800' },
-  cardDate: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
-  cardTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
-  cardBody: { fontSize: 15, color: '#334155', lineHeight: 22 },
-  taskActions: { marginTop: 14, gap: 8 },
-  completeBtn: {
-    flexDirection: 'row',
+  priorityText: { fontSize: 10, fontWeight: '800' },
+  taskChip: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#16a34a',
-    borderRadius: 12,
-    paddingVertical: 12,
   },
-  completeBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  openTasksBtn: {
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2563eb',
-  },
-  openTasksBtnText: { color: '#2563eb', fontWeight: '700', fontSize: 14 },
-  ackBtn: {
-    marginTop: 14,
-    flexDirection: 'row',
+  mediaChip: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#f5f3ff',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    paddingVertical: 12,
   },
-  ackBtnBusy: { opacity: 0.7 },
-  ackBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  readMark: { marginTop: 10, fontSize: 12, color: '#64748b', fontWeight: '600' },
-  backBtn: {
-    marginTop: 8,
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  backBtnText: { color: pds.indigo, fontWeight: '700', fontSize: 15 },
+  cardDate: { marginLeft: 'auto', fontSize: 10, color: '#94a3b8', fontWeight: '600' },
+  cardTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
+  cardPreview: { marginTop: 3, fontSize: 12, color: '#64748b', lineHeight: 17 },
+  cardChevron: { marginLeft: 6 },
 });

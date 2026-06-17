@@ -22,7 +22,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { createAiReceptionTask } from '@/lib/aiReceptionTask';
 import { useTranslation } from 'react-i18next';
 
-export function AiReceptionFab() {
+type Props = { variant?: 'fab' | 'icon' };
+
+export function AiReceptionFab({ variant = 'fab' }: Props) {
   const { t } = useTranslation();
   const staff = useAuthStore((s) => s.staff);
   const insets = useSafeAreaInsets();
@@ -85,14 +87,25 @@ export function AiReceptionFab() {
     }
   };
 
-  return (
-    <>
+  const trigger =
+    variant === 'icon' ? (
+      <PressableScale style={styles.iconWrap} onPress={() => setOpen(true)} scaleTo={0.92}>
+        <LinearGradient colors={['#667eea', '#764ba2']} style={styles.iconBtn}>
+          <Ionicons name="sparkles" size={16} color="#fff" />
+        </LinearGradient>
+      </PressableScale>
+    ) : (
       <PressableScale style={styles.fabWrap} onPress={() => setOpen(true)}>
         <LinearGradient colors={['#667eea', '#764ba2']} style={styles.fab}>
           <Ionicons name="sparkles" size={18} color="#fff" />
           <Text style={styles.fabText}>{t('staffAiFabLabel')}</Text>
         </LinearGradient>
       </PressableScale>
+    );
+
+  return (
+    <>
+      {trigger}
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={close}>
         <View style={styles.root}>
@@ -138,6 +151,14 @@ export function AiReceptionFab() {
 }
 
 const styles = StyleSheet.create({
+  iconWrap: { marginHorizontal: 0 },
+  iconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fabWrap: { alignSelf: 'center', marginBottom: 8 },
   fab: {
     flexDirection: 'row',

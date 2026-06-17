@@ -25,3 +25,8 @@ export function getDepartmentLabel(value: string | null | undefined): string {
   if (!value) return '—';
   return DEPARTMENT_LABELS[value] ?? value.replace(/_/g, ' ');
 }
+
+export const DEPARTMENT_OPTIONS = Object.entries(DEPARTMENT_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));

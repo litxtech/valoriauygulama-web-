@@ -1,6 +1,7 @@
 import { memo } from 'react';
-import { Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { FastPress } from '@/components/ui/FastPress';
 import { hapticSelection } from '@/lib/hapticsSafe';
 import type { StaffHamburgerMenuItem } from '@/lib/staffHamburgerMenu';
@@ -59,6 +60,8 @@ export const StaffHamburgerRecentFlyout = memo(function StaffHamburgerRecentFlyo
   palette,
   onSelect,
 }: Props) {
+  const { t } = useTranslation();
+
   const handleSelect = (item: StaffHamburgerMenuItem) => {
     if (!canPress) return;
     hapticSelection();
@@ -68,28 +71,46 @@ export const StaffHamburgerRecentFlyout = memo(function StaffHamburgerRecentFlyo
   if (items.length === 0) return null;
 
   return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomInset + 10 }]}
-      showsVerticalScrollIndicator={false}
-      nestedScrollEnabled
-      bounces={!IS_ANDROID}
-    >
-      {items.map((item, index) => (
-        <RecentIconButtonMemo
-          key={item.id}
-          item={item}
-          isLatest={index === 0}
-          canPress={canPress}
-          palette={palette}
-          onPress={() => handleSelect(item)}
-        />
-      ))}
-    </ScrollView>
+    <View style={styles.wrap}>
+      <Text style={[styles.title, { color: palette.muted }]} numberOfLines={2}>
+        {t('staffMenuRecentFlyoutTitle')}
+      </Text>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomInset + 10 }]}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        bounces={!IS_ANDROID}
+      >
+        {items.map((item, index) => (
+          <RecentIconButtonMemo
+            key={item.id}
+            item={item}
+            isLatest={index === 0}
+            canPress={canPress}
+            palette={palette}
+            onPress={() => handleSelect(item)}
+          />
+        ))}
+      </ScrollView>
+    </View>
   );
 });
 
 const styles = StyleSheet.create({
+  wrap: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    paddingTop: 8,
+    paddingHorizontal: 2,
+    lineHeight: 11,
+  },
   scroll: {
     flex: 1,
   },

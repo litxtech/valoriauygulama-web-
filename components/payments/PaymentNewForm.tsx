@@ -27,10 +27,12 @@ import {
 
 const ACCENT = '#635bff';
 
-type QrMode = 'single' | 'standing';
+type QrMode = 'single' | 'standing' | 'standing_variable';
 
 type Props = {
   successBasePath: '/staff/payments' | '/admin/payments';
+  initialMode?: QrMode;
+  initialServiceKind?: PaymentServiceKind;
 };
 
 function parseAmount(raw: string): number | null {
@@ -39,21 +41,26 @@ function parseAmount(raw: string): number | null {
   return Math.round(n * 100) / 100;
 }
 
-export function PaymentNewForm({ successBasePath }: Props) {
+export function PaymentNewForm({ successBasePath, initialMode, initialServiceKind }: Props) {
   const router = useRouter();
-  const [qrMode, setQrMode] = useState<QrMode>('single');
+  const [qrMode, setQrMode] = useState<QrMode>(initialMode ?? 'single');
   const [amount, setAmount] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [serviceKind, setServiceKind] = useState<PaymentServiceKind>('generic');
+  const [serviceKind, setServiceKind] = useState<PaymentServiceKind>(initialServiceKind ?? 'generic');
   const [currency, setCurrency] = useState<PaymentCurrency>('try');
   const [submitting, setSubmitting] = useState(false);
 
+  const needsFixedAmount = qrMode === 'single' || qrMode === 'standing';
+
   const submit = async () => {
-    const parsed = parseAmount(amount);
-    if (!parsed) {
-      Alert.alert(paymentText('paymentsAmount'), paymentText('paymentsErrorAmount'));
-      return;
+    let parsed: number | null = null;
+    if (needsFixedAmount) {
+      parsed = parseAmount(amount);
+      if (!parsed) {
+        Alert.alert(paymentText('paymentsAmount'), paymentText('paymentsErrorAmount'));
+        return;
+      }
     }
     if (!title.trim()) {
       Alert.alert(paymentText('paymentsTitleLabel'), paymentText('paymentsErrorTitle'));
@@ -61,9 +68,10 @@ export function PaymentNewForm({ successBasePath }: Props) {
     }
     setSubmitting(true);
     try {
-      if (qrMode === 'standing') {
+      if (qrMode === 'standing' || qrMode === 'standing_variable') {
         const result = await createPaymentQrStand({
-          amount: parsed,
+          amount: parsed ?? undefined,
+          amountMode: qrMode === 'standing_variable' ? 'variable' : 'fixed',
           currency,
           title: title.trim(),
           description: description.trim() || null,
@@ -72,7 +80,7 @@ export function PaymentNewForm({ successBasePath }: Props) {
         router.replace(`${successBasePath}/stand/${result.id}`);
       } else {
         const result = await createPaymentRequest({
-          amount: parsed,
+          amount: parsed!,
           currency,
           title: title.trim(),
           description: description.trim() || null,
@@ -86,6 +94,13 @@ export function PaymentNewForm({ successBasePath }: Props) {
       setSubmitting(false);
     }
   };
+
+  const modeHint =
+    qrMode === 'single'
+      ? paymentText('paymentsQrModeSingleHint')
+      : qrMode === 'standing'
+        ? paymentText('paymentsQrModeStandingHint')
+        : paymentText('paymentsQrModeStandingVariableHint');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -115,9 +130,16 @@ export function PaymentNewForm({ successBasePath }: Props) {
           </Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.modeHint}>
-        {qrMode === 'single' ? paymentText('paymentsQrModeSingleHint') : paymentText('paymentsQrModeStandingHint')}
-      </Text>
+      <TouchableOpacity
+        style={[styles.modeBtnWide, qrMode === 'standing_variable' && styles.modeBtnActive]}
+        onPress={() => setQrMode('standing_variable')}
+      >
+        <Ionicons name="create-outline" size={18} color={qrMode === 'standing_variable' ? '#fff' : ACCENT} />
+        <Text style={[styles.modeBtnText, qrMode === 'standing_variable' && styles.modeBtnTextActive]}>
+          {paymentText('paymentsQrModeStandingVariable')}
+        </Text>
+      </TouchableOpacity>
+      <Text style={styles.modeHint}>{modeHint}</Text>
 
       <Text style={styles.label}>{paymentText('paymentsCurrency')}</Text>
       <View style={styles.chipWrap}>
@@ -131,15 +153,24 @@ export function PaymentNewForm({ successBasePath }: Props) {
         })}
       </View>
 
-      <Text style={styles.label}>{paymentText('paymentsAmount')} ({currency.toUpperCase()})</Text>
-      <TextInput
-        style={styles.inputLg}
-        placeholder={paymentText('paymentsAmountPlaceholder')}
-        placeholderTextColor={theme.colors.textMuted}
-        keyboardType="decimal-pad"
-        value={amount}
-        onChangeText={setAmount}
-      />
+      {needsFixedAmount ? (
+        <>
+          <Text style={styles.label}>{paymentText('paymentsAmount')} ({currency.toUpperCase()})</Text>
+          <TextInput
+            style={styles.inputLg}
+            placeholder={paymentText('paymentsAmountPlaceholder')}
+            placeholderTextColor={theme.colors.textMuted}
+            keyboardType="decimal-pad"
+            value={amount}
+            onChangeText={setAmount}
+          />
+        </>
+      ) : (
+        <View style={styles.variableInfo}>
+          <Ionicons name="information-circle-outline" size={18} color={ACCENT} />
+          <Text style={styles.variableInfoText}>{paymentText('paymentsQrModeStandingVariableHint')}</Text>
+        </View>
+      )}
 
       <Text style={styles.label}>{paymentText('paymentsTitleLabel')}</Text>
       <TextInput
@@ -207,10 +238,34 @@ const styles = StyleSheet.create({
     borderColor: ACCENT + '44',
     backgroundColor: theme.colors.surface,
   },
+  modeBtnWide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: ACCENT + '44',
+    backgroundColor: theme.colors.surface,
+    marginTop: 10,
+  },
   modeBtnActive: { backgroundColor: ACCENT, borderColor: ACCENT },
   modeBtnText: { fontSize: 12, fontWeight: '800', color: ACCENT },
   modeBtnTextActive: { color: '#fff' },
   modeHint: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 8, lineHeight: 18 },
+  variableInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: ACCENT + '10',
+    borderWidth: 1,
+    borderColor: ACCENT + '22',
+  },
+  variableInfoText: { flex: 1, fontSize: 12, color: theme.colors.textSecondary, lineHeight: 18 },
   inputLg: {
     borderWidth: 1,
     borderColor: theme.colors.borderLight,

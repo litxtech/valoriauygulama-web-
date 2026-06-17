@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -16,9 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import { displayCapturedName, capturedAtTs } from '@/lib/kbsCaptureHistory';
-import { buildKbsCopyFields, kbsOcrStatusLabel } from '@/lib/kbsCaptureParsedFields';
+import { buildKbsCopyFields } from '@/lib/kbsCaptureParsedFields';
 import { buildKbsCaptureSingleReportHtml } from '@/lib/kbsCaptureReportHtml';
-import { kbsOcrEngineLabel } from '@/lib/kbsOcrEngineLabel';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { hapticImpactLight } from '@/lib/hapticsSafe';
 
@@ -34,15 +32,9 @@ function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
   return p as ParsedDocument;
 }
 
-function statusUi(status: ReturnType<typeof kbsOcrStatusLabel>) {
-  if (status === 'processing') {
-    return { label: 'Okunuyor…', bg: '#eff6ff', fg: '#2563eb', icon: 'sync-outline' as const };
-  }
-  if (status === 'pending') {
-    return { label: 'Sırada', bg: '#fffbeb', fg: '#b45309', icon: 'time-outline' as const };
-  }
-  if (status === 'ready') {
-    return { label: 'Hazır', bg: '#ecfdf5', fg: '#059669', icon: 'checkmark-circle-outline' as const };
+function statusUi(isManualCapture: boolean) {
+  if (isManualCapture) {
+    return { label: 'Kaydedildi', bg: '#ecfdf5', fg: '#059669', icon: 'checkmark-circle-outline' as const };
   }
   return { label: 'Eksik', bg: '#fef2f2', fg: '#dc2626', icon: 'alert-circle-outline' as const };
 }
@@ -51,8 +43,8 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
   const [exportBusy, setExportBusy] = useState(false);
   const parsed = asParsed(row);
   const fields = useMemo(() => buildKbsCopyFields(parsed), [parsed]);
-  const ocrStatus = kbsOcrStatusLabel(parsed);
-  const badge = statusUi(ocrStatus);
+  const isManualCapture = Array.isArray(parsed?.warnings) && parsed.warnings.includes('manual_capture');
+  const badge = statusUi(isManualCapture);
 
   const reportHtml = useCallback(
     () => buildKbsCaptureSingleReportHtml(row, canSeeImage),
@@ -97,7 +89,7 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
 
   const copyAll = useCallback(async () => {
     if (!fields.length) {
-      Alert.alert('Henüz veri yok', 'Kimlik bilgileri okununca burada görünecek.');
+      Alert.alert('Henüz veri yok', 'Bu kayıt yalnızca görsel olarak saklanmış.');
       return;
     }
     const block = fields.map((f) => `${f.label}: ${f.value}`).join('\n');
@@ -127,16 +119,9 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
           <Text style={styles.name}>{displayCapturedName(row)}</Text>
           <Text style={styles.meta}>Oda {row.room_number ?? '—'}</Text>
           <Text style={styles.meta}>{new Date(capturedAtTs(row)).toLocaleString('tr-TR')}</Text>
-          {row.ocr_engine ? (
-            <Text style={styles.meta}>{kbsOcrEngineLabel(row.ocr_engine)}</Text>
-          ) : null}
         </View>
         <View style={[styles.badge, { backgroundColor: badge.bg }]}>
-          {ocrStatus === 'processing' ? (
-            <ActivityIndicator size="small" color={badge.fg} />
-          ) : (
-            <Ionicons name={badge.icon} size={16} color={badge.fg} />
-          )}
+          <Ionicons name={badge.icon} size={16} color={badge.fg} />
           <Text style={[styles.badgeText, { color: badge.fg }]}>{badge.label}</Text>
         </View>
       </View>
@@ -175,14 +160,11 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
 
       {fields.length === 0 ? (
         <View style={styles.emptyBox}>
-          {ocrStatus === 'pending' || ocrStatus === 'processing' ? (
-            <>
-              <ActivityIndicator color={theme.colors.primary} />
-              <Text style={styles.emptyText}>Kimlik bilgileri MRZ ile okunuyor, lütfen bekleyin…</Text>
-            </>
-          ) : (
-            <Text style={styles.emptyText}>Okunamadı. Listeden “MRZ ile oku” veya isteğe bağlı “AI yedek okuma” deneyin.</Text>
-          )}
+          <Text style={styles.emptyText}>
+            {isManualCapture
+              ? 'Kimlik görseli kaydedildi. İsteğe bağlı ad / soyad çekim ekranında girilebilir.'
+              : 'Bu kayıt için okunabilir kimlik alanı yok.'}
+          </Text>
         </View>
       ) : (
         <View style={styles.fieldList}>

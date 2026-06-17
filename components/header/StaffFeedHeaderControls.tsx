@@ -13,8 +13,6 @@ import { ModernMenuButton } from '@/components/header/ModernMenuButton';
 import { FastPress } from '@/components/ui/FastPress';
 
 const HEADER_BTN = {
-  mrz: '#0f766e',
-  idCapture: '#2563eb',
   notify: '#ea580c',
   menu: '#7c3aed',
 } as const;
@@ -117,42 +115,14 @@ export const StaffFeedHeaderLeftConnected = memo(function StaffFeedHeaderLeftCon
   );
 });
 
-type StaffFeedHeaderRightProps = {
-  showMrz?: boolean;
-  onMrzPress?: () => void;
-  showIdCapture?: boolean;
-  onIdCapturePress?: () => void;
-};
-
-/** Feed header sağ: MRZ (varsa) + bildirim */
-export function StaffFeedHeaderRight({
-  showMrz,
-  onMrzPress,
-  showIdCapture,
-  onIdCapturePress,
-}: StaffFeedHeaderRightProps) {
+/** Feed header sağ: bildirim */
+export function StaffFeedHeaderRight() {
   const router = useRouter();
   const { t } = useTranslation();
   const unreadNotify = useStaffNotificationStore((s) => s.unreadCount);
 
   return (
     <View style={styles.rightRow}>
-      {showMrz && onMrzPress ? (
-        <ModernHeaderIconButton
-          icon="scan-outline"
-          onPress={onMrzPress}
-          accessibilityLabel={t('kbsNavScanSerial')}
-          color={HEADER_BTN.mrz}
-        />
-      ) : null}
-      {showIdCapture && onIdCapturePress ? (
-        <ModernHeaderIconButton
-          icon="id-card-outline"
-          onPress={onIdCapturePress}
-          accessibilityLabel="Kimlik çekim sistemi"
-          color={HEADER_BTN.idCapture}
-        />
-      ) : null}
       <ModernHeaderIconButton
         icon="notifications-outline"
         badge={unreadNotify}
@@ -172,15 +142,12 @@ export function feedHeaderLeftMinWidth(showShare: boolean) {
 }
 
 /** Sağ kol genişliği */
-export function feedHeaderRightMinWidth(showMrz: boolean, showIdCapture = false) {
-  const iconW = 34;
-  const mrzW = showMrz ? iconW + 4 : 0;
-  const idCaptureW = showIdCapture ? iconW + 4 : 0;
-  return mrzW + idCaptureW + iconW + 12;
+export function feedHeaderRightMinWidth() {
+  return 34 + 12;
 }
 
-export function feedHeaderSideMinWidth(showShare: boolean, showMrz: boolean, showIdCapture = false) {
-  return Math.max(feedHeaderLeftMinWidth(showShare), feedHeaderRightMinWidth(showMrz, showIdCapture));
+export function feedHeaderSideMinWidth(showShare: boolean) {
+  return Math.max(feedHeaderLeftMinWidth(showShare), feedHeaderRightMinWidth());
 }
 
 const styles = StyleSheet.create({

@@ -9,9 +9,10 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
-import { formatTrFullDayLabelFromYmd, toLocalYmd } from '@/lib/mealMenuDate';
+import { toLocalYmd } from '@/lib/mealMenuDate';
 import {
   DEFAULT_MEAL_MENU_PDF_APPROVER,
   DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE,
@@ -24,23 +25,26 @@ import {
   menuStatsFromDaysMap,
   weekKeyForYmd,
   type MealFields,
-  dayFillStatus,
   editableMealDayKeys,
   buildEmptyDaysMap,
   isPastMealMonth,
   monthStartDate,
+  countFilledSlots,
 } from '@/lib/mealMenuUi';
 import {
   MealMonthNavigator,
   MealMenuStatsStrip,
-  MealWeekSectionHeader,
   MealDayEditorCard,
   MealMenuEmptyState,
-  MealAdminActionBar,
+  MealSaveBar,
+  MealPdfActionRow,
   MealNotifyCard,
+  MealCollapsibleSection,
   adminMealPalette,
 } from '@/components/mealMenu/MealMenuUi';
 import { MealMenuPdfSettingsCard } from '@/components/mealMenu/MealMenuPdfSettingsCard';
+import { MealMenuAiAssistant } from '@/components/mealMenu/MealMenuAiAssistant';
+import { MealMonthDayPicker } from '@/components/mealMenu/MealMonthDayPicker';
 
 const MONTHS_TR = [
   'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
@@ -60,7 +64,6 @@ export type MealMenuEditorProps = {
   staffId: string | undefined;
   staffRole: string | null | undefined;
   showPdf?: boolean;
-  /** PDF alt not / hazırlayan düzenlenebilir (admin veya yemek listesi yetkisi) */
   canEditPdfMeta?: boolean;
   headerSlot?: ReactNode;
   noOrgTitle?: string;
@@ -84,6 +87,8 @@ export function MealMenuEditor({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [notifyDaily, setNotifyDaily] = useState(true);
   const [daysMap, setDaysMap] = useState<Record<string, MealFields>>({});
+  const [selectedYmd, setSelectedYmd] = useState<string>('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -92,7 +97,6 @@ export function MealMenuEditor({
   const [printerMailLoading, setPrinterMailLoading] = useState(false);
   const [pdfApproverName, setPdfApproverName] = useState(DEFAULT_MEAL_MENU_PDF_APPROVER);
   const [pdfFooterNote, setPdfFooterNote] = useState(DEFAULT_MEAL_MENU_PDF_FOOTER_NOTE);
-  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(() => new Set());
 
   const todayYmd = toLocalYmd(new Date());
   const currentMonthStart = useMemo(() => monthStartDate(new Date()), []);
@@ -119,6 +123,16 @@ export function MealMenuEditor({
 
   const periodLabel = `${MONTHS_TR[viewMonth.getMonth()]} ${viewMonth.getFullYear()}`;
   const periodMonthStr = firstDayOfMonth(viewMonth);
+
+  const pickDefaultYmd = useCallback(
+    (keys: string[]) => {
+      if (!keys.length) return '';
+      const monthPrefix = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}`;
+      if (todayYmd.startsWith(monthPrefix) && keys.includes(todayYmd)) return todayYmd;
+      return keys[0];
+    },
+    [viewMonth, todayYmd]
+  );
 
   const load = useCallback(async () => {
     if (!effectiveOrgId) {
@@ -177,14 +191,12 @@ export function MealMenuEditor({
   useEffect(() => {
     const keys = editableMealDayKeys(viewMonth, todayYmd);
     if (!keys.length) {
-      setExpandedWeeks(new Set());
+      setSelectedYmd('');
       return;
     }
-    const monthPrefix = `${viewMonth.getFullYear()}-${String(viewMonth.getMonth() + 1).padStart(2, '0')}`;
-    const focusYmd =
-      todayYmd.startsWith(monthPrefix) && keys.includes(todayYmd) ? todayYmd : keys[0];
-    setExpandedWeeks(new Set([weekKeyForYmd(focusYmd)]));
-  }, [periodMonthStr, todayYmd, viewMonth]);
+    const focusYmd = pickDefaultYmd(keys);
+    setSelectedYmd((prev) => (prev && keys.includes(prev) ? prev : focusYmd));
+  }, [periodMonthStr, todayYmd, viewMonth, pickDefaultYmd]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -192,8 +204,8 @@ export function MealMenuEditor({
     setRefreshing(false);
   };
 
-  const createMenu = async () => {
-    if (!effectiveOrgId || !staffId) return;
+  const createMenu = async (): Promise<boolean> => {
+    if (!effectiveOrgId || !staffId) return false;
     if (editableKeys.length === 0) {
       Alert.alert(
         'Tarih',
@@ -201,7 +213,7 @@ export function MealMenuEditor({
           ? 'Geçmiş aylar için menü oluşturulamaz. Bugün ve sonrası için ileri bir ay seçin.'
           : 'Bu ayda bugünden sonra düzenlenecek gün kalmadı.'
       );
-      return;
+      return false;
     }
     try {
       const { data, error } = await supabase
@@ -219,9 +231,11 @@ export function MealMenuEditor({
       setNotifyDaily(true);
       setDaysMap(buildEmptyDaysMap(editableKeys));
       const first = editableKeys[0];
-      setExpandedWeeks(new Set(first ? [weekKeyForYmd(first)] : []));
+      setSelectedYmd(first ?? '');
+      return true;
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Oluşturulamadı');
+      return false;
     }
   };
 
@@ -283,17 +297,31 @@ export function MealMenuEditor({
   };
 
   const sortedDayKeys = useMemo(() => editableKeys.filter((k) => k in daysMap).sort(), [editableKeys, daysMap]);
-  const weekGroups = useMemo(() => groupDayKeysByWeek(sortedDayKeys), [sortedDayKeys]);
   const stats = useMemo(() => menuStatsFromDaysMap(daysMap, todayYmd), [daysMap, todayYmd]);
 
-  const toggleWeek = (weekKey: string) => {
-    setExpandedWeeks((prev) => {
-      const next = new Set(prev);
-      if (next.has(weekKey)) next.delete(weekKey);
-      else next.add(weekKey);
-      return next;
-    });
+  const selectedIndex = sortedDayKeys.indexOf(selectedYmd);
+  const goPrevDay = () => {
+    if (selectedIndex > 0) setSelectedYmd(sortedDayKeys[selectedIndex - 1]);
   };
+  const goNextDay = () => {
+    if (selectedIndex >= 0 && selectedIndex < sortedDayKeys.length - 1) {
+      setSelectedYmd(sortedDayKeys[selectedIndex + 1]);
+    }
+  };
+
+  const dayChips = useMemo(
+    () =>
+      sortedDayKeys.map((ymd) => ({
+        ymd,
+        hasContent: countFilledSlots(daysMap[ymd] ?? { breakfast: '', lunch: '', dinner: '' }) > 0,
+        isToday: ymd === todayYmd,
+        isPast: ymd < todayYmd,
+        isFuture: ymd > todayYmd,
+      })),
+    [sortedDayKeys, daysMap, todayYmd]
+  );
+
+  const selectedFields = daysMap[selectedYmd] ?? { breakfast: '', lunch: '', dinner: '' };
 
   const buildPdfPayload = async (): Promise<{
     hotelName: string;
@@ -364,167 +392,207 @@ export function MealMenuEditor({
     }
   };
 
+  const handleAiApply = (nextMap: Record<string, MealFields>, _count: number) => {
+    setDaysMap((prev) => ({ ...prev, ...nextMap }));
+  };
+
   const monthSubtitle = orgName ? orgName : undefined;
 
   return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      keyboardShouldPersistTaps="handled"
-    >
-      {headerSlot}
+    <View style={styles.root}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
+      >
+        {headerSlot}
 
-      <MealMonthNavigator
-        periodLabel={periodLabel}
-        onPrev={() => shiftMonth(-1)}
-        onNext={() => shiftMonth(1)}
-        palette={adminMealPalette}
-        subtitle={monthSubtitle}
-        prevDisabled={!canGoPrevMonth}
-      />
-
-      {!pastMonth && editableKeys.length > 0 ? (
-        <Text style={styles.dateHint}>
-          Sadece bugün ({formatTrFullDayLabelFromYmd(todayYmd)}) ve sonraki günler listelenir. Geçmiş günler düzenlenemez.
-        </Text>
-      ) : null}
-
-      {!effectiveOrgId ? (
-        <MealMenuEmptyState icon="business-outline" title={noOrgTitle} message={noOrgMessage} palette={adminMealPalette} />
-      ) : loading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} color={adminTheme.colors.primary} />
-      ) : pastMonth ? (
-        <MealMenuEmptyState
-          icon="calendar-clear-outline"
-          title="Geçmiş ay"
-          message="Bu ay tamamen geçmişte kaldı. Menü yalnızca bugün ve sonrası için oluşturulur; ileri veya içinde bulunduğunuz ayı seçin."
+        <MealMonthNavigator
+          periodLabel={periodLabel}
+          onPrev={() => shiftMonth(-1)}
+          onNext={() => shiftMonth(1)}
           palette={adminMealPalette}
+          subtitle={monthSubtitle}
+          prevDisabled={!canGoPrevMonth}
         />
-      ) : editableKeys.length === 0 ? (
-        <MealMenuEmptyState
-          icon="calendar-outline"
-          title="Düzenlenecek gün yok"
-          message="Bu ayda bugünden sonra kayıt yapılacak gün kalmadı."
-          palette={adminMealPalette}
-        />
-      ) : !menuId ? (
-        <MealMenuEmptyState
-          icon="restaurant-outline"
-          title="Bu ay için menü yok"
-          message={`${editableKeys.length} gün için menü oluşturun (bugün ve sonrası). Personel uygulamada görür; sabah bildirimi açıksa günlük hatırlatma gider.`}
-          palette={adminMealPalette}
-          action={
-            <TouchableOpacity style={styles.createBtn} onPress={createMenu} activeOpacity={0.85}>
-              <Text style={styles.createBtnText}>Menü oluştur</Text>
-            </TouchableOpacity>
-          }
-        />
-      ) : (
-        <>
-          <MealMenuStatsStrip
-            mode="admin"
-            filledDays={stats.filledDays}
-            partialDays={stats.partialDays}
-            totalDays={stats.totalDays}
-            palette={adminMealPalette}
-          />
 
-          <MealNotifyCard value={notifyDaily} onValueChange={toggleNotify} palette={adminMealPalette} />
-
-          {showPdf ? (
-            <MealMenuPdfSettingsCard
-              approverName={pdfApproverName}
-              footerNote={pdfFooterNote}
-              onApproverChange={setPdfApproverName}
-              onFooterNoteChange={setPdfFooterNote}
-              editable={canEditPdfMeta}
-            />
-          ) : null}
-
-          <MealAdminActionBar
-            saving={saving}
-            pdfLoading={pdfLoading}
-            printerMailLoading={printerMailLoading}
-            onSave={saveDays}
-            onPdf={exportMonthPdf}
-            onPrinterMail={sendMonthPdfToPrinter}
-            showPdf={showPdf}
-            showPrinterMail={showPdf}
-            palette={adminMealPalette}
-          />
-
-          <Text style={styles.sectionHint}>
-            Gün gün kahvaltı, öğle ve akşam yazın. Haftalara dokunarak açıp kapatabilirsiniz.
+        {!pastMonth && editableKeys.length > 0 ? (
+          <Text style={styles.dateHint}>
+            Gün şeridinden seçin veya oklarla gezinin. AI ile toplu doldurup tek tek düzenleyin.
           </Text>
+        ) : null}
 
-          {weekGroups.length === 0 ? (
+        {!effectiveOrgId ? (
+          <MealMenuEmptyState icon="business-outline" title={noOrgTitle} message={noOrgMessage} palette={adminMealPalette} />
+        ) : loading ? (
+          <ActivityIndicator style={{ marginTop: 24 }} color={adminTheme.colors.primary} />
+        ) : pastMonth ? (
+          <MealMenuEmptyState
+            icon="calendar-clear-outline"
+            title="Geçmiş ay"
+            message="Bu ay tamamen geçmişte kaldı. Menü yalnızca bugün ve sonrası için oluşturulur; ileri veya içinde bulunduğunuz ayı seçin."
+            palette={adminMealPalette}
+          />
+        ) : editableKeys.length === 0 ? (
+          <MealMenuEmptyState
+            icon="calendar-outline"
+            title="Düzenlenecek gün yok"
+            message="Bu ayda bugünden sonra kayıt yapılacak gün kalmadı."
+            palette={adminMealPalette}
+          />
+        ) : !menuId ? (
+          <>
+            {effectiveOrgId ? (
+              <MealMenuAiAssistant
+                organizationId={effectiveOrgId}
+                organizationName={orgName}
+                periodMonth={periodMonthStr}
+                editableDates={editableKeys}
+                todayYmd={todayYmd}
+                daysMap={buildEmptyDaysMap(editableKeys)}
+                onApply={handleAiApply}
+                onFocusDate={(ymd) => setSelectedYmd(ymd)}
+                onEnsureMenu={createMenu}
+              />
+            ) : null}
             <MealMenuEmptyState
-              icon="calendar-outline"
-              title="Gösterilecek gün yok"
-              message="Bu ayda bugünden itibaren düzenlenecek gün kalmadı."
+              icon="restaurant-outline"
+              title="Bu ay için menü yok"
+              message={`${editableKeys.length} gün için menü oluşturun veya yukarıdaki AI ile doğrudan hazırlayın.`}
+              palette={adminMealPalette}
+              action={
+                <TouchableOpacity style={styles.createBtn} onPress={() => void createMenu()} activeOpacity={0.85}>
+                  <Ionicons name="add-circle-outline" size={20} color="#fff" />
+                  <Text style={styles.createBtnText}>Boş menü oluştur</Text>
+                </TouchableOpacity>
+              }
+            />
+          </>
+        ) : (
+          <>
+            <MealMenuStatsStrip
+              mode="admin"
+              filledDays={stats.filledDays}
+              partialDays={stats.partialDays}
+              totalDays={stats.totalDays}
               palette={adminMealPalette}
             />
-          ) : null}
 
-          {weekGroups.map((week) => {
-            const filledInWeek = week.keys.filter(
-              (k) => dayFillStatus(daysMap[k] ?? { breakfast: '', lunch: '', dinner: '' }) === 'full'
-            ).length;
-            const expanded = expandedWeeks.has(week.weekKey);
-            return (
-              <View key={week.weekKey} style={styles.weekBlock}>
-                <MealWeekSectionHeader
-                  label={week.label}
-                  dayCount={week.keys.length}
-                  filledCount={filledInWeek}
-                  expanded={expanded}
-                  onToggle={() => toggleWeek(week.weekKey)}
-                  palette={adminMealPalette}
-                />
-                {expanded
-                  ? week.keys.map((ymd) => {
-                      const fields = daysMap[ymd] ?? { breakfast: '', lunch: '', dinner: '' };
-                      return (
-                        <MealDayEditorCard
-                          key={ymd}
-                          ymd={ymd}
-                          fields={fields}
-                          isToday={ymd === todayYmd}
-                          onChange={(next) => setDaysMap((m) => ({ ...m, [ymd]: next }))}
-                          palette={adminMealPalette}
-                        />
-                      );
-                    })
-                  : null}
-              </View>
-            );
-          })}
-        </>
-      )}
-    </ScrollView>
+            {effectiveOrgId ? (
+              <MealMenuAiAssistant
+                organizationId={effectiveOrgId}
+                organizationName={orgName}
+                periodMonth={periodMonthStr}
+                editableDates={editableKeys}
+                todayYmd={todayYmd}
+                daysMap={daysMap}
+                onApply={handleAiApply}
+                onFocusDate={setSelectedYmd}
+              />
+            ) : null}
+
+            <MealMonthDayPicker
+              days={dayChips}
+              selectedYmd={selectedYmd}
+              onSelect={setSelectedYmd}
+              primaryColor={adminMealPalette.primary}
+              mutedColor={adminMealPalette.textMuted}
+              borderColor={adminMealPalette.border}
+              compact
+            />
+
+            {selectedYmd ? (
+              <MealDayEditorCard
+                compact
+                ymd={selectedYmd}
+                fields={selectedFields}
+                isToday={selectedYmd === todayYmd}
+                onChange={(next) => setDaysMap((m) => ({ ...m, [selectedYmd]: next }))}
+                palette={adminMealPalette}
+                onPrevDay={goPrevDay}
+                onNextDay={goNextDay}
+                prevDisabled={selectedIndex <= 0}
+                nextDisabled={selectedIndex < 0 || selectedIndex >= sortedDayKeys.length - 1}
+              />
+            ) : null}
+
+            <MealCollapsibleSection
+              title="Bildirim & belge"
+              subtitle={notifyDaily ? 'Sabah bildirimi açık' : 'Sabah bildirimi kapalı'}
+              icon="options-outline"
+              expanded={settingsOpen}
+              onToggle={() => setSettingsOpen((v) => !v)}
+              palette={adminMealPalette}
+            >
+              <MealNotifyCard
+                compact
+                value={notifyDaily}
+                onValueChange={toggleNotify}
+                palette={adminMealPalette}
+              />
+              {showPdf ? (
+                <>
+                  <MealMenuPdfSettingsCard
+                    compact
+                    approverName={pdfApproverName}
+                    footerNote={pdfFooterNote}
+                    onApproverChange={setPdfApproverName}
+                    onFooterNoteChange={setPdfFooterNote}
+                    editable={canEditPdfMeta}
+                  />
+                  <MealPdfActionRow
+                    pdfLoading={pdfLoading}
+                    printerMailLoading={printerMailLoading}
+                    onPdf={exportMonthPdf}
+                    onPrinterMail={sendMonthPdfToPrinter}
+                    showPrinterMail={showPdf}
+                    palette={adminMealPalette}
+                  />
+                </>
+              ) : null}
+            </MealCollapsibleSection>
+          </>
+        )}
+      </ScrollView>
+
+      {menuId && !loading && editableKeys.length > 0 ? (
+        <View style={[styles.stickyBar, { borderColor: adminMealPalette.border }]}>
+          <MealSaveBar saving={saving} onSave={saveDays} palette={adminMealPalette} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 16, paddingBottom: 48 },
+  root: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  scroll: { flex: 1 },
+  content: { padding: 12, paddingBottom: 72 },
   dateHint: {
-    fontSize: 12,
+    fontSize: 11,
     color: adminTheme.colors.textMuted,
-    lineHeight: 18,
-    marginBottom: 10,
-    paddingHorizontal: 4,
-  },
-  sectionHint: {
-    fontSize: 12,
-    color: adminTheme.colors.textMuted,
+    lineHeight: 16,
     marginBottom: 8,
-    lineHeight: 18,
+    paddingHorizontal: 2,
   },
-  weekBlock: { marginBottom: 4 },
+  stickyBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 12,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+  },
   createBtn: {
     marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     backgroundColor: adminTheme.colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 28,

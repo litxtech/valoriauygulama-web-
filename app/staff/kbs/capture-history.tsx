@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,28 +17,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
-import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffViewAllKbsCaptures, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import {
   capturedAtTs,
   deleteKbsCapturedDocument,
   displayCapturedName,
   fetchKbsCapturedDocuments,
+  filterKbsCapturesForViewer,
   staffCanDeleteKbsCaptures,
   type KbsCapturedDocumentRow,
 } from '@/lib/kbsCaptureHistory';
 import { getKbsCaptureHistoryCache, setKbsCaptureHistoryCache } from '@/lib/kbsCaptureHistoryCache';
 import { listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
-import { formatKbsTrDate } from '@/lib/kbsDisplayFormat';
-import { applyKbsCaptureOcrResult } from '@/lib/kbsCaptureHistory';
-import { kbsOcrEngineLabel, kbsOcrEngineShort } from '@/lib/kbsOcrEngineLabel';
 import { buildKbsCaptureReportHtml } from '@/lib/kbsCaptureReportHtml';
-import { kbsOcrStatusLabel } from '@/lib/kbsCaptureParsedFields';
 import { buildKbsCaptureListItems } from '@/lib/kbsCaptureListGroups';
-import { enqueueKbsCaptureOcrBatch, kbsCaptureOcrQueueSize } from '@/lib/kbsCaptureOcrQueue';
 import {
-  filterKbsMrzOcrPending,
   isKbsCaptureRowNew,
-  pickKbsMrzOcrTargets,
 } from '@/lib/kbsCaptureHistoryMrzTargets';
 import {
   consumeKbsCapturesJustSaved,
@@ -47,7 +41,6 @@ import {
 } from '@/lib/kbsCaptureHistorySeen';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
-import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '@/lib/supabase';
 import { useTranslation } from 'react-i18next';
 
@@ -78,8 +71,6 @@ type CaptureCardProps = {
   item: KbsCapturedDocumentRow;
   canSeeImages: boolean;
   canDelete: boolean;
-  selectMode: boolean;
-  checked: boolean;
   onPress: () => void;
   onLongPress: () => void;
   onDelete: () => void;
@@ -87,14 +78,13 @@ type CaptureCardProps = {
   inGroup?: boolean;
   groupPosition?: 'first' | 'middle' | 'last' | 'only';
   isNew?: boolean;
+  showCapturedBy?: boolean;
 };
 
 function CaptureCard({
   item,
   canSeeImages,
   canDelete,
-  selectMode,
-  checked,
   onPress,
   onLongPress,
   onDelete,
@@ -102,20 +92,13 @@ function CaptureCard({
   inGroup,
   groupPosition = 'only',
   isNew = false,
+  showCapturedBy = false,
 }: CaptureCardProps) {
   const { t } = useTranslation();
   const parsed = asParsed(item);
   const missing = parsed ? listMissingIdFields(parsed) : [];
-  const ocrStatus = kbsOcrStatusLabel(parsed);
-  const engineShort = kbsOcrEngineShort(item.ocr_engine);
-  const statusLabel =
-    ocrStatus === 'ready'
-      ? engineShort ? `${t('kbsStatusReady')} · ${engineShort}` : t('kbsStatusReady')
-      : ocrStatus === 'processing'
-        ? t('kbsStatusReading')
-        : ocrStatus === 'pending'
-          ? t('kbsStatusQueued')
-          : t('kbsStatusIncomplete');
+  const isManualCapture = Array.isArray(parsed?.warnings) && parsed.warnings.includes('manual_capture');
+  const statusLabel = isManualCapture ? 'Kaydedildi' : t('kbsStatusIncomplete');
 
   const isFirst = groupPosition === 'first' || groupPosition === 'only';
   const isLast = groupPosition === 'last' || groupPosition === 'only';
@@ -127,17 +110,10 @@ function CaptureCard({
         inGroup && styles.cardInGroup,
         inGroup && isFirst && styles.cardInGroupFirst,
         inGroup && isLast && styles.cardInGroupLast,
-        !inGroup && checked && styles.cardSelected,
-        inGroup && checked && styles.cardInGroupSelected,
       ]}
       onPress={onPress}
       onLongPress={onLongPress}
     >
-      {selectMode ? (
-        <View style={[styles.check, checked && styles.checkOn]}>
-          {checked ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
-        </View>
-      ) : null}
       {canSeeImages && item.front_image_url ? (
         <Pressable
           onPress={() => onThumbPress?.(item.front_image_url!)}
@@ -163,36 +139,27 @@ function CaptureCard({
           <View
             style={[
               styles.statusChip,
-              ocrStatus === 'ready' && styles.statusChipOk,
-              ocrStatus === 'processing' && styles.statusChipBusy,
+              isManualCapture && styles.statusChipOk,
             ]}
           >
             <Text style={styles.statusChipText}>{statusLabel}</Text>
           </View>
         </View>
         {!inGroup ? <Text style={styles.meta}>Oda {item.room_number ?? '—'}</Text> : null}
-        <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
-        {ocrStatus === 'ready' && parsed?.birthDate ? (
-          <Text style={styles.parsedLine}>D.T: {formatKbsTrDate(parsed.birthDate) ?? parsed.birthDate}</Text>
+        {showCapturedBy && item.captured_by_staff_name ? (
+          <Text style={styles.meta}>Çeken: {item.captured_by_staff_name}</Text>
         ) : null}
-        {missing.length > 0 ? (
+        <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
+        {isManualCapture ? (
+          <Text style={styles.okLine}>Görsel kaydedildi</Text>
+        ) : missing.length > 0 ? (
           <Text style={styles.missingLine} numberOfLines={1}>
             Eksik: {missing.join(', ')}
           </Text>
-        ) : ocrStatus === 'ready' ? (
-          <Text style={styles.okLine}>Dokunun — alanları kopyalayın</Text>
-        ) : (
-          <Text style={styles.parsedHint}>
-            {ocrStatus === 'processing' || ocrStatus === 'pending'
-              ? 'Belge okunuyor…'
-              : kbsOcrEngineLabel(item.ocr_engine)}
-          </Text>
-        )}
+        ) : null}
       </View>
-      {!selectMode ? (
-        <Ionicons name="chevron-forward" size={22} color={theme.colors.textMuted} />
-      ) : null}
-      {canDelete && !selectMode ? (
+      <Ionicons name="chevron-forward" size={22} color={theme.colors.textMuted} />
+      {canDelete ? (
         <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} hitSlop={8}>
           <Ionicons name="trash-outline" size={20} color="#dc2626" />
         </TouchableOpacity>
@@ -205,18 +172,15 @@ export default function KbsCaptureHistoryScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [filter, setFilter] = useState<FilterKey>('day');
+  const viewAllCaptures = canStaffViewAllKbsCaptures(staff);
+  const [filter, setFilter] = useState<FilterKey>(viewAllCaptures ? 'all' : 'day');
   const [rows, setRows] = useState<KbsCapturedDocumentRow[]>(() => getKbsCaptureHistoryCache() ?? []);
   const [loading, setLoading] = useState(() => !getKbsCaptureHistoryCache()?.length);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [, setQueueTick] = useState(0);
-  const [selectMode, setSelectMode] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
   const [justSavedIds] = useState(() => consumeKbsCapturesJustSaved());
-  const resumedOcrRef = useRef(false);
 
   const canDelete = staffCanDeleteKbsCaptures(staff);
   const canSeeImages =
@@ -229,15 +193,16 @@ export default function KbsCaptureHistoryScreen() {
     try {
       setError(null);
       const data = await fetchKbsCapturedDocuments();
-      setRows(data);
-      setKbsCaptureHistoryCache(data);
+      const scoped = filterKbsCapturesForViewer(data, staff, staff?.auth_id);
+      setRows(scoped);
+      setKbsCaptureHistoryCache(scoped);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('kbsListLoadFailed'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [staff, t]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -256,11 +221,6 @@ export default function KbsCaptureHistoryScreen() {
     return () => {
       void setKbsCaptureHistoryLastSeenAt(new Date().toISOString());
     };
-  }, []);
-
-  useEffect(() => {
-    const tick = setInterval(() => setQueueTick((n) => n + 1), 700);
-    return () => clearInterval(tick);
   }, []);
 
   useEffect(() => {
@@ -290,114 +250,7 @@ export default function KbsCaptureHistoryScreen() {
     [justSavedIds, lastSeenAt]
   );
 
-  const mrzTargetRows = useMemo(
-    () =>
-      pickKbsMrzOcrTargets({
-        combined: selectMode ? combined : rows,
-        selectMode,
-        selectedIds: selected,
-        justSavedIds,
-        lastSeenAt,
-      }),
-    [combined, rows, selectMode, selected, justSavedIds, lastSeenAt]
-  );
-
   const newCount = useMemo(() => rows.filter(isRowNew).length, [rows, isRowNew]);
-
-  useEffect(() => {
-    if (loading || resumedOcrRef.current || rows.length === 0) return;
-    resumedOcrRef.current = true;
-    const pending = filterKbsMrzOcrPending(
-      pickKbsMrzOcrTargets({
-        combined: rows,
-        selectMode: false,
-        selectedIds: new Set(),
-        justSavedIds,
-        lastSeenAt,
-      })
-    );
-    if (pending.length > 0) {
-      enqueueKbsCaptureOcrBatch(
-        pending.map((r) => ({
-          docId: r.id,
-          guestId: r.guest_id,
-          imageUrl: r.front_image_url!,
-        }))
-      );
-    }
-  }, [loading, rows, justSavedIds, lastSeenAt]);
-
-  const toggleSelect = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const retryOcr = (picked: KbsCapturedDocumentRow[]) => {
-    const targets = picked.filter((r) => r.front_image_url);
-    if (!targets.length) {
-      Alert.alert(t('kbsNoRecord'), t('kbsNoReadableId'));
-      return;
-    }
-    enqueueKbsCaptureOcrBatch(
-      targets.map((r) => ({
-        docId: r.id,
-        guestId: r.guest_id,
-        imageUrl: r.front_image_url!,
-      }))
-    );
-    Alert.alert(t('kbsReadStarted'), t('kbsMrzBatchStarted', { count: targets.length }));
-  };
-
-  const retryOcrFiltered = () => {
-    if (!mrzTargetRows.length) {
-      Alert.alert(
-        t('kbsNoRecord'),
-        selectMode ? t('kbsNoSelectedRecord') : t('kbsNoRecordFilterHint')
-      );
-      return;
-    }
-    retryOcr(mrzTargetRows);
-  };
-
-  const selectAllVisible = () => {
-    setSelectMode(true);
-    setSelected(new Set(combined.map((r) => r.id)));
-  };
-
-  const retryAiOcrFiltered = async () => {
-    const picked = (selectMode ? combined.filter((r) => selected.has(r.id)) : combined).filter(
-      (r) => r.front_image_url
-    );
-    if (!picked.length) {
-      Alert.alert(t('kbsNoRecord'), t('kbsNoReadableId'));
-      return;
-    }
-    let ok = 0;
-    for (const row of picked) {
-      try {
-        const local = `${FileSystem.cacheDirectory ?? ''}kbs-ai-${row.id}.jpg`;
-        const dl = await FileSystem.downloadAsync(row.front_image_url!, local);
-        const { parseIdCardImageUriWithFallback } = await import('@/lib/kbsCaptureOcr');
-        const ocr = await parseIdCardImageUriWithFallback(dl.uri);
-        const res = await applyKbsCaptureOcrResult(
-          row.id,
-          row.guest_id,
-          ocr.parsed,
-          ocr.parsed.confidence,
-          ocr.engine
-        );
-        if (res.ok) ok += 1;
-      } catch {
-        /* sonraki kayıt */
-      }
-    }
-    void reload();
-    Alert.alert('AI yedek okuma', `${ok} / ${picked.length} kayıt güncellendi.`);
-  };
 
   const confirmDelete = (row: KbsCapturedDocumentRow) => {
     Alert.alert(t('kbsDeleteIdTitle'), t('kbsDeleteIdBody'), [
@@ -458,72 +311,9 @@ export default function KbsCaptureHistoryScreen() {
       {newCount > 0 ? (
         <View style={styles.newBanner}>
           <Ionicons name="sparkles" size={16} color="#0d9488" />
-          <Text style={styles.newBannerText}>
-            {newCount} yeni kimlik — okuma otomatik başlar veya aşağıdan tetikleyin
-          </Text>
+          <Text style={styles.newBannerText}>{newCount} yeni kimlik kaydedildi</Text>
         </View>
       ) : null}
-
-      {kbsCaptureOcrQueueSize() > 0 ? (
-        <View style={styles.queueBanner}>
-          <ActivityIndicator size="small" color="#2563eb" />
-          <Text style={styles.queueBannerText}>
-            Belge okunuyor ({kbsCaptureOcrQueueSize()} sırada)…
-          </Text>
-        </View>
-      ) : null}
-
-      <TouchableOpacity
-        style={styles.retryOcrBtn}
-        onPress={retryOcrFiltered}
-        disabled={combined.length === 0}
-      >
-        <Ionicons name="scan-outline" size={18} color={theme.colors.primary} />
-        <Text style={styles.retryOcrText}>
-          {selectMode && selected.size > 0
-            ? `Seçilenleri oku (${selected.size})`
-            : `Son çekilenleri oku (${mrzTargetRows.length})`}
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.retryAiBtn}
-        onPress={() => void retryAiOcrFiltered()}
-        disabled={combined.length === 0}
-      >
-        <Ionicons name="sparkles-outline" size={16} color="#64748b" />
-        <Text style={styles.retryAiText}>
-          {selectMode && selected.size > 0
-            ? t('kbsAiBackupReadSelected', { count: selected.size })
-            : t('kbsAiBackupRead')}
-        </Text>
-      </TouchableOpacity>
-
-      <View style={styles.toolRow}>
-        <TouchableOpacity
-          style={[styles.toolChip, selectMode && styles.toolChipOn]}
-          onPress={() => {
-            setSelectMode((v) => !v);
-            setSelected(new Set());
-          }}
-        >
-          <Ionicons name="checkbox-outline" size={16} color={selectMode ? '#fff' : theme.colors.text} />
-          <Text style={[styles.toolChipText, selectMode && styles.toolChipTextOn]}>Seç</Text>
-        </TouchableOpacity>
-        {combined.length > 0 ? (
-          <TouchableOpacity style={styles.toolChip} onPress={selectAllVisible}>
-            <Ionicons name="checkmark-done-outline" size={16} color={theme.colors.text} />
-            <Text style={styles.toolChipText}>Tümünü seç</Text>
-          </TouchableOpacity>
-        ) : null}
-        {selectMode ? (
-          <Text style={styles.selectHint}>
-            {selected.size > 0
-              ? t('kbsMrzReadSelected', { count: selected.size })
-              : t('kbsSelectForMrz')}
-          </Text>
-        ) : null}
-      </View>
 
       <View style={styles.filterRow}>
         {([
@@ -561,18 +351,7 @@ export default function KbsCaptureHistoryScreen() {
         }
         renderItem={({ item: entry }) => {
           const openRow = (row: KbsCapturedDocumentRow) => {
-            if (selectMode) {
-              toggleSelect(row.id);
-              return;
-            }
             router.push(detailRoute(row.id));
-          };
-
-          const longPressRow = (row: KbsCapturedDocumentRow) => {
-            if (!selectMode) {
-              setSelectMode(true);
-              setSelected(new Set([row.id]));
-            }
           };
 
           const thumbZoom = (uri: string) => setPreviewUri(uri);
@@ -584,11 +363,10 @@ export default function KbsCaptureHistoryScreen() {
                 item={row}
                 canSeeImages={canSeeImages}
                 canDelete={canDelete}
-                selectMode={selectMode}
-                checked={selected.has(row.id)}
                 isNew={isRowNew(row)}
+                showCapturedBy={viewAllCaptures}
                 onPress={() => openRow(row)}
-                onLongPress={() => longPressRow(row)}
+                onLongPress={() => openRow(row)}
                 onDelete={() => confirmDelete(row)}
                 onThumbPress={thumbZoom}
               />
@@ -630,13 +408,12 @@ export default function KbsCaptureHistoryScreen() {
                         item={row}
                         canSeeImages={canSeeImages}
                         canDelete={canDelete}
-                        selectMode={selectMode}
-                        checked={selected.has(row.id)}
                         isNew={isRowNew(row)}
+                        showCapturedBy={viewAllCaptures}
                         inGroup
                         groupPosition={pos}
                         onPress={() => openRow(row)}
-                        onLongPress={() => longPressRow(row)}
+                        onLongPress={() => openRow(row)}
                         onDelete={() => confirmDelete(row)}
                         onThumbPress={thumbZoom}
                       />

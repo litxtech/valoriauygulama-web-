@@ -15,6 +15,7 @@ export default function StaffPaymentsLayout() {
         }}
       />
       <Stack.Screen name="history" options={{ title: paymentText('paymentsHistoryTitle') }} />
+      <Stack.Screen name="stands/index" options={{ title: 'Sabit QR noktaları' }} />
       <Stack.Screen name="new" options={{ title: paymentText('paymentsNew') }} />
       <Stack.Screen name="[id]" options={{ title: paymentText('paymentsShowQr') }} />
       <Stack.Screen name="stand/[id]" options={{ title: paymentText('paymentsStandingTitle') }} />

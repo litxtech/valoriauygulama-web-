@@ -6,16 +6,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { KitchenOpsHub } from '@/components/kitchenOps/KitchenOpsHub';
 import { fetchCariNetBalance, fetchDaySummary, fetchUnresolvedAlertCount } from '@/lib/kitchenOps/api';
-import { useAuthStore } from '@/stores/authStore';
 import { canAccessKitchenOps, canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
+import { useKitchenFinanceAccess } from '@/hooks/useKitchenFinanceAccess';
 
 export default function KitchenOpsHome() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const staff = useAuthStore((s) => s.staff);
+  const { staff, loading: financeAccessLoading, allowed: financeAllowed, hasKitchenOps } = useKitchenFinanceAccess();
   const canKitchen = canAccessKitchenOps(staff);
   const canReception = canAccessKitchenReceptionAccounting(staff);
-  const allowed = canKitchen || canReception;
+  const allowed = canKitchen || canReception || financeAllowed;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
@@ -25,26 +25,36 @@ export default function KitchenOpsHome() {
   const [todayExpenses, setTodayExpenses] = useState(0);
 
   const load = useCallback(async () => {
-    const [alerts, summary, cari] = await Promise.all([
-      fetchUnresolvedAlertCount().catch(() => 0),
-      fetchDaySummary().catch(() => ({ net_remaining: 0, total_revenue: 0, total_expenses: 0 })),
-      fetchCariNetBalance().catch(() => 0),
-    ]);
+    const alerts = await fetchUnresolvedAlertCount().catch(() => 0);
     setAlertCount(alerts);
-    setNetRemaining(Number(summary.net_remaining ?? 0));
-    setTodayRevenue(Number(summary.total_revenue ?? 0));
-    setTodayExpenses(Number(summary.total_expenses ?? 0));
-    setCariNet(Number(cari));
-  }, []);
+
+    if (financeAllowed) {
+      const [summary, cari] = await Promise.all([
+        fetchDaySummary().catch(() => ({ net_remaining: 0, total_revenue: 0, total_expenses: 0 })),
+        fetchCariNetBalance().catch(() => 0),
+      ]);
+      setNetRemaining(Number(summary.net_remaining ?? 0));
+      setTodayRevenue(Number(summary.total_revenue ?? 0));
+      setTodayExpenses(Number(summary.total_expenses ?? 0));
+      setCariNet(Number(cari));
+    }
+  }, [financeAllowed]);
 
   useEffect(() => {
+    if (financeAccessLoading) return;
+
+    if (!canKitchen && financeAllowed) {
+      router.replace('/staff/kitchen-ops/finance-bridge');
+      return;
+    }
     if (!canKitchen && canReception) {
       router.replace('/staff/kitchen-ops/reception');
       return;
     }
     if (!canKitchen) return;
+
     load().finally(() => setLoading(false));
-  }, [canKitchen, canReception, load, router]);
+  }, [canKitchen, canReception, financeAllowed, financeAccessLoading, load, router]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -52,12 +62,20 @@ export default function KitchenOpsHome() {
     setRefreshing(false);
   };
 
+  if (financeAccessLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
   if (!allowed) {
     return (
       <View style={styles.center}>
         <Ionicons name="lock-closed-outline" size={48} color={theme.colors.textMuted} />
         <Text style={styles.deniedTitle}>Erişim yok</Text>
-        <Text style={styles.denied}>Mutfak veya reception muhasebe yetkisi gerekir.</Text>
+        <Text style={styles.denied}>Mutfak, finans veya reception muhasebe yetkisi gerekir.</Text>
       </View>
     );
   }
@@ -93,6 +111,8 @@ export default function KitchenOpsHome() {
         todayRevenue={todayRevenue}
         todayExpenses={todayExpenses}
         staffName={staff?.full_name}
+        showFinance={financeAllowed}
+        showFinanceBridge={financeAllowed || canReception}
         onNavigate={(route) => router.push(route as never)}
       />
     </ScrollView>

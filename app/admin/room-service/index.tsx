@@ -12,7 +12,9 @@ import {
   Switch,
   ActivityIndicator,
   FlatList,
+  Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
@@ -61,6 +63,8 @@ function formatTrDateTime(value: string) {
 
 export default function AdminRoomServiceScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const headerPaddingTop = Platform.OS === 'ios' ? insets.top + 10 : insets.top + 12;
   const [tab, setTab] = useState<Tab>('orders');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -244,7 +248,7 @@ export default function AdminRoomServiceScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.85}>
           <Ionicons name="arrow-back" size={18} color={adminTheme.colors.text} />
         </TouchableOpacity>
@@ -569,8 +573,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 10,
+    paddingBottom: 14,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: adminTheme.colors.border,
@@ -589,7 +592,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
   pendingBadge: { backgroundColor: '#fef3c7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   pendingBadgeText: { fontSize: 11, fontWeight: '800', color: '#b45309' },
-  tabs: { flexDirection: 'row', gap: 8, padding: 12, backgroundColor: '#fff' },
+  tabs: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 12, backgroundColor: '#fff' },
   tab: {
     flex: 1,
     flexDirection: 'row',
@@ -604,7 +607,7 @@ const styles = StyleSheet.create({
   tabActive: { borderColor: adminTheme.colors.primary, backgroundColor: adminTheme.colors.primary + '10' },
   tabText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted },
   tabTextActive: { color: adminTheme.colors.primary },
-  content: { padding: 14, paddingBottom: 28, gap: 10 },
+  content: { paddingHorizontal: 14, paddingTop: 18, paddingBottom: 28, gap: 10 },
   empty: { textAlign: 'center', color: adminTheme.colors.textMuted, marginTop: 24, fontSize: 14 },
   card: {
     backgroundColor: '#fff',

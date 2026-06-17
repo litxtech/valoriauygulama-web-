@@ -25,13 +25,36 @@ export async function proxyPaymentEdge(request, edgeFunction) {
   if (ua) headers.set('user-agent', ua);
   const accept = request.headers.get('accept');
   if (accept) headers.set('accept', accept);
-  if (anonKey) headers.set('apikey', anonKey);
+  if (anonKey) {
+    headers.set('apikey', anonKey);
+    headers.set('authorization', `Bearer ${anonKey}`);
+  }
 
-  const upstream = await fetch(target.toString(), {
-    method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+  const method =
+    request.method === 'HEAD' ? 'HEAD' : request.method === 'POST' ? 'POST' : 'GET';
+
+  /** @type {RequestInit} */
+  const fetchInit = {
+    method,
     headers,
     redirect: 'manual',
-  });
+  };
+
+  if (method === 'POST') {
+    const contentType = request.headers.get('content-type');
+    if (contentType) headers.set('content-type', contentType);
+    fetchInit.body = await request.arrayBuffer();
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(target.toString(), fetchInit);
+  } catch {
+    return new Response('Ödeme sunucusuna ulaşılamadı. Lütfen tekrar deneyin.', {
+      status: 503,
+      headers: { 'cache-control': 'no-store', 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
 
   const outHeaders = new Headers();
   upstream.headers.forEach((value, key) => {

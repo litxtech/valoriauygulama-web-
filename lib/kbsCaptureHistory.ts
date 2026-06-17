@@ -5,6 +5,7 @@ import { kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { isKbsPlaceholderName, mergeKbsOcrIntoExisting } from '@/lib/kbsCaptureOcrMerge';
 import { isKbsOcrPending, isKbsOcrProcessing } from '@/lib/kbsCaptureParsedFields';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
+import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
 
 export type KbsCapturedDocumentRow = {
   id: string;
@@ -18,6 +19,8 @@ export type KbsCapturedDocumentRow = {
   room_number: string | null;
   /** Aynı toplu çekim / MRZ partisi — listede aile grubu. */
   mrz_batch_key: string | null;
+  scanned_by_user_id: string | null;
+  captured_by_staff_name: string | null;
 };
 
 /** Kimlik çekim listesi — ops.guest_documents (+ oda ataması). guest_stays kullanılmaz. */
@@ -29,7 +32,7 @@ export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapture
     .schema('ops')
     .from('guest_documents')
     .select(
-      'id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key'
+      'id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id'
     )
     .eq('hotel_id', ctx.hotelId)
     .not('front_image_url', 'is', null)
@@ -47,8 +50,22 @@ export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapture
     scan_status: string;
     ocr_engine: string | null;
     mrz_batch_key: string | null;
+    scanned_by_user_id: string | null;
   }[];
   if (list.length === 0) return [];
+
+  const scannerAuthIds = [...new Set(list.map((d) => d.scanned_by_user_id).filter(Boolean))] as string[];
+  let nameByAuthId = new Map<string, string>();
+  if (scannerAuthIds.length > 0) {
+    const { data: staffRows, error: staffErr } = await supabase
+      .from('staff')
+      .select('auth_id, full_name')
+      .in('auth_id', scannerAuthIds);
+    if (staffErr) throw new Error(staffErr.message);
+    nameByAuthId = new Map(
+      (staffRows ?? []).map((s) => [String(s.auth_id), String(s.full_name ?? '').trim() || '—'])
+    );
+  }
 
   const guestIds = [...new Set(list.map((d) => d.guest_id))];
   const { data: stays, error: stayErr } = await supabase
@@ -92,7 +109,22 @@ export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapture
     ocr_engine: d.ocr_engine ?? null,
     room_number: roomByGuest.get(d.guest_id) ?? null,
     mrz_batch_key: d.mrz_batch_key ?? null,
+    scanned_by_user_id: d.scanned_by_user_id ?? null,
+    captured_by_staff_name: d.scanned_by_user_id
+      ? nameByAuthId.get(d.scanned_by_user_id) ?? null
+      : null,
   }));
+}
+
+/** Admin tüm çekimleri görür; diğer personel yalnızca kendi çekimlerini. */
+export function filterKbsCapturesForViewer(
+  rows: KbsCapturedDocumentRow[],
+  staff: { role?: string | null } | null | undefined,
+  viewerAuthId?: string | null
+): KbsCapturedDocumentRow[] {
+  if (canStaffViewAllKbsCaptures(staff)) return rows;
+  if (!viewerAuthId) return rows;
+  return rows.filter((r) => !r.scanned_by_user_id || r.scanned_by_user_id === viewerAuthId);
 }
 
 export function displayCapturedName(row: KbsCapturedDocumentRow): string {

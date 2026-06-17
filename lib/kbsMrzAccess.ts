@@ -26,8 +26,21 @@ export function canStaffUseMrzScan(staff: MrzStaff): boolean {
   return staff.kbs_access_enabled === true;
 }
 
-/** Kimlik/pasaport çekim + çekilen liste (MRZ/KBS tam modülünden bağımsız; `id_capture` yetkisi). */
+/** Kimlik/pasaport çekim (kamera) — `id_capture` yetkisi gerekir. */
 export function canStaffUseIdCapture(staff: MrzStaff): boolean {
   if (!staff?.role) return false;
   return hasIdCapturePermission(staff.app_permissions ?? {});
+}
+
+/** Çekilen kimlik listesi / detay — admin tüm kayıtları görür. */
+export function canStaffViewKbsCaptureHistory(staff: MrzStaff): boolean {
+  if (!staff?.role) return false;
+  if (staff.role === 'admin') return true;
+  return hasIdCapturePermission(staff.app_permissions ?? {});
+}
+
+/** Admin: organizasyondaki tüm personelin çekimleri (sadece kendi değil). */
+export function canStaffViewAllKbsCaptures(staff: MrzStaff): boolean {
+  if (!staff?.role) return false;
+  return staff.role === 'admin';
 }

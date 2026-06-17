@@ -70,7 +70,7 @@ export default function KitchenCariScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
-      <KitchenCariPrintBar />
+      <KitchenCariPrintBar defaultOpen />
       <View style={styles.hero}>
         <Text style={styles.heroLabel}>Net cari durum</Text>
         <Text style={[styles.heroValue, net >= 0 ? styles.positive : styles.negative]}>{fmtKitchenMoney(net)}</Text>

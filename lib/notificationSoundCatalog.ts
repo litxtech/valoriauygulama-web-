@@ -159,7 +159,7 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     titleTr: 'Muhasebe / evrak',
     descriptionTr: 'Muhasebe, çek, borç-alacak ve maliye evrak bildirimleri.',
     audiences: ['staff', 'admin'],
-    notificationTypeHints: ['staff_debt', 'finance', 'maliye', 'accounting', 'document'],
+    notificationTypeHints: ['staff_debt', 'finance', 'finance_counterparty_agreement', 'maliye', 'accounting', 'document'],
     defaultIosPushSound: 'default',
     defaultAndroidPushSound: 'default',
     defaultAndroidChannelId: 'valoria_ns_accounting_document',

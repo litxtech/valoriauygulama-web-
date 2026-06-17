@@ -18,7 +18,8 @@ export default function AdminPaymentsLayout() {
         headerLeft: () => <AdminStackBackButton accessibilityLabel={t('back')} />,
       })}
     >
-      <Stack.Screen name="index" options={{ title: 'Ödemeler' }} />
+      <Stack.Screen name="index" options={{ title: 'Tahsilat Merkezi' }} />
+      <Stack.Screen name="stands/index" options={{ title: 'Sabit QR noktaları' }} />
       <Stack.Screen name="history" options={{ title: paymentText('paymentsHistoryTitle') }} />
       <Stack.Screen name="new" options={{ title: paymentText('paymentsNew') }} />
       <Stack.Screen name="[id]" options={{ title: paymentText('paymentsShowQr') }} />

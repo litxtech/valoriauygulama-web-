@@ -18,7 +18,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
 import {
@@ -62,8 +62,11 @@ const SCREEN_H = Dimensions.get('window').height;
 
 export default function AdminGuestExtrasScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>('catalog');
+  const headerPaddingTop = Platform.OS === 'ios' ? insets.top + 10 : insets.top + 12;
+  const initialTab: Tab = params.tab === 'orders' ? 'orders' : 'catalog';
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,6 +84,12 @@ export default function AdminGuestExtrasScreen() {
     sort_order: string;
     is_available: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    if (params.tab === 'orders' || params.tab === 'catalog') {
+      setTab(params.tab);
+    }
+  }, [params.tab]);
 
   const load = useCallback(async () => {
     const oid = orgId ?? (await resolveAdminOrganizationId());
@@ -204,7 +213,7 @@ export default function AdminGuestExtrasScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
           <Ionicons name="chevron-back" size={26} color={adminTheme.colors.text} />
         </TouchableOpacity>
@@ -439,7 +448,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 12,
     paddingBottom: 8,
   },
   headerTitle: { fontSize: 18, fontWeight: '700', color: adminTheme.colors.text },

@@ -15,6 +15,7 @@ import { adminTheme as T } from '@/constants/adminTheme';
 import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
 import { useAuthStore } from '@/stores/authStore';
 import {
+  buildStaffEmergencyConfirmBody,
   listEmergencyLocations,
   notifyStaffEmergency,
   type EmergencyLocation,
@@ -68,10 +69,15 @@ export default function AdminStaffEmergencyScreen() {
       Alert.alert('Toplanma alanı seçin', 'Önce bir toplanma alanı seçin veya lokasyon ekleyin.');
       return;
     }
-    Alert.alert(
-      'Personel alarmı gönder',
-      `"${selectedLocation.name}" toplanma alanı tüm personele acil bildirim olarak gidecek. Emin misiniz?`,
-      [
+    const confirmBody = buildStaffEmergencyConfirmBody({
+      location: selectedLocation.name,
+      note,
+      withoutNote: (location) =>
+        `"${location}" toplanma alanı tüm personele acil bildirim olarak gidecek. Emin misiniz?`,
+      withNote: (location, noteText) =>
+        `"${location}" toplanma alanı tüm personele acil bildirim olarak gidecek.\n\nNot: ${noteText}\n\nEmin misiniz?`,
+    });
+    Alert.alert('Personel alarmı gönder', confirmBody, [
         { text: 'İptal', style: 'cancel' },
         {
           text: 'Gönder',

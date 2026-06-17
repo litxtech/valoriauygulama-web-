@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import { Ionicons } from '@expo/vector-icons';
 import {
   KITCHEN_CARI_PRINT_OPTIONS,
+  KITCHEN_FINANCE_BRIDGE_PRINT_OPTIONS,
   KITCHEN_PRINT_REPORT_TITLES,
   type KitchenPrintReportKind,
 } from '@/lib/kitchenOps/kitchenPrintReports';
@@ -22,12 +23,14 @@ type Props = {
   compact?: boolean;
   /** Üst satırda bölüm adı — örn. Mutfak / Otel */
   sectionLabel?: string;
+  /** Açılışta PDF / yazdır butonları görünsün */
+  defaultOpen?: boolean;
 };
 
-export function KitchenPrintBar({ kind, kinds, compact, sectionLabel = 'Mutfak' }: Props) {
+export function KitchenPrintBar({ kind, kinds, compact, sectionLabel = 'Mutfak', defaultOpen = false }: Props) {
   const options = kinds ?? (kind ? [{ kind, label: KITCHEN_PRINT_REPORT_TITLES[kind] }] : []);
   const [selected, setSelected] = useState(options[0]?.kind);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [busy, setBusy] = useState<'pdf' | 'print' | 'email' | null>(null);
 
   if (options.length === 0 || !selected) return null;
@@ -139,8 +142,26 @@ function PrintBtn({
   );
 }
 
-export function KitchenCariPrintBar(props: { compact?: boolean }) {
-  return <KitchenPrintBar kinds={KITCHEN_CARI_PRINT_OPTIONS} compact={props.compact} />;
+export function KitchenCariPrintBar(props: { compact?: boolean; defaultOpen?: boolean }) {
+  return (
+    <KitchenPrintBar
+      kinds={KITCHEN_CARI_PRINT_OPTIONS}
+      compact={props.compact}
+      defaultOpen={props.defaultOpen}
+      sectionLabel="Cari"
+    />
+  );
+}
+
+export function KitchenFinancePrintBar(props: { compact?: boolean; defaultOpen?: boolean }) {
+  return (
+    <KitchenPrintBar
+      kinds={KITCHEN_FINANCE_BRIDGE_PRINT_OPTIONS}
+      compact={props.compact}
+      defaultOpen={props.defaultOpen ?? true}
+      sectionLabel="Finans"
+    />
+  );
 }
 
 const styles = StyleSheet.create({

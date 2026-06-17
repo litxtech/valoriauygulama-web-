@@ -136,7 +136,7 @@ export default function CustomerMapScreen() {
     const { data } = await supabase
       .from('feed_posts')
       .select('id, lat, lng, staff_id, guest_id, media_type, thumbnail_url, media_url, staff:staff_id(full_name, profile_image), guest:guest_id(full_name, photo_url)')
-      .eq('visibility', 'customers')
+      .in('visibility', ['customers', 'guests_only'])
       .not('lat', 'is', null)
       .not('lng', 'is', null)
       .order('created_at', { ascending: false })
@@ -417,7 +417,9 @@ export default function CustomerMapScreen() {
           const lostPin =
             row.lat == null ||
             row.lng == null ||
-            (row.visibility != null && row.visibility !== 'customers');
+            (row.visibility != null &&
+              row.visibility !== 'customers' &&
+              row.visibility !== 'guests_only');
           if (lostPin) setMapPosts((prev) => prev.filter((p) => p.id !== row.id));
         }
       )

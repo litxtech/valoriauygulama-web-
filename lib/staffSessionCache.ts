@@ -13,6 +13,7 @@ export type CachedStaffProfile = {
   work_status?: string | null;
   banned_until?: string | null;
   deleted_at?: string | null;
+  account_locked?: boolean;
   app_permissions?: Record<string, boolean> | null;
   hidden_menu_item_ids?: string[] | null;
   kbs_access_enabled?: boolean;

@@ -62,6 +62,8 @@ type Props = {
   todayRevenue?: number;
   todayExpenses?: number;
   staffName?: string | null;
+  showFinance?: boolean;
+  showFinanceBridge?: boolean;
 };
 
 function SectionHeader({ title, icon }: { title: string; icon: IonIcon }) {
@@ -136,6 +138,8 @@ export function KitchenOpsHub({
   todayRevenue = 0,
   todayExpenses = 0,
   staffName,
+  showFinance = true,
+  showFinanceBridge = true,
 }: Props) {
   const todayLabel = new Date().toLocaleDateString('tr-TR', {
     weekday: 'long',
@@ -159,32 +163,61 @@ export function KitchenOpsHub({
       </LinearGradient>
 
       <View style={styles.statsRow}>
-        <KitchenDashboardStat
-          label="Bugün net"
-          value={fmtKitchenMoney(netRemaining)}
-          tone={netRemaining >= 0 ? 'positive' : 'danger'}
-          icon="wallet-outline"
-        />
-        <KitchenDashboardStat label="Hasılat" value={fmtKitchenMoney(todayRevenue)} tone="info" icon="trending-up-outline" />
-        <KitchenDashboardStat label="Gider" value={fmtKitchenMoney(todayExpenses)} tone="warning" icon="trending-down-outline" />
+        {showFinance ? (
+          <>
+            <KitchenDashboardStat
+              label="Bugün net"
+              value={fmtKitchenMoney(netRemaining)}
+              tone={netRemaining >= 0 ? 'positive' : 'danger'}
+              icon="wallet-outline"
+            />
+            <KitchenDashboardStat label="Hasılat" value={fmtKitchenMoney(todayRevenue)} tone="info" icon="trending-up-outline" />
+            <KitchenDashboardStat label="Gider" value={fmtKitchenMoney(todayExpenses)} tone="warning" icon="trending-down-outline" />
+          </>
+        ) : (
+          <KitchenDashboardStat
+            label="Stok uyarısı"
+            value={alertCount > 0 ? `${alertCount} ürün` : 'Temiz'}
+            tone={alertCount > 0 ? 'danger' : 'positive'}
+            icon="alert-circle-outline"
+            onPress={() => onNavigate('/staff/kitchen-ops/stock/low')}
+          />
+        )}
       </View>
 
-      <View style={styles.statsRowSecondary}>
-        <KitchenDashboardStat
-          label="Cari net"
-          value={fmtKitchenMoney(cariNet)}
-          tone="neutral"
-          icon="swap-horizontal-outline"
-          onPress={() => onNavigate('/staff/kitchen-ops/cari')}
-        />
-        <KitchenDashboardStat
-          label="Stok uyarısı"
-          value={alertCount > 0 ? `${alertCount} ürün` : 'Temiz'}
-          tone={alertCount > 0 ? 'danger' : 'positive'}
-          icon="alert-circle-outline"
-          onPress={() => onNavigate('/staff/kitchen-ops/stock/low')}
-        />
-      </View>
+      {showFinance ? (
+        <View style={styles.statsRowSecondary}>
+          <KitchenDashboardStat
+            label="Cari net"
+            value={fmtKitchenMoney(cariNet)}
+            tone="neutral"
+            icon="swap-horizontal-outline"
+            onPress={() => onNavigate('/staff/kitchen-ops/cari')}
+          />
+          <KitchenDashboardStat
+            label="Stok uyarısı"
+            value={alertCount > 0 ? `${alertCount} ürün` : 'Temiz'}
+            tone={alertCount > 0 ? 'danger' : 'positive'}
+            icon="alert-circle-outline"
+            onPress={() => onNavigate('/staff/kitchen-ops/stock/low')}
+          />
+        </View>
+      ) : null}
+
+      {showFinanceBridge ? (
+        <PressableScale onPress={() => onNavigate('/staff/kitchen-ops/finance-bridge')}>
+          <LinearGradient colors={['#312e81', '#4338ca', '#4f46e5']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.financeBridge}>
+            <View style={styles.financeBridgeIcon}>
+              <Ionicons name="git-compare-outline" size={22} color="#fff" />
+            </View>
+            <View style={styles.financeBridgeText}>
+              <Text style={styles.financeBridgeTitle}>Mutfak ↔ Resepsiyon Finans</Text>
+              <Text style={styles.financeBridgeSub}>Hasılat, gider, ödeme ve temiz kalan para</Text>
+            </View>
+            <Ionicons name="arrow-forward-circle" size={28} color="#fff" />
+          </LinearGradient>
+        </PressableScale>
+      ) : null}
 
       {alertCount > 0 ? (
         <PressableScale onPress={() => onNavigate('/staff/kitchen-ops/stock/low')}>
@@ -212,17 +245,21 @@ export function KitchenOpsHub({
 
       <SectionHeader title="Hızlı işlemler" icon="flash-outline" />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickScroll}>
-        {QUICK_ACTIONS.map((item) => (
+        {QUICK_ACTIONS.filter((item) => showFinance || !['revenue', 'expense', 'pos'].includes(item.key)).map((item) => (
           <QuickPill key={item.key} item={item} onPress={() => onNavigate(item.route)} />
         ))}
       </ScrollView>
 
-      <SectionHeader title="Finans & kayıtlar" icon="calculator-outline" />
-      <View style={styles.financeList}>
-        {FINANCE_ROWS.map((item) => (
-          <FinanceListRow key={item.key} item={item} onPress={() => onNavigate(item.route)} />
-        ))}
-      </View>
+      {showFinance ? (
+        <>
+          <SectionHeader title="Finans & kayıtlar" icon="calculator-outline" />
+          <View style={styles.financeList}>
+            {FINANCE_ROWS.map((item) => (
+              <FinanceListRow key={item.key} item={item} onPress={() => onNavigate(item.route)} />
+            ))}
+          </View>
+        </>
+      ) : null}
 
       <PressableScale onPress={() => onNavigate('/staff/kitchen-ops/day-close')}>
         <LinearGradient colors={['#4338ca', '#4f46e5', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.dayClose}>
@@ -380,4 +417,24 @@ const styles = StyleSheet.create({
   dayCloseText: { flex: 1 },
   dayCloseTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
   dayCloseSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
+  financeBridge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    ...theme.shadows.md,
+  },
+  financeBridgeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  financeBridgeText: { flex: 1 },
+  financeBridgeTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  financeBridgeSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import {
   archivePaymentRequest,
@@ -20,7 +19,6 @@ import {
   fetchAdminPaymentRequests,
   formatPaymentAmount,
   isPaymentActiveForList,
-  isPaymentHistoryForList,
   subscribeAdminPaymentRequests,
   type AdminPaymentRequestRow,
 } from '@/lib/payments';
@@ -35,6 +33,7 @@ import {
   type AdminPaymentLane,
 } from '@/lib/adminPaymentLanes';
 import { AdminPaymentCard } from '@/components/admin/AdminPaymentCard';
+import { AdminPaymentHubNav } from '@/components/admin/AdminPaymentHubNav';
 import { guestSearchHaystack } from '@/lib/adminGuestAccountSummary';
 import { fetchLinkedPaymentRequestIds } from '@/lib/financeIncomeStripe';
 
@@ -62,10 +61,10 @@ export default function AdminPaymentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [laneFilter, setLaneFilter] = useState<AdminPaymentLane | 'all'>(initialLane);
+  const [hubExpanded, setHubExpanded] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [actingId, setActingId] = useState<string | null>(null);
   const [linkedPaymentIds, setLinkedPaymentIds] = useState<Set<string>>(() => new Set());
-  const historyCount = useMemo(() => rows.filter(isPaymentHistoryForList).length, [rows]);
 
   const load = useCallback(async () => {
     try {
@@ -276,64 +275,40 @@ export default function AdminPaymentsScreen() {
         }
         ListHeaderComponent={
           <View>
-            <LinearGradient colors={['#1e1b4b', '#4338ca', '#635bff']} style={styles.hero}>
-              <Text style={styles.heroKicker}>MUHASEBE & TAHSİLAT</Text>
-              <Text style={styles.heroTitle}>Yapılan ödemeler</Text>
-              <Text style={styles.heroSub}>{paymentText('paymentsActiveSub')}</Text>
-              <View style={styles.heroStatRow}>
-                <View style={styles.heroStat}>
-                  <Text style={styles.heroStatVal}>{formatPaymentAmount(totalPaidToday, 'try')}</Text>
-                  <Text style={styles.heroStatLbl}>Bugün tahsil</Text>
-                </View>
-                <View style={styles.heroStat}>
-                  <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'paid').length}</Text>
-                  <Text style={styles.heroStatLbl}>Toplam ödenen</Text>
-                </View>
-                <View style={styles.heroStat}>
-                  <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'pending').length}</Text>
-                  <Text style={styles.heroStatLbl}>Bekleyen</Text>
-                </View>
-              </View>
-            </LinearGradient>
+            {hubExpanded ? (
+              <AdminPaymentHubNav
+                onLanePress={(lane) => {
+                  setLaneFilter(lane);
+                  setHubExpanded(false);
+                }}
+              />
+            ) : (
+              <TouchableOpacity style={styles.hubReopen} onPress={() => setHubExpanded(true)} activeOpacity={0.85}>
+                <Ionicons name="grid-outline" size={18} color="#635bff" />
+                <Text style={styles.hubReopenText}>Tahsilat merkezi menüsünü aç</Text>
+                <Ionicons name="chevron-down" size={16} color="#635bff" />
+              </TouchableOpacity>
+            )}
 
-            <TouchableOpacity
-              activeOpacity={0.88}
-              onPress={() => router.push('/admin/payments/new')}
-              style={styles.newWrap}
-            >
-              <LinearGradient colors={['#635bff', '#4f46e5']} style={styles.newBtn}>
-                <Ionicons name="qr-code-outline" size={22} color="#fff" />
-                <Text style={styles.newBtnText}>{paymentText('paymentsNew')}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            <View style={styles.liveHead}>
+              <Text style={styles.liveTitle}>Canlı işlemler</Text>
+              <Text style={styles.liveSub}>Stripe QR tahsilatları — bahşiş, mutfak, otel</Text>
+            </View>
 
-            <TouchableOpacity
-              style={styles.historyLink}
-              onPress={() => router.push('/admin/payments/history' as never)}
-              activeOpacity={0.88}
-            >
-              <Ionicons name="time-outline" size={20} color="#475569" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.historyLinkTitle}>{paymentText('paymentsViewHistory')}</Text>
-                <Text style={styles.historyLinkSub}>
-                  Kapatılan, iptal ve süresi dolan kayıtlar
-                  {historyCount > 0 ? ` · ${historyCount}` : ''}
-                </Text>
+            <View style={styles.heroStatRow}>
+              <View style={styles.heroStat}>
+                <Text style={styles.heroStatVal}>{formatPaymentAmount(totalPaidToday, 'try')}</Text>
+                <Text style={styles.heroStatLbl}>Bugün tahsil</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#475569" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.accountingLink}
-              onPress={() => router.push('/admin/accounting/movements')}
-            >
-              <Ionicons name="calculator-outline" size={20} color="#0f766e" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.accountingLinkTitle}>Muhasebe defteri</Text>
-                <Text style={styles.accountingLinkSub}>Stripe ödemeleri otomatik gelir satırı olarak işlenir</Text>
+              <View style={styles.heroStat}>
+                <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'paid').length}</Text>
+                <Text style={styles.heroStatLbl}>Toplam ödenen</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#0f766e" />
-            </TouchableOpacity>
+              <View style={styles.heroStat}>
+                <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'pending').length}</Text>
+                <Text style={styles.heroStatLbl}>Bekleyen</Text>
+              </View>
+            </View>
 
             <View style={styles.laneSummaryRow}>
               {ADMIN_PAYMENT_LANES.map((lane) => {
@@ -359,7 +334,12 @@ export default function AdminPaymentsScreen() {
 
             {stands.length > 0 ? (
               <View style={styles.standsBlock}>
-                <Text style={styles.standsTitle}>Sabit QR noktaları</Text>
+                <View style={styles.standsHead}>
+                  <Text style={styles.standsTitle}>Sabit QR noktaları</Text>
+                  <TouchableOpacity onPress={() => router.push('/admin/payments/stands' as never)} hitSlop={8}>
+                    <Text style={styles.standsAll}>Tümünü gör</Text>
+                  </TouchableOpacity>
+                </View>
                 {stands.slice(0, 6).map((stand) => (
                   <TouchableOpacity
                     key={stand.id}
@@ -460,50 +440,34 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   listContent: { paddingHorizontal: 12, paddingBottom: 32 },
-  hero: { marginHorizontal: -12, paddingHorizontal: 16, paddingVertical: 18, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
-  heroKicker: { fontSize: 10, fontWeight: '800', color: 'rgba(255,255,255,0.7)', letterSpacing: 1 },
-  heroTitle: { fontSize: 22, fontWeight: '900', color: '#fff', marginTop: 4 },
-  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 8, lineHeight: 18 },
-  heroStatRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  hubReopen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  hubReopenText: { flex: 1, fontSize: 14, fontWeight: '700', color: '#4338ca' },
+  liveHead: { marginTop: 8, marginBottom: 10 },
+  liveTitle: { fontSize: 17, fontWeight: '900', color: theme.colors.text },
+  liveSub: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
+  heroStatRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   heroStat: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 10,
     alignItems: 'center',
-  },
-  heroStatVal: { fontSize: 13, fontWeight: '900', color: '#fff' },
-  heroStatLbl: { fontSize: 10, color: 'rgba(255,255,255,0.75)', marginTop: 4, textAlign: 'center' },
-  newWrap: { marginTop: 14, borderRadius: 14, overflow: 'hidden' },
-  newBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 14 },
-  newBtnText: { color: '#fff', fontSize: 16, fontWeight: '900' },
-  accountingLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#ecfdf5',
     borderWidth: 1,
-    borderColor: '#a7f3d0',
+    borderColor: theme.colors.borderLight,
   },
-  accountingLinkTitle: { fontSize: 14, fontWeight: '800', color: '#0f766e' },
-  accountingLinkSub: { fontSize: 11, color: '#047857', marginTop: 2 },
-  historyLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  historyLinkTitle: { fontSize: 14, fontWeight: '800', color: '#334155' },
-  historyLinkSub: { fontSize: 11, color: '#64748b', marginTop: 2 },
-  laneSummaryRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  heroStatVal: { fontSize: 13, fontWeight: '900', color: '#635bff' },
+  heroStatLbl: { fontSize: 10, color: theme.colors.textMuted, marginTop: 4, textAlign: 'center' },
+  laneSummaryRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
   laneCard: {
     flex: 1,
     backgroundColor: theme.colors.surface,
@@ -517,7 +481,9 @@ const styles = StyleSheet.create({
   laneCardAmount: { fontSize: 12, fontWeight: '900', color: '#635bff' },
   laneCardMeta: { fontSize: 9, color: theme.colors.textMuted },
   standsBlock: { marginTop: 12, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 12 },
-  standsTitle: { fontSize: 12, fontWeight: '800', color: theme.colors.textSecondary, marginBottom: 8 },
+  standsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  standsTitle: { fontSize: 12, fontWeight: '800', color: theme.colors.textSecondary },
+  standsAll: { fontSize: 12, fontWeight: '700', color: '#635bff' },
   standRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
   standTitle: { flex: 1, fontSize: 13, fontWeight: '700', color: theme.colors.text },
   standAmount: { fontSize: 12, fontWeight: '800', color: '#635bff' },

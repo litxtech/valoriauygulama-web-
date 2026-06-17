@@ -1,5 +1,4 @@
 import { hasStaffAppPermission, type StaffPermissionSlice } from '@/lib/staffPermissions';
-import { canAccessAdminShell, isGorevAtaOnlyUser } from '@/lib/staffPermissions';
 import { canAccessFnbHub } from '@/lib/fnbHub';
 import { canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
@@ -23,6 +22,8 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/hotel-pulse': 'hotel_pulse',
   '/admin/local-area-guide': 'bolge_rehberi',
   '/admin/notifications/bulk': 'toplu_duyuru',
+  '/admin/announcements/compose': 'toplu_duyuru',
+  '/admin/engagement': 'toplu_duyuru',
   '/admin/map': 'doluluk_operasyon',
   '/admin/smart-ops': 'operasyon_merkezi',
   '/admin/notifications/templates': 'toplu_duyuru',
@@ -87,6 +88,32 @@ export function adminRoutePermissionKey(href: string): string | null {
   return base ? ADMIN_ROUTE_PERMISSION[base] : null;
 }
 
+/** gorev_ata dışında admin panel modülü açan en az bir yetki. */
+export function hasAdminModulePermissionBeyondGorevAta(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  const keys = new Set(Object.values(ADMIN_ROUTE_PERMISSION));
+  for (const key of keys) {
+    if (key === 'gorev_ata') continue;
+    if (hasStaffAppPermission(staff, key)) return true;
+  }
+  if (hasStaffAppPermission(staff, 'bolum_kurallari_duzenle')) return true;
+  if (hasStaffAppPermission(staff, 'harcama_girisi')) return true;
+  if (canAccessFnbHub(staff)) return true;
+  return false;
+}
+
+/**
+ * Yalnızca görev atama yetkisi olan personel (admin değil, başka admin modülü yok).
+ * Admin panelden ek yetki verildiğinde false döner — menüdeki modüle giriş engellenmez.
+ */
+export function isGorevAtaOnlyUser(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return false;
+  if (!hasStaffAppPermission(staff, 'gorev_ata')) return false;
+  return !hasAdminModulePermissionBeyondGorevAta(staff);
+}
+
 /** Admin panel menü öğesi görünür mü? */
 export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): boolean {
   if (!staff) return false;
@@ -108,7 +135,7 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
   if (href.startsWith('/admin/payments')) return hasStaffAppPermission(staff, 'stripe_odemeler');
   if (href.startsWith('/admin/expenses')) return hasStaffAppPermission(staff, 'harcama_yonetimi') || hasStaffAppPermission(staff, 'harcama_girisi');
 
-  return canAccessAdminShell(staff) && !isGorevAtaOnlyUser(staff);
+  return false;
 }
 
 /** En az bir yönetim paneli modülü yetkisi (admin rolü dışı kısmi erişim). */

@@ -8,6 +8,7 @@ type Props = {
   onApproverChange: (v: string) => void;
   onFooterNoteChange: (v: string) => void;
   editable?: boolean;
+  compact?: boolean;
 };
 
 export function MealMenuPdfSettingsCard({
@@ -16,14 +17,19 @@ export function MealMenuPdfSettingsCard({
   onApproverChange,
   onFooterNoteChange,
   editable = true,
+  compact = false,
 }: Props) {
   return (
-    <View style={styles.wrap}>
-      <View style={styles.head}>
-        <Ionicons name="document-text-outline" size={20} color={adminTheme.colors.primary} />
-        <Text style={styles.title}>PDF / yazdırma ayarları</Text>
-      </View>
-      <Text style={styles.hint}>A4 çıktıda otel adı ve dönem otomatik eklenir. Alt not ve hazırlayan PDF’te görünür.</Text>
+    <View style={[styles.wrap, compact && styles.wrapCompact]}>
+      {!compact ? (
+        <>
+          <View style={styles.head}>
+            <Ionicons name="document-text-outline" size={20} color={adminTheme.colors.primary} />
+            <Text style={styles.title}>PDF / yazdırma ayarları</Text>
+          </View>
+          <Text style={styles.hint}>A4 çıktıda otel adı ve dönem otomatik eklenir.</Text>
+        </>
+      ) : null}
 
       <Text style={styles.label}>Hazırlayan</Text>
       {editable ? (
@@ -65,6 +71,12 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
   },
+  wrapCompact: {
+    borderWidth: 0,
+    padding: 0,
+    marginBottom: 0,
+    backgroundColor: 'transparent',
+  },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   title: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
   hint: { fontSize: 12, lineHeight: 18, color: adminTheme.colors.textMuted, marginBottom: 12 },
@@ -80,7 +92,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 12,
   },
-  noteInput: { minHeight: 88 },
+  noteInput: { minHeight: 64 },
   readonly: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text, marginBottom: 12 },
   readonlyNote: { fontSize: 14, lineHeight: 21, color: adminTheme.colors.text, marginBottom: 4 },
 });

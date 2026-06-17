@@ -19,6 +19,7 @@ import {
   closePaymentQrStand,
   fetchPaymentQrStand,
   fetchPaymentQrStandStats,
+  isVariablePaymentQrStand,
   paymentQrStandOpenUrl,
   subscribePaymentQrStand,
   type PaymentQrStandRow,
@@ -76,6 +77,7 @@ export function PaymentQrStandView() {
 
   const openUrl = row ? paymentQrStandOpenUrl(row.public_token) : '';
   const isActive = row?.status === 'active';
+  const isVariable = row ? isVariablePaymentQrStand(row) : false;
 
   const copyLink = async () => {
     if (!openUrl) return;
@@ -151,10 +153,17 @@ export function PaymentQrStandView() {
         </Text>
       </View>
 
-      <Text style={styles.amount}>{formatPaymentAmount(Number(row.amount), row.currency)}</Text>
+      <Text style={styles.amount}>
+        {isVariable
+          ? paymentText('paymentsStandingVariableAmount')
+          : formatPaymentAmount(Number(row.amount), row.currency)}
+      </Text>
       <Text style={styles.title}>{row.title}</Text>
       {row.description ? <Text style={styles.desc}>{row.description}</Text> : null}
-      <Text style={styles.kind}>{paymentKindLabel(row.service_kind)} · {paymentText('paymentsQrModeStanding')}</Text>
+      <Text style={styles.kind}>
+        {paymentKindLabel(row.service_kind)} ·{' '}
+        {isVariable ? paymentText('paymentsQrModeStandingVariable') : paymentText('paymentsQrModeStanding')}
+      </Text>
 
       <View style={styles.statsRow}>
         <View style={styles.statBox}>
@@ -172,7 +181,9 @@ export function PaymentQrStandView() {
           <View style={styles.qrCard}>
             <QRCode value={openUrl} size={220} backgroundColor="#fff" color="#111" />
           </View>
-          <Text style={styles.hint}>{paymentText('paymentsStandingScanHint')}</Text>
+          <Text style={styles.hint}>
+            {isVariable ? paymentText('paymentsStandingVariableScanHint') : paymentText('paymentsStandingScanHint')}
+          </Text>
         </View>
       ) : (
         <View style={styles.closedBox}>

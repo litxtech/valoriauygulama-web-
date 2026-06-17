@@ -8,13 +8,7 @@ import {
   getKbsCaptureOpsContext,
   type KbsCapturePrewarmReady,
 } from '@/lib/kbsCapturePrewarm';
-import {
-  parseIdCardImageUriWithFallback,
-  type KbsCaptureSide,
-  type KbsOcrResult,
-} from '@/lib/kbsCaptureOcr';
-import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
-import { canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
+import { type KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
 
 export type KbsCaptureSaveItem = {
@@ -63,69 +57,33 @@ function buildFallbackParsed(
   };
 }
 
-function mergeOcrIntoCaptureParsed(
+function applyManualNames(
   fallback: ParsedDocument,
-  ocr: KbsOcrResult | null,
   manual?: { firstName?: string | null; lastName?: string | null }
-): { parsed: ParsedDocument; ocrEngine: string | null; ocrOk: boolean } {
-  if (!ocr) {
-    return {
-      parsed: { ...fallback, warnings: [...fallback.warnings, 'ocr_pending'] },
-      ocrEngine: null,
-      ocrOk: false,
-    };
-  }
-
-  let p = sanitizeKbsOcrForApply(ocr.parsed);
-  if (p.rawMrz) {
-    const gate = canSaveMrzDocument({ rawMrz: p.rawMrz, parsed: p });
-    if (!gate.allowed) {
-      p = {
-        ...p,
-        rawMrz: null,
-        warnings: [...(p.warnings ?? []), 'mrz_checksum_skip'],
-      };
-    }
-  }
-
+): ParsedDocument {
   const manualFn = manual?.firstName?.trim();
   const manualLn = manual?.lastName?.trim();
+  let firstName = fallback.firstName;
+  let lastName = fallback.lastName;
+  const warnings = [...fallback.warnings];
+
   if (manualFn && isUsablePersonName(manualFn)) {
-    p.firstName = sanitizePersonName(manualFn);
-    p.warnings = [...(p.warnings ?? []).filter((w) => w !== 'name_uncertain'), 'manual_name'];
+    firstName = sanitizePersonName(manualFn);
+    if (!warnings.includes('manual_name')) warnings.push('manual_name');
   }
   if (manualLn && isUsablePersonName(manualLn)) {
-    p.lastName = sanitizePersonName(manualLn);
-    p.warnings = [...(p.warnings ?? []).filter((w) => w !== 'name_uncertain'), 'manual_name'];
+    lastName = sanitizePersonName(manualLn);
+    if (!warnings.includes('manual_name')) warnings.push('manual_name');
   }
 
-  const fn = p.firstName ?? fallback.firstName;
-  const ln = p.lastName ?? fallback.lastName;
-  p.firstName = fn;
-  p.lastName = ln;
-  p.fullName = [fn, ln].filter(Boolean).join(' ').trim() || p.fullName || fallback.fullName;
-
-  const hasId = !!(p.documentNumber && String(p.documentNumber).replace(/\D/g, '').length >= 6);
-  const hasNames = isUsablePersonName(p.firstName) && isUsablePersonName(p.lastName);
-  const ocrOk = hasId || hasNames || !!p.rawMrz;
-
-  const warnings = (p.warnings ?? []).filter(
-    (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
-  );
-
-  return {
-    parsed: { ...p, warnings },
-    ocrEngine: ocr.engine,
-    ocrOk,
-  };
+  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+  return { ...fallback, firstName, lastName, fullName, warnings };
 }
 
 export type KbsCaptureSaveResult = {
   guestDocumentId: string;
   guestId: string;
   frontImageUrl: string;
-  /** Kayıt sırasında OCR uygulandı — kuyruk gerekmez. */
-  ocrApplied: boolean;
   localUri: string;
 };
 
@@ -140,7 +98,7 @@ function newCaptureBatchKey(): string {
   });
 }
 
-/** Tek kimlik: sıkıştır → yükle → DB → oda (OCR kayıt ile paralel). */
+/** Tek kimlik: sıkıştır → yükle → DB → oda. */
 export async function saveOneKbsCaptureItem(
   item: KbsCaptureSaveItem,
   room: KbsOpsRoom,
@@ -150,7 +108,7 @@ export async function saveOneKbsCaptureItem(
   return saved!;
 }
 
-/** Görselleri paralel kaydet; OCR yerel dosyada yükleme ile birlikte çalışır. */
+/** Görselleri paralel kaydet; yükleme arka planda hazırlanmış olabilir. */
 export async function saveKbsCaptureItemsParallel(
   items: KbsCaptureSaveItem[],
   room: KbsOpsRoom,
@@ -170,7 +128,6 @@ export async function saveKbsCaptureItemsParallel(
   type Pack = {
     index: number;
     preparedUri: string;
-    ocrSettled: { ok: true; result: KbsOcrResult } | { ok: false; result: null };
     upload: { publicUrl: string };
   };
 
@@ -186,22 +143,13 @@ export async function saveKbsCaptureItemsParallel(
         return {
           index,
           preparedUri: prewarm.preparedUri,
-          ocrSettled: prewarm.ocr
-            ? { ok: true as const, result: prewarm.ocr }
-            : { ok: false as const, result: null },
           upload: prewarm.upload,
         };
       }
 
       const preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
-      const [ocrSettled, upload] = await Promise.all([
-        parseIdCardImageUriWithFallback(preparedUri, { captureSide: item.captureSide }).then(
-          (r) => ({ ok: true as const, result: r }),
-          () => ({ ok: false as const, result: null })
-        ),
-        uploadPassportPrivateFromUri({ uri: preparedUri, subfolder: 'kbs-documents' }),
-      ]);
-      return { index, preparedUri, ocrSettled, upload };
+      const upload = await uploadPassportPrivateFromUri({ uri: preparedUri, subfolder: 'kbs-documents' });
+      return { index, preparedUri, upload };
     })
   );
 
@@ -213,24 +161,23 @@ export async function saveKbsCaptureItemsParallel(
         firstName: item.firstName,
         lastName: item.lastName,
       });
-      const { parsed, ocrEngine, ocrOk } = mergeOcrIntoCaptureParsed(
-        fallback,
-        pack.ocrSettled.ok ? pack.ocrSettled.result : null,
-        { firstName: item.firstName, lastName: item.lastName }
-      );
+      const parsed = applyManualNames(fallback, {
+        firstName: item.firstName,
+        lastName: item.lastName,
+      });
 
       const result = await upsertGuestDocumentLocal({
         parsed,
-        scanConfidence: parsed.confidence,
-        rawMrz: parsed.rawMrz,
-        deferReady: !ocrOk,
+        scanConfidence: null,
+        rawMrz: null,
+        deferReady: false,
         usageKind: 'konaklama',
         mrzBatchKey: batchKey,
         frontImageUrl: pack.upload.publicUrl,
         backImageUrl: null,
         captureSource: item.captureSource,
         capturedAt,
-        ocrEngine,
+        ocrEngine: null,
         opsContext: ctx,
       });
       if (!result.ok) throw new Error(result.message);
@@ -240,7 +187,6 @@ export async function saveKbsCaptureItemsParallel(
         guestId: result.data.guestId,
         frontImageUrl: pack.upload.publicUrl,
         localUri: pack.preparedUri,
-        ocrApplied: ocrOk,
       };
     })
   );
@@ -256,7 +202,6 @@ export async function saveKbsCaptureItemsParallel(
     guestDocumentId: row.guestDocumentId,
     guestId: row.guestId,
     frontImageUrl: row.frontImageUrl,
-    ocrApplied: row.ocrApplied,
     localUri: row.localUri,
   }));
 }

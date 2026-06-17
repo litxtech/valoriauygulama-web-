@@ -22,10 +22,10 @@ import { pickGalleryImages } from '@/lib/galleryPicker';
 import {
   fetchBreakfastSettings,
   canBreakfastSubmitUi,
-  appPermissionTruthy,
   canBreakfastReportViewUi,
   isBreakfastReportOnlyUi,
-  canBreakfastOwnHistoryUi,
+  shouldShowBreakfastListShortcutUi,
+  breakfastListShortcutLabel,
   type BreakfastConfirmationSettings,
   type BreakfastConfirmationRow,
 } from '@/lib/breakfastConfirm';
@@ -236,7 +236,10 @@ export default function StaffBreakfastConfirmScreen() {
   }
 
   const reportOnly = staff ? isBreakfastReportOnlyUi(staff) : false;
-  const canHistory = staff ? canBreakfastOwnHistoryUi(staff) : false;
+  const showListShortcut = staff ? shouldShowBreakfastListShortcutUi(staff) : false;
+  const listShortcutKind = staff ? breakfastListShortcutLabel(staff) : 'own';
+  const listShortcutText =
+    listShortcutKind === 'report' ? 'Kayıt geçmişi / raporlar' : listShortcutKind === 'all' ? 'Kayıt listesi' : 'Teyit geçmişim';
 
   if (reportOnly && staff) {
     return (
@@ -253,13 +256,7 @@ export default function StaffBreakfastConfirmScreen() {
     );
   }
 
-  const perms = staff?.app_permissions as Record<string, unknown> | undefined;
-  const canListOnly =
-    !!staff &&
-    !canSubmit &&
-    (appPermissionTruthy(perms, 'kahvalti_teyit_departman') ||
-      appPermissionTruthy(perms, 'kahvalti_teyit_onayla') ||
-      appPermissionTruthy(perms, 'kahvalti_rapor'));
+  const canListOnly = !!staff && !canSubmit && showListShortcut;
 
   if (!canSubmit && canListOnly) {
     return (
@@ -272,7 +269,7 @@ export default function StaffBreakfastConfirmScreen() {
             : 'Bu hesap için görüntüleme / onay yetkileri tanımlı. Kayıt listesine gidebilirsiniz.'}
         </Text>
         <TouchableOpacity style={styles.primaryBtnWide} onPress={() => router.push('/staff/breakfast-confirm/list')} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnTextLight}>{canBreakfastReportViewUi(staff) ? 'Raporlar' : 'Kayıt listesi'}</Text>
+          <Text style={styles.primaryBtnTextLight}>{listShortcutText}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -344,14 +341,14 @@ export default function StaffBreakfastConfirmScreen() {
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Kaydet</Text>}
       </TouchableOpacity>
 
-      {canHistory ? (
+      {showListShortcut ? (
         <TouchableOpacity
           style={styles.historyBtn}
           onPress={() => router.push('/staff/breakfast-confirm/list')}
           activeOpacity={0.85}
         >
           <Ionicons name="time-outline" size={20} color={theme.colors.primary} />
-          <Text style={styles.historyBtnText}>Teyit geçmişim</Text>
+          <Text style={styles.historyBtnText}>{listShortcutText}</Text>
         </TouchableOpacity>
       ) : null}
     </ScrollView>

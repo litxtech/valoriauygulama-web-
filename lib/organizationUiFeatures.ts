@@ -4,6 +4,12 @@ import {
   type AppFeatureAudience,
   type AppFeaturePlacement,
 } from '@/lib/appFeatureCatalog';
+import {
+  normalizeStaffHamburgerLayout,
+  type StaffHamburgerLayoutConfig,
+} from '@/lib/staffHamburgerLayoutConfig';
+
+export type { StaffHamburgerLayoutConfig };
 
 export type FeatureOverride = {
   enabled?: boolean;
@@ -13,6 +19,8 @@ export type FeatureOverride = {
 export type OrganizationUiFeaturesConfig = {
   v: 1;
   features: Record<string, FeatureOverride>;
+  /** Personel hamburger menü sırası / işletme geneli gizleme */
+  hamburger?: StaffHamburgerLayoutConfig;
 };
 
 export const EMPTY_UI_FEATURES: OrganizationUiFeaturesConfig = { v: 1, features: {} };
@@ -41,7 +49,12 @@ export function normalizeOrganizationUiFeatures(raw: unknown): OrganizationUiFea
       };
     }
   }
-  return { v: 1, features };
+  const hamburger = normalizeStaffHamburgerLayout(o.hamburger);
+  return {
+    v: 1,
+    features,
+    hamburger: Object.keys(hamburger).length ? hamburger : undefined,
+  };
 }
 
 export function resolveFeatureEnabled(config: OrganizationUiFeaturesConfig | null | undefined, featureId: string): boolean {
@@ -98,7 +111,10 @@ export function mergeOrganizationUiFeatures(
       placements: override.placements?.length ? override.placements : merged[id]?.placements,
     };
   }
-  return { v: 1, features: merged };
+  const hamburger = stored.hamburger
+    ? normalizeStaffHamburgerLayout(stored.hamburger)
+    : defaults.hamburger;
+  return { v: 1, features: merged, hamburger };
 }
 
 export function catalogGroupedByAudience(): Record<AppFeatureAudience, typeof APP_FEATURE_CATALOG> {

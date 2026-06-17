@@ -691,3 +691,16 @@ export const KITCHEN_CARI_PRINT_OPTIONS: { kind: KitchenPrintReportKind; label: 
   { kind: 'cari_receivable', label: 'Alacak' },
   { kind: 'cari_weekly', label: 'Haftalık' },
 ];
+
+/** Mutfak–resepsiyon finans köprüsü yazdırma seçenekleri */
+export const KITCHEN_FINANCE_BRIDGE_PRINT_OPTIONS: { kind: KitchenPrintReportKind; label: string }[] = [
+  { kind: 'finance_daily', label: 'Günlük özet' },
+  { kind: 'cari_debt', label: 'Cari borç' },
+  { kind: 'cari_receivable', label: 'Cari alacak' },
+  { kind: 'cari_all', label: 'Cari toplu' },
+  { kind: 'supplier_debts', label: 'Tedarikçi borç' },
+  { kind: 'revenue', label: 'Hasılat' },
+  { kind: 'expenses', label: 'Gider' },
+  { kind: 'personnel', label: 'Ödemeler' },
+  { kind: 'settlements', label: 'Mahsup' },
+];

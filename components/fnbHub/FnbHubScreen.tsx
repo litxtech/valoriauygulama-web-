@@ -25,7 +25,8 @@ import {
 } from '@/lib/fnbHub';
 import { fetchDaySummary } from '@/lib/kitchenOps/api';
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
-import { canAccessKitchenOps, canAccessReservationSales, canManageHotelKitchenMenu } from '@/lib/staffPermissions';
+import { fetchKitchenFinanceStaffIds } from '@/lib/kitchenOps/financeAccessSettings';
+import { canAccessKitchenFinance, canAccessKitchenOps, canAccessReservationSales, canManageHotelKitchenMenu } from '@/lib/staffPermissions';
 import { supabase } from '@/lib/supabase';
 import { fetchOrganizationSlugById } from '@/lib/publicKitchenMenu';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
@@ -59,7 +60,8 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const canUse = canAccessFnbHub(staff);
+  const [financeStaffIds, setFinanceStaffIds] = useState<string[]>([]);
+  const canUse = canAccessFnbHub(staff, financeStaffIds);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,20 +73,28 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
   const palette = variant === 'admin' ? adminTheme.colors : { primary: theme.colors.primary, textMuted: theme.colors.textSecondary };
 
   const primaryActions = useMemo(
-    () => buildFnbHubPrimaryActions(staff, { variant, publicMenuUrl }),
-    [staff, variant, publicMenuUrl]
+    () => buildFnbHubPrimaryActions(staff, { variant, publicMenuUrl, financeStaffIds }),
+    [staff, variant, publicMenuUrl, financeStaffIds]
   );
   const secondaryActions = useMemo(
-    () => buildFnbHubSecondaryActions(staff, { variant, publicMenuUrl }),
-    [staff, variant, publicMenuUrl]
+    () => buildFnbHubSecondaryActions(staff, { variant, publicMenuUrl, financeStaffIds }),
+    [staff, variant, publicMenuUrl, financeStaffIds]
   );
+
+  useEffect(() => {
+    if (!staff?.organization_id) {
+      setFinanceStaffIds([]);
+      return;
+    }
+    void fetchKitchenFinanceStaffIds(staff.organization_id).then(setFinanceStaffIds);
+  }, [staff?.organization_id]);
 
   const load = useCallback(async () => {
     if (!staff?.id || !canUse) return;
 
     const tasks: Promise<void>[] = [];
 
-    if (canAccessKitchenOps(staff)) {
+    if (canAccessKitchenFinance(staff, financeStaffIds)) {
       tasks.push(
         fetchDaySummary()
           .then((s) => setKitchenRevenue(Number(s.total_revenue ?? 0)))

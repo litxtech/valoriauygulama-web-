@@ -10,12 +10,10 @@ import {
   canAccessDepartmentRulesAdminRoutes,
   canCreateDepartmentRules,
   canManageManagedContracts,
-  isGorevAtaOnlyUser,
-  isManagedContractsAdminPath,
   isDepartmentRulesAdminPath,
 } from '@/lib/staffPermissions';
-import { canAccessAdminRoute, hasAnyAdminModulePermission } from '@/lib/adminRoutePermissions';
-import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
+import { canAccessAdminRoute, hasAnyAdminModulePermission, isGorevAtaOnlyUser } from '@/lib/adminRoutePermissions';
+import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { Ionicons } from '@expo/vector-icons';
@@ -206,6 +204,17 @@ export default function AdminLayout() {
           <Ionicons name="id-card-outline" size={22} color={adminTheme.colors.text} />
         </TouchableOpacity>
       ) : null}
+      {canStaffViewKbsCaptureHistory(staff) ? (
+        <TouchableOpacity
+          onPress={() => router.push('/staff/kbs/capture-history' as Href)}
+          style={{ marginRight: 8, padding: 6 }}
+          activeOpacity={0.8}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel="Çekilen kimlikler"
+        >
+          <Ionicons name="albums-outline" size={22} color={adminTheme.colors.text} />
+        </TouchableOpacity>
+      ) : null}
       <TouchableOpacity
         onPress={() => router.push('/admin/map')}
         style={{ marginRight: 12, padding: 6 }}
@@ -258,22 +267,17 @@ export default function AdminLayout() {
     router.replace('/admin' as Href);
   }, [loading, staff, pathname, router, isAdminRootPath]);
 
-  /** Sadece görev yetkisi olan personel tam paneli göremez; görevler + (varsa) sözleşme modülü */
+  /** Yalnızca görev yetkisi olan personel: yetkisiz admin rotasında görev ekranına yönlendir */
   useEffect(() => {
     if (loading || !staff) return;
     if (!isGorevAtaOnlyUser(staff)) return;
     const p = pathname ?? '';
-    const allowedTasks = p.startsWith('/admin/tasks');
-    const allowedContracts =
-      canManageManagedContracts(staff) && isManagedContractsAdminPath(p);
-    const allowedDepartmentRules =
-      canAccessDepartmentRulesAdminRoutes(staff) && isDepartmentRulesAdminPath(p);
-    if (!allowedTasks && !allowedContracts && !allowedDepartmentRules) {
-      if (Platform.OS === 'android') {
-        log.warn('AdminLayout', 'gorev-ata-only redirect', { from: p, to: '/admin/tasks' });
-      }
-      router.replace('/admin/tasks');
+    if (!p.startsWith('/admin')) return;
+    if (canAccessAdminRoute(staff, p)) return;
+    if (Platform.OS === 'android') {
+      log.warn('AdminLayout', 'gorev-ata-only redirect', { from: p, to: '/admin/tasks' });
     }
+    router.replace('/admin/tasks');
   }, [loading, staff, pathname, router]);
 
   const headerOpts = {
@@ -326,7 +330,7 @@ export default function AdminLayout() {
       <Stack.Screen name="tasks/assign" options={{ title: t('adminAssignTask'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="attendance/index" options={{ title: 'Mesai Takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="attendance/[staffId]" options={{ title: 'Personel Mesai Detayı', headerRight: renderHeaderRight }} />
-      <Stack.Screen name="report" options={{ title: t('adminReport'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="report" options={{ headerShown: false }} />
       <Stack.Screen name="stays/index" options={{ title: t('adminStayHistory'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="sales/index" options={{ title: t('adminSalesAndCommission'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="sales/new" options={{ title: t('adminNewSale'), headerRight: renderHeaderRight }} />
@@ -415,11 +419,14 @@ export default function AdminLayout() {
       <Stack.Screen name="access/logs" options={{ title: t('adminAccessLogs'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="permissions" options={{ title: t('adminPermissions'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="ui-features/index" options={{ title: 'Uygulama özellikleri', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="hamburger-menu/index" options={{ title: 'Hamburger menü tasarımı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-capture-notify" options={{ title: 'Kimlik çekim bildirimleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/index" options={{ title: t('adminNotifications'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/bulk" options={{ title: t('adminBulkNotification'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="announcements/compose" options={{ title: t('staffAnnouncementCompose'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="engagement" options={{ title: 'Okuma takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="reports/index" options={{ title: t('adminReports'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="complaints/index" options={{ title: complaintsText('adminTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff-complaints/index" options={{ title: 'Personel Şikayetleri', headerRight: renderHeaderRight }} />
@@ -440,6 +447,7 @@ export default function AdminLayout() {
       <Stack.Screen name="staff/index" options={{ title: t('adminStaffCreate'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/list" options={{ title: t('adminUserList'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/[id]" options={{ title: t('adminStaffEdit'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="staff/profile/[id]" options={{ title: 'Personel profili', headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/add" options={{ title: t('adminStaffAdd'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/pending" options={{ title: t('adminStaffPending'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/approve/[id]" options={{ title: t('adminStaffApprove'), headerRight: renderHeaderRight }} />
@@ -472,6 +480,9 @@ export default function AdminLayout() {
       <Stack.Screen name="debts/[id]" options={{ title: 'Borç detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="meal-menu/index" options={{ title: 'Aylık yemek listesi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="points/index" options={{ title: 'Puan Yönetimi', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notes/index" options={{ title: 'Not Al', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notes/new" options={{ title: 'Yeni not', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notes/[id]" options={{ title: 'Not detayı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: 'Kahvaltı Teyit Kayıtları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/settings" options={{ title: 'Kahvaltı Teyit Ayarları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="transfer-tour/index" options={{ title: t('transferTourAdminMenu'), headerRight: renderHeaderRight }} />

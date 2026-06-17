@@ -6,20 +6,16 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   canCreateFeed: boolean;
-  canKbsMrz: boolean;
   onPost: () => void;
   onStory: () => void;
-  onMrz: () => void;
 };
 
 export function StaffFeedShareSheet({
   visible,
   onClose,
   canCreateFeed,
-  canKbsMrz,
   onPost,
   onStory,
-  onMrz,
 }: Props) {
   const { t } = useTranslation();
 
@@ -41,17 +37,8 @@ export function StaffFeedShareSheet({
         onPress: onStory,
       });
     }
-    if (canKbsMrz) {
-      list.push({
-        key: 'mrz',
-        label: t('staffPassportsTitle'),
-        icon: 'scan',
-        iconColor: '#0f766e',
-        onPress: onMrz,
-      });
-    }
     return list;
-  }, [canCreateFeed, canKbsMrz, onPost, onStory, onMrz, t]);
+  }, [canCreateFeed, onPost, onStory, t]);
 
   return <FeedCreateAnchorMenu visible={visible} onClose={onClose} items={items} />;
 }

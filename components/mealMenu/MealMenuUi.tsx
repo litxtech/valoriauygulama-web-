@@ -306,9 +306,40 @@ type MealSlotEditorRowProps = {
   inputColors: { text: string; muted: string; border: string };
 };
 
-export function MealSlotEditorRow({ slotKey, value, onChangeText, placeholder, inputColors }: MealSlotEditorRowProps) {
+export function MealSlotEditorRow({
+  slotKey,
+  value,
+  onChangeText,
+  placeholder,
+  inputColors,
+  compact = false,
+}: MealSlotEditorRowProps & { compact?: boolean }) {
   const slot = MEAL_SLOTS.find((s) => s.key === slotKey)!;
   const filled = !!value.trim();
+
+  if (compact) {
+    return (
+      <View style={slotStyles.compactRow}>
+        <View style={slotStyles.compactLabelCol}>
+          <Ionicons name={slot.icon} size={14} color={slot.iconColor} />
+          <Text style={[slotStyles.compactLabel, { color: inputColors.text }]}>{slot.shortLabel}</Text>
+        </View>
+        <TextInput
+          style={[
+            slotStyles.compactInput,
+            { color: inputColors.text, borderColor: inputColors.border },
+            filled && slotStyles.compactInputFilled,
+          ]}
+          placeholder={placeholder}
+          placeholderTextColor={inputColors.muted}
+          value={value}
+          onChangeText={onChangeText}
+          multiline
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[slotStyles.editWrap, { backgroundColor: slot.tint, borderColor: slot.border }]}>
       <View style={slotStyles.editHead}>
@@ -347,11 +378,99 @@ type MealDayEditorCardProps = {
   isToday: boolean;
   onChange: (next: MealFields) => void;
   palette: Palette;
+  compact?: boolean;
+  onPrevDay?: () => void;
+  onNextDay?: () => void;
+  prevDisabled?: boolean;
+  nextDisabled?: boolean;
 };
 
-export function MealDayEditorCard({ ymd, fields, isToday, onChange, palette }: MealDayEditorCardProps) {
+export function MealDayEditorCard({
+  ymd,
+  fields,
+  isToday,
+  onChange,
+  palette,
+  compact = false,
+  onPrevDay,
+  onNextDay,
+  prevDisabled,
+  nextDisabled,
+}: MealDayEditorCardProps) {
   const status = dayFillStatus(fields);
   const title = formatTrFullDayLabelFromYmd(ymd);
+  const inputColors = { text: palette.text, muted: palette.textMuted, border: palette.border };
+
+  if (compact) {
+    return (
+      <View
+        style={[
+          dayStyles.compactCard,
+          { backgroundColor: palette.surface, borderColor: isToday ? palette.primary : palette.border },
+        ]}
+      >
+        <View style={dayStyles.compactHead}>
+          {onPrevDay ? (
+            <TouchableOpacity
+              onPress={onPrevDay}
+              disabled={prevDisabled}
+              hitSlop={10}
+              style={dayStyles.navBtn}
+              accessibilityLabel="Önceki gün"
+            >
+              <Ionicons
+                name="chevron-back"
+                size={20}
+                color={prevDisabled ? palette.textMuted : palette.primary}
+              />
+            </TouchableOpacity>
+          ) : null}
+          <View style={dayStyles.compactHeadCenter}>
+            <Text style={[dayStyles.compactTitle, { color: palette.text }]} numberOfLines={1}>
+              {title}
+            </Text>
+            <View style={dayStyles.compactMeta}>
+              {isToday ? (
+                <View style={[dayStyles.todayChipSmall, { backgroundColor: palette.primary }]}>
+                  <Text style={dayStyles.todayChipText}>Bugün</Text>
+                </View>
+              ) : null}
+              <Text style={[dayStyles.statusMini, { color: status === 'full' ? '#059669' : status === 'partial' ? '#d97706' : palette.textMuted }]}>
+                {fillStatusLabel(status)}
+              </Text>
+            </View>
+          </View>
+          {onNextDay ? (
+            <TouchableOpacity
+              onPress={onNextDay}
+              disabled={nextDisabled}
+              hitSlop={10}
+              style={dayStyles.navBtn}
+              accessibilityLabel="Sonraki gün"
+            >
+              <Ionicons
+                name="chevron-forward"
+                size={20}
+                color={nextDisabled ? palette.textMuted : palette.primary}
+              />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {MEAL_SLOTS.map((slot) => (
+          <MealSlotEditorRow
+            key={slot.key}
+            compact
+            slotKey={slot.key}
+            value={fields[slot.key]}
+            onChangeText={(t) => onChange({ ...fields, [slot.key]: t })}
+            placeholder={SLOT_PLACEHOLDERS[slot.key]}
+            inputColors={inputColors}
+          />
+        ))}
+      </View>
+    );
+  }
+
   return (
     <View
       style={[
@@ -380,7 +499,7 @@ export function MealDayEditorCard({ ymd, fields, isToday, onChange, palette }: M
           value={fields[slot.key]}
           onChangeText={(t) => onChange({ ...fields, [slot.key]: t })}
           placeholder={SLOT_PLACEHOLDERS[slot.key]}
-          inputColors={{ text: palette.text, muted: palette.textMuted, border: palette.border }}
+          inputColors={inputColors}
         />
       ))}
     </View>
@@ -486,6 +605,75 @@ export function MealMenuEmptyState({
 
 // —— Admin aksiyon satırı ——
 
+export function MealSaveBar({
+  saving,
+  onSave,
+  palette,
+}: {
+  saving: boolean;
+  onSave: () => void;
+  palette: Palette;
+}) {
+  return (
+    <TouchableOpacity
+      style={[actionStyles.saveBar, { backgroundColor: palette.primary }, saving && actionStyles.disabled]}
+      onPress={onSave}
+      disabled={saving}
+      activeOpacity={0.85}
+    >
+      <Ionicons name="save-outline" size={18} color="#fff" />
+      <Text style={actionStyles.saveText}>{saving ? 'Kaydediliyor…' : 'Kaydet'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+export function MealPdfActionRow({
+  pdfLoading,
+  printerMailLoading,
+  onPdf,
+  onPrinterMail,
+  showPrinterMail,
+  palette,
+}: {
+  pdfLoading: boolean;
+  printerMailLoading?: boolean;
+  onPdf: () => void;
+  onPrinterMail?: () => void;
+  showPrinterMail?: boolean;
+  palette: Palette;
+}) {
+  const mailBusy = !!printerMailLoading;
+  return (
+    <View style={actionStyles.pdfRow}>
+      <TouchableOpacity
+        style={[actionStyles.pdfAction, { borderColor: palette.border }, pdfLoading && actionStyles.disabled]}
+        onPress={onPdf}
+        disabled={pdfLoading || mailBusy}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="print-outline" size={18} color={palette.primary} />
+        <Text style={[actionStyles.pdfActionText, { color: palette.text }]}>
+          {pdfLoading ? 'PDF…' : 'PDF indir / yazdır'}
+        </Text>
+      </TouchableOpacity>
+      {showPrinterMail && onPrinterMail ? (
+        <TouchableOpacity
+          style={[actionStyles.pdfAction, { borderColor: palette.border }, mailBusy && actionStyles.disabled]}
+          onPress={onPrinterMail}
+          disabled={mailBusy || pdfLoading}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="mail-outline" size={18} color={palette.primary} />
+          <Text style={[actionStyles.pdfActionText, { color: palette.text }]}>
+            {mailBusy ? 'Gönderiliyor…' : 'Yazıcıya gönder'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+/** Eski bileşen — geriye dönük uyumluluk */
 export function MealAdminActionBar({
   saving,
   pdfLoading,
@@ -507,45 +695,18 @@ export function MealAdminActionBar({
   showPrinterMail?: boolean;
   palette: Palette;
 }) {
-  const mailBusy = !!printerMailLoading;
   return (
-    <View style={actionStyles.row}>
-      <TouchableOpacity
-        style={[actionStyles.saveBtn, { backgroundColor: palette.primary }, saving && actionStyles.disabled]}
-        onPress={onSave}
-        disabled={saving}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="save-outline" size={20} color="#fff" />
-        <Text style={actionStyles.saveText}>{saving ? 'Kaydediliyor…' : 'Kaydet'}</Text>
-      </TouchableOpacity>
+    <View style={actionStyles.legacyRow}>
+      <MealSaveBar saving={saving} onSave={onSave} palette={palette} />
       {showPdf ? (
-        <TouchableOpacity
-          style={[actionStyles.pdfBtn, { borderColor: palette.primary }, pdfLoading && actionStyles.disabled]}
-          onPress={onPdf}
-          disabled={pdfLoading || mailBusy}
-          activeOpacity={0.85}
-          accessibilityLabel="PDF yazdır"
-        >
-          <Ionicons name="print-outline" size={20} color={palette.primary} />
-          <Text style={[actionStyles.pdfBtnText, { color: palette.primary }]}>
-            {pdfLoading ? '…' : 'PDF'}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
-      {showPrinterMail && onPrinterMail ? (
-        <TouchableOpacity
-          style={[actionStyles.pdfBtn, { borderColor: palette.primary }, mailBusy && actionStyles.disabled]}
-          onPress={onPrinterMail}
-          disabled={mailBusy || pdfLoading}
-          activeOpacity={0.85}
-          accessibilityLabel="Yazıcıya mail gönder"
-        >
-          <Ionicons name="mail-outline" size={20} color={palette.primary} />
-          <Text style={[actionStyles.pdfBtnText, { color: palette.primary }]}>
-            {mailBusy ? '…' : 'Yazıcı'}
-          </Text>
-        </TouchableOpacity>
+        <MealPdfActionRow
+          pdfLoading={pdfLoading}
+          printerMailLoading={printerMailLoading}
+          onPdf={onPdf}
+          onPrinterMail={onPrinterMail}
+          showPrinterMail={showPrinterMail}
+          palette={palette}
+        />
       ) : null}
     </View>
   );
@@ -555,11 +716,27 @@ export function MealNotifyCard({
   value,
   onValueChange,
   palette,
+  compact = false,
 }: {
   value: boolean;
   onValueChange: (v: boolean) => void;
   palette: Palette;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <View style={[notifyStyles.compactWrap, { borderColor: palette.border }]}>
+        <Ionicons name="notifications-outline" size={18} color={palette.primary} />
+        <Text style={[notifyStyles.compactTitle, { color: palette.text }]}>Sabah bildirimi</Text>
+        <Switch
+          value={value}
+          onValueChange={onValueChange}
+          trackColor={{ false: '#cbd5e1', true: palette.primary }}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[notifyStyles.wrap, { backgroundColor: palette.surface, borderColor: palette.border }]}>
       <View style={[notifyStyles.iconBox, { backgroundColor: palette.surfaceSecondary }]}>
@@ -576,6 +753,40 @@ export function MealNotifyCard({
         onValueChange={onValueChange}
         trackColor={{ false: '#cbd5e1', true: palette.primary }}
       />
+    </View>
+  );
+}
+
+export function MealCollapsibleSection({
+  title,
+  subtitle,
+  icon,
+  expanded,
+  onToggle,
+  palette,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  expanded: boolean;
+  onToggle: () => void;
+  palette: Palette;
+  children: ReactNode;
+}) {
+  return (
+    <View style={[collapseStyles.wrap, { borderColor: palette.border, backgroundColor: palette.surface }]}>
+      <TouchableOpacity style={collapseStyles.head} onPress={onToggle} activeOpacity={0.8}>
+        <Ionicons name={icon} size={18} color={palette.primary} />
+        <View style={collapseStyles.headText}>
+          <Text style={[collapseStyles.title, { color: palette.text }]}>{title}</Text>
+          {subtitle && !expanded ? (
+            <Text style={[collapseStyles.sub, { color: palette.textMuted }]} numberOfLines={1}>{subtitle}</Text>
+          ) : null}
+        </View>
+        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={palette.textMuted} />
+      </TouchableOpacity>
+      {expanded ? <View style={collapseStyles.body}>{children}</View> : null}
     </View>
   );
 }
@@ -734,6 +945,32 @@ const slotStyles = StyleSheet.create({
     minHeight: 48,
     textAlignVertical: 'top',
   },
+  compactRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 6,
+  },
+  compactLabelCol: {
+    width: 52,
+    alignItems: 'center',
+    paddingTop: 8,
+    gap: 2,
+  },
+  compactLabel: { fontSize: 10, fontWeight: '700', textAlign: 'center' },
+  compactInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 36,
+    textAlignVertical: 'top',
+    backgroundColor: '#f8fafc',
+  },
+  compactInputFilled: { backgroundColor: '#fff' },
 });
 
 const dayStyles = StyleSheet.create({
@@ -763,6 +1000,28 @@ const dayStyles = StyleSheet.create({
   },
   todayChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   emptyDayText: { fontSize: 13, lineHeight: 18, marginTop: 2, fontStyle: 'italic' },
+  compactCard: {
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  compactHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 4,
+  },
+  compactHeadCenter: { flex: 1, alignItems: 'center' },
+  compactTitle: { fontSize: 14, fontWeight: '700' },
+  compactMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  todayChipSmall: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusMini: { fontSize: 11, fontWeight: '600' },
+  navBtn: { padding: 4, width: 32, alignItems: 'center' },
 });
 
 const emptyStyles = StyleSheet.create({
@@ -780,6 +1039,15 @@ const emptyStyles = StyleSheet.create({
 
 const actionStyles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  legacyRow: { gap: 8 },
+  saveBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 12,
+  },
   saveBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -790,6 +1058,18 @@ const actionStyles = StyleSheet.create({
     borderRadius: 12,
   },
   saveText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  pdfRow: { gap: 8 },
+  pdfAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    backgroundColor: '#fff',
+  },
+  pdfActionText: { fontSize: 13, fontWeight: '600', flex: 1 },
   pdfBtn: {
     minWidth: 72,
     paddingHorizontal: 12,
@@ -805,7 +1085,35 @@ const actionStyles = StyleSheet.create({
   disabled: { opacity: 0.65 },
 });
 
+const collapseStyles = StyleSheet.create({
+  wrap: {
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  headText: { flex: 1 },
+  title: { fontSize: 14, fontWeight: '700' },
+  sub: { fontSize: 12, marginTop: 2 },
+  body: { paddingHorizontal: 12, paddingBottom: 12 },
+});
+
 const notifyStyles = StyleSheet.create({
+  compactWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  compactTitle: { flex: 1, fontSize: 14, fontWeight: '600' },
   wrap: {
     flexDirection: 'row',
     alignItems: 'center',

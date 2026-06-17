@@ -1,6 +1,11 @@
 import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
 import { emergencyNotificationCopy } from '@/lib/emergencyNotificationsI18n';
 import { EMERGENCY_TYPES } from '@/lib/notificationTypes';
+import {
+  buildStaffEmergencyNotificationCopy,
+  isStaffEmergencyAlertNotification,
+  staffEmergencyAlertFromData,
+} from '@/lib/staffEmergency';
 import { supabase } from '@/lib/supabase';
 import {
   appLangCode,
@@ -81,6 +86,14 @@ function tryTemplateCopy(
     if (copy.title !== type || (copy.body?.trim() ?? '').length > 0) {
       return { title: copy.title, body: copy.body?.trim() ? copy.body.trim() : null };
     }
+  }
+  if (isStaffEmergencyAlertNotification(type)) {
+    const payload = staffEmergencyAlertFromData(row.data, row.body);
+    if (payload.location || payload.authorName || payload.note) {
+      const copy = buildStaffEmergencyNotificationCopy(payload);
+      return { title: copy.title, body: copy.body };
+    }
+    return null;
   }
   if (EMERGENCY_TYPE_SET.has(type) || type.includes('emergency')) {
     const copy = emergencyNotificationCopy(type, lang);

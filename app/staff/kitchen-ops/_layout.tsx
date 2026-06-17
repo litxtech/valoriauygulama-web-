@@ -39,6 +39,7 @@ export default function KitchenOpsLayout() {
       <Stack.Screen name="handovers/[id]" options={{ title: t('staffKitchenHandoverDetail') }} />
       <Stack.Screen name="day-close/index" options={{ title: t('staffKitchenDayClose') }} />
       <Stack.Screen name="finance/index" options={{ title: t('staffKitchenFinanceSummary') }} />
+      <Stack.Screen name="finance-bridge/index" options={{ title: 'Mutfak ↔ Resepsiyon Finans' }} />
       <Stack.Screen name="reception" options={{ title: t('staffKitchenReceptionAccounting') }} />
     </Stack>
   );

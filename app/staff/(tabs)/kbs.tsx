@@ -1,13 +1,10 @@
-import { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
-import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import { useTranslation } from 'react-i18next';
-import { useKbsMrzBatchStore } from '@/stores/kbsMrzBatchStore';
-import { preloadMrzVisionScanner } from '@/lib/scanner/mrzVisionScannerLoader';
 
 function Tile(props: { title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
   return (
@@ -28,13 +25,8 @@ export default function StaffKbsTab() {
   const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const showMrz = canStaffUseMrzScan(staff);
   const showIdCapture = canStaffUseIdCapture(staff);
-  const batchKey = useKbsMrzBatchStore((s) => s.batchKey);
-
-  useEffect(() => {
-    if (showMrz) void preloadMrzVisionScanner();
-  }, [showMrz]);
+  const showCaptureHistory = canStaffViewKbsCaptureHistory(staff);
 
   return (
     <View style={styles.container}>
@@ -43,26 +35,8 @@ export default function StaffKbsTab() {
           <Text style={styles.h1}>{t('kbsNavOperation')}</Text>
           <Text style={styles.p}>{t('kbsTabHeaderDesc')}</Text>
         </View>
-        {showMrz ? (
-          <TouchableOpacity
-            style={styles.passportAddBtn}
-            onPress={() => router.push('/staff/kbs/guests' as never)}
-            activeOpacity={0.88}
-            accessibilityLabel={t('kbsNavScanSerial')}
-          >
-            <Ionicons name="add" size={20} color="#fff" />
-          </TouchableOpacity>
-        ) : null}
       </View>
 
-      {showMrz ? (
-        <Tile
-          title={t('kbsGuestHubTitle')}
-          subtitle={t('kbsGuestHubTileSub')}
-          icon="scan-outline"
-          onPress={() => router.push('/staff/kbs/guests' as never)}
-        />
-      ) : null}
       {showIdCapture ? (
         <Tile
           title="Kimlik/Pasaport Çekim"
@@ -71,27 +45,12 @@ export default function StaffKbsTab() {
           onPress={() => router.push('/staff/kbs/capture-id' as never)}
         />
       ) : null}
-      {showIdCapture ? (
+      {showCaptureHistory ? (
         <Tile
           title="Canlı Kimlik Listesi"
-          subtitle="Günlük/haftalık/aylık filtre, önizleme, paylaş-yazdır."
+          subtitle={staff?.role === 'admin' ? 'Tüm personelin çekimleri — filtre, önizleme, paylaş.' : 'Günlük/haftalık/aylık filtre, önizleme, paylaş-yazdır.'}
           icon="albums-outline"
           onPress={() => router.push('/staff/kbs/capture-history' as never)}
-        />
-      ) : null}
-      {showMrz ? (
-        <Tile title={t('kbsNavScanSerial')} subtitle={t('kbsTabScanSub')} icon="document-text-outline" onPress={() => router.push({ pathname: '/staff/mrz-scan', params: { mode: 'single' } } as never)} />
-      ) : null}
-      {showMrz ? (
-        <Tile
-          title="Parti / Beklet"
-          subtitle="Aynı grupta sırayla MRZ; oda atayıp hazıra çekin."
-          icon="people-outline"
-          onPress={() =>
-            batchKey
-              ? router.push({ pathname: '/staff/kbs/batch', params: { batchKey } } as never)
-              : router.push('/staff/kbs/scan' as never)
-          }
         />
       ) : null}
       <Tile

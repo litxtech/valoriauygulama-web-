@@ -37,13 +37,7 @@ export default function ReportLayout() {
           headerLeft: () => <AdminStackBackButton fallback={REPORT_HUB} accessibilityLabel={t('back')} />,
         }}
       />
-      <Stack.Screen
-        name="breakfast-briefing"
-        options={{
-          title: 'Sabah kahvaltı sayısı',
-          headerLeft: () => <AdminStackBackButton fallback={REPORT_HUB} accessibilityLabel={t('back')} />,
-        }}
-      />
+      <Stack.Screen name="breakfast-briefing" options={{ title: 'Sabah kahvaltı sayısı' }} />
     </Stack>
   );
 }

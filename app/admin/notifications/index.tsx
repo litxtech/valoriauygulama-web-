@@ -87,6 +87,10 @@ export default function AdminNotificationsIndex() {
       />
       <Text style={styles.subtitle}>Toplu bildirim gönder, şablonları yönet, son bildirimlere bakın.</Text>
 
+      <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/engagement')}>
+        <Text style={styles.cardTitle}>👁 Duyuru & görev takibi</Text>
+        <Text style={styles.cardDesc}>Duyuruyu kim okudu, görevleri kim açtı</Text>
+      </TouchableOpacity>
       <TouchableOpacity style={styles.card} onPress={() => router.push('/admin/notifications/bulk')}>
         <Text style={styles.cardTitle}>📢 Toplu Bildirim Gönder</Text>
         <Text style={styles.cardDesc}>Misafirlere veya personele toplu duyuru gönder</Text>

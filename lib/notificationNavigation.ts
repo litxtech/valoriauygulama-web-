@@ -7,6 +7,7 @@ import {
   isStaffMealMenuDailyNotification,
   staffMealMenuNotificationHref,
 } from '@/lib/staffMealMenuNotification';
+import { buildAnnouncementActionHref } from '@/lib/staffNotificationActions';
 
 export type NotificationNavContext = {
   isStaff?: boolean;
@@ -114,8 +115,40 @@ function resolveByNotificationType(
     case 'staff_room_cleaning_plan':
       return '/staff/cleaning-plan';
     case 'staff_board_announcement':
-    case 'admin_announcement':
+    case 'admin_announcement': {
+      const boardId = pickStr(data, 'boardAnnouncementId', 'announcementId');
+      if (boardId) {
+        return { pathname: '/staff/board', params: { boardAnnouncementId: boardId } } as Href;
+      }
       return '/staff/board';
+    }
+    case 'staff_feature_intro': {
+      const boardId = pickStr(data, 'boardAnnouncementId', 'announcementId');
+      const videoUrl = pickStr(data, 'videoUrl', 'video_url');
+      const imageUrlsRaw = data.imageUrls;
+      const imageUrls =
+        Array.isArray(imageUrlsRaw)
+          ? imageUrlsRaw.filter((u): u is string => typeof u === 'string' && !!u.trim()).join(',')
+          : '';
+      if (videoUrl || boardId) {
+        return {
+          pathname: videoUrl ? '/staff/announcement-action' : '/staff/board',
+          params: {
+            title: pickStr(data, 'introTitle', 'title'),
+            body: pickStr(data, 'introBody', 'body'),
+            videoUrl,
+            videoTitle: pickStr(data, 'videoTitle', 'video_title'),
+            openScreen: pickStr(data, 'openScreen', 'targetScreen'),
+            actionLabel: pickStr(data, 'actionLabel', 'action_label') || 'Modülü aç',
+            imageUrls,
+            boardAnnouncementId: boardId,
+          },
+        } as Href;
+      }
+      const openScreen = pickStr(data, 'openScreen', 'targetScreen');
+      if (openScreen.startsWith('/')) return openScreen as Href;
+      return '/staff/notifications';
+    }
     case 'staff_assignment':
       if (assignmentId) {
         return { pathname: '/staff/tasks', params: { focusAssignment: assignmentId } };
@@ -128,6 +161,8 @@ function resolveByNotificationType(
         return { pathname: '/staff/debts/[id]', params: { id: debtId } } as Href;
       }
       return '/staff/debts';
+    case 'finance_counterparty_agreement':
+      return '/staff/notifications';
     case 'transfer_tour':
       return isStaff ? '/staff/transfer-tour' : '/customer/transfer-tour';
     case 'stock_pending_approval':
@@ -174,6 +209,7 @@ function resolveByNotificationType(
       return '/staff/department-rules';
     }
     case 'kitchen_revenue_entry':
+      return '/staff/kitchen-ops/revenue';
     case 'kitchen_expense_entry':
     case 'kitchen_monthly_market_expense':
       return '/staff/kitchen-ops/expenses';
@@ -244,9 +280,22 @@ export function resolveNotificationHref(
   const notificationType = notificationTypeOf(data);
   const missingItemsBase = ctx?.pathnameIsAdmin ? '/admin/missing-items' : '/staff/missing-items';
 
+  if (notificationType === 'staff_feature_intro') {
+    const videoUrl = pickStr(data, 'videoUrl', 'video_url');
+    if (videoUrl) return buildAnnouncementActionHref(data);
+    const openScreen = pickStr(data, 'openScreen', 'targetScreen');
+    if (openScreen.startsWith('/')) return openScreen as Href;
+  }
+
   const screenRaw = data.screen;
   const screenPath = typeof screenRaw === 'string' ? screenRaw.trim() : '';
   if (screenPath.startsWith('/')) {
+    if (screenPath === '/staff/announcement-action') {
+      return buildAnnouncementActionHref(data);
+    }
+    if (screenPath === '/staff/salary') {
+      return '/staff/salary-history';
+    }
     return screenPath as Href;
   }
 

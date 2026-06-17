@@ -34,6 +34,9 @@ import {
 } from '@/lib/feedPostMediaPicker';
 import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
+import { FeedVisibilityPicker } from '@/components/FeedVisibilityPicker';
+import type { FeedPostVisibility } from '@/lib/feedVisibility';
+import { shouldNotifyGuestsForStaffPost } from '@/lib/feedVisibility';
 
 const BUCKET = 'feed-media';
 
@@ -46,7 +49,7 @@ export default function NewFeedPostScreen() {
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [mediaItems, setMediaItems] = useState<{ uri: string; type: 'image' | 'video' }[]>([]);
   const [title, setTitle] = useState('');
-  const visibility = 'customers';
+  const [visibility, setVisibility] = useState<FeedPostVisibility>('all_staff');
   const [uploading, setUploading] = useState(false);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadCompleted, setUploadCompleted] = useState(0);
@@ -241,7 +244,9 @@ export default function NewFeedPostScreen() {
             excludeStaffId: staff.id,
             createdByStaffId: staff.id,
           });
-          await notifyGuestsOfNewFeedPost(newPostId);
+          if (shouldNotifyGuestsForStaffPost(visibility)) {
+            await notifyGuestsOfNewFeedPost(newPostId);
+          }
         } catch (e) {
           log.warn('staff/feed/new', 'bildirim veya push', e);
         }
@@ -282,6 +287,13 @@ export default function NewFeedPostScreen() {
         onCamera={takePhoto}
         onGallery={pickImage}
         onRemoveMedia={clearMedia}
+      />
+
+      <FeedVisibilityPicker
+        audience="staff"
+        value={visibility}
+        onChange={setVisibility}
+        disabled={uploading}
       />
 
       <TouchableOpacity

@@ -68,6 +68,8 @@ export type StaffFeedPostCardProps = {
   onCardPress: () => void;
   onMenu: () => void;
   horizontalInset?: number;
+  /** Akışta sade başlık — rol/otel satırları gizlenir */
+  socialHeader?: boolean;
 };
 
 const CELEBRATION_META: Record<
@@ -122,6 +124,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   onCardPress,
   onMenu,
   horizontalInset = SPACING.lg,
+  socialHeader = false,
 }: StaffFeedPostCardProps) {
   const { t } = useTranslation();
   const palette = usePersonelDesign();
@@ -169,19 +172,23 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   const nameBlock = (
     <View style={styles.headerText}>
       <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={styles.name} />
-      {roleBadge ? (
+      {!socialHeader && roleBadge ? (
         <View style={styles.roleBadgeRow}>
           <Text style={styles.roleBadgeEmoji}>{roleBadge.emoji}</Text>
           <Text style={styles.roleBadgeLabel} numberOfLines={1}>
             {roleBadge.label}
           </Text>
         </View>
-      ) : roleLabel && roleLabel !== '—' ? (
+      ) : !socialHeader && roleLabel && roleLabel !== '—' ? (
         <Text style={styles.roleFallback} numberOfLines={1}>
           {roleLabel}
         </Text>
+      ) : socialHeader && roleLabel && roleLabel !== '—' ? (
+        <Text style={styles.roleFallback} numberOfLines={1}>
+          {roleLabel.split(' • ')[0]}
+        </Text>
       ) : null}
-      {(hotelName || hotelLocation) ? (
+      {!socialHeader && (hotelName || hotelLocation) ? (
         <View style={styles.orgRow}>
           {hotelName ? (
             <Text style={styles.orgLine} numberOfLines={1}>
@@ -199,7 +206,7 @@ export const StaffFeedPostCard = memo(function StaffFeedPostCard({
   );
 
   return (
-    <View style={[styles.outer, { marginHorizontal: horizontalInset }]}>
+    <View style={[styles.outer, { marginHorizontal: horizontalInset }, socialHeader && styles.outerSocial]}>
       <PressableScale onPress={onCardPress} scaleTo={0.985} haptic={false}>
         <View
           style={[
@@ -387,6 +394,12 @@ function createPostCardStyles(p: PersonelDesignPalette) {
     marginTop: p.cardGap,
     borderRadius: p.cardRadius,
     ...p.shadowCard,
+  },
+  outerSocial: {
+    marginTop: 8,
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   surface: {
     borderRadius: p.cardRadius,

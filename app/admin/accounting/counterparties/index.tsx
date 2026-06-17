@@ -208,17 +208,6 @@ export default function AccountingCounterpartiesIndex() {
     }
   };
 
-  if (loading && !refreshing) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={adminTheme.colors.accent} />
-      </View>
-    );
-  }
-
-  const needOrg = !orgScope;
-  const showOrgBadge = orgScope === 'all';
-
   const removeFromList = useCallback((row: Row) => {
     confirmDeactivateCounterparty(row.name, async () => {
       const err = await deactivateFinanceCounterparty(row.id, row.organization_id);
@@ -234,6 +223,17 @@ export default function AccountingCounterpartiesIndex() {
       });
     });
   }, []);
+
+  if (loading && !refreshing) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={adminTheme.colors.accent} />
+      </View>
+    );
+  }
+
+  const needOrg = !orgScope;
+  const showOrgBadge = orgScope === 'all';
 
   return (
     <View style={styles.container}>

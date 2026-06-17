@@ -27,7 +27,12 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { awardStaffPoints } from '@/lib/staffPoints';
 import { prefetchAdminAssignPickers } from '@/lib/adminAssignPickersCache';
-import { fetchStaffTaskViewers, type StaffTaskViewerRow } from '@/lib/staffTaskViewers';
+import {
+  fetchStaffAssignmentViewers,
+  fetchStaffTasksTabViewers,
+  type StaffAssignmentViewerRow,
+  type StaffTasksTabViewerRow,
+} from '@/lib/staffAssignmentViews';
 
 type AssignmentRow = {
   id: string;
@@ -69,8 +74,12 @@ export default function AdminTasksIndexScreen() {
   const [scoreNote, setScoreNote] = useState('');
   const [scoring, setScoring] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
-  const [viewers, setViewers] = useState<StaffTaskViewerRow[]>([]);
+  const [viewers, setViewers] = useState<StaffTasksTabViewerRow[]>([]);
   const [viewersLoading, setViewersLoading] = useState(false);
+  const [assignmentViewersOpen, setAssignmentViewersOpen] = useState(false);
+  const [assignmentViewers, setAssignmentViewers] = useState<StaffAssignmentViewerRow[]>([]);
+  const [assignmentViewersTitle, setAssignmentViewersTitle] = useState('');
+  const [assignmentViewersLoading, setAssignmentViewersLoading] = useState(false);
 
   const orgIdForViewers = useMemo(() => {
     const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
@@ -87,7 +96,7 @@ export default function AdminTasksIndexScreen() {
     }
     setViewersLoading(true);
     try {
-      setViewers(await fetchStaffTaskViewers(orgIdForViewers));
+      setViewers(await fetchStaffTasksTabViewers(orgIdForViewers));
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Personel listesi yüklenemedi.');
       setViewers([]);
@@ -105,7 +114,7 @@ export default function AdminTasksIndexScreen() {
       setViewers([]);
       return;
     }
-    void fetchStaffTaskViewers(orgIdForViewers)
+    void fetchStaffTasksTabViewers(orgIdForViewers)
       .then(setViewers)
       .catch(() => setViewers([]));
   }, [isAdmin, orgIdForViewers]);
@@ -284,6 +293,19 @@ export default function AdminTasksIndexScreen() {
     }
   };
 
+  const openAssignmentViewers = async (row: AssignmentRow) => {
+    setAssignmentViewersTitle(row.title);
+    setAssignmentViewersOpen(true);
+    setAssignmentViewersLoading(true);
+    try {
+      setAssignmentViewers(await fetchStaffAssignmentViewers(row.id));
+    } catch {
+      setAssignmentViewers([]);
+    } finally {
+      setAssignmentViewersLoading(false);
+    }
+  };
+
   const stats = useMemo(() => {
     const open = rows.filter((r) => r.status === 'pending' || r.status === 'in_progress').length;
     const done = rows.filter((r) => r.status === 'completed').length;
@@ -373,7 +395,7 @@ export default function AdminTasksIndexScreen() {
             activeOpacity={0.85}
           >
             <Ionicons name="eye-outline" size={18} color={adminTheme.colors.primary} />
-            <Text style={styles.viewersBtnText}>Görevleri gören personel</Text>
+            <Text style={styles.viewersBtnText}>Görev sekmesini açanlar</Text>
             {viewerCount > 0 ? (
               <View style={styles.viewersBadge}>
                 <Text style={styles.viewersBadgeText}>{viewerCount}</Text>
@@ -510,6 +532,16 @@ export default function AdminTasksIndexScreen() {
                   {r.body}
                 </Text>
               ) : null}
+              {isAdmin ? (
+                <TouchableOpacity
+                  style={styles.viewersInlineBtn}
+                  onPress={() => void openAssignmentViewers(r)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="eye-outline" size={16} color={adminTheme.colors.primary} />
+                  <Text style={styles.viewersInlineBtnText}>Kim gördü</Text>
+                </TouchableOpacity>
+              ) : null}
               {isAdmin && r.status !== 'completed' && r.status !== 'cancelled' && r.status !== 'failed' ? (
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => cancelAssignment(r.id)} activeOpacity={0.8}>
                   <Text style={styles.cancelBtnText}>Görevi iptal et</Text>
@@ -602,22 +634,22 @@ export default function AdminTasksIndexScreen() {
           <View style={[styles.modalSheet, styles.viewersSheet]}>
             <View style={styles.viewersSheetHeader}>
               <Ionicons name="people-outline" size={24} color={adminTheme.colors.primary} />
-              <Text style={styles.viewersSheetTitle}>Görevleri gören personel</Text>
+              <Text style={styles.viewersSheetTitle}>Görev sekmesini açanlar</Text>
               <TouchableOpacity onPress={() => setViewersOpen(false)} hitSlop={12}>
                 <Ionicons name="close" size={24} color={adminTheme.colors.textMuted} />
               </TouchableOpacity>
             </View>
             <Text style={styles.viewersSheetSub}>
-              Aynı oteldeki aktif personel &quot;Tüm görevler&quot; sekmesinde görevleri görür. Kendi görevlerinde tamamlama / yapamadım yapabilir.
+              Personel görevler sekmesine girdiğinde burada listelenir. Görev kartını açanlar ilgili görevde &quot;Kim gördü&quot; ile görünür.
             </Text>
             {viewersLoading ? (
               <ActivityIndicator style={{ marginVertical: 24 }} color={adminTheme.colors.primary} />
             ) : viewers.length === 0 ? (
-              <Text style={styles.viewersEmpty}>Liste boş veya otel seçilmedi.</Text>
+              <Text style={styles.viewersEmpty}>Henüz kayıt yok veya otel seçilmedi.</Text>
             ) : (
               <ScrollView style={styles.viewersList} keyboardShouldPersistTaps="handled">
                 {viewers.map((v) => (
-                  <View key={v.id} style={styles.viewerRow}>
+                  <View key={v.staff_id} style={styles.viewerRow}>
                     <View style={styles.viewerAvatar}>
                       <Text style={styles.viewerAvatarText}>{(v.full_name?.[0] ?? '?').toUpperCase()}</Text>
                     </View>
@@ -627,12 +659,48 @@ export default function AdminTasksIndexScreen() {
                         {v.role ? STAFF_ROLE_LABELS[v.role] ?? v.role : '—'}
                         {v.department ? ` · ${v.department}` : ''}
                       </Text>
+                      <Text style={styles.viewerTime}>{formatDateTime(v.last_opened_at)}</Text>
                     </View>
-                    {v.canAssignTasks ? (
-                      <View style={styles.viewerTag}>
-                        <Text style={styles.viewerTagText}>Görev atar</Text>
-                      </View>
-                    ) : null}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={assignmentViewersOpen} transparent animationType="slide" onRequestClose={() => setAssignmentViewersOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, styles.viewersSheet]}>
+            <View style={styles.viewersSheetHeader}>
+              <Ionicons name="eye-outline" size={24} color={adminTheme.colors.primary} />
+              <Text style={styles.viewersSheetTitle} numberOfLines={2}>
+                {assignmentViewersTitle}
+              </Text>
+              <TouchableOpacity onPress={() => setAssignmentViewersOpen(false)} hitSlop={12}>
+                <Ionicons name="close" size={24} color={adminTheme.colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.viewersSheetSub}>Bu görev kartını açan personel</Text>
+            {assignmentViewersLoading ? (
+              <ActivityIndicator style={{ marginVertical: 24 }} color={adminTheme.colors.primary} />
+            ) : assignmentViewers.length === 0 ? (
+              <Text style={styles.viewersEmpty}>Henüz kimse açmamış.</Text>
+            ) : (
+              <ScrollView style={styles.viewersList} keyboardShouldPersistTaps="handled">
+                {assignmentViewers.map((v) => (
+                  <View key={v.staff_id} style={styles.viewerRow}>
+                    <View style={styles.viewerAvatar}>
+                      <Text style={styles.viewerAvatarText}>{(v.full_name?.[0] ?? '?').toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.viewerBody}>
+                      <Text style={styles.viewerName}>{v.full_name ?? 'Personel'}</Text>
+                      <Text style={styles.viewerMeta}>
+                        {v.role ? STAFF_ROLE_LABELS[v.role] ?? v.role : '—'}
+                        {v.department ? ` · ${v.department}` : ''}
+                      </Text>
+                      <Text style={styles.viewerTime}>{formatDateTime(v.viewed_at)}</Text>
+                    </View>
                   </View>
                 ))}
               </ScrollView>
@@ -774,6 +842,20 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.surfaceSecondary,
   },
   viewersBtnText: { flex: 1, fontSize: 14, fontWeight: '700', color: adminTheme.colors.primary },
+  viewersInlineBtn: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  viewersInlineBtnText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.primary },
   viewersBadge: {
     minWidth: 22,
     height: 22,
@@ -815,6 +897,7 @@ const styles = StyleSheet.create({
   viewerBody: { flex: 1, minWidth: 0 },
   viewerName: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
   viewerMeta: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
+  viewerTime: { fontSize: 11, color: '#64748b', marginTop: 4, fontWeight: '600' },
   viewerTag: {
     paddingHorizontal: 8,
     paddingVertical: 4,

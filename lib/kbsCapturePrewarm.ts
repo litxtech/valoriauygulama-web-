@@ -1,19 +1,10 @@
-import {
-  parseIdCardImageUri,
-  parseIdCardImageUriWithFallback,
-  type KbsCaptureSide,
-  type KbsOcrResult,
-} from '@/lib/kbsCaptureOcr';
+import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
-import { listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
-import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
-import type { ParsedDocument } from '@/lib/scanner/types';
 
 export type KbsCapturePrewarmReady = {
   preparedUri: string;
-  ocr: KbsOcrResult | null;
   upload: { publicUrl: string };
 };
 
@@ -46,53 +37,27 @@ export function cancelKbsCapturePrewarm(itemId: string): void {
   entries.delete(itemId);
 }
 
-function runPrewarm(args: {
-  imageUri: string;
-  captureSide?: KbsCaptureSide;
-  prefetchedParsed?: ParsedDocument | null;
-}): Promise<KbsCapturePrewarmReady> {
+function runPrewarm(args: { imageUri: string }): Promise<KbsCapturePrewarmReady> {
   warmKbsCaptureOpsContext();
 
   return (async () => {
     const preparedUri = await prepareKbsCaptureImageUri(args.imageUri);
-
-    const uploadP = uploadPassportPrivateFromUri({
+    const upload = await uploadPassportPrivateFromUri({
       uri: preparedUri,
       subfolder: 'kbs-documents',
     });
-
-    let ocrP: Promise<KbsOcrResult | null>;
-    if (args.prefetchedParsed) {
-      ocrP = Promise.resolve({
-        parsed: args.prefetchedParsed,
-        missingFields: listMissingIdFields(args.prefetchedParsed),
-        engine: MRZ_OCR_ENGINE_VISION_MLKIT,
-      });
-    } else {
-      ocrP = parseIdCardImageUriWithFallback(preparedUri, {
-        captureSide: args.captureSide,
-      }).catch(() => null);
-    }
-
-    const [upload, ocr] = await Promise.all([uploadP, ocrP]);
     return {
       preparedUri,
       upload: { publicUrl: upload.publicUrl },
-      ocr,
     };
   })();
 }
 
-/**
- * Çekim anında arka planda: sıkıştır → OCR → yükle.
- * Onayda yalnızca DB + oda ataması kalır.
- */
+/** Çekim anında arka planda: sıkıştır → yükle. Onayda yalnızca DB + oda ataması kalır. */
 export function startKbsCapturePrewarm(args: {
   itemId: string;
   imageUri: string;
   captureSide?: KbsCaptureSide;
-  /** Canlı ön yüz taramada OCR zaten yapıldı. */
-  prefetchedParsed?: ParsedDocument | null;
 }): void {
   const existing = entries.get(args.itemId);
   if (existing && !existing.cancelled) return;

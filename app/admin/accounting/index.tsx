@@ -74,7 +74,7 @@ const QUICK: { href: Href; icon: keyof typeof Ionicons.glyphMap; label: string; 
 const LINKS: { href: Href; icon: keyof typeof Ionicons.glyphMap; label: string }[] = [
   { href: '/admin/payments', icon: 'card-outline', label: 'Stripe ödemeler (bahşiş / mutfak / otel)' },
   { href: '/admin/accounting/activity', icon: 'time-outline', label: 'Son işlemler (tüm kayıtlar)' },
-  { href: '/admin/accounting/movements', icon: 'list-outline', label: 'Gelir / gider defteri' },
+  { href: '/admin/accounting/movements', icon: 'list-outline', label: 'Tüm ödemeler' },
   {
     href: '/admin/accounting/counterparties',
     icon: 'people-outline',

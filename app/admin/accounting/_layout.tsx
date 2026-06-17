@@ -39,7 +39,7 @@ export default function AccountingLayout() {
         name="index"
         options={{ title: 'Muhasebe', headerLeft: () => <AdminStackBackButton fallback="/admin" /> }}
       />
-      <Stack.Screen name="movements/index" options={{ title: 'Gelir / Gider' }} />
+      <Stack.Screen name="movements/index" options={{ title: 'Tüm ödemeler' }} />
       <Stack.Screen name="movements/new" options={{ title: 'Yeni kayıt' }} />
       <Stack.Screen name="movements/[id]" options={{ title: 'Hareket detayı' }} />
       <Stack.Screen name="movements/edit" options={{ title: 'Kayıt düzenle' }} />

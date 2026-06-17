@@ -24,6 +24,8 @@ export type StaffFeedStoryAvatarProps = {
   hasUnseen: boolean;
   profileHidden?: boolean;
   presenceStatus?: StaffPresenceStatus;
+  /** Instagram tarzı story şeridi — sadece avatar + kısa isim */
+  compact?: boolean;
   onPress: () => void;
 };
 
@@ -43,55 +45,69 @@ export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
     hasUnseen,
     profileHidden,
     presenceStatus = isOnline ? 'available' : 'break',
+    compact = false,
     onPress,
   } = props;
 
+  const displayName = compact ? (name.split(/\s+/)[0] || name) : name;
+  const avatarSize = compact ? 56 : 60;
+  const ringSize = compact ? 64 : 68;
+  const outerSize = compact ? 68 : 72;
+
+  const avatarInner = (
+    <AnimatedStoryRing hasStory={hasStory} hasUnseen={hasUnseen} isOnline={!!isOnline} size={ringSize}>
+      <AvatarWithBadge badge={verificationBadge ?? null} avatarSize={avatarSize} badgeSize={14} showBadge={false}>
+        {profileImage ? (
+          <CachedImage uri={profileImage} style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]} contentFit="cover" />
+        ) : (
+          <View style={[styles.placeholder, { backgroundColor: palette.borderLight, width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
+            <Text style={[styles.letter, { color: palette.subtext, fontSize: compact ? 20 : 22 }]}>{name.charAt(0).toUpperCase()}</Text>
+          </View>
+        )}
+      </AvatarWithBadge>
+      {isMe ? (
+        <TouchableOpacity style={styles.addBadge} activeOpacity={0.9}>
+          <Ionicons name="add" size={13} color="#fff" />
+        </TouchableOpacity>
+      ) : null}
+      {isOnline ? (
+        <OnlinePresenceDot
+          online
+          size={compact ? 10 : 12}
+          borderColor="#fff"
+          position={isMe ? 'bottom-left' : 'bottom-right'}
+        />
+      ) : null}
+    </AnimatedStoryRing>
+  );
+
   return (
-    <PressableScale style={styles.card} onPress={onPress}>
+    <PressableScale style={[styles.card, compact && styles.cardCompact]} onPress={onPress}>
       <View style={styles.inner}>
-        <View style={styles.avatarCluster}>
-          <RoleAura role={role} department={department} radius={38}>
-            <StaffStatusRing status={presenceStatus} size={72}>
-              <AnimatedStoryRing hasStory={hasStory} hasUnseen={hasUnseen} isOnline={!!isOnline} size={68}>
-                <AvatarWithBadge badge={verificationBadge ?? null} avatarSize={60} badgeSize={14} showBadge={false}>
-                  {profileImage ? (
-                    <CachedImage uri={profileImage} style={styles.avatar} contentFit="cover" />
-                  ) : (
-                    <View style={[styles.placeholder, { backgroundColor: palette.borderLight }]}>
-                      <Text style={[styles.letter, { color: palette.subtext }]}>{name.charAt(0).toUpperCase()}</Text>
-                    </View>
-                  )}
-                </AvatarWithBadge>
-                {isMe ? (
-                  <TouchableOpacity style={styles.addBadge} activeOpacity={0.9}>
-                    <Ionicons name="add" size={13} color="#fff" />
-                  </TouchableOpacity>
-                ) : null}
-                {isOnline ? (
-                  <OnlinePresenceDot
-                    online
-                    size={12}
-                    borderColor="#fff"
-                    position={isMe ? 'bottom-left' : 'bottom-right'}
-                  />
-                ) : null}
-              </AnimatedStoryRing>
-            </StaffStatusRing>
-          </RoleAura>
+        <View style={[styles.avatarCluster, compact && { width: outerSize, height: outerSize }]}>
+          {compact ? (
+            avatarInner
+          ) : (
+            <RoleAura role={role} department={department} radius={38}>
+              <StaffStatusRing status={presenceStatus} size={outerSize}>
+                {avatarInner}
+              </StaffStatusRing>
+            </RoleAura>
+          )}
         </View>
         <View style={styles.captionBlock}>
           <StaffNameWithBadge
-            name={name}
-            badge={verificationBadge ?? null}
-            textStyle={[styles.name, { color: palette.text }]}
+            name={displayName}
+            badge={compact ? null : verificationBadge ?? null}
+            textStyle={[styles.name, compact && styles.nameCompact, { color: palette.text }]}
             center
           />
-          {!profileHidden && (department || position) ? (
+          {!compact && !profileHidden && (department || position) ? (
             <Text style={[styles.role, { color: palette.muted }]} numberOfLines={1}>
               {department || position || ''}
             </Text>
           ) : null}
-          {!profileHidden && orgLabel ? (
+          {!compact && !profileHidden && orgLabel ? (
             <Text style={[styles.org, { color: palette.subtext }]} numberOfLines={2}>
               {orgLabel}
             </Text>
@@ -104,6 +120,7 @@ export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
 
 const styles = StyleSheet.create({
   card: { width: 88, marginRight: 10 },
+  cardCompact: { width: 72, marginRight: 6 },
   inner: { alignItems: 'center', width: '100%' },
   avatarCluster: {
     width: 76,
@@ -136,6 +153,7 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   name: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  nameCompact: { fontSize: 10, fontWeight: '600' },
   role: { fontSize: 9, marginTop: 2, textAlign: 'center' },
   org: { fontSize: 8, textAlign: 'center', marginTop: 1 },
 });

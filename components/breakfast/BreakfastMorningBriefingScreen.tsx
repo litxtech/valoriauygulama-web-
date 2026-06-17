@@ -31,6 +31,7 @@ import {
   type BreakfastBriefingTarget,
   type BreakfastMorningBriefing,
 } from '@/lib/breakfastMorningBriefing';
+import { BreakfastBriefingNotifCard } from '@/components/breakfast/BreakfastBriefingNotifCard';
 
 type Props = {
   /** occupancy/admin: düzenleme; view: salt okunur (mutfak/resepsiyon bildirim ekranı) */
@@ -228,20 +229,24 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
           </View>
           <Text style={styles.heroDate}>{dateLabel}</Text>
           <Text style={styles.heroHint}>
-            Kahvaltıya gelecek misafir sayısı ve otel nüfusunu net şekilde paylaşın.
+            İki sayıyı karıştırmayın: turuncu mutfak servisi, mavi konaklayan toplam.
           </Text>
         </View>
 
         <View style={styles.metricRow}>
           <View style={[styles.metricCard, styles.metricBreakfast]}>
-            <Ionicons name="cafe-outline" size={28} color="#b45309" />
+            <Text style={styles.metricRole}>MUTFAK</Text>
+            <Ionicons name="restaurant" size={28} color="#b45309" />
             <Text style={styles.metricValue}>{displayBreakfast ?? '—'}</Text>
-            <Text style={styles.metricLabel}>Kahvaltı misafiri</Text>
+            <Text style={styles.metricLabel}>Kahvaltı servisi</Text>
+            <Text style={styles.metricSub}>Hazırlanacak kişi</Text>
           </View>
           <View style={[styles.metricCard, styles.metricHotel]}>
+            <Text style={[styles.metricRole, styles.metricRoleBlue]}>REFERANS</Text>
             <Ionicons name="bed-outline" size={28} color="#2563eb" />
             <Text style={styles.metricValue}>{displayHotel ?? '—'}</Text>
-            <Text style={styles.metricLabel}>Otel nüfusu</Text>
+            <Text style={styles.metricLabel}>Konaklayan</Text>
+            <Text style={styles.metricSub}>Otel nüfusu</Text>
           </View>
         </View>
 
@@ -261,7 +266,7 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
           <>
             <Text style={styles.sectionTitle}>Sayıları girin</Text>
             <View style={styles.inputCard}>
-              <Text style={styles.inputLabel}>Kahvaltıya gelecek kişi sayısı</Text>
+              <Text style={styles.inputLabel}>🍳 Mutfağın hazırlaması gereken (kahvaltı servisi)</Text>
               <TextInput
                 style={styles.countInput}
                 value={breakfastCount}
@@ -270,7 +275,7 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
                 placeholder="Örn. 42"
                 placeholderTextColor="#94a3b8"
               />
-              <Text style={styles.inputLabel}>Otel nüfusu (konaklayan misafir)</Text>
+              <Text style={styles.inputLabel}>🏨 Konaklayan toplam (referans — otel nüfusu)</Text>
               <TextInput
                 style={styles.countInput}
                 value={hotelCount}
@@ -342,13 +347,30 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
             </TouchableOpacity>
           </>
         ) : (
-          <View style={styles.readOnlyCard}>
-            <Ionicons name="information-circle-outline" size={20} color="#64748b" />
-            <Text style={styles.readOnlyText}>
-              Bu ekran size iletilen güncel sabah kahvaltı sayılarını gösterir.
-              {briefing?.note ? `\n\nNot: ${briefing.note}` : ''}
-            </Text>
-          </View>
+          <>
+            <View style={styles.staffBanner}>
+              <Ionicons name="information-circle" size={22} color="#b45309" />
+              <Text style={styles.staffBannerText}>
+                Turuncu kutu mutfağın hazırlaması gereken kahvaltı sayısıdır. Mavi satır konaklayan
+                toplamıdır — karıştırmayın.
+              </Text>
+            </View>
+            {displayBreakfast != null && displayHotel != null ? (
+              <BreakfastBriefingNotifCard
+                snapshot={{
+                  breakfastGuestCount: displayBreakfast,
+                  hotelGuestCount: displayHotel,
+                  recordDate,
+                  note: (briefing?.note ?? note.trim()) || null,
+                }}
+              />
+            ) : (
+              <View style={styles.readOnlyCard}>
+                <Ionicons name="time-outline" size={20} color="#64748b" />
+                <Text style={styles.readOnlyText}>Bugün için henüz kahvaltı brifingi gönderilmedi.</Text>
+              </View>
+            )}
+          </>
         )}
 
         {canEdit && scope === 'staff' ? (
@@ -406,10 +428,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
   },
-  metricBreakfast: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
+  metricBreakfast: { backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 2 },
   metricHotel: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
+  metricRole: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#b45309',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  metricRoleBlue: { color: '#2563eb' },
   metricValue: { fontSize: 40, fontWeight: '900', color: '#0f172a', marginTop: 8 },
-  metricLabel: { fontSize: 13, color: '#475569', marginTop: 4, textAlign: 'center', fontWeight: '600' },
+  metricLabel: { fontSize: 13, color: '#475569', marginTop: 4, textAlign: 'center', fontWeight: '700' },
+  metricSub: { fontSize: 11, color: '#94a3b8', marginTop: 2, textAlign: 'center' },
   metaLine: { fontSize: 12, color: '#94a3b8', marginBottom: 16, textAlign: 'center' },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8, marginTop: 8 },
   sectionHint: { fontSize: 13, color: '#64748b', marginBottom: 12 },
@@ -479,6 +510,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   readOnlyText: { flex: 1, color: '#475569', lineHeight: 20, fontSize: 14 },
+  staffBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  staffBannerText: { flex: 1, fontSize: 13, color: '#92400e', lineHeight: 19, fontWeight: '600' },
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',

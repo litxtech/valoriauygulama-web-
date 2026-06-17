@@ -4,23 +4,17 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
   Alert,
 } from 'react-native';
 import { Stack, useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
-import { theme } from '@/constants/theme';
-import { profileScreenTheme as pst } from '@/constants/profileScreenTheme';
 import {
-  auditScoreColor,
-  auditScoreLabel,
   type DepartmentLeaderboardRow,
 } from '@/lib/audit';
 import {
@@ -34,57 +28,16 @@ import { exportAuditMonthlyReportPdf } from '@/lib/auditMonthlyReportPdf';
 import { monthKey } from '@/lib/financeLedger';
 import { monthName } from '@/lib/i18nLookup';
 import { canAccessAdminShell } from '@/lib/staffPermissions';
-
-function ScoreRing({
-  score,
-  size = 140,
-  label,
-}: {
-  score: number | null;
-  size?: number;
-  label: string;
-}) {
-  const color = auditScoreColor(score);
-  const display = score != null ? Math.round(score) : '—';
-  return (
-    <View style={[styles.ringWrap, { width: size, height: size }]}>
-      <View style={[styles.ringOuter, { width: size, height: size, borderRadius: size / 2, borderColor: color }]}>
-        <Text style={[styles.ringScore, { color, fontSize: size * 0.32 }]}>{display}</Text>
-        <Text style={styles.ringSub}>/ 100</Text>
-      </View>
-      <Text style={styles.ringLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function PillarCard({
-  title,
-  score,
-  weight,
-  icon,
-  noDataLabel,
-}: {
-  title: string;
-  score: number | null;
-  weight: number;
-  icon: keyof typeof Ionicons.glyphMap;
-  noDataLabel: string;
-}) {
-  return (
-    <View style={styles.pillarCard}>
-      <View style={styles.pillarHead}>
-        <View style={styles.pillarIconWrap}>
-          <Ionicons name={icon} size={20} color={pst.accent.blue} />
-        </View>
-        <Text style={styles.pillarWeight}>%{weight}</Text>
-      </View>
-      <Text style={styles.pillarTitle}>{title}</Text>
-      <Text style={[styles.pillarScore, { color: auditScoreColor(score) }]}>
-        {score != null ? auditScoreLabel(score) : noDataLabel}
-      </Text>
-    </View>
-  );
-}
+import { performanceTheme } from '@/components/performance';
+import {
+  PerformanceHeroCard,
+  PerformanceAlertBanner,
+  PerformancePillarCard,
+  PerformanceDeptLeaderboard,
+  PerformanceNoticeCard,
+  PerformanceLinkCard,
+  PerformanceSectionTitle,
+} from '@/components/performance/PerformancePremiumUi';
 
 export default function PerformanceDashboardScreen() {
   const { t, i18n } = useTranslation();
@@ -163,129 +116,161 @@ export default function PerformanceDashboardScreen() {
     return `${monthName(m - 1)} ${y}`;
   }, [i18n.language]);
 
+  const updatedLabel = dash?.evaluation_combined_updated_at
+    ? t('perfUpdated', {
+        date: new Date(dash.evaluation_combined_updated_at).toLocaleDateString(dateLoc, {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        }),
+      })
+    : null;
+
+  const thresholdLabel = t('perfThreshold', {
+    score: threshold,
+    status: dash?.below_threshold ? t('perfThresholdBelow') : t('perfThresholdOk'),
+  });
+
+  const linkCards = useMemo(() => {
+    const cards: {
+      key: string;
+      icon: 'analytics-outline' | 'ribbon-outline' | 'clipboard-outline' | 'document-outline';
+      title: string;
+      subtitle: string;
+      colors: [string, string];
+      onPress: () => void;
+      disabled?: boolean;
+    }[] = [
+      {
+        key: 'eval',
+        icon: 'analytics-outline',
+        title: t('perfEvalCenter'),
+        subtitle: t('perfEvalCenterSub'),
+        colors: ['#6366F1', '#8B5CF6'],
+        onPress: () => router.push('/staff/evaluation'),
+      },
+      {
+        key: 'points',
+        icon: 'ribbon-outline',
+        title: 'Alınan puanlarım',
+        subtitle: 'Bölüm ve kaynak bazında puan geçmişi, sıralama',
+        colors: ['#FBBF24', '#F59E0B'],
+        onPress: () => router.push('/staff/points'),
+      },
+    ];
+    if (isAdmin) {
+      cards.push(
+        {
+          key: 'audit',
+          icon: 'clipboard-outline',
+          title: t('perfAuditBoard'),
+          subtitle: t('perfAuditBoardSub'),
+          colors: ['#3B82F6', '#2563EB'],
+          onPress: () => router.push('/admin/audits' as Href),
+        },
+        {
+          key: 'pdf',
+          icon: 'document-outline',
+          title: t('perfMonthlyPdf'),
+          subtitle: pdfLoading ? t('perfPdfPreparing') : t('perfPdfShare'),
+          colors: ['#34D399', '#059669'],
+          onPress: exportPdf,
+          disabled: pdfLoading,
+        }
+      );
+    }
+    return cards;
+  }, [isAdmin, pdfLoading, router, t]);
+
   return (
     <>
       <Stack.Screen options={{ title: t('perfDashboardTitle'), headerBackTitle: t('back') }} />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={performanceTheme.accent}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         {loading ? (
-          <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 48 }} />
+          <ActivityIndicator size="large" color={performanceTheme.accent} style={styles.loader} />
         ) : !dash ? (
           <Text style={styles.muted}>{t('perfDashLoadFailed')}</Text>
         ) : (
           <>
-            <View style={styles.heroCard}>
-              <Text style={styles.heroEyebrow}>{t('perfCombinedTitle')}</Text>
-              <View style={styles.heroRow}>
-                <ScoreRing score={dash.evaluation_combined} label={t('perfOverallScore')} />
-                <View style={styles.heroMeta}>
-                  <Text style={styles.heroName}>{dash.full_name ?? t('staffDefaultName')}</Text>
-                  <Text style={styles.heroFormula}>
-                    {t('perfFormula', {
-                      mgmt: dash.weights.management,
-                      audit: dash.weights.audit,
-                      guest: dash.weights.guest,
-                    })}
-                  </Text>
-                  {dash.evaluation_combined_updated_at ? (
-                    <Text style={styles.heroUpdated}>
-                      {t('perfUpdated', {
-                        date: new Date(dash.evaluation_combined_updated_at).toLocaleDateString(dateLoc, {
-                          day: 'numeric',
-                          month: 'long',
-                          year: 'numeric',
-                        }),
-                      })}
-                    </Text>
-                  ) : null}
-                  <View
-                    style={[
-                      styles.thresholdPill,
-                      dash.below_threshold ? styles.thresholdBad : styles.thresholdOk,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.thresholdText,
-                        dash.below_threshold ? styles.thresholdTextBad : styles.thresholdTextOk,
-                      ]}
-                    >
-                      {t('perfThreshold', {
-                        score: threshold,
-                        status: dash.below_threshold ? t('perfThresholdBelow') : t('perfThresholdOk'),
-                      })}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
+            <PerformanceHeroCard
+              eyebrow={t('perfCombinedTitle')}
+              name={dash.full_name ?? t('staffDefaultName')}
+              score={dash.evaluation_combined}
+              scoreLabel={t('perfOverallScore')}
+              formula={t('perfFormula', {
+                mgmt: dash.weights.management,
+                audit: dash.weights.audit,
+                guest: dash.weights.guest,
+              })}
+              updatedLabel={updatedLabel}
+              threshold={threshold}
+              belowThreshold={dash.below_threshold}
+              thresholdLabel={thresholdLabel}
+            />
 
             {dash.below_threshold ? (
-              <View style={styles.alertCard}>
-                <Ionicons name="alert-circle" size={24} color="#b91c1c" />
-                <Text style={styles.alertText}>{t('perfBelowThresholdAlert', { threshold })}</Text>
-              </View>
+              <PerformanceAlertBanner text={t('perfBelowThresholdAlert', { threshold })} />
             ) : null}
 
             {(dash.notices ?? []).length > 0 ? (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>{t('perfOfficialRecords')}</Text>
-                {dash.notices.map((n) => (
-                  <View key={n.id} style={styles.noticeCard}>
-                    <View style={styles.noticeBadge}>
-                      <Text style={styles.noticeBadgeText}>
-                        {n.notice_type === 'termination_review'
-                          ? t('perfNoticeTermination')
-                          : t('perfNoticeWarning')}
-                      </Text>
-                    </View>
-                    <Text style={styles.noticeMsg}>{n.message}</Text>
-                    <Text style={styles.noticeMeta}>
-                      {t('perfNoticeScore', {
-                        score: n.score_at_trigger,
-                        threshold: n.threshold_score,
-                        date: new Date(n.created_at).toLocaleDateString(dateLoc),
-                      })}
-                    </Text>
-                    {!n.acknowledged_at ? (
-                      <TouchableOpacity
-                        style={styles.ackBtn}
-                        onPress={() => onAck(n.id)}
-                        disabled={ackId === n.id}
-                      >
-                        <Text style={styles.ackBtnText}>
-                          {ackId === n.id ? '…' : t('perfAckBtn')}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <Text style={styles.ackDone}>{t('perfAckDone')}</Text>
-                    )}
-                  </View>
+                <PerformanceSectionTitle title={t('perfOfficialRecords')} icon="document-text-outline" />
+                {dash.notices.map((n, idx) => (
+                  <PerformanceNoticeCard
+                    key={n.id}
+                    index={idx}
+                    badge={
+                      n.notice_type === 'termination_review'
+                        ? t('perfNoticeTermination')
+                        : t('perfNoticeWarning')
+                    }
+                    message={n.message}
+                    meta={t('perfNoticeScore', {
+                      score: n.score_at_trigger,
+                      threshold: n.threshold_score,
+                      date: new Date(n.created_at).toLocaleDateString(dateLoc),
+                    })}
+                    acknowledged={!!n.acknowledged_at}
+                    ackLabel={t('perfAckBtn')}
+                    ackDoneLabel={t('perfAckDone')}
+                    onAck={() => onAck(n.id)}
+                    ackLoading={ackId === n.id}
+                  />
                 ))}
               </View>
             ) : null}
 
-            <Text style={styles.sectionTitle}>{t('perfPillarSection')}</Text>
+            <PerformanceSectionTitle title={t('perfPillarSection')} icon="layers-outline" />
             <View style={styles.pillarGrid}>
-              <PillarCard
+              <PerformancePillarCard
+                index={0}
                 title={pillarLabel('management')}
                 score={dash.evaluation_management}
                 weight={dash.weights.management}
                 icon="ribbon-outline"
                 noDataLabel={t('perfNoData')}
               />
-              <PillarCard
+              <PerformancePillarCard
+                index={1}
                 title={pillarLabel('audit')}
                 score={dash.evaluation_audit}
                 weight={dash.weights.audit}
                 icon="clipboard-outline"
                 noDataLabel={t('perfNoData')}
               />
-              <PillarCard
+              <PerformancePillarCard
+                index={2}
                 title={pillarLabel('guest')}
                 score={dash.evaluation_guest}
                 weight={dash.weights.guest}
@@ -295,50 +280,26 @@ export default function PerformanceDashboardScreen() {
             </View>
 
             {departments.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>{t('perfDeptRanking', { month: currentMonthLabel })}</Text>
-                {departments.map((d) => (
-                  <View key={d.category_id} style={styles.deptRow}>
-                    <View style={styles.deptRank}>
-                      <Text style={styles.deptRankNum}>{d.rank}</Text>
-                    </View>
-                    <Text style={styles.deptName}>{d.name}</Text>
-                    <Text style={[styles.deptScore, { color: auditScoreColor(d.avg_score) }]}>
-                      {d.avg_score != null ? auditScoreLabel(d.avg_score) : '—'}
-                    </Text>
-                  </View>
-                ))}
-              </View>
+              <PerformanceDeptLeaderboard
+                departments={departments}
+                monthLabel={currentMonthLabel}
+              />
             ) : null}
 
-            <Text style={styles.sectionTitle}>{t('perfDetailSection')}</Text>
+            <PerformanceSectionTitle title={t('perfDetailSection')} icon="grid-outline" />
             <View style={styles.linkGrid}>
-              <TouchableOpacity style={styles.linkCard} onPress={() => router.push('/staff/evaluation')}>
-                <Ionicons name="analytics-outline" size={22} color={pst.accent.purple} />
-                <Text style={styles.linkTitle}>{t('perfEvalCenter')}</Text>
-                <Text style={styles.linkSub}>{t('perfEvalCenterSub')}</Text>
-              </TouchableOpacity>
-              {isAdmin ? (
-                <>
-                  <TouchableOpacity
-                    style={styles.linkCard}
-                    onPress={() => router.push('/admin/audits' as Href)}
-                  >
-                    <Ionicons name="clipboard-outline" size={22} color={pst.accent.blue} />
-                    <Text style={styles.linkTitle}>{t('perfAuditBoard')}</Text>
-                    <Text style={styles.linkSub}>{t('perfAuditBoardSub')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.linkCard}
-                    onPress={exportPdf}
-                    disabled={pdfLoading}
-                  >
-                    <Ionicons name="document-outline" size={22} color={pst.accent.green} />
-                    <Text style={styles.linkTitle}>{t('perfMonthlyPdf')}</Text>
-                    <Text style={styles.linkSub}>{pdfLoading ? t('perfPdfPreparing') : t('perfPdfShare')}</Text>
-                  </TouchableOpacity>
-                </>
-              ) : null}
+              {linkCards.map((card, idx) => (
+                <PerformanceLinkCard
+                  key={card.key}
+                  index={idx}
+                  icon={card.icon}
+                  title={card.title}
+                  subtitle={card.subtitle}
+                  colors={card.colors}
+                  onPress={card.onPress}
+                  disabled={card.disabled}
+                />
+              ))}
             </View>
           </>
         )}
@@ -348,131 +309,11 @@ export default function PerformanceDashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: pst.bg },
-  content: { padding: 20, paddingTop: 12 },
-  muted: { color: pst.subtext, textAlign: 'center', marginTop: 24 },
-  heroCard: {
-    ...pst.cardShell,
-    padding: 22,
-    marginBottom: 16,
-  },
-  heroEyebrow: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: pst.subtext,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 16,
-  },
-  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-  heroMeta: { flex: 1 },
-  heroName: { fontSize: 20, fontWeight: '800', color: pst.text, marginBottom: 8 },
-  heroFormula: { fontSize: 13, color: pst.subtext, lineHeight: 18, marginBottom: 8 },
-  heroUpdated: { fontSize: 12, color: pst.subtext, marginBottom: 10 },
-  thresholdPill: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  thresholdOk: { backgroundColor: '#ecfdf5' },
-  thresholdBad: { backgroundColor: '#fef2f2' },
-  thresholdText: { fontSize: 12, fontWeight: '700' },
-  thresholdTextOk: { color: '#047857' },
-  thresholdTextBad: { color: '#b91c1c' },
-  ringWrap: { alignItems: 'center' },
-  ringOuter: {
-    borderWidth: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  ringScore: { fontWeight: '800' },
-  ringSub: { fontSize: 12, color: pst.subtext, marginTop: 2 },
-  ringLabel: { marginTop: 8, fontSize: 12, fontWeight: '600', color: pst.subtext },
-  alertCard: {
-    flexDirection: 'row',
-    gap: 12,
-    backgroundColor: '#fef2f2',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-  },
-  alertText: { flex: 1, fontSize: 14, color: '#991b1b', lineHeight: 20 },
-  section: { marginBottom: 20 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: pst.subtext,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 12,
-  },
-  pillarGrid: { gap: 12, marginBottom: 24 },
-  pillarCard: {
-    ...pst.cardShell,
-    padding: 16,
-  },
-  pillarHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  pillarIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: pst.iconBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillarWeight: { fontSize: 13, fontWeight: '700', color: pst.subtext },
-  pillarTitle: { fontSize: 15, fontWeight: '700', color: pst.text, marginBottom: 6 },
-  pillarScore: { fontSize: 22, fontWeight: '800' },
-  deptRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    ...pst.cardShell,
-    padding: 14,
-    marginBottom: 8,
-  },
-  deptRank: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: pst.cardMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  deptRankNum: { fontWeight: '800', fontSize: 13, color: pst.text },
-  deptName: { flex: 1, fontSize: 15, fontWeight: '600', color: pst.text },
-  deptScore: { fontSize: 16, fontWeight: '800' },
-  noticeCard: {
-    ...pst.cardShell,
-    padding: 16,
-    marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#dc2626',
-  },
-  noticeBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#fee2e2',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  noticeBadgeText: { fontSize: 11, fontWeight: '800', color: '#991b1b' },
-  noticeMsg: { fontSize: 14, color: pst.text, lineHeight: 20, marginBottom: 8 },
-  noticeMeta: { fontSize: 12, color: pst.subtext },
-  ackBtn: {
-    marginTop: 12,
-    backgroundColor: pst.accent.blue,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  ackBtnText: { color: '#fff', fontWeight: '700' },
-  ackDone: { marginTop: 8, fontSize: 12, color: '#047857', fontWeight: '600' },
-  linkGrid: { gap: 12 },
-  linkCard: {
-    ...pst.cardShell,
-    padding: 18,
-  },
-  linkTitle: { fontSize: 16, fontWeight: '700', color: pst.text, marginTop: 10 },
-  linkSub: { fontSize: 13, color: pst.subtext, marginTop: 4 },
+  scroll: { flex: 1, backgroundColor: performanceTheme.pageBg },
+  content: { padding: 16, paddingTop: 12 },
+  loader: { marginTop: 48 },
+  muted: { color: '#64748B', textAlign: 'center', marginTop: 24 },
+  section: { marginBottom: 16 },
+  pillarGrid: { gap: 10, marginBottom: 18 },
+  linkGrid: { marginBottom: 8 },
 });

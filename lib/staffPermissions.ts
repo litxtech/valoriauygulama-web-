@@ -32,7 +32,6 @@ export function canStaffReceiveGuestTips(staff: StaffPermissionSlice): boolean {
 /** Stripe tahsilat listesi (admin panel ödemeler ekranı). */
 export function canAccessAdminPayments(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (isGorevAtaOnlyUser(staff)) return false;
   if (staff.role === 'admin') return true;
   return staff.app_permissions?.stripe_odemeler === true;
 }
@@ -44,11 +43,21 @@ export function canAccessAdminShell(staff: StaffPermissionSlice): boolean {
   return staff.app_permissions?.gorev_ata === true;
 }
 
-/** Sadece görev ekranlarına izin verilen personel (admin değil, gorev_ata var). */
-export function isGorevAtaOnlyUser(staff: StaffPermissionSlice): boolean {
+/** Not Al — admin veya not_al izni. */
+export function canAccessQuickNotes(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (staff.role === 'admin') return false;
-  return staff.app_permissions?.gorev_ata === true;
+  if (staff.role === 'admin') return true;
+  return staff.app_permissions?.not_al === true;
+}
+
+/** @deprecated use canAccessQuickNotes */
+export function canAccessAdminQuickNotes(staff: StaffPermissionSlice): boolean {
+  return canAccessQuickNotes(staff);
+}
+
+/** Yönetici: org içindeki tüm notları (personel + kendi) görür. */
+export function canViewAllOrgQuickNotes(staff: StaffPermissionSlice): boolean {
+  return staff?.role === 'admin';
 }
 
 /** Görev oluşturma (insert) — admin veya gorev_ata. */
@@ -159,6 +168,22 @@ export function canManageKitchenOps(staff: StaffPermissionSlice): boolean {
   return hasStaffAppPermission(staff, 'mutfak_operasyon_yonetim');
 }
 
+/**
+ * Mutfak–resepsiyon finans paneli (hasılat/gider özeti, temiz kalan para).
+ * Admin seçili personel + reception + mutfak yönetim yetkisi.
+ */
+export function canAccessKitchenFinance(
+  staff: (StaffPermissionSlice & { id?: string | null }) | null | undefined,
+  financeStaffIds?: string[] | null
+): boolean {
+  if (!staff) return false;
+  if (staff.role === 'admin') return true;
+  if (canManageKitchenOps(staff)) return true;
+  if (canAccessKitchenReceptionAccounting(staff)) return true;
+  if (staff.id && financeStaffIds?.includes(staff.id)) return true;
+  return false;
+}
+
 /** Reception mutfak muhasebe kontrolü (POS onay, gün sonu). */
 export function canAccessKitchenReceptionAccounting(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
@@ -214,7 +239,6 @@ export function hasTechnicalAssetsStaffAccess(staff: StaffPermissionSlice): bool
  */
 export function canAccessTechnicalAssetsAdminRoutes(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  if (!canAccessAdminShell(staff) || isGorevAtaOnlyUser(staff)) return false;
   if (staff.role === 'admin') return true;
   return staff.app_permissions?.teknik_varlik_yonetimi === true;
 }

@@ -44,7 +44,6 @@ export default function AdminSalaryNewScreen() {
   const [paymentType, setPaymentType] = useState<'transfer' | 'cash' | 'credit_card'>('transfer');
   const [bankOrReference, setBankOrReference] = useState('');
   const [description, setDescription] = useState('');
-  const [sendNotif, setSendNotif] = useState(true);
   const [saving, setSaving] = useState(false);
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
@@ -107,21 +106,18 @@ export default function AdminSalaryNewScreen() {
       return;
     }
 
-    if (sendNotif) {
-      const staff = staffList.find((s) => s.id === staffId);
-      const periodLabel = `${MONTH_NAMES[periodMonth - 1]} ${periodYear}`;
-      await sendNotification({
-        staffId,
-        title: 'Maaşınız yatırıldı!',
-        body: `Dönem: ${periodLabel}\nTutar: ${new Intl.NumberFormat('tr-TR').format(num)} ₺\nÖdeme tarihi: ${paymentDate}\n\nLütfen kontrol edip onaylayın.`,
-        notificationType: 'salary_deposited',
-        category: 'staff',
-        data: { type: 'salary', paymentId: inserted?.id, screen: '/staff/salary' },
-        createdByStaffId: me?.id ?? null,
-      });
-    }
+    const periodLabel = `${MONTH_NAMES[periodMonth - 1]} ${periodYear}`;
+    await sendNotification({
+      staffId,
+      title: 'Maaşınız yatırıldı!',
+      body: `Dönem: ${periodLabel}\nTutar: ${new Intl.NumberFormat('tr-TR').format(num)} ₺\nÖdeme tarihi: ${paymentDate}\n\nLütfen maaş takip sayfasından kontrol edip onaylayın.`,
+      notificationType: 'salary_deposited',
+      category: 'staff',
+      data: { type: 'salary', paymentId: inserted?.id, screen: '/staff/salary-history' },
+      createdByStaffId: me?.id ?? null,
+    }).catch(() => {});
 
-    Alert.alert('Kaydedildi', 'Maaş kaydı oluşturuldu.' + (sendNotif ? ' Personel bilgilendirildi.' : ''), [
+    Alert.alert('Kaydedildi', 'Maaş kaydı oluşturuldu. Personele bildirim gönderildi.', [
       { text: 'Tamam', onPress: () => router.replace('/admin/salary') },
     ]);
   };
@@ -234,11 +230,6 @@ export default function AdminSalaryNewScreen() {
           multiline
         />
 
-        <TouchableOpacity style={styles.checkRow} onPress={() => setSendNotif((v) => !v)}>
-          <Ionicons name={sendNotif ? 'checkbox' : 'square-outline'} size={24} color={adminTheme.colors.accent} />
-          <Text style={styles.checkLabel}>Kaydettikten sonra personel bildirimi gönder</Text>
-        </TouchableOpacity>
-
         <View style={styles.actions}>
           <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} disabled={saving}>
             <Text style={styles.cancelBtnText}>İptal</Text>
@@ -249,12 +240,12 @@ export default function AdminSalaryNewScreen() {
             ) : (
               <>
                 <Ionicons name="notifications-outline" size={18} color="#fff" />
-                <Text style={styles.saveBtnText}>Bildirim gönder & Kaydet</Text>
+                <Text style={styles.saveBtnText}>Kaydet ve bildir</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
-        <Text style={styles.hint}>Kaydettikten sonra personele "Maaşınız yatırıldı" bildirimi gidecek.</Text>
+        <Text style={styles.hint}>Kayıt sonrası personele otomatik bildirim gider; maaş takip sayfasından onaylayabilir.</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );

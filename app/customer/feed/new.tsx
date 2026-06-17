@@ -34,6 +34,9 @@ import {
   resolveFeedPickedMediaUri,
   ensureLocalFeedUploadUri,
 } from '@/lib/feedPostMediaPicker';
+import { FeedVisibilityPicker } from '@/components/FeedVisibilityPicker';
+import type { FeedPostVisibility } from '@/lib/feedVisibility';
+import { shouldNotifyStaffForGuestPost } from '@/lib/feedVisibility';
 
 export default function CustomerNewFeedPostScreen() {
   const { t } = useTranslation();
@@ -49,6 +52,7 @@ export default function CustomerNewFeedPostScreen() {
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [mediaItems, setMediaItems] = useState<{ uri: string; type: 'image' | 'video' }[]>([]);
   const [title, setTitle] = useState('');
+  const [visibility, setVisibility] = useState<FeedPostVisibility>('customers');
   const [uploading, setUploading] = useState(false);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadCompleted, setUploadCompleted] = useState(0);
@@ -238,7 +242,7 @@ export default function CustomerNewFeedPostScreen() {
         media_url: mediaUrl,
         thumbnail_url: thumbnailUrl,
         title: (title ?? '').trim() || null,
-        visibility: 'customers',
+        visibility,
       };
       if (locationFromMap) {
         insertPayload.lat = locationFromMap.lat;
@@ -301,11 +305,13 @@ export default function CustomerNewFeedPostScreen() {
             (guestRow as { full_name?: string | null } | null)?.full_name,
             t('guestDefaultName')
           );
-          await notifyStaffOfNewFeedPost({
-            postId: newPostId,
-            authorDisplayName: authorName,
-            titlePreview,
-          });
+          if (shouldNotifyStaffForGuestPost(visibility)) {
+            await notifyStaffOfNewFeedPost({
+              postId: newPostId,
+              authorDisplayName: authorName,
+              titlePreview,
+            });
+          }
           await notifyGuestsOfNewFeedPost(newPostId);
         } catch (e) {
           log.warn('customer/feed/new', 'notifyStaffOfNewFeedPost', e);
@@ -397,6 +403,14 @@ export default function CustomerNewFeedPostScreen() {
         onCamera={takePhoto}
         onGallery={pickImage}
         onRemoveMedia={clearMedia}
+      />
+
+      <FeedVisibilityPicker
+        audience="guest"
+        value={visibility}
+        onChange={setVisibility}
+        disabled={uploading}
+        accentColor="#0f766e"
       />
 
       <TouchableOpacity

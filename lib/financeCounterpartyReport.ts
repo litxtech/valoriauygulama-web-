@@ -17,6 +17,16 @@ import {
   DEFAULT_FINANCE_DOCUMENT_BRAND,
   resolveFinanceReportBranding,
 } from '@/lib/financeReportBranding';
+import {
+  DEBT_CATEGORY_META,
+  DEBT_STATUS_META,
+  debtPartyBorrow,
+  debtPartyLend,
+  debtRowPerspective,
+  type DebtListRow,
+  type DebtTone,
+} from '@/lib/debtUi';
+import { DEBT_STATUS_LABELS } from '@/lib/finance';
 
 export type CounterpartyReportMovement = {
   movement_date: string;
@@ -410,6 +420,102 @@ export function buildCounterpartyListReportHtml(
 </div>`;
 
   return reportShell('Kişi ödemeleri — özet', subtitle, body, params.footer);
+}
+
+export type DebtListReportRow = {
+  perspective: string;
+  tone: DebtTone;
+  borrower: string;
+  lender: string;
+  categoryLabel: string;
+  statusLabel: string;
+  principal: number;
+  remaining: number;
+  dueDate: string | null;
+  description: string;
+  createdAt: string;
+};
+
+function debtMatchesKindFilter(tone: DebtTone, filter: FinanceReportKindFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'paid') return tone === 'payable';
+  return tone === 'receivable';
+}
+
+export function buildDebtListReportHtml(
+  params: {
+    rows: DebtListReportRow[];
+    receivableTotal: number;
+    payableTotal: number;
+    footer: FinanceReportFooter;
+  },
+  kindFilter: FinanceReportKindFilter = 'all'
+): string {
+  const subtitle = FINANCE_REPORT_KIND_LABELS[kindFilter];
+  const filtered = params.rows.filter((r) => debtMatchesKindFilter(r.tone, kindFilter));
+  const sorted = [...filtered].sort((a, b) => b.remaining - a.remaining || a.perspective.localeCompare(b.perspective, 'tr'));
+
+  const tableRows = sorted
+    .map(
+      (r) => `<tr>
+      <td>${esc(r.perspective)}</td>
+      <td>${esc(r.borrower)}</td>
+      <td>${esc(r.lender)}</td>
+      <td>${esc(r.categoryLabel)}</td>
+      <td>${esc(r.statusLabel)}</td>
+      <td class="colAmt">${esc(fmtMoneyTry(r.principal))}</td>
+      <td class="colAmt rowPaid">${esc(fmtMoneyTry(r.remaining))}</td>
+      <td>${esc(r.dueDate ? formatDateShort(r.dueDate) : '—')}</td>
+      <td>${esc(r.description || '—')}</td>
+    </tr>`
+    )
+    .join('');
+
+  const toneLabel =
+    kindFilter === 'paid' ? 'Ödenecek borç' : kindFilter === 'received' ? 'Tahsil edilecek alacak' : 'Tüm kayıtlar';
+  const totalVal =
+    kindFilter === 'paid'
+      ? params.payableTotal
+      : kindFilter === 'received'
+        ? params.receivableTotal
+        : params.receivableTotal + params.payableTotal;
+
+  const body = `
+<div class="summary">
+  <div class="sumBox"><div class="sumLbl">${esc(toneLabel)}</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(totalVal))}</div></div>
+  <div class="sumBox"><div class="sumLbl">Tahsil edilecek</div><div class="sumVal sumIn">${esc(fmtMoneyTry(params.receivableTotal))}</div></div>
+  <div class="sumBox"><div class="sumLbl">Ödenecek</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(params.payableTotal))}</div></div>
+  <div class="sumBox"><div class="sumLbl">Kayıt</div><div class="sumVal">${sorted.length}</div></div>
+</div>
+<div class="section">
+  <h2>Borç / alacak listesi — ${esc(subtitle)}</h2>
+  <table>
+    <tr>
+      <th>Özet</th><th>Borçlu</th><th>Alacaklı</th><th>Kategori</th><th>Durum</th>
+      <th>Anapara</th><th>Kalan</th><th>Vade</th><th>Açıklama</th>
+    </tr>
+    ${tableRows || '<tr><td colspan="9">Kayıt yok</td></tr>'}
+  </table>
+</div>`;
+
+  return reportShell('Borç / alacak listesi', subtitle, body, params.footer);
+}
+
+export function debtListRowToReportRow(r: DebtListRow): DebtListReportRow {
+  const { tone, line } = debtRowPerspective(r);
+  return {
+    perspective: line,
+    tone,
+    borrower: debtPartyBorrow(r),
+    lender: debtPartyLend(r),
+    categoryLabel: DEBT_CATEGORY_META[r.category]?.label ?? r.category,
+    statusLabel: DEBT_STATUS_META[r.status]?.label ?? DEBT_STATUS_LABELS[r.status] ?? r.status,
+    principal: Number(r.amount_principal) || 0,
+    remaining: Number(r.amount_remaining) || 0,
+    dueDate: r.due_date,
+    description: r.description,
+    createdAt: r.created_at,
+  };
 }
 
 function normalizeMovementRow(

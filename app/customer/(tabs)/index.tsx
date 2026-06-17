@@ -564,7 +564,7 @@ export default function CustomerHome() {
       supabase
         .from('feed_posts')
         .select('id, media_type, media_url, thumbnail_url, title, created_at, staff_id, guest_id, post_tag, lat, lng, location_label, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, profile_hidden_by_admin, organization:organization_id(name, kind)), guest:guest_id(full_name, photo_url, deleted_at)')
-        .eq('visibility', 'customers')
+        .in('visibility', ['customers', 'guests_only'])
         .order('created_at', { ascending: false })
         .limit(10),
       supabase.from('facilities').select('name, icon').eq('is_active', true).order('sort_order').limit(6),

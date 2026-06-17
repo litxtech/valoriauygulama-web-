@@ -42,6 +42,8 @@ export default function CounterpartyEditScreen() {
   const [customTypeLabel, setCustomTypeLabel] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [linkedStaffId, setLinkedStaffId] = useState<string | null>(null);
+  const [staffOptions, setStaffOptions] = useState<{ id: string; full_name: string | null }[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -49,7 +51,9 @@ export default function CounterpartyEditScreen() {
       setLoading(true);
       const { data, error } = await supabase
         .from('finance_counterparties')
-        .select('id, organization_id, name, party_type, party_type_label, phone, notes, profile_image')
+        .select(
+          'id, organization_id, name, party_type, party_type_label, phone, notes, profile_image, linked_staff_id'
+        )
         .eq('id', id)
         .single();
       if (error || !data) {
@@ -73,6 +77,14 @@ export default function CounterpartyEditScreen() {
       setPartyType(row.party_type);
       setCustomTypeLabel(row.party_type_label ?? '');
       setProfileImage((row as { profile_image?: string | null }).profile_image ?? null);
+      setLinkedStaffId((row as { linked_staff_id?: string | null }).linked_staff_id ?? null);
+      const { data: staffRows } = await supabase
+        .from('staff')
+        .select('id, full_name')
+        .eq('organization_id', row.organization_id)
+        .is('deleted_at', null)
+        .order('full_name');
+      setStaffOptions((staffRows ?? []) as { id: string; full_name: string | null }[]);
       setLoading(false);
     })();
   }, [id, router]);
@@ -120,6 +132,7 @@ export default function CounterpartyEditScreen() {
         party_type_label: customTypeLabel.trim() || null,
         phone: phone.trim() || null,
         notes: notes.trim() || null,
+        linked_staff_id: linkedStaffId,
       })
       .eq('id', id);
     setSaving(false);
@@ -256,6 +269,33 @@ export default function CounterpartyEditScreen() {
         placeholderTextColor={adminTheme.colors.textMuted}
       />
 
+      <Text style={styles.label}>Bildirim alacak personel</Text>
+      <Text style={styles.hint}>
+        Borç/alacak kaydında “kişiye bildirim gönder” seçilirse bu personele uygulama bildirimi gider.
+      </Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.staffScroll}>
+        <TouchableOpacity
+          style={[styles.staffChip, !linkedStaffId && styles.staffChipOn]}
+          onPress={() => setLinkedStaffId(null)}
+        >
+          <Text style={[styles.staffChipText, !linkedStaffId && styles.staffChipTextOn]}>Bağlı değil</Text>
+        </TouchableOpacity>
+        {staffOptions.map((s) => {
+          const active = linkedStaffId === s.id;
+          return (
+            <TouchableOpacity
+              key={s.id}
+              style={[styles.staffChip, active && styles.staffChipOn]}
+              onPress={() => setLinkedStaffId(s.id)}
+            >
+              <Text style={[styles.staffChipText, active && styles.staffChipTextOn]} numberOfLines={1}>
+                {s.full_name?.trim() || 'Personel'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Kaydet</Text>}
       </TouchableOpacity>
@@ -312,6 +352,21 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   area: { minHeight: 80, textAlignVertical: 'top' },
+  hint: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: -8, marginBottom: 10, lineHeight: 17 },
+  staffScroll: { marginBottom: 16 },
+  staffChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    maxWidth: 180,
+  },
+  staffChipOn: { backgroundColor: '#ede9fe', borderColor: '#7c3aed' },
+  staffChipText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.text },
+  staffChipTextOn: { color: '#5b21b6' },
   typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   typeCard: {
     width: '47%',

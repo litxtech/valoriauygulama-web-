@@ -2,18 +2,19 @@ import { useEffect } from 'react';
 import { Redirect, Stack, usePathname, type Href } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
-import { canStaffUseIdCapture, canStaffUseMrzScan } from '@/lib/kbsMrzAccess';
+import { canStaffUseIdCapture, canStaffUseMrzScan, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import { refreshStaffKbsAccess } from '@/lib/refreshStaffKbsAccess';
 import { useTranslation } from 'react-i18next';
 import { StaffStackBackButton, STAFF_TABS_FALLBACK, buildStaffNestedStackOptions } from '@/lib/staffStackBack';
 
-function isIdCaptureRoute(pathname: string | null | undefined): boolean {
+function isIdCaptureWriteRoute(pathname: string | null | undefined): boolean {
   const p = pathname ?? '';
-  return (
-    p.includes('/kbs/capture-id') ||
-    p.includes('/kbs/capture-history') ||
-    p.includes('/kbs/capture/')
-  );
+  return p.includes('/kbs/capture-id');
+}
+
+function isIdCaptureReadRoute(pathname: string | null | undefined): boolean {
+  const p = pathname ?? '';
+  return p.includes('/kbs/capture-history') || /\/kbs\/capture\/[^/]+/.test(p);
 }
 
 export default function KbsLayout() {
@@ -22,16 +23,24 @@ export default function KbsLayout() {
   const pathname = usePathname();
   const guestMrzSubtree = pathname?.includes('/kbs/guests');
   const mrzOnlyAccess = canStaffUseMrzScan(staff);
-  const idCaptureRoute = isIdCaptureRoute(pathname);
-  const idCaptureAccess = canStaffUseIdCapture(staff);
+  const idCaptureWriteRoute = isIdCaptureWriteRoute(pathname);
+  const idCaptureReadRoute = isIdCaptureReadRoute(pathname);
+  const idCaptureWriteAccess = canStaffUseIdCapture(staff);
+  const idCaptureReadAccess = canStaffViewKbsCaptureHistory(staff);
 
   useEffect(() => {
     void refreshStaffKbsAccess();
   }, [staff?.id]);
 
-  if (idCaptureRoute && !idCaptureAccess) {
+  if (idCaptureWriteRoute && !idCaptureWriteAccess) {
     return <Redirect href="/staff" />;
   }
+
+  if (idCaptureReadRoute && !idCaptureReadAccess) {
+    return <Redirect href="/staff" />;
+  }
+
+  const idCaptureRoute = idCaptureWriteRoute || idCaptureReadRoute;
 
   if (!idCaptureRoute && !isKbsUiEnabled() && !(guestMrzSubtree && mrzOnlyAccess)) {
     return <Redirect href="/staff" />;

@@ -29,6 +29,7 @@ import {
 } from '@/lib/kitchenOps/api';
 import { Ionicons } from '@expo/vector-icons';
 import { KitchenMoneyStat } from '@/components/kitchenOps/KitchenUi';
+import { KitchenCariPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 
 const STATUS_LABELS = Object.fromEntries(KITCHEN_POS_STATUSES.map((s) => [s.value, s.label]));
 const NEXT_STATUS: Record<string, string> = {
@@ -152,6 +153,9 @@ export function KitchenReceptionPanel() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.printWrap}>
+        <KitchenCariPrintBar compact defaultOpen />
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
         <KitchenMoneyStat label="Bugün hasılat" amount={summary.total_revenue} />
         <KitchenMoneyStat label="POS toplam" amount={summary.total_pos} />
@@ -281,6 +285,7 @@ export function KitchenReceptionPanel() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
+  printWrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 0 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   denied: { marginTop: 12, color: theme.colors.textSecondary, textAlign: 'center', fontWeight: '600' },
   deniedHint: { marginTop: 8, color: theme.colors.textMuted, textAlign: 'center', fontSize: 13, lineHeight: 18 },

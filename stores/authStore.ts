@@ -22,7 +22,7 @@ const SESSION_FETCH_TIMEOUT_MS = 10_000;
 const STAFF_BOOT_WATCHDOG_MS = 12_000;
 
 const STAFF_SELECT_LEAN =
-  'id, auth_id, email, full_name, role, department, profile_image, work_status, is_active, banned_until, deleted_at, app_permissions, organization_id, hidden_menu_item_ids';
+  'id, auth_id, email, full_name, role, department, profile_image, work_status, is_active, banned_until, deleted_at, app_permissions, organization_id, hidden_menu_item_ids, account_locked';
 
 type StaffRow = {
   id: string;
@@ -39,6 +39,7 @@ type StaffRow = {
   app_permissions?: Record<string, boolean> | unknown;
   organization_id: string | null;
   hidden_menu_item_ids?: unknown;
+  account_locked?: boolean | null;
 };
 
 export type StaffProfile = CachedStaffProfile;
@@ -130,6 +131,7 @@ function staffFromRow(row: StaffRow, org?: StaffProfile['organization']): StaffP
     work_status: row.work_status,
     banned_until: row.banned_until,
     deleted_at: row.deleted_at,
+    account_locked: row.account_locked === true,
     app_permissions: perms,
     hidden_menu_item_ids: normalizeHiddenMenuItemIds(row.hidden_menu_item_ids),
     kbs_access_enabled: true,

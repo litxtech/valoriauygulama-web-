@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -58,11 +59,16 @@ import {
   formatCounterpartyBalance,
   resolveCounterpartyTypeMeta,
 } from '@/lib/financeCounterpartyUi';
+import {
+  fetchOpenCounterpartyAgreements,
+  type CounterpartyAgreementRow,
+} from '@/lib/financeCounterpartyAgreements';
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000, 2000, 5000] as const;
 const HERO_GRAD = ['#0f172a', '#1e3a5f'] as const;
 const PAY_GRAD = ['#dc2626', '#b91c1c'] as const;
 const FAB_GRAD = ['#d97706', '#b45309'] as const;
+const PAY_SHEET_HEIGHT = Math.round(Dimensions.get('window').height * 0.92);
 
 type Row = {
   id: string;
@@ -99,7 +105,11 @@ export default function AccountingQuickPayScreen() {
   const [addingCategory, setAddingCategory] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [openAgreements, setOpenAgreements] = useState<CounterpartyAgreementRow[]>([]);
+  const [selectedAgreementId, setSelectedAgreementId] = useState<string | null>(null);
+  const [loadingAgreements, setLoadingAgreements] = useState(false);
   const listRef = useRef<FlatList<Row>>(null);
+  const paySheetScrollRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
 
   const canUseAllOrg = accountingCanUseAllOrg(me);
@@ -165,7 +175,22 @@ export default function AccountingQuickPayScreen() {
     setShowNewCategory(false);
     setNewCategoryName('');
     setLastSaved(null);
+    setOpenAgreements([]);
+    setSelectedAgreementId(null);
     void loadCategoriesForOrg(row.organization_id);
+    setLoadingAgreements(true);
+    void fetchOpenCounterpartyAgreements(row.id)
+      .then((plans) => {
+        setOpenAgreements(plans);
+        if (plans.length === 1) {
+          setSelectedAgreementId(plans[0].id);
+          if (plans[0].amount_remaining > 0) {
+            setAmount(String(plans[0].amount_remaining));
+          }
+        }
+      })
+      .catch(() => setOpenAgreements([]))
+      .finally(() => setLoadingAgreements(false));
   };
 
   const closePay = () => {
@@ -174,6 +199,8 @@ export default function AccountingQuickPayScreen() {
     setNote('');
     setShowNewCategory(false);
     setNewCategoryName('');
+    setOpenAgreements([]);
+    setSelectedAgreementId(null);
   };
 
   const addNewCategory = async () => {
@@ -214,6 +241,7 @@ export default function AccountingQuickPayScreen() {
       counterparty_id: selected.id,
       description: note.trim() || t('quickPayDefaultNote'),
       ledger_scope: ledgerScope,
+      agreement_id: selectedAgreementId,
       created_by_staff_id: me.id,
     });
     setSaving(false);
@@ -475,12 +503,14 @@ export default function AccountingQuickPayScreen() {
       ) : null}
 
       <Modal visible={!!selected} transparent animationType="slide" onRequestClose={closePay}>
-        <Pressable style={styles.modalOverlay} onPress={closePay}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalOverlayDismiss} onPress={closePay} accessibilityLabel="Kapat" />
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modalKb}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 6 : 0}
           >
-            <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
               {selected ? (
                 <>
                   <View style={styles.sheetHandle} />
@@ -506,7 +536,7 @@ export default function AccountingQuickPayScreen() {
                           </Text>
                         </View>
                         <View style={styles.personHeroBody}>
-                          <Text style={styles.personName} numberOfLines={1}>
+                          <Text style={styles.personName} numberOfLines={2}>
                             {selected.name}
                           </Text>
                           <View style={styles.personMetaRow}>
@@ -540,9 +570,14 @@ export default function AccountingQuickPayScreen() {
                   })()}
 
                   <ScrollView
+                    ref={paySheetScrollRef}
                     style={styles.sheetScroll}
+                    contentContainerStyle={styles.sheetScrollContent}
                     keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
+                    keyboardDismissMode="interactive"
+                    automaticallyAdjustKeyboardInsets
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
                   >
                     <LinearGradient colors={['#fff7ed', '#ffffff']} style={styles.amountHero}>
                       <Text style={styles.amountLbl}>{t('quickPayAmountLabel')}</Text>
@@ -586,6 +621,56 @@ export default function AccountingQuickPayScreen() {
                         ) : null}
                       </ScrollView>
                     </LinearGradient>
+
+                    {loadingAgreements ? (
+                      <View style={styles.planLoading}>
+                        <ActivityIndicator size="small" color="#7c3aed" />
+                      </View>
+                    ) : openAgreements.length > 0 ? (
+                      <View style={styles.sheetSection}>
+                        <Text style={styles.sectionLbl}>{t('quickPayPlanLabel')}</Text>
+                        <Text style={styles.planHint}>{t('quickPayPlanHint')}</Text>
+                        <TouchableOpacity
+                          style={[styles.planChip, !selectedAgreementId && styles.planChipOn]}
+                          onPress={() => setSelectedAgreementId(null)}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={[styles.planChipText, !selectedAgreementId && styles.planChipTextOn]}>
+                            {t('quickPayPlanNone')}
+                          </Text>
+                        </TouchableOpacity>
+                        {openAgreements.map((plan) => {
+                          const active = selectedAgreementId === plan.id;
+                          return (
+                            <TouchableOpacity
+                              key={plan.id}
+                              style={[styles.planRow, active && styles.planRowOn]}
+                              onPress={() => {
+                                setSelectedAgreementId(plan.id);
+                                if (plan.amount_remaining > 0 && !amount.trim()) {
+                                  setAmount(String(plan.amount_remaining));
+                                }
+                              }}
+                              activeOpacity={0.85}
+                            >
+                              <View style={styles.planRowBody}>
+                                <Text style={[styles.planRowTitle, active && styles.planRowTitleOn]} numberOfLines={1}>
+                                  {plan.title}
+                                </Text>
+                                <Text style={styles.planRowMeta}>
+                                  {t('quickPayPlanRemaining', { amount: fmtMoneyTry(plan.amount_remaining) })}
+                                </Text>
+                              </View>
+                              {active ? (
+                                <Ionicons name="checkmark-circle" size={20} color="#7c3aed" />
+                              ) : (
+                                <Ionicons name="ellipse-outline" size={20} color={adminTheme.colors.textMuted} />
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
 
                     <View style={styles.sheetSection}>
                       <Text style={styles.sectionLbl}>{t('quickPayScopeLabel')}</Text>
@@ -680,28 +765,31 @@ export default function AccountingQuickPayScreen() {
                         placeholder={t('quickPayNotePlaceholder')}
                         placeholderTextColor={adminTheme.colors.textMuted}
                         multiline
+                        onFocus={() => {
+                          setTimeout(() => paySheetScrollRef.current?.scrollToEnd({ animated: true }), 120);
+                        }}
                       />
                     </View>
-                  </ScrollView>
 
-                  <TouchableOpacity
-                    style={styles.detailLink}
-                    onPress={() => {
-                      closePay();
-                      router.push({
-                        pathname: '/admin/accounting/counterparties/[id]',
-                        params: { id: selected.id },
-                      } as never);
-                    }}
-                    activeOpacity={0.88}
-                  >
-                    <Ionicons name="person-circle-outline" size={26} color="#7c3aed" />
-                    <View style={styles.detailLinkBody}>
-                      <Text style={styles.detailLinkTitle}>{t('quickPayViewDetail')}</Text>
-                      <Text style={styles.detailLinkSub}>{t('quickPayViewDetailSub')}</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#a78bfa" />
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.detailLink}
+                      onPress={() => {
+                        closePay();
+                        router.push({
+                          pathname: '/admin/accounting/counterparties/[id]',
+                          params: { id: selected.id },
+                        } as never);
+                      }}
+                      activeOpacity={0.88}
+                    >
+                      <Ionicons name="person-circle-outline" size={26} color="#7c3aed" />
+                      <View style={styles.detailLinkBody}>
+                        <Text style={styles.detailLinkTitle}>{t('quickPayViewDetail')}</Text>
+                        <Text style={styles.detailLinkSub}>{t('quickPayViewDetailSub')}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color="#a78bfa" />
+                    </TouchableOpacity>
+                  </ScrollView>
 
                   <View style={styles.sheetFooter}>
                     <TouchableOpacity
@@ -723,9 +811,9 @@ export default function AccountingQuickPayScreen() {
                   </View>
                 </>
               ) : null}
-            </Pressable>
+            </View>
           </KeyboardAvoidingView>
-        </Pressable>
+        </View>
       </Modal>
     </View>
   );
@@ -915,15 +1003,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,23,42,0.55)',
     justifyContent: 'flex-end',
   },
-  modalKb: { width: '100%' },
+  modalOverlayDismiss: { ...StyleSheet.absoluteFillObject },
+  modalKb: { width: '100%', maxHeight: PAY_SHEET_HEIGHT },
   sheet: {
     backgroundColor: adminTheme.colors.surface,
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: 16,
-    maxHeight: '92%',
+    height: PAY_SHEET_HEIGHT,
+    maxHeight: PAY_SHEET_HEIGHT,
   },
   sheetHandle: {
     width: 40,
@@ -993,7 +1082,8 @@ const styles = StyleSheet.create({
   personBalance: { fontSize: 12, fontWeight: '700', marginTop: 6 },
   personBalancePos: { color: '#16a34a' },
   personBalanceNeg: { color: '#dc2626' },
-  sheetScroll: { maxHeight: 380 },
+  sheetScroll: { flex: 1 },
+  sheetScrollContent: { paddingBottom: 24, flexGrow: 1 },
   amountHero: {
     borderRadius: 16,
     padding: 14,
@@ -1042,6 +1132,37 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
   },
   sectionLbl: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.textMuted, marginBottom: 8 },
+  planLoading: { alignItems: 'center', paddingVertical: 8 },
+  planHint: { fontSize: 11, color: adminTheme.colors.textMuted, marginBottom: 8, lineHeight: 15 },
+  planChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surface,
+    marginBottom: 8,
+  },
+  planChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
+  planChipText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  planChipTextOn: { color: '#fff' },
+  planRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    backgroundColor: adminTheme.colors.surface,
+    marginBottom: 6,
+  },
+  planRowOn: { borderColor: '#c4b5fd', backgroundColor: '#faf5ff' },
+  planRowBody: { flex: 1, minWidth: 0 },
+  planRowTitle: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text },
+  planRowTitleOn: { color: '#5b21b6' },
+  planRowMeta: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
   segmented: {
     flexDirection: 'row',
     backgroundColor: adminTheme.colors.surface,
@@ -1109,7 +1230,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    minHeight: 44,
+    minHeight: 88,
     backgroundColor: adminTheme.colors.surface,
     textAlignVertical: 'top',
   },
@@ -1118,7 +1239,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     marginTop: 2,
-    marginBottom: 10,
+    marginBottom: 4,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 14,

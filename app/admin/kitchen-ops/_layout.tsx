@@ -51,6 +51,20 @@ export default function AdminKitchenOpsLayout() {
           headerLeft: () => <AdminStackBackButton fallback={ADMIN_KITCHEN_OPS_HUB} />,
         }}
       />
+      <Stack.Screen
+        name="revenue-notify"
+        options={{
+          title: 'Hasılat bildirimleri',
+          headerLeft: () => <AdminStackBackButton fallback={ADMIN_KITCHEN_OPS_HUB} />,
+        }}
+      />
+      <Stack.Screen
+        name="finance-access"
+        options={{
+          title: 'Finans erişimi',
+          headerLeft: () => <AdminStackBackButton fallback={ADMIN_KITCHEN_OPS_HUB} />,
+        }}
+      />
     </Stack>
   );
 }

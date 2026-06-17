@@ -1,4 +1,5 @@
 // Sabit QR ödeme noktası oluştur — QR kapatılana kadar tekrar kullanılır
+// amount_mode=variable → serbest tutar; müşteri taradıktan sonra tutar girer
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { paymentQrStandOpenUrl, resolveStaffCaller } from "../_shared/paymentQrStandAuth.ts";
 
@@ -10,7 +11,8 @@ const CORS = {
 const SERVICE_KINDS = new Set(["food", "amenity", "room_service", "transfer", "dining", "generic", "other"]);
 
 type Body = {
-  amount: number;
+  amount?: number | null;
+  amount_mode?: string;
   currency?: string;
   title: string;
   description?: string | null;
@@ -39,9 +41,15 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Geçersiz JSON" }, 400);
   }
 
-  const amount = Number(body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || amount > 500000) {
-    return json({ error: "Geçersiz tutar (0–500.000)" }, 400);
+  const amountMode = (body.amount_mode ?? "fixed").trim().toLowerCase() === "variable" ? "variable" : "fixed";
+
+  let amount: number | null = null;
+  if (amountMode === "fixed") {
+    const parsed = Number(body.amount);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 500000) {
+      return json({ error: "Geçersiz tutar (0–500.000)" }, 400);
+    }
+    amount = Math.round(parsed * 100) / 100;
   }
 
   const title = (body.title ?? "").trim();
@@ -58,16 +66,20 @@ Deno.serve(async (req: Request) => {
     .from("payment_qr_stands")
     .insert({
       organization_id: orgId,
-      amount: Math.round(amount * 100) / 100,
+      amount,
+      amount_mode: amountMode,
       currency,
       title,
       description: body.description?.trim() || null,
       service_kind: serviceKind,
       status: "active",
       created_by_staff_id: caller.staff.id,
-      metadata: { staff_name: caller.staff.full_name ?? null, qr_mode: "standing" },
+      metadata: {
+        staff_name: caller.staff.full_name ?? null,
+        qr_mode: amountMode === "variable" ? "standing_variable" : "standing",
+      },
     })
-    .select("id, public_token, amount, currency, title, description, service_kind, status, created_at")
+    .select("id, public_token, amount, amount_mode, currency, title, description, service_kind, status, created_at")
     .single();
 
   if (insertErr || !inserted) {
@@ -81,12 +93,13 @@ Deno.serve(async (req: Request) => {
     public_token: inserted.public_token,
     open_url: openUrl,
     amount: inserted.amount,
+    amount_mode: inserted.amount_mode,
     currency: inserted.currency,
     title: inserted.title,
     description: inserted.description,
     service_kind: inserted.service_kind,
     status: inserted.status,
-    qr_mode: "standing",
+    qr_mode: amountMode === "variable" ? "standing_variable" : "standing",
   });
 });
 

@@ -27,6 +27,8 @@ import {
   clearStaffHamburgerMenuRestore,
   peekStaffHamburgerMenuRestore,
 } from '@/lib/staffHamburgerNavigation';
+import { StaffAttendanceHamburgerShortcuts } from '@/components/header/StaffAttendanceHamburgerShortcuts';
+import { AdminAttendanceHamburgerButton } from '@/components/header/AdminAttendanceHamburgerButton';
 import { StaffHamburgerRecentFlyout } from '@/components/header/StaffHamburgerRecentFlyout';
 import type {
   StaffHamburgerMenuItem,
@@ -35,6 +37,13 @@ import type {
   StaffHamburgerMenuSectionId,
 } from '@/lib/staffHamburgerMenu';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import {
+  coalesceStaffHamburgerTheme,
+  getDefaultResolvedStaffHamburgerTheme,
+  resolveMenuItemAccent,
+  resolveMenuSectionColor,
+  type ResolvedStaffHamburgerTheme,
+} from '@/lib/staffHamburgerTheme';
 
 export type StaffQuickMenuItem = StaffHamburgerMenuItem;
 
@@ -57,8 +66,13 @@ type Props = {
   identity?: StaffMenuIdentity | null;
   onProfilePress?: () => void;
   layout?: StaffHamburgerMenuLayout | null;
+  menuTheme?: ResolvedStaffHamburgerTheme | null;
   recentItems?: StaffHamburgerMenuItem[];
+  showAttendanceShortcuts?: boolean;
+  showAdminAttendancePanel?: boolean;
+  onAdminAttendanceNavigate?: () => void;
   onSelect: (href: string, target?: { itemId?: string; scrollY?: number; item?: StaffHamburgerMenuItem }) => void;
+  onSignOutPress?: () => void;
 };
 
 const OPEN_MS = Platform.OS === 'android' ? 0 : 120;
@@ -70,7 +84,7 @@ const FLYOUT_W = 50;
 const DRAWER_W = SCREEN_W - FLYOUT_W;
 const DRAWER_RADIUS = 26;
 const H_PAD = 16;
-const SEARCH_MIN_ITEMS = 9;
+const SEARCH_MIN_ITEMS = 6;
 const IS_ANDROID = Platform.OS === 'android';
 /** Android: çift dokunuş koruması — görsel açılışı geciktirmez. */
 const ANDROID_ITEM_PRESS_GUARD_MS = 28;
@@ -81,6 +95,7 @@ const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: 
   nav: { color: '#6366f1', icon: 'compass-outline' },
   staff: { color: '#ea580c', icon: 'person-outline' },
   hotel: { color: '#0d9488', icon: 'bed-outline' },
+  payments: { color: '#635bff', icon: 'card-outline' },
   ops: { color: '#2563eb', icon: 'construct-outline' },
   admin: { color: '#7c3aed', icon: 'shield-checkmark-outline' },
 };
@@ -108,9 +123,15 @@ function sectionIdForMenuItem(
 ): string | null {
   if (!itemId) return null;
   for (const section of sections) {
-    if (section.items.some((item) => item.id === itemId)) return section.id;
+    if ((section.items ?? []).some((item) => item.id === itemId)) return section.id;
   }
   return null;
+}
+
+function filterMenuItems(items: StaffHamburgerMenuItem[], query: string): StaffHamburgerMenuItem[] {
+  const q = query.trim().toLocaleLowerCase();
+  if (!q) return items;
+  return items.filter((i) => i.label.toLocaleLowerCase().includes(q));
 }
 
 function filterSections(sections: StaffHamburgerMenuSection[], query: string): StaffHamburgerMenuSection[] {
@@ -119,23 +140,79 @@ function filterSections(sections: StaffHamburgerMenuSection[], query: string): S
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((i) => i.label.toLocaleLowerCase().includes(q)),
+      items: (section.items ?? []).filter((i) => i.label.toLocaleLowerCase().includes(q)),
     }))
-    .filter((s) => s.items.length > 0);
+    .filter((s) => (s.items?.length ?? 0) > 0);
+}
+
+function HubCard({
+  item,
+  onPress,
+  palette,
+  theme,
+}: {
+  item: StaffHamburgerMenuItem;
+  onPress: () => void;
+  palette: PersonelDesignPalette;
+  theme: ResolvedStaffHamburgerTheme;
+}) {
+  const accent = resolveMenuItemAccent(item.id, item.accent, theme);
+  const body = (
+    <>
+      <View style={[styles.hubIcon, { backgroundColor: accentTintBg(accent) }]}>
+        <Ionicons name={item.icon} size={22} color={accent} />
+      </View>
+      <Text style={[styles.hubLabel, { color: palette.text }]} numberOfLines={2}>
+        {item.label}
+      </Text>
+    </>
+  );
+
+  if (IS_ANDROID) {
+    return (
+      <FastPress
+        onPress={onPress}
+        style={[styles.hubCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
+        rippleColor={`${accent}22`}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+      >
+        {body}
+      </FastPress>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[styles.hubCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
+      accessibilityRole="button"
+      accessibilityLabel={item.label}
+    >
+      {body}
+    </TouchableOpacity>
+  );
 }
 
 function PrimaryActionButton({
   item,
   onPress,
+  theme,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
+  theme: ResolvedStaffHamburgerTheme;
 }) {
   const isEmergency = item.id === 'emergency';
-  const androidBg = isEmergency ? '#dc2626' : '#f43f5e';
-  const gradColors = isEmergency
-    ? (['#dc2626', '#ef4444', '#f87171'] as const)
-    : (['#f43f5e', '#fb7185', '#fda4af'] as const);
+  const gradColors = (
+    (theme.primaryButtonGradient?.length ?? 0) >= 2
+      ? theme.primaryButtonGradient
+      : isEmergency
+        ? (['#dc2626', '#ef4444', '#f87171'] as const)
+        : (['#f43f5e', '#fb7185', '#fda4af'] as const)
+  ) as readonly [string, string, ...string[]];
+  const androidBg = theme.primaryButtonColor ?? (isEmergency ? '#dc2626' : '#f43f5e');
 
   if (IS_ANDROID) {
     return (
@@ -177,15 +254,20 @@ function MenuListRow({
   onPress,
   isLast,
   palette,
+  theme,
+  compact,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
   isLast: boolean;
   palette: PersonelDesignPalette;
+  theme: ResolvedStaffHamburgerTheme;
+  compact?: boolean;
 }) {
+  const accent = resolveMenuItemAccent(item.id, item.accent, theme);
   const iconNode = (
-    <View style={[styles.listIcon, { backgroundColor: accentTintBg(item.accent) }]}>
-      <Ionicons name={item.icon} size={19} color={item.accent} />
+    <View style={[styles.listIcon, compact && styles.listIconCompact, { backgroundColor: accentTintBg(accent) }]}>
+      <Ionicons name={item.icon} size={compact ? 17 : 19} color={accent} />
     </View>
   );
 
@@ -211,8 +293,8 @@ function MenuListRow({
     return (
       <FastPress
         onPress={onPress}
-        style={[styles.listRow, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
-        rippleColor={`${item.accent}22`}
+        style={[styles.listRow, compact && styles.listRowCompact, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
+        rippleColor={`${accent}22`}
         accessibilityRole="button"
         accessibilityLabel={item.label}
       >
@@ -225,7 +307,7 @@ function MenuListRow({
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.82}
-      style={[styles.listRow, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
+      style={[styles.listRow, compact && styles.listRowCompact, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
       accessibilityRole="button"
       accessibilityLabel={item.label}
     >
@@ -236,23 +318,107 @@ function MenuListRow({
 
 const MenuListRowMemo = memo(MenuListRow);
 
+function MenuGridTile({
+  item,
+  onPress,
+  palette,
+  theme,
+}: {
+  item: StaffHamburgerMenuItem;
+  onPress: () => void;
+  palette: PersonelDesignPalette;
+  theme: ResolvedStaffHamburgerTheme;
+}) {
+  const accent = resolveMenuItemAccent(item.id, item.accent, theme);
+  const body = (
+    <>
+      <View style={[styles.gridIcon, { backgroundColor: accentTintBg(accent) }]}>
+        <Ionicons name={item.icon} size={22} color={accent} />
+      </View>
+      <Text style={[styles.gridLabel, { color: palette.text }]} numberOfLines={2}>
+        {item.label}
+      </Text>
+    </>
+  );
+  const tileStyle = [styles.gridTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }];
+  if (IS_ANDROID) {
+    return (
+      <FastPress onPress={onPress} style={tileStyle} rippleColor={`${accent}22`} accessibilityRole="button" accessibilityLabel={item.label}>
+        {body}
+      </FastPress>
+    );
+  }
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={tileStyle} accessibilityRole="button" accessibilityLabel={item.label}>
+      {body}
+    </TouchableOpacity>
+  );
+}
+
+function MenuPillItem({
+  item,
+  onPress,
+  palette,
+  theme,
+}: {
+  item: StaffHamburgerMenuItem;
+  onPress: () => void;
+  palette: PersonelDesignPalette;
+  theme: ResolvedStaffHamburgerTheme;
+}) {
+  const accent = resolveMenuItemAccent(item.id, item.accent, theme);
+  const pillStyle = [styles.pillItem, { backgroundColor: accentTintBg(accent, '33'), borderColor: `${accent}44` }];
+  const inner = (
+    <>
+      <Ionicons name={item.icon} size={16} color={accent} />
+      <Text style={[styles.pillLabel, { color: palette.text }]} numberOfLines={1}>
+        {item.label}
+      </Text>
+    </>
+  );
+  if (IS_ANDROID) {
+    return (
+      <FastPress onPress={onPress} style={pillStyle} rippleColor={`${accent}22`} accessibilityRole="button" accessibilityLabel={item.label}>
+        {inner}
+      </FastPress>
+    );
+  }
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={pillStyle} accessibilityRole="button" accessibilityLabel={item.label}>
+      {inner}
+    </TouchableOpacity>
+  );
+}
+
 function UnifiedMenuHeader({
   identity,
   paddingTop,
   closeLabel,
   onClose,
   onProfilePress,
+  theme,
+  palette,
 }: {
   identity: StaffMenuIdentity;
   paddingTop: number;
   closeLabel: string;
   onClose: () => void;
   onProfilePress?: () => void;
+  theme: ResolvedStaffHamburgerTheme;
+  palette: PersonelDesignPalette;
 }) {
   const displayName = identity.fullName?.trim() || '—';
-  const identityColors = IS_ANDROID
-    ? (['#6366f1', '#8b5cf6'] as const)
-    : (['#6366f1', '#8b5cf6', '#d946ef', '#fb7185'] as const);
+  const isMinimal = theme.headerStyle === 'minimal';
+  const isSolid = theme.headerStyle === 'solid';
+  const identityColors = (
+    isSolid || isMinimal
+      ? [theme.headerSolidColor, theme.headerSolidColor]
+      : (theme.headerGradient?.length ?? 0) >= 2
+        ? theme.headerGradient
+        : ['#6366f1', '#8b5cf6']
+  ) as readonly [string, string, ...string[]];
+  const minimalText = palette.text;
+  const minimalSub = palette.muted;
 
   const identityBody = (
     <>
@@ -266,22 +432,52 @@ function UnifiedMenuHeader({
         )}
       </View>
       <View style={styles.identityTextCol}>
-        <Text style={styles.identityName} numberOfLines={1}>
+        <Text style={[styles.identityName, isMinimal && { color: minimalText }]} numberOfLines={1}>
           {displayName}
         </Text>
-        <View style={styles.rolePill}>
-          <Text style={styles.rolePillText} numberOfLines={1}>
+        <View style={[styles.rolePill, isMinimal && styles.rolePillMinimal]}>
+          <Text style={[styles.rolePillText, isMinimal && { color: minimalSub }]} numberOfLines={1}>
             {identity.roleLabel}
           </Text>
         </View>
         {[identity.department?.trim(), identity.organizationName?.trim()].filter(Boolean).length > 0 ? (
-          <Text style={styles.identitySub} numberOfLines={2}>
+          <Text style={[styles.identitySub, isMinimal && { color: minimalSub }]} numberOfLines={2}>
             {[identity.department?.trim(), identity.organizationName?.trim()].filter(Boolean).join(' · ')}
           </Text>
         ) : null}
       </View>
     </>
   );
+
+  if (isMinimal) {
+    return (
+      <View
+        style={[
+          styles.unifiedHeader,
+          styles.minimalHeader,
+          { paddingTop, backgroundColor: theme.headerSolidColor || palette.pageBg, borderBottomColor: palette.cardBorder },
+        ]}
+      >
+        <TouchableOpacity
+          onPress={onClose}
+          style={[styles.headerDismissBtn, styles.headerDismissBtnMinimal, { top: paddingTop + 6, backgroundColor: palette.secondaryBtn }]}
+          activeOpacity={0.82}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={closeLabel}
+        >
+          <Ionicons name="chevron-back" size={20} color={palette.text} />
+        </TouchableOpacity>
+        {onProfilePress ? (
+          <TouchableOpacity onPress={onProfilePress} activeOpacity={0.88} style={styles.identityPressableFull} accessibilityRole="button" accessibilityLabel={displayName}>
+            {identityBody}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.identityPressableFull}>{identityBody}</View>
+        )}
+      </View>
+    );
+  }
 
   return (
     <LinearGradient
@@ -328,11 +524,36 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   identity,
   onProfilePress,
   layout,
+  menuTheme: menuThemeProp,
   recentItems = [],
+  showAttendanceShortcuts = false,
+  showAdminAttendancePanel = false,
+  onAdminAttendanceNavigate,
   onSelect,
+  onSignOutPress,
 }: Props) {
   const { t } = useTranslation();
   const palette = usePersonelDesign();
+  const menuTheme = useMemo((): ResolvedStaffHamburgerTheme => {
+    try {
+      return coalesceStaffHamburgerTheme(menuThemeProp);
+    } catch {
+      return getDefaultResolvedStaffHamburgerTheme();
+    }
+  }, [menuThemeProp]);
+  const effectivePalette = useMemo(
+    (): PersonelDesignPalette =>
+      ({
+        ...palette,
+        pageBg: menuTheme.drawerBackground ?? palette.pageBg,
+        cardBg: menuTheme.cardBackground ?? palette.cardBg,
+        cardBorder: menuTheme.cardBorder ?? palette.cardBorder,
+        text: menuTheme.textColor ?? palette.text,
+        muted: menuTheme.mutedTextColor ?? palette.muted,
+        indigo: menuTheme.chevronColor ?? palette.indigo,
+      }) as PersonelDesignPalette,
+    [palette, menuTheme]
+  );
   const [searchQuery, setSearchQuery] = useState('');
   /** Açılışta hamburger konumundaki çift dokunuş menü satırına düşmesin. */
   const [itemsPressEnabled, setItemsPressEnabled] = useState(false);
@@ -340,17 +561,24 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const [mounted, setMounted] = useState(visible);
 
   const primary = layout?.primary ?? null;
+  const hubs = layout?.hubs ?? [];
   const sections = layout?.sections ?? [];
 
-  const sectionItemCount = useMemo(
-    () => sections.reduce((n, s) => n + s.items.length, 0),
-    [sections]
-  );
-  const showSearch = sectionItemCount >= SEARCH_MIN_ITEMS;
+  const filteredHubs = useMemo(() => filterMenuItems(hubs, searchQuery), [hubs, searchQuery]);
   const filteredSections = useMemo(
     () => filterSections(sections, searchQuery),
     [sections, searchQuery]
   );
+  const sectionItemCount = useMemo(
+    () => hubs.length + sections.reduce((n, s) => n + (s.items?.length ?? 0), 0),
+    [hubs, sections]
+  );
+  const showSearch =
+    menuTheme.showSearch && sectionItemCount >= (menuTheme.searchMinItems ?? SEARCH_MIN_ITEMS);
+  const isCompact = menuTheme.layoutMode === 'compact';
+  const useGrid = menuTheme.layoutMode === 'grid' || menuTheme.itemStyle === 'grid';
+  const usePill = menuTheme.itemStyle === 'pill';
+  const showHubs = menuTheme.showHubCards && filteredHubs.length > 0;
 
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
@@ -522,16 +750,18 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
     onClose();
   }, [onClose]);
 
-  const drawerBg = palette.pageBg;
+  const drawerBg = effectivePalette.pageBg;
   const panelShellStyle = [
     styles.menuPanel,
     IS_ANDROID && styles.menuPanelAndroid,
     {
       width: SCREEN_W,
       backgroundColor: drawerBg,
-      borderColor: palette.cardBorder,
+      borderColor: effectivePalette.cardBorder,
+      borderTopRightRadius: menuTheme.drawerBorderRadius,
+      borderBottomRightRadius: menuTheme.drawerBorderRadius,
     },
-  ] as const;
+  ];
 
   const menuScroll = (
     <ScrollView
@@ -549,11 +779,37 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
       }}
       onContentSizeChange={tryApplyMenuScrollRestore}
     >
+        {showAdminAttendancePanel ? (
+          <View style={styles.attendanceScrollBlock}>
+            <AdminAttendanceHamburgerButton menuOpen={visible} onNavigate={onAdminAttendanceNavigate} />
+          </View>
+        ) : null}
+        {showAttendanceShortcuts ? (
+          <View style={styles.attendanceScrollBlock}>
+            <StaffAttendanceHamburgerShortcuts menuOpen={visible} />
+          </View>
+        ) : null}
+
         {primary ? (
           <PrimaryActionButton
             item={primary}
+            theme={menuTheme}
             onPress={() => go(onSelect, primary.href, itemsPressEnabled, primary, scrollYRef.current)}
           />
+        ) : null}
+
+        {showHubs ? (
+          <View style={styles.hubRow}>
+            {filteredHubs.map((item) => (
+              <HubCard
+                key={item.id}
+                item={item}
+                palette={effectivePalette}
+                theme={menuTheme}
+                onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+              />
+            ))}
+          </View>
         ) : null}
 
         {showSearch ? (
@@ -562,18 +818,18 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               styles.searchWrap,
               IS_ANDROID && styles.searchWrapAndroid,
               {
-                backgroundColor: palette.cardBg,
-                borderColor: palette.cardBorder,
+                backgroundColor: effectivePalette.cardBg,
+                borderColor: effectivePalette.cardBorder,
               },
             ]}
           >
-            <Ionicons name="search-outline" size={18} color={palette.muted} style={styles.searchIcon} />
+            <Ionicons name="search-outline" size={18} color={effectivePalette.muted} style={styles.searchIcon} />
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder={t('staffMenuSearch')}
-              placeholderTextColor={palette.muted}
-              style={[styles.searchInput, { color: palette.text }]}
+              placeholderTextColor={effectivePalette.muted}
+              style={[styles.searchInput, { color: effectivePalette.text }]}
               autoCorrect={false}
               autoCapitalize="none"
               clearButtonMode="while-editing"
@@ -586,37 +842,47 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                 accessibilityRole="button"
                 accessibilityLabel={t('clear')}
               >
-                <Ionicons name="close-circle" size={18} color={palette.muted} />
+                <Ionicons name="close-circle" size={18} color={effectivePalette.muted} />
               </TouchableOpacity>
             ) : null}
           </View>
         ) : null}
 
         {filteredSections.map((section) => {
-          const theme = SECTION_THEME[section.id as StaffHamburgerMenuSectionId] ?? SECTION_THEME.ops;
+          const sectionId = section.id as StaffHamburgerMenuSectionId;
+          const fallbackTheme = SECTION_THEME[sectionId] ?? SECTION_THEME.ops;
+          const sectionColor = resolveMenuSectionColor(sectionId, menuTheme);
+          const sectionIcon = fallbackTheme.icon;
           return (
             <View
               key={section.id}
-              style={styles.menuSection}
+              style={[styles.menuSection, isCompact && styles.menuSectionCompact]}
               onLayout={(e) => {
                 sectionOffsetsRef.current[section.id] = e.nativeEvent.layout.y;
                 tryApplyMenuScrollRestore();
               }}
             >
-              <View style={styles.sectionLabelRow}>
-                <View style={[styles.sectionLabelDot, { backgroundColor: theme.color }]} />
-                <Ionicons name={theme.icon} size={14} color={theme.color} style={{ marginRight: 5 }} />
-                <Text style={[styles.sectionLabel, { color: theme.color }]}>{section.title}</Text>
-              </View>
+              {menuTheme.showSectionLabels ? (
+                <View style={styles.sectionLabelRow}>
+                  {menuTheme.showSectionIcons ? (
+                    <>
+                      <View style={[styles.sectionLabelDot, { backgroundColor: sectionColor }]} />
+                      <Ionicons name={sectionIcon} size={14} color={sectionColor} style={{ marginRight: 5 }} />
+                    </>
+                  ) : null}
+                  <Text style={[styles.sectionLabel, { color: sectionColor }]}>{section.title}</Text>
+                </View>
+              ) : null}
               <View
                 style={[
-                  styles.listCard,
-                  IS_ANDROID && styles.listCardAndroid,
+                  useGrid ? styles.gridCard : usePill ? styles.pillCard : styles.listCard,
+                  !useGrid && !usePill && IS_ANDROID && styles.listCardAndroid,
+                  isCompact && !useGrid && !usePill && styles.listCardCompact,
                   {
-                    borderTopColor: `${theme.color}20`,
-                    borderTopWidth: 2,
-                    backgroundColor: palette.cardBg,
-                    borderColor: palette.cardBorder,
+                    borderTopColor: `${sectionColor}20`,
+                    borderTopWidth: menuTheme.showSectionLabels ? 2 : 0,
+                    backgroundColor: effectivePalette.cardBg,
+                    borderColor: effectivePalette.cardBorder,
                   },
                 ]}
                 onLayout={(e) => {
@@ -624,31 +890,106 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                   tryApplyMenuScrollRestore();
                 }}
               >
-                {section.items.map((item, idx) => (
-                  <View
-                    key={item.id}
-                    onLayout={(e) => {
-                      const sectionY = sectionOffsetsRef.current[section.id] ?? 0;
-                      const cardY = listCardOffsetsRef.current[section.id] ?? 0;
-                      itemOffsetsRef.current[item.id] = sectionY + cardY + e.nativeEvent.layout.y;
-                      tryApplyMenuScrollRestore();
-                    }}
-                  >
-                    <MenuListRowMemo
-                      item={item}
-                      isLast={idx === section.items.length - 1}
-                      palette={palette}
-                      onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
-                    />
+                {(section.items ?? []).length === 0 ? null : useGrid ? (
+                  <View style={styles.gridWrap}>
+                    {(section.items ?? []).map((item) => (
+                      <View
+                        key={item.id}
+                        style={styles.gridCell}
+                        onLayout={(e) => {
+                          const sectionY = sectionOffsetsRef.current[section.id] ?? 0;
+                          const cardY = listCardOffsetsRef.current[section.id] ?? 0;
+                          itemOffsetsRef.current[item.id] = sectionY + cardY + e.nativeEvent.layout.y;
+                          tryApplyMenuScrollRestore();
+                        }}
+                      >
+                        <MenuGridTile
+                          item={item}
+                          palette={effectivePalette}
+                          theme={menuTheme}
+                          onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                        />
+                      </View>
+                    ))}
                   </View>
-                ))}
+                ) : usePill ? (
+                  <View style={styles.pillWrap}>
+                    {(section.items ?? []).map((item) => (
+                      <View
+                        key={item.id}
+                        onLayout={(e) => {
+                          const sectionY = sectionOffsetsRef.current[section.id] ?? 0;
+                          const cardY = listCardOffsetsRef.current[section.id] ?? 0;
+                          itemOffsetsRef.current[item.id] = sectionY + cardY + e.nativeEvent.layout.y;
+                          tryApplyMenuScrollRestore();
+                        }}
+                      >
+                        <MenuPillItem
+                          item={item}
+                          palette={effectivePalette}
+                          theme={menuTheme}
+                          onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  (section.items ?? []).map((item, idx, items) => (
+                    <View
+                      key={item.id}
+                      onLayout={(e) => {
+                        const sectionY = sectionOffsetsRef.current[section.id] ?? 0;
+                        const cardY = listCardOffsetsRef.current[section.id] ?? 0;
+                        itemOffsetsRef.current[item.id] = sectionY + cardY + e.nativeEvent.layout.y;
+                        tryApplyMenuScrollRestore();
+                      }}
+                    >
+                      <MenuListRowMemo
+                        item={item}
+                        isLast={idx === items.length - 1}
+                        palette={effectivePalette}
+                        theme={menuTheme}
+                        compact={isCompact}
+                        onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                      />
+                    </View>
+                  ))
+                )}
               </View>
             </View>
           );
         })}
 
-        {searchQuery.trim() && filteredSections.length === 0 ? (
-          <Text style={[styles.emptySearch, { color: palette.muted }]}>{t('staffMenuSearchEmpty')}</Text>
+        {searchQuery.trim() && filteredSections.length === 0 && filteredHubs.length === 0 ? (
+          <Text style={[styles.emptySearch, { color: effectivePalette.muted }]}>{t('staffMenuSearchEmpty')}</Text>
+        ) : null}
+
+        {onSignOutPress ? (
+          <View style={[styles.signOutFooter, { borderTopColor: effectivePalette.cardBorder }]}>
+            {IS_ANDROID ? (
+              <FastPress
+                onPress={onSignOutPress}
+                style={[styles.signOutBtn, { backgroundColor: effectivePalette.cardBg, borderColor: effectivePalette.cardBorder }]}
+                rippleColor="rgba(239,68,68,0.15)"
+                accessibilityRole="button"
+                accessibilityLabel={t('signOutFromAccount')}
+              >
+                <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+                <Text style={[styles.signOutBtnText, { color: effectivePalette.text }]}>{t('signOutFromAccount')}</Text>
+              </FastPress>
+            ) : (
+              <TouchableOpacity
+                onPress={onSignOutPress}
+                activeOpacity={0.82}
+                style={[styles.signOutBtn, { backgroundColor: effectivePalette.cardBg, borderColor: effectivePalette.cardBorder }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('signOutFromAccount')}
+              >
+                <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+                <Text style={[styles.signOutBtnText, { color: effectivePalette.text }]}>{t('signOutFromAccount')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         ) : null}
     </ScrollView>
   );
@@ -665,34 +1006,40 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
           closeLabel={closeLabel}
           onClose={handleClosePress}
           onProfilePress={onProfilePress}
+          theme={menuTheme}
+          palette={effectivePalette}
         />
       ) : (
-        <View style={[styles.fallbackHeader, { paddingTop: insets.top + 12, borderBottomColor: palette.cardBorder }]}>
-          <Text style={[styles.fallbackTitle, { color: palette.text }]}>{t('staffMenuDrawerTitle')}</Text>
+        <View style={[styles.fallbackHeader, { paddingTop: insets.top + 12, borderBottomColor: effectivePalette.cardBorder }]}>
+          <Text style={[styles.fallbackTitle, { color: effectivePalette.text }]}>{t('staffMenuDrawerTitle')}</Text>
           <TouchableOpacity
             onPress={handleClosePress}
-            style={[styles.fallbackDismissBtn, { backgroundColor: palette.secondaryBtn }]}
+            style={[styles.fallbackDismissBtn, { backgroundColor: effectivePalette.secondaryBtn }]}
             activeOpacity={0.82}
             accessibilityRole="button"
             accessibilityLabel={closeLabel}
           >
-            <Ionicons name="chevron-back" size={20} color={palette.text} />
+            <Ionicons name="chevron-back" size={20} color={effectivePalette.text} />
           </TouchableOpacity>
         </View>
       )}
       <View style={styles.panelBody}>
-        <View style={[styles.panelDrawerCol, { width: DRAWER_W }]}>{menuScroll}</View>
-        <View style={[styles.panelFlyoutCol, { width: FLYOUT_W, borderLeftColor: palette.cardBorder }]}>
-          <StaffHamburgerRecentFlyout
-            items={recentItems}
-            bottomInset={insets.bottom}
-            canPress={itemsPressEnabled}
-            palette={palette}
-            onSelect={(href, target) => {
-              onSelect(href, { ...target, scrollY: scrollYRef.current });
-            }}
-          />
+        <View style={[styles.panelDrawerCol, { width: menuTheme.showRecentFlyout ? DRAWER_W : SCREEN_W }]}>
+          {menuScroll}
         </View>
+        {menuTheme.showRecentFlyout ? (
+          <View style={[styles.panelFlyoutCol, { width: FLYOUT_W, borderLeftColor: effectivePalette.cardBorder }]}>
+            <StaffHamburgerRecentFlyout
+              items={recentItems}
+              bottomInset={insets.bottom}
+              canPress={itemsPressEnabled}
+              palette={effectivePalette}
+              onSelect={(href, target) => {
+                onSelect(href, { ...target, scrollY: scrollYRef.current });
+              }}
+            />
+          </View>
+        ) : null}
       </View>
     </>
   );
@@ -719,9 +1066,11 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               accessibilityLabel={closeLabel}
             >
               {IS_ANDROID ? (
-                <View style={styles.backdrop} />
+                <View style={[styles.backdrop, { backgroundColor: menuTheme.backdropColor }]} />
               ) : (
-                <Animated.View style={[styles.backdrop, styles.backdropIos, { opacity: backdrop }]} />
+                <Animated.View
+                  style={[styles.backdrop, styles.backdropIos, { opacity: backdrop, backgroundColor: menuTheme.backdropColor }]}
+                />
               )}
             </Pressable>
 
@@ -729,7 +1078,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               <View style={panelShellStyle}>{panelInner}</View>
             ) : (
               <Animated.View
-                style={[...panelShellStyle, { transform: [{ translateX: drawerTranslateX }] }]}
+                style={[panelShellStyle, { transform: [{ translateX: drawerTranslateX }] }]}
               >
                 {panelInner}
               </Animated.View>
@@ -832,10 +1181,33 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'stretch',
+    minHeight: 0,
   },
   panelDrawerCol: {
-    flexGrow: 0,
-    flexShrink: 0,
+    flex: 1,
+    minHeight: 0,
+    flexDirection: 'column',
+  },
+  signOutFooter: {
+    marginTop: 8,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    minHeight: 50,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  signOutBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.15,
   },
   panelFlyoutCol: {
     flexGrow: 0,
@@ -985,13 +1357,50 @@ const styles = StyleSheet.create({
   },
   drawerScroll: {
     flex: 1,
+    minHeight: 0,
+  },
+  attendanceScrollBlock: {
+    marginBottom: 8,
   },
   drawerScrollContent: {
     paddingHorizontal: H_PAD,
-    paddingTop: 14,
+    paddingTop: 8,
   },
   primaryWrap: {
     marginBottom: 14,
+  },
+  hubRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  hubCard: {
+    flexGrow: 1,
+    flexBasis: '30%',
+    minWidth: 96,
+    maxWidth: '48%',
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 88,
+  },
+  hubIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hubLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 16,
+    letterSpacing: -0.1,
   },
   primaryBtn: {
     flexDirection: 'row',
@@ -1141,5 +1550,94 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     paddingVertical: 20,
+  },
+  minimalHeader: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerDismissBtnMinimal: {
+    borderColor: 'transparent',
+  },
+  rolePillMinimal: {
+    backgroundColor: 'rgba(15,23,42,0.06)',
+  },
+  menuSectionCompact: {
+    marginBottom: 8,
+  },
+  listCardCompact: {
+    borderRadius: 14,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  listRowCompact: {
+    paddingVertical: 9,
+    minHeight: 46,
+  },
+  listIconCompact: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+  },
+  gridCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+    padding: 8,
+  },
+  gridWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -4,
+  },
+  gridCell: {
+    width: '50%',
+    padding: 4,
+  },
+  gridTile: {
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    minHeight: 96,
+    gap: 8,
+  },
+  gridIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  pillCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+    padding: 10,
+  },
+  pillWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  pillItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: '100%',
+  },
+  pillLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    flexShrink: 1,
   },
 });

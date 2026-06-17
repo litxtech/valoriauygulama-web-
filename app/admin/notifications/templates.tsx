@@ -29,8 +29,16 @@ import {
   parseGuestRoomNumbers,
   parseScheduledGuestCategory,
 } from '@/lib/notificationTemplateRecipients';
+import {
+  deleteStaffIntroTemplate,
+  listStaffIntroTemplates,
+  staffIntroTemplateBulkHref,
+  staffIntroTemplateSummary,
+  type StaffIntroTemplateItem,
+} from '@/lib/staffIntroNotificationTemplates';
+import { destinationById } from '@/lib/staffNotificationActions';
 
-type TabKey = 'scheduled_staff' | 'scheduled_guest' | 'guest' | 'staff';
+type TabKey = 'scheduled_staff' | 'scheduled_guest' | 'guest' | 'staff' | 'staff_intro';
 type ScheduledAudience = 'staff' | 'guest';
 
 const GUEST_TARGETS: { value: BulkGuestTarget; label: string }[] = [
@@ -249,19 +257,80 @@ function ScheduledTemplateCard({
   );
 }
 
+function StaffIntroTemplateCard({
+  item,
+  deleting,
+  onUse,
+  onDelete,
+}: {
+  item: StaffIntroTemplateItem;
+  deleting: boolean;
+  onUse: () => void;
+  onDelete?: () => void;
+}) {
+  const cat = CATEGORY_COLORS[item.category] ?? { bg: T.colors.surfaceTertiary, text: T.colors.textMuted };
+  const dest = destinationById(item.destinationId);
+  return (
+    <View style={styles.readyCard}>
+      <View style={styles.readyCardTop}>
+        <View style={[styles.categoryBadge, { backgroundColor: cat.bg }]}>
+          <Text style={[styles.categoryBadgeText, { color: cat.text }]}>
+            {CATEGORY_LABELS[item.category] ?? item.category}
+          </Text>
+        </View>
+        {item.isPreset ? (
+          <View style={styles.systemPill}>
+            <Ionicons name="sparkles-outline" size={12} color={T.colors.textMuted} />
+            <Text style={styles.systemPillText}>Hazır</Text>
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.readyTitle}>{item.label}</Text>
+      <Text style={styles.readyBody} numberOfLines={2}>
+        {item.title}
+      </Text>
+      <Text style={styles.introMeta}>
+        {staffIntroTemplateSummary(item)}
+        {dest ? ` · ${dest.label}` : ''}
+      </Text>
+      <View style={styles.introActions}>
+        <TouchableOpacity style={styles.useBtn} onPress={onUse} activeOpacity={0.85}>
+          <Ionicons name="send-outline" size={16} color="#fff" />
+          <Text style={styles.useBtnText}>Toplu gönderimde kullan</Text>
+        </TouchableOpacity>
+        {!item.isPreset && onDelete ? (
+          <TouchableOpacity
+            style={[styles.actionBtnDanger, deleting && styles.actionBtnDisabled]}
+            onPress={onDelete}
+            disabled={deleting}
+            activeOpacity={0.85}
+          >
+            {deleting ? (
+              <ActivityIndicator size="small" color={T.colors.error} />
+            ) : (
+              <Ionicons name="trash-outline" size={18} color={T.colors.error} />
+            )}
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 export default function NotificationTemplatesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { staff, canUseAll, canQuery, orgScoped } = useAdminOrganizationQueryScope();
   const [guestTemplates, setGuestTemplates] = useState<NotificationTemplateRow[]>([]);
   const [staffTemplates, setStaffTemplates] = useState<NotificationTemplateRow[]>([]);
+  const [staffIntroTemplates, setStaffIntroTemplates] = useState<StaffIntroTemplateItem[]>([]);
   const [scheduledStaffTemplates, setScheduledStaffTemplates] = useState<ScheduledTemplateRow[]>([]);
   const [scheduledGuestTemplates, setScheduledGuestTemplates] = useState<ScheduledTemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>('scheduled_staff');
+  const [tab, setTab] = useState<TabKey>('staff_intro');
   const [showCreator, setShowCreator] = useState(true);
   const [scheduledAudience, setScheduledAudience] = useState<ScheduledAudience>('staff');
 
@@ -315,7 +384,7 @@ export default function NotificationTemplatesScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: legacyData }, { data: scheduledData }] = await Promise.all([
+    const [{ data: legacyData }, { data: scheduledData }, introList] = await Promise.all([
       supabase
         .from('notification_templates')
         .select('*')
@@ -331,6 +400,7 @@ export default function NotificationTemplatesScreen() {
             .contains('metadata', { notification_only: true })
             .order('send_time', { ascending: true })
         : Promise.resolve({ data: [] as ScheduledTemplateRow[] }),
+      listStaffIntroTemplates(orgScoped),
     ]);
     const list = (legacyData as NotificationTemplateRow[]) ?? [];
     const scheduled = (scheduledData as ScheduledTemplateRow[]) ?? [];
@@ -342,6 +412,7 @@ export default function NotificationTemplatesScreen() {
     );
     setGuestTemplates(list.filter((t) => t.target_audience === 'guest'));
     setStaffTemplates(list.filter((t) => t.target_audience === 'staff'));
+    setStaffIntroTemplates(introList);
     setLoading(false);
   }, [orgScoped]);
 
@@ -366,8 +437,9 @@ export default function NotificationTemplatesScreen() {
         scheduledGuestTemplates.filter((t) => t.active).length,
       guest: guestTemplates.length,
       staff: staffTemplates.length,
+      staffIntro: staffIntroTemplates.length,
     }),
-    [guestTemplates.length, scheduledGuestTemplates, scheduledStaffTemplates, staffTemplates.length]
+    [guestTemplates.length, scheduledGuestTemplates, scheduledStaffTemplates, staffIntroTemplates.length, staffTemplates.length]
   );
 
   const toggleExcludedStaff = useCallback((staffId: string) => {
@@ -507,6 +579,7 @@ export default function NotificationTemplatesScreen() {
   };
 
   const tabs: { key: TabKey; label: string; count: number; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { key: 'staff_intro', label: 'Personel eğitimi', count: stats.staffIntro, icon: 'school-outline' },
     { key: 'scheduled_staff', label: 'Planlı · personel', count: stats.scheduledStaff, icon: 'alarm-outline' },
     { key: 'scheduled_guest', label: 'Planlı · misafir', count: stats.scheduledGuest, icon: 'time-outline' },
     { key: 'guest', label: 'Misafir metinleri', count: stats.guest, icon: 'people-outline' },
@@ -529,7 +602,7 @@ export default function NotificationTemplatesScreen() {
         <View style={styles.heroText}>
           <Text style={styles.heroTitle}>Bildirim şablonları</Text>
           <Text style={styles.heroSub}>
-            Hazır metinlerle hızlı gönderim veya saatli otomatik bildirim planlayın.
+            Hazır metinler, personel eğitimi (modül + video) ve saatli otomatik bildirim planlayın.
           </Text>
         </View>
       </View>
@@ -823,6 +896,48 @@ export default function NotificationTemplatesScreen() {
             ))
           );
         })()
+      ) : tab === 'staff_intro' ? (
+        <>
+          <Text style={styles.introTabHint}>
+            Modül yönlendirmeli ve isteğe bağlı video içeren personel duyuruları. Toplu gönderimde galeriden video
+            yükleyebilir veya bağlantı yapıştırabilirsiniz; özel şablonlar aynı ekrandan kaydedilir.
+          </Text>
+          {staffIntroTemplates.map((item) => (
+            <StaffIntroTemplateCard
+              key={item.id}
+              item={item}
+              deleting={deletingId === item.id}
+              onUse={() => router.push(staffIntroTemplateBulkHref(item))}
+              onDelete={
+                item.isPreset
+                  ? undefined
+                  : () => {
+                      Alert.alert(
+                        'Şablonu sil',
+                        `«${item.label}» kalıcı olarak silinsin mi?`,
+                        [
+                          { text: 'İptal', style: 'cancel' },
+                          {
+                            text: 'Sil',
+                            style: 'destructive',
+                            onPress: async () => {
+                              setDeletingId(item.id);
+                              const { error } = await deleteStaffIntroTemplate(item.id);
+                              setDeletingId(null);
+                              if (error) {
+                                Alert.alert('Silinemedi', error);
+                                return;
+                              }
+                              setStaffIntroTemplates((prev) => prev.filter((t) => t.id !== item.id));
+                            },
+                          },
+                        ]
+                      );
+                    }
+              }
+            />
+          ))}
+        </>
       ) : tab === 'guest' ? (
         guestTemplates.length === 0 ? (
           <View style={styles.emptyBox}>
@@ -1083,8 +1198,17 @@ const styles = StyleSheet.create({
   systemPillText: { fontSize: 11, color: T.colors.textMuted, fontWeight: '600' },
   readyTitle: { fontSize: 16, fontWeight: '800', color: T.colors.text, marginBottom: 6 },
   readyBody: { fontSize: 14, color: T.colors.textSecondary, lineHeight: 20 },
+  introMeta: { fontSize: 12, color: T.colors.textMuted, marginTop: 4, marginBottom: 4 },
+  introTabHint: {
+    fontSize: 13,
+    color: T.colors.textSecondary,
+    lineHeight: 19,
+    marginBottom: 14,
+    paddingHorizontal: 2,
+  },
+  introActions: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   useBtn: {
-    marginTop: 12,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
