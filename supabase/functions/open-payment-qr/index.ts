@@ -23,18 +23,17 @@ import {
   resolvePaymentBrandName,
 } from "../_shared/paymentLinkPage.ts";
 
-function paymentAnonKey(): string {
-  return Deno.env.get("SUPABASE_ANON_KEY")?.trim() ?? "";
-}
-
 async function loadStand(admin: ReturnType<typeof createClient>, publicToken: string) {
-  return admin
+  const { data, error } = await admin
     .from("payment_qr_stands")
     .select(
       "id, organization_id, amount, amount_mode, currency, title, description, service_kind, status, public_token, created_by_staff_id, organizations(name, finance_report_brand)"
     )
     .eq("public_token", publicToken)
     .maybeSingle();
+
+  if (error) return { stand: null, loadError: error.message };
+  return { stand: data, loadError: null as string | null };
 }
 
 Deno.serve(async (req: Request) => {
@@ -96,7 +95,19 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const { data: stand } = await loadStand(admin, publicToken);
+  const { stand, loadError } = await loadStand(admin, publicToken);
+
+  if (loadError) {
+    return htmlResponse(
+      paymentLandingHtml({
+        pageUrl,
+        ogTitle: `${PAYMENT_BRAND_NAME} — Ödeme QR`,
+        ogDescription: "Ödeme servisi geçici olarak kullanılamıyor. Lütfen tekrar deneyin.",
+        variant: "error",
+      }),
+      503
+    );
+  }
 
   if (!stand?.id) {
     return htmlResponse(
@@ -137,7 +148,6 @@ Deno.serve(async (req: Request) => {
 
   if (isVariable) {
     const postUrl = paymentQrStandPostUrl();
-    const postApiKey = paymentAnonKey();
 
     if (req.method === "POST") {
       const amount = parseQrPaymentAmount(postedAmount);
@@ -146,7 +156,6 @@ Deno.serve(async (req: Request) => {
           paymentVariableAmountFormHtml({
             pageUrl,
             postUrl,
-            postApiKey,
             publicToken,
             ogTitle,
             ogDescription,
@@ -168,7 +177,6 @@ Deno.serve(async (req: Request) => {
           paymentVariableAmountFormHtml({
             pageUrl,
             postUrl,
-            postApiKey,
             publicToken,
             ogTitle,
             ogDescription,
@@ -201,7 +209,6 @@ Deno.serve(async (req: Request) => {
       paymentVariableAmountFormHtml({
         pageUrl,
         postUrl,
-        postApiKey,
         publicToken,
         ogTitle,
         ogDescription,

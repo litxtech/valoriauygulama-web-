@@ -34,10 +34,18 @@ export function paymentRequestOpenUrl(publicToken: string): string {
 
 export function paymentQrStandOpenUrl(publicToken: string): string {
   const q = `t=${encodeURIComponent(publicToken)}`;
+  const publicBase = paymentPublicBase();
+  if (publicBase && !publicBase.includes("supabase.co")) {
+    return `${publicBase}/payment/qr?${q}`;
+  }
   return `${paymentFunctionsBase()}/open-payment-qr?${q}`;
 }
 
 export function paymentQrStandPostUrl(): string {
+  const publicBase = paymentPublicBase();
+  if (publicBase && !publicBase.includes("supabase.co")) {
+    return `${publicBase}/payment/qr`;
+  }
   return `${paymentFunctionsBase()}/open-payment-qr`;
 }
 
@@ -88,7 +96,6 @@ type LandingOpts = {
 type VariableAmountFormOpts = {
   pageUrl: string;
   postUrl: string;
-  postApiKey: string;
   publicToken: string;
   ogTitle: string;
   ogDescription: string;
@@ -112,9 +119,8 @@ export function paymentVariableAmountFormHtml(opts: VariableAmountFormOpts): str
   const currency = escapeHtml(opts.currency.toUpperCase());
   const minAmount = opts.minAmount;
   const maxAmount = opts.maxAmount;
-  const postUrlJson = JSON.stringify(opts.postUrl);
-  const postApiKeyJson = JSON.stringify(opts.postApiKey);
-  const tokenJson = JSON.stringify(opts.publicToken);
+  const postAction = escapeHtml(opts.postUrl);
+  const submitLabel = escapeHtml("Güvenli ödemeye devam et");
   const errorMessage = opts.errorMessage?.trim()
     ? `<p class="err" id="pay-err">${escapeHtml(opts.errorMessage)}</p>`
     : `<p class="err" id="pay-err" hidden></p>`;
@@ -169,70 +175,34 @@ ${ogImageTag}
     <h1>${headline}</h1>
     <p class="sub">${subtitle}</p>
     ${errorMessage}
-    <form id="pay-form">
+    <form id="pay-form" method="POST" action="${postAction}">
+      <input type="hidden" name="t" value="${token}"/>
       <label for="amount">${escapeHtml("Tutar")}</label>
       <div class="field">
         <input id="amount" name="amount" type="number" inputmode="decimal" step="0.01" min="${minAmount}" max="${maxAmount}" placeholder="0.00" required autofocus/>
         <span class="curr">${currency}</span>
       </div>
       <p class="hint">${escapeHtml(`En az ${minAmount.toFixed(2)} · en fazla ${maxAmount.toLocaleString("tr-TR")} ${currency}`)}</p>
-      <button class="btn" id="pay-btn" type="submit">${escapeHtml("Güvenli ödemeye devam et")}</button>
+      <button class="btn" id="pay-btn" type="submit">${submitLabel}</button>
     </form>
     <p class="foot">${brandName} ${escapeHtml("·")} ${escapeHtml("Kart bilgileriniz Stripe ile korunur")}</p>
   </div>
 <script>
 (function(){
-  var postUrl=${postUrlJson};
-  var apiKey=${postApiKeyJson};
-  var token=${tokenJson};
   var form=document.getElementById("pay-form");
   var btn=document.getElementById("pay-btn");
   var err=document.getElementById("pay-err");
   if(!form||!btn) return;
   form.addEventListener("submit",function(e){
-    e.preventDefault();
     var amount=Number(document.getElementById("amount").value);
     if(!Number.isFinite(amount)||amount<${minAmount}||amount>${maxAmount}){
+      e.preventDefault();
       if(err){err.hidden=false;err.textContent="Geçerli bir tutar girin.";}
       return;
     }
     btn.disabled=true;
     btn.textContent="Yönlendiriliyorsunuz…";
     if(err) err.hidden=true;
-    fetch(postUrl,{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "apikey":apiKey,
-        "Authorization":"Bearer "+apiKey
-      },
-      body:JSON.stringify({t:token,amount:amount}),
-      redirect:"manual"
-    }).then(function(res){
-      if(res.status>=300&&res.status<400){
-        var loc=res.headers.get("Location");
-        if(loc){window.location.href=loc;return;}
-      }
-      return res.text().then(function(body){
-        if(res.ok&&body.indexOf("checkout.stripe.com")>=0){
-          var m=body.match(/https:\\/\\/checkout\\.stripe\\.com[^"'\\s]+/);
-          if(m){window.location.href=m[0];return;}
-        }
-        if(err){
-          err.hidden=false;
-          err.textContent="Ödeme başlatılamadı. Lütfen tekrar deneyin.";
-        }
-        btn.disabled=false;
-        btn.textContent=${JSON.stringify("Güvenli ödemeye devam et")};
-      });
-    }).catch(function(){
-      if(err){
-        err.hidden=false;
-        err.textContent="Bağlantı hatası. Lütfen tekrar deneyin.";
-      }
-      btn.disabled=false;
-      btn.textContent=${JSON.stringify("Güvenli ödemeye devam et")};
-    });
   });
 })();
 </script>

@@ -55,6 +55,13 @@ function paymentReturnBaseUrl(): string {
   return "";
 }
 
+function useHtmlPaymentReturn(): boolean {
+  if (Deno.env.get("PAYMENT_USE_APP_DEEP_LINK") === "true") return false;
+  if (Deno.env.get("PAYMENT_USE_HTML_RETURN") === "false") return false;
+  // Varsayılan: HTTPS payment-return (Stripe Checkout success_url uyumlulu)
+  return true;
+}
+
 export function paymentSuccessUrl(requestId: string, publicToken: string): string {
   const custom = Deno.env.get("PAYMENT_SUCCESS_URL")?.trim();
   if (custom) {
@@ -64,18 +71,16 @@ export function paymentSuccessUrl(requestId: string, publicToken: string): strin
       .replace("{CHECKOUT_SESSION_ID}", "{CHECKOUT_SESSION_ID}");
   }
 
-  // Varsayılan: doğrudan uygulamaya dön (Stripe mobil checkout)
-  if (Deno.env.get("PAYMENT_USE_HTML_RETURN") !== "true") {
-    return appPaymentDeepLink("success", requestId, publicToken);
+  if (useHtmlPaymentReturn()) {
+    const base = paymentReturnBaseUrl();
+    if (!base) {
+      throw new Error("PAYMENT_RETURN_BASE_URL veya SUPABASE_URL yapılandırılmamış");
+    }
+    const q = new URLSearchParams({ status: "success", id: requestId, token: publicToken });
+    return `${base}?${q.toString()}`;
   }
 
-  const base = paymentReturnBaseUrl();
-  if (!base) {
-    throw new Error("PAYMENT_RETURN_BASE_URL veya SUPABASE_URL yapılandırılmamış");
-  }
-
-  const q = new URLSearchParams({ status: "success", id: requestId, token: publicToken });
-  return `${base}?${q.toString()}`;
+  return appPaymentDeepLink("success", requestId, publicToken);
 }
 
 export function paymentCancelUrl(requestId: string, publicToken: string): string {
@@ -87,15 +92,14 @@ export function paymentCancelUrl(requestId: string, publicToken: string): string
       .replace("{CHECKOUT_SESSION_ID}", "{CHECKOUT_SESSION_ID}");
   }
 
-  if (Deno.env.get("PAYMENT_USE_HTML_RETURN") !== "true") {
-    return appPaymentDeepLink("cancel", requestId, publicToken);
+  if (useHtmlPaymentReturn()) {
+    const base = paymentReturnBaseUrl();
+    if (!base) {
+      throw new Error("PAYMENT_RETURN_BASE_URL veya SUPABASE_URL yapılandırılmamış");
+    }
+    const q = new URLSearchParams({ status: "cancel", id: requestId, token: publicToken });
+    return `${base}?${q.toString()}`;
   }
 
-  const base = paymentReturnBaseUrl();
-  if (!base) {
-    throw new Error("PAYMENT_RETURN_BASE_URL veya SUPABASE_URL yapılandırılmamış");
-  }
-
-  const q = new URLSearchParams({ status: "cancel", id: requestId, token: publicToken });
-  return `${base}?${q.toString()}`;
+  return appPaymentDeepLink("cancel", requestId, publicToken);
 }

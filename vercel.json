@@ -19,35 +19,35 @@
     },
     {
       "source": "/payment/qr/",
-      "destination": "/payment/qr/index.html"
+      "destination": "/api/payment/qr"
     },
     {
       "source": "/payment/qr",
-      "destination": "/payment/qr/index.html"
+      "destination": "/api/payment/qr"
     },
     {
       "source": "/payment/",
-      "destination": "/payment/index.html"
+      "destination": "/api/payment"
     },
     {
       "source": "/payment",
-      "destination": "/payment/index.html"
+      "destination": "/api/payment"
     },
     {
       "source": "/odeme/qr/",
-      "destination": "/odeme/qr/index.html"
+      "destination": "/api/odeme/qr"
     },
     {
       "source": "/odeme/qr",
-      "destination": "/odeme/qr/index.html"
+      "destination": "/api/odeme/qr"
     },
     {
       "source": "/odeme/",
-      "destination": "/odeme/index.html"
+      "destination": "/api/odeme"
     },
     {
       "source": "/odeme",
-      "destination": "/odeme/index.html"
+      "destination": "/api/odeme"
     },
     {
       "source": "/:path*",

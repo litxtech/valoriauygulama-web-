@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { paymentRequestOpenUrl } from '@/lib/paymentOpenUrl';
 import { invokeEdgeWithAuth } from '@/lib/invokeEdgeWithAuth';
+import { getEdgeFunctionErrorMessage, parseEdgeFunctionErrorBody } from '@/lib/functionsError';
 import type { PaymentRequestStatus, PaymentServiceKind } from '@/lib/paymentsI18n';
 
 import type { AdminGuestAccountSummary } from '@/lib/adminGuestAccountSummary';
@@ -91,7 +92,9 @@ export async function createPaymentRequest(input: CreatePaymentRequestInput): Pr
   });
 
   if (error) {
-    throw new Error(error.message || 'Ödeme talebi oluşturulamadı');
+    const parsed = await parseEdgeFunctionErrorBody(error);
+    const msg = parsed?.message ?? (await getEdgeFunctionErrorMessage(error));
+    throw new Error(msg || 'Ödeme talebi oluşturulamadı');
   }
   const payload = data as CreatePaymentRequestResult & { error?: string };
   if (payload?.error) throw new Error(payload.error);
