@@ -297,7 +297,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         <View
           style={[
             styles.welcomeViewport,
-            { minHeight: viewportH, height: viewportH, paddingTop: insets.top },
+            { minHeight: viewportH, height: viewportH },
           ]}
         >
           <PublicKitchenMenuWelcomeHero
@@ -312,6 +312,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
             onOrdersPress={() => setOrdersOpen(true)}
             fullScreen
             onEnterMenu={scrollToMenu}
+            safeTopInset={insets.top}
           />
         </View>
 

@@ -26,7 +26,7 @@ export function parseKitchenMenuPromoVideos(raw: unknown): KitchenMenuPromoVideo
       typeof o.id === 'string' && o.id.trim()
         ? o.id.trim()
         : newKitchenMenuPromoVideoId();
-    if (!videoUrl && !muxPlaybackId) continue;
+    if (!videoUrl && !muxPlaybackId && !posterUrl) continue;
     out.push({
       id,
       title: title || 'Restoran tanıtımı',
@@ -47,7 +47,7 @@ export function kitchenMenuPromoVideosToPayload(videos: KitchenMenuPromoVideo[])
       muxPlaybackId: v.muxPlaybackId?.trim() || null,
       posterUrl: v.posterUrl?.trim() || null,
     }))
-    .filter((v) => v.videoUrl || v.muxPlaybackId);
+    .filter((v) => v.videoUrl || v.muxPlaybackId || v.posterUrl);
 }
 
 export function resolvePromoVideoPlayUrl(video: KitchenMenuPromoVideo): string | null {

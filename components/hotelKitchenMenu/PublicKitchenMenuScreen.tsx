@@ -37,6 +37,8 @@ import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMe
 import { PublicKitchenMenuWebLayout } from '@/components/hotelKitchenMenu/PublicKitchenMenuWebLayout';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
+import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { resolvePromoVideoPoster } from '@/lib/kitchenMenuPromoVideo';
 import {
   cartLineFromItem,
   clearPublicMenuCart,
@@ -183,6 +185,14 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
       setNotFound(false);
       setCartLines((prev) => syncPublicMenuCartLines(prev, bundle.items, menuLang));
       scheduleMenuImagePrefetch(bundle.items);
+      const theme = resolveKitchenMenuTheme(bundle.org.kitchen_menu_public_theme, {
+        heroTitle: t('hotelKitchenMenuHeroTitle'),
+        heroSubtitle: t('publicKitchenMenuHeroSub'),
+      });
+      prefetchImageUrls(
+        theme.promoVideos.map((v) => resolvePromoVideoPoster(v)),
+        8
+      );
       if (isWeb && typeof document !== 'undefined') {
         document.title = `${bundle.org.name} — ${t('hotelKitchenMenuHeroTitle')}`;
       }
@@ -237,13 +247,12 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     }
     if (cachedBoot) {
       void bootstrap({ silent: true, cacheOnly: true });
-      const refreshTimer =
-        typeof window !== 'undefined'
-          ? window.setTimeout(() => void bootstrap({ silent: true }), 2500)
-          : undefined;
-      return () => {
-        if (refreshTimer != null) window.clearTimeout(refreshTimer);
-      };
+      if (typeof window !== 'undefined' && typeof requestIdleCallback === 'function') {
+        const id = requestIdleCallback(() => void bootstrap({ silent: true }), { timeout: 400 });
+        return () => cancelIdleCallback(id);
+      }
+      void bootstrap({ silent: true });
+      return;
     }
     void bootstrap({ silent: false });
   }, [bootstrap, slugKey, cachedBoot]);
