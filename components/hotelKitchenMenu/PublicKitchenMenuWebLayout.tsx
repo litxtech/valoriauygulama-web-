@@ -116,6 +116,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { width, height: viewportH } = useWindowDimensions();
+  const welcomeViewportH = useMemo(() => {
+    const ratio = width < 560 ? 0.72 : width < 900 ? 0.64 : 0.56;
+    const cap = width >= 900 ? 460 : width >= 560 ? 420 : undefined;
+    const h = Math.round(viewportH * ratio);
+    return cap != null ? Math.min(h, cap) : h;
+  }, [viewportH, width]);
   const scrollRef = useRef<ScrollView>(null);
   const menuSectionY = useRef(0);
   const menuTheme =
@@ -171,7 +177,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   };
 
   const scrollToMenu = () => {
-    const y = menuSectionY.current > 0 ? menuSectionY.current : viewportH;
+    const y = menuSectionY.current > 0 ? menuSectionY.current : welcomeViewportH;
     scrollRef.current?.scrollTo({ y, animated: true });
     setMenuTab('menu');
   };
@@ -297,7 +303,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         <View
           style={[
             styles.welcomeViewport,
-            { minHeight: viewportH, height: viewportH },
+            { minHeight: welcomeViewportH, height: welcomeViewportH },
           ]}
         >
           <PublicKitchenMenuWelcomeHero

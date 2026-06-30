@@ -42,7 +42,7 @@ type Props = {
 
 function promoMediaHeight(width: number, fullScreen?: boolean): number {
   if (fullScreen) {
-    return Math.min(Math.round(width * 0.52), width < 560 ? 200 : 248);
+    return Math.min(Math.round(width * 0.36), width < 560 ? 140 : 168);
   }
   return Math.min(Math.round(width / VIDEO_ASPECT), width < 560 ? 180 : 220);
 }
@@ -408,10 +408,10 @@ export function PublicKitchenMenuWelcomeHero({
             <View style={{ paddingTop: safeTopInset + 12 }}>{topChrome}</View>
           )}
 
-          <View style={[styles.innerFull, { paddingBottom: 28 }]}>
+          <View style={[styles.innerFull, { paddingBottom: 18 }]}>
             <View style={styles.copyColFull}>{copyBlock}</View>
             {onEnterMenu ? (
-              <Pressable style={[styles.enterMenuBtn, { borderColor: `${accent}66` }]} onPress={onEnterMenu}>
+              <Pressable style={[styles.enterMenuBtn, styles.enterMenuBtnFull, { borderColor: `${accent}66` }]} onPress={onEnterMenu}>
                 <Text style={[styles.enterMenuText, { color: accent }]}>{t('publicKitchenMenuEnterMenu')}</Text>
                 <Ionicons name="chevron-down" size={18} color={accent} />
               </Pressable>
@@ -482,7 +482,6 @@ const styles = StyleSheet.create({
     padding: 0,
     width: '100%',
     height: '100%',
-    flex: 1,
     justifyContent: 'flex-start',
   },
   topMediaSlot: { width: '100%', position: 'relative' },
@@ -492,11 +491,10 @@ const styles = StyleSheet.create({
   },
   inner: { zIndex: 2 },
   innerFull: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    maxWidth: 720,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    maxWidth: 560,
     width: '100%',
     alignSelf: 'center',
   },
@@ -526,11 +524,11 @@ const styles = StyleSheet.create({
   mediaCol: { alignItems: 'center', gap: 8 },
   mediaColStack: { width: '100%', maxWidth: '100%' },
   kicker: { fontSize: 10, fontWeight: '800', letterSpacing: 2.8, marginBottom: 6 },
-  kickerFull: { fontSize: 11, letterSpacing: 3.2, marginBottom: 10 },
+  kickerFull: { fontSize: 10, letterSpacing: 2.4, marginBottom: 6 },
   title: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -0.8, lineHeight: 32 },
-  titleFull: { fontSize: 34, lineHeight: 38, letterSpacing: -1, maxWidth: 640 },
+  titleFull: { fontSize: 26, lineHeight: 30, letterSpacing: -0.6, maxWidth: 480 },
   subtitle: { fontSize: 14, color: 'rgba(255,255,255,0.74)', marginTop: 8, lineHeight: 20, fontWeight: '500' },
-  subtitleFull: { fontSize: 15, lineHeight: 22, marginTop: 10, maxWidth: 520 },
+  subtitleFull: { fontSize: 13, lineHeight: 19, marginTop: 6, maxWidth: 420 },
   promoSingleTitle: { marginTop: 12, fontSize: 12, fontWeight: '700' },
   carouselWrap: { position: 'relative', overflow: 'hidden' },
   carouselWrapEdge: { borderRadius: 0 },
@@ -603,6 +601,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  enterMenuBtnFull: {
+    marginTop: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
   },
   enterMenuText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
 });
