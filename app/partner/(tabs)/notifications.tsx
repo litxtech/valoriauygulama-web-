@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable } from 'react-native';
+import { useCallback, useState, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,15 +63,27 @@ export default function PartnerNotificationsScreen() {
   const listBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
   const footerBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 16;
   const [rows, setRows] = useState<PartnerNotification[]>([]);
+  const rowsRef = useRef<PartnerNotification[]>([]);
+  const lastLoadAtRef = useRef(0);
+  const NOTIF_LIST_TTL_MS = 60_000;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+
+  const load = useCallback(async (opts?: { background?: boolean }) => {
+    const hadRows = rowsRef.current.length > 0;
+    if (!opts?.background && !hadRows) {
+      setLoading(true);
+    }
     try {
       const data = await listPartnerNotifications();
       setRows(data);
+      lastLoadAtRef.current = Date.now();
     } catch {
-      setRows([]);
+      if (!hadRows) setRows([]);
     }
     setLoading(false);
     setRefreshing(false);
@@ -79,10 +91,12 @@ export default function PartnerNotificationsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
-      void load().then(() => {
-        void markAllPartnerNotificationsRead();
-      });
+      const hadRows = rowsRef.current.length > 0;
+      const stale = !hadRows || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
+      void markAllPartnerNotificationsRead();
+      if (stale) {
+        void load({ background: hadRows });
+      }
     }, [load])
   );
 
@@ -94,10 +108,12 @@ export default function PartnerNotificationsScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: listBottomPad }]}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={partnerTheme.accent} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load({ background: true }); }} tintColor={partnerTheme.accent} />
         }
         ListEmptyComponent={
-          loading ? null : (
+          loading ? (
+            <ActivityIndicator size="large" color={partnerTheme.accent} style={{ marginVertical: 32 }} />
+          ) : (
             <PartnerEmptyState
               icon="notifications-off-outline"
               title="Henüz bildirim yok"

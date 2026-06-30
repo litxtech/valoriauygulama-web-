@@ -190,20 +190,22 @@ export async function ensureNotificationsLocalized(
     out[row.id] = resolveNotificationDisplaySync(row, lang);
   }
 
-  for (const row of rows) {
-    if (!needsApiLocalization(row, lang)) continue;
-    try {
-      const localized = await translateNotificationFields(row, lang);
-      out[row.id] = localized;
-      if (options.guestAppToken) {
-        await persistGuestI18n(options.guestAppToken, row.id, lang, localized);
-      } else if (options.staffPersist) {
-        await persistStaffI18n(row.id, lang, localized);
+  const toTranslate = rows.filter((row) => needsApiLocalization(row, lang));
+  await Promise.all(
+    toTranslate.map(async (row) => {
+      try {
+        const localized = await translateNotificationFields(row, lang);
+        out[row.id] = localized;
+        if (options.guestAppToken) {
+          await persistGuestI18n(options.guestAppToken, row.id, lang, localized);
+        } else if (options.staffPersist) {
+          await persistStaffI18n(row.id, lang, localized);
+        }
+      } catch {
+        // Orijinal metin kalır
       }
-    } catch {
-      // Orijinal metin kalır
-    }
-  }
+    })
+  );
 
   return out;
 }

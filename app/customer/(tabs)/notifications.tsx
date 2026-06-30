@@ -54,26 +54,33 @@ export default function CustomerNotificationsScreen() {
   const listRef = useRef<NotifRow[]>([]);
   const listMaxCreatedRef = useRef<string | null>(null);
   const lastNotifTokenRef = useRef<string | null>(null);
+  const pushPermCheckedRef = useRef(false);
 
   useEffect(() => {
     listRef.current = list;
   }, [list]);
+
+  const refreshPushPerm = useCallback(async () => {
+    if (isExpoGo) return;
+    try {
+      const { status } = await ExpoNotifications.getPermissionsAsync();
+      setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
+    } catch {
+      setPushPerm('unknown');
+    }
+  }, []);
 
   const { refresh: refreshNotificationCount, setUnreadCount, setNotificationsScreenFocused } = useGuestNotificationStore();
   const { displayFor } = useNotificationLocalization(list, { guestAppToken: token, enabled: Boolean(token) });
 
   const load = useCallback(async (opts?: LoadOpts) => {
     const force = opts?.force === true;
-    if (!isExpoGo) {
-      try {
-        const { status } = await ExpoNotifications.getPermissionsAsync();
-        setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
-      } catch {
-        setPushPerm('unknown');
-      }
+    if (!pushPermCheckedRef.current) {
+      pushPermCheckedRef.current = true;
+      void refreshPushPerm();
     }
 
-    let notifToken = await getGuestNotificationToken();
+    let notifToken = token ?? (await getGuestNotificationToken());
     if (!notifToken) {
       const {
         data: { session: s },
@@ -161,7 +168,7 @@ export default function CustomerNotificationsScreen() {
     useGuestNotificationStore.getState().setUnreadCount(0);
     setLoading(false);
     setRefreshing(false);
-  }, [setUnreadCount]);
+  }, [setUnreadCount, token, refreshPushPerm]);
 
   useFocusEffect(
     useCallback(() => {

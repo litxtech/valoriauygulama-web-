@@ -367,7 +367,9 @@ export default function StaffNotificationsScreen() {
   const missingItemsBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { staff } = useAuthStore();
   const scrollRef = useRef<FlatList<NotifRow>>(null);
+  const listRef = useRef<NotifRow[]>([]);
   const lastLoadAtRef = useRef(0);
+  const pushPermCheckedRef = useRef(false);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const NOTIF_LIST_TTL_MS = 60_000;
   const [list, setList] = useState<NotifRow[]>([]);
@@ -392,32 +394,45 @@ export default function StaffNotificationsScreen() {
     enabled: Boolean(staff?.id),
   });
 
+  useEffect(() => {
+    listRef.current = list;
+  }, [list]);
+
   const markAllAsRead = useCallback(async () => {
     if (!staff?.id) return;
     const now = new Date().toISOString();
+    setList((prev) => prev.map((n) => (n.read_at ? n : { ...n, read_at: now })));
+    setUnreadCount(0);
     await supabase
       .from('notifications')
       .update({ read_at: now })
       .eq('staff_id', staff.id)
       .is('read_at', null);
-    setList((prev) => prev.map((n) => (n.read_at ? n : { ...n, read_at: now })));
-    setUnreadCount(0);
     refreshBadge();
   }, [staff?.id, refreshBadge, setUnreadCount]);
 
-  const load = useCallback(async (opts?: { scrollToTop?: boolean }) => {
+  const refreshPushPerm = useCallback(async () => {
+    if (isExpoGo) return;
+    try {
+      const { status } = await ExpoNotifications.getPermissionsAsync();
+      setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
+    } catch {
+      setPushPerm('unknown');
+    }
+  }, []);
+
+  const load = useCallback(async (opts?: { scrollToTop?: boolean; background?: boolean }) => {
     if (!staff?.id) {
       setLoading(false);
       return;
     }
-    // Push iznini otomatik isteme: sadece durum kontrol et.
-    if (!isExpoGo) {
-      try {
-        const { status } = await ExpoNotifications.getPermissionsAsync();
-        setPushPerm(status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined');
-      } catch {
-        setPushPerm('unknown');
-      }
+    const hadList = listRef.current.length > 0;
+    if (!opts?.background && !hadList) {
+      setLoading(true);
+    }
+    if (!pushPermCheckedRef.current) {
+      pushPermCheckedRef.current = true;
+      void refreshPushPerm();
     }
     const { data } = await supabase
       .from('notifications')
@@ -433,11 +448,7 @@ export default function StaffNotificationsScreen() {
         scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
       });
     }
-  }, [staff?.id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  }, [staff?.id, refreshPushPerm]);
 
   // Yeni bildirim gelince listeyi güncelle (beğeni/yorum push’u anında görünsün)
   useEffect(() => {
@@ -466,14 +477,14 @@ export default function StaffNotificationsScreen() {
     useCallback(() => {
       setUnreadCount(0);
       setNotificationsScreenFocused(true);
-      const stale = list.length === 0 || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
+      void markAllAsRead();
+      const hadList = listRef.current.length > 0;
+      const stale = !hadList || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
       if (stale) {
-        load().then(() => markAllAsRead());
-      } else {
-        void markAllAsRead();
+        void load({ background: hadList });
       }
       return () => setNotificationsScreenFocused(false);
-    }, [list.length, setUnreadCount, setNotificationsScreenFocused, load, markAllAsRead])
+    }, [setUnreadCount, setNotificationsScreenFocused, load, markAllAsRead])
   );
 
   const enablePush = useCallback(async () => {
@@ -1037,7 +1048,11 @@ export default function StaffNotificationsScreen() {
         contentInsetAdjustmentBehavior="automatic"
         ListHeaderComponent={ListHeader}
         ListEmptyComponent={
-          !loading ? <Text style={styles.empty}>{t('staffNotifEmpty')}</Text> : null
+          loading ? (
+            <ActivityIndicator size="large" color="#2b6cb0" style={{ marginVertical: 32 }} />
+          ) : (
+            <Text style={styles.empty}>{t('staffNotifEmpty')}</Text>
+          )
         }
         initialNumToRender={10}
         maxToRenderPerBatch={10}
