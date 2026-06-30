@@ -13,7 +13,7 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.21',
+  version: '2.2.22',
   /** Android tablet: döner; iPad kapalı (supportsTablet false). Bkz. withTabletOrientation.js */
   orientation: 'default',
   icon: './assets/icon.png',
@@ -29,7 +29,7 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '28',
+    buildNumber: '29',
     newArchEnabled: true,
     infoPlist: {
       /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
@@ -53,7 +53,7 @@ const baseConfig = {
     newArchEnabled: true,
     /** SDK 54 / target 35+: edge-to-edge; statusBarColor gibi eski API kullanmayın. */
     edgeToEdgeEnabled: true,
-    versionCode: 29,
+    versionCode: 30,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {
