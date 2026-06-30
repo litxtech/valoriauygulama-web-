@@ -56,6 +56,11 @@ const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
 const IS_ANDROID = Platform.OS === 'android';
 const { height: SCREEN_H } = Dimensions.get('window');
 
+/** Android Modal: sistem çubukları için güvenli alan ölçümü (klavye + sheet). */
+const ROOM_MODAL_ANDROID_PROPS = IS_ANDROID
+  ? ({ statusBarTranslucent: true, navigationBarTranslucent: true } as const)
+  : {};
+
 function newCaptureId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -104,6 +109,7 @@ export default function KbsCaptureIdScreen() {
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const [splitting, setSplitting] = useState(false);
   const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
+  const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const captureLockRef = useRef(false);
 
   const setGuestName = useCallback((itemId: string, field: 'firstName' | 'lastName', value: string) => {
@@ -181,6 +187,24 @@ export default function KbsCaptureIdScreen() {
       input.focus();
     }, 320);
     return () => clearTimeout(t);
+  }, [roomModalVisible]);
+
+  /** Android: KeyboardAvoidingView height titremesini önlemek için klavye yüksekliği manuel. */
+  useEffect(() => {
+    if (!IS_ANDROID || !roomModalVisible) {
+      setAndroidKeyboardInset(0);
+      return;
+    }
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setAndroidKeyboardInset(Math.max(0, e.endCoordinates?.height ?? 0));
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardInset(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
   }, [roomModalVisible]);
 
   const goBack = useCallback(() => {
@@ -553,13 +577,27 @@ export default function KbsCaptureIdScreen() {
         </View>
       ) : null}
 
-      <Modal visible={roomModalVisible} animationType="slide" transparent onRequestClose={closeRoomModal}>
+      <Modal
+        visible={roomModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={closeRoomModal}
+        {...ROOM_MODAL_ANDROID_PROPS}
+      >
         <KeyboardAvoidingView
           style={styles.roomModalBackdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <Pressable style={styles.roomModalDismiss} onPress={closeRoomModal} />
-          <View style={[styles.roomSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View
+            style={[
+              styles.roomSheet,
+              {
+                paddingBottom: androidKeyboardInset > 0 ? 16 : Math.max(insets.bottom, 16),
+              },
+              IS_ANDROID && androidKeyboardInset > 0 ? { marginBottom: androidKeyboardInset } : null,
+            ]}
+          >
             <View style={styles.roomSheetHandle} />
             <View style={styles.roomSheetHeader}>
               <Pressable style={styles.roomSheetBack} onPress={closeRoomModal} disabled={saving}>
@@ -600,9 +638,13 @@ export default function KbsCaptureIdScreen() {
                 editable={!saving}
                 maxLength={24}
               />
-              {roomNoTrimmed.length > 0 ? (
-                <Text style={styles.roomHint}>Kayıt oda no: {roomNoTrimmed}</Text>
-              ) : null}
+              <Text
+                style={[styles.roomHint, roomNoTrimmed.length === 0 && styles.roomHintHidden]}
+                accessibilityElementsHidden={roomNoTrimmed.length === 0}
+                importantForAccessibility={roomNoTrimmed.length === 0 ? 'no-hide-descendants' : 'yes'}
+              >
+                {roomNoTrimmed.length > 0 ? `Kayıt oda no: ${roomNoTrimmed}` : ' '}
+              </Text>
 
               <Text style={styles.nameSectionTitle}>Ad / soyad (isteğe bağlı)</Text>
               <Text style={styles.nameSectionHint}>
@@ -969,7 +1011,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     minHeight: 44,
   },
-  roomHint: { marginTop: 10, fontSize: 14, fontWeight: '600', color: '#0369a1', textAlign: 'center' },
+  roomHint: { marginTop: 10, minHeight: 20, fontSize: 14, fontWeight: '600', color: '#0369a1', textAlign: 'center' },
+  roomHintHidden: { opacity: 0 },
   roomSheetScroll: { flexGrow: 0, flexShrink: 1, maxHeight: SCREEN_H * 0.62 },
   roomSheetScrollContent: { paddingBottom: 8 },
   nameSectionTitle: {
