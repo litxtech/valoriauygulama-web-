@@ -47,6 +47,7 @@ import {
   pickKitchenMenuPromoPoster,
 } from '@/lib/hotelKitchenMenuPromoUpload';
 import { fetchOrganizationSlugById, invalidatePublicMenuCache } from '@/lib/publicKitchenMenu';
+import { persistKitchenMenuPublicTheme } from '@/lib/kitchenMenuPromoPersist';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
 import { KITCHEN_MENU_THEME_PRESETS } from '@/lib/kitchenMenuThemePresets';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -170,52 +171,76 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
   }, [canUse, load]);
 
   const colorErrors = useMemo(() => kitchenMenuThemeColorErrors(form), [form]);
+  const formRef = useRef(form);
+  formRef.current = form;
 
-  const save = async () => {
-    if (!staff?.organization_id) return;
-    const validationErrors = kitchenMenuThemeColorErrors(form);
-    if (validationErrors.length > 0) {
-      Alert.alert(t('error'), validationErrors.join('\n'));
-      return;
-    }
-    setSaving(true);
-    try {
-      const normalizedForm: KitchenMenuPublicTheme = {
-        ...form,
-        primaryColor: normalizeKitchenMenuHexColor(form.primaryColor),
-        navyColor: normalizeKitchenMenuHexColor(form.navyColor),
-        accentLightColor: normalizeKitchenMenuHexColor(form.accentLightColor),
-      };
-      const payload = kitchenMenuThemeToPayload(normalizedForm);
-      const { error } = await supabase.rpc('update_kitchen_menu_public_theme', {
-        p_organization_id: staff.organization_id,
-        p_theme: payload,
-      });
-      if (error) {
-        if (
-          error.message.includes('update_kitchen_menu_public_theme') ||
-          error.message.includes('kitchen_menu_public_theme')
-        ) {
+  const persistTheme = useCallback(
+    async (nextForm: KitchenMenuPublicTheme, opts?: { silent?: boolean }) => {
+      if (!staff?.organization_id) return;
+      const validationErrors = kitchenMenuThemeColorErrors(nextForm);
+      if (validationErrors.length > 0) {
+        if (!opts?.silent) Alert.alert(t('error'), validationErrors.join('\n'));
+        throw new Error(validationErrors.join('\n'));
+      }
+      try {
+        await persistKitchenMenuPublicTheme({
+          organizationId: staff.organization_id,
+          orgSlug,
+          theme: nextForm,
+        });
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (msg.includes('update_kitchen_menu_public_theme') || msg.includes('kitchen_menu_public_theme')) {
           throw new Error(
             'Veritabanı güncellemesi gerekli (migration 434). Supabase\'de migration uygulayın veya yöneticinize bildirin.'
           );
         }
-        if (error.message.includes('otel_mutfak_menu') || error.message.includes('yetkiniz yok')) {
+        if (msg.includes('otel_mutfak_menu') || msg.includes('yetkiniz yok')) {
           throw new Error('Otel mutfağı menü yetkisi gerekli. Yöneticinizden «otel_mutfak_menu» iznini açmasını isteyin.');
         }
-        throw error;
+        throw e;
       }
       setMigrationMissing(false);
-      setForm(normalizedForm);
-      if (orgSlug) invalidatePublicMenuCache(orgSlug);
+      setForm(nextForm);
+      if (!opts?.silent) Alert.alert(t('success'), t('hotelKitchenMenuThemeSaved'));
+    },
+    [staff?.organization_id, orgSlug, t]
+  );
+
+  const save = async () => {
+    if (!staff?.organization_id) return;
+    setSaving(true);
+    try {
+      await persistTheme(formRef.current);
       await load();
-      Alert.alert(t('success'), t('hotelKitchenMenuThemeSaved'));
     } catch (e) {
       Alert.alert(t('error'), (e as Error).message);
     } finally {
       setSaving(false);
     }
   };
+
+  const savePromoPatch = useCallback(
+    async (patch: (videos: KitchenMenuPromoVideo[]) => KitchenMenuPromoVideo[]) => {
+      if (!staff?.organization_id) return;
+      const current = formRef.current;
+      const nextForm: KitchenMenuPublicTheme = {
+        ...current,
+        promoVideos: patch(current.promoVideos ?? []),
+      };
+      setForm(nextForm);
+      setSaving(true);
+      try {
+        await persistTheme(nextForm, { silent: true });
+        Alert.alert(t('success'), t('hotelKitchenMenuPromoSavedLive'));
+      } catch (e) {
+        Alert.alert(t('error'), (e as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [persistTheme, staff?.organization_id, t]
+  );
 
   if (!canUse) {
     return (
@@ -525,12 +550,18 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
                 return;
               }
               if (!res.publicUrl) return;
-              setForm((f) => ({
-                ...f,
-                promoVideos: (f.promoVideos ?? []).map((row) =>
-                  row.id === video.id ? { ...row, videoUrl: res.publicUrl, muxPlaybackId: null } : row
-                ),
-              }));
+              await savePromoPatch((videos) =>
+                videos.map((row) =>
+                  row.id === video.id
+                    ? {
+                        ...row,
+                        videoUrl: res.publicUrl,
+                        muxPlaybackId: null,
+                        title: row.title.trim() || t('hotelKitchenMenuPromoVideoTitlePh'),
+                      }
+                    : row
+                )
+              );
             }}
           >
             {promoUploadingId === video.id ? (
@@ -556,17 +587,21 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
             disabled={!staff?.organization_id || promoUploadingId === video.id}
             onPress={async () => {
               if (!staff?.organization_id) return;
-              const res = await pickKitchenMenuPromoPoster({ organizationId: staff.organization_id });
+              const res = await pickKitchenMenuPromoPoster({
+                organizationId: staff.organization_id,
+                onProgress: setPromoUploadStep,
+              });
+              setPromoUploadingId(null);
+              setPromoUploadStep('');
               if (res.cancelled || !res.publicUrl) {
                 if (res.error) Alert.alert(t('error'), res.error);
                 return;
               }
-              setForm((f) => ({
-                ...f,
-                promoVideos: (f.promoVideos ?? []).map((row) =>
+              await savePromoPatch((videos) =>
+                videos.map((row) =>
                   row.id === video.id ? { ...row, posterUrl: res.publicUrl } : row
-                ),
-              }));
+                )
+              );
             }}
           >
             <Ionicons name="image-outline" size={16} color="#64748b" />
@@ -581,7 +616,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
         onPress={() => {
           const row: KitchenMenuPromoVideo = {
             id: newKitchenMenuPromoVideoId(),
-            title: '',
+            title: t('hotelKitchenMenuPromoVideoTitlePh'),
             videoUrl: '',
             muxPlaybackId: null,
             posterUrl: null,

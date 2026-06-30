@@ -1,20 +1,66 @@
+import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import {
-  facilityJournalMediaPickerGalleryOptions,
-  prepareFacilityJournalUploadUri,
-} from '@/lib/facilityJournalMedia';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { HOTEL_KITCHEN_MENU_BUCKET } from '@/lib/hotelKitchenMenu';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { copyUriToCacheForUpload, isLocalFileUriForUpload } from '@/lib/uploadMedia';
 import {
   FEED_MEDIA_UPLOAD_TIMEOUT_MS,
   promiseWithTimeout,
   uploadUriToPublicBucket,
 } from '@/lib/storagePublicUpload';
-import { STAFF_INTRO_VIDEO_BUCKET } from '@/lib/staffIntroNotificationVideo';
+import {
+  kitchenMenuPromoVideoPickerOptions,
+  prepareKitchenMenuPromoVideoUri,
+} from '@/lib/kitchenMenuPromoVideoUpload';
+
+const PROMO_POSTER_MAX_WIDTH = 1280;
+
+export const kitchenMenuPromoPosterPickerOptions: ImagePicker.ImagePickerOptions = {
+  mediaTypes: ['images'],
+  allowsMultipleSelection: false,
+  allowsEditing: false,
+  quality: 0.85,
+  base64: false,
+  ...(Platform.OS === 'ios'
+    ? {
+        preferredAssetRepresentationMode:
+          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      }
+    : {}),
+};
+
+function promoSubfolder(organizationId: string, kind: 'videos' | 'posters'): string {
+  return `org/${organizationId}/promo/${kind}`;
+}
+
+/** Android content:// ve HEIC → her zaman JPEG (menü fotoğrafı ile aynı yaklaşım). */
+async function preparePromoPosterUri(uri: string): Promise<string> {
+  let local = (uri ?? '').trim();
+  if (!local) return local;
+
+  if (!isLocalFileUriForUpload(local)) {
+    local = await copyUriToCacheForUpload(local, 'image');
+  }
+
+  try {
+    const out = await ImageManipulator.manipulateAsync(
+      local,
+      [{ resize: { width: PROMO_POSTER_MAX_WIDTH } }],
+      { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    if (out?.uri) return out.uri;
+  } catch {
+    /* fallback */
+  }
+
+  return local;
+}
 
 export async function pickAndUploadKitchenMenuPromoVideo(params: {
   organizationId: string;
   onProgress?: (step: string) => void;
-}): Promise<{ publicUrl?: string; posterUrl?: string; cancelled?: boolean; error?: string }> {
+}): Promise<{ publicUrl?: string; cancelled?: boolean; error?: string }> {
   const granted = await ensureMediaLibraryPermission({
     title: 'Galeri',
     message: 'Tanıtım videosu seçmek için galeri erişimi gerekir.',
@@ -22,31 +68,26 @@ export async function pickAndUploadKitchenMenuPromoVideo(params: {
   });
   if (!granted) return { cancelled: true };
 
-  const result = await ImagePicker.launchImageLibraryAsync({
-    ...facilityJournalMediaPickerGalleryOptions,
-    mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-    allowsMultipleSelection: false,
-    videoMaxDuration: 180,
-  });
+  params.onProgress?.('Galeriden seçiliyor…');
+  const result = await ImagePicker.launchImageLibraryAsync(kitchenMenuPromoVideoPickerOptions);
   if (result.canceled || !result.assets[0]?.uri) return { cancelled: true };
 
   try {
-    params.onProgress?.('Video hazırlanıyor…');
     const asset = result.assets[0];
-    const localUri = await prepareFacilityJournalUploadUri(asset.uri, 'video', params.onProgress);
+    const localUri = await prepareKitchenMenuPromoVideoUri(asset.uri, { fileSize: asset.fileSize }, params.onProgress);
 
     params.onProgress?.('Sunucuya yükleniyor…');
-    const timeout = FEED_MEDIA_UPLOAD_TIMEOUT_MS + 20 * 60 * 1000;
+    const timeout = FEED_MEDIA_UPLOAD_TIMEOUT_MS + 15 * 60 * 1000;
     const uploaded = await promiseWithTimeout(
       uploadUriToPublicBucket({
-        bucketId: STAFF_INTRO_VIDEO_BUCKET,
+        bucketId: HOTEL_KITCHEN_MENU_BUCKET,
         uri: localUri,
         kind: 'video',
-        subfolder: `kitchen-menu-promo/${params.organizationId}`,
+        subfolder: promoSubfolder(params.organizationId, 'videos'),
         preferStreamUpload: true,
       }),
       timeout,
-      'Video yükleme zaman aşımına uğradı.'
+      'Video yükleme zaman aşımına uğradı. Wi‑Fi ile tekrar deneyin.'
     );
 
     return { publicUrl: uploaded.publicUrl };
@@ -57,6 +98,7 @@ export async function pickAndUploadKitchenMenuPromoVideo(params: {
 
 export async function pickKitchenMenuPromoPoster(params: {
   organizationId: string;
+  onProgress?: (step: string) => void;
 }): Promise<{ publicUrl?: string; cancelled?: boolean; error?: string }> {
   const granted = await ensureMediaLibraryPermission({
     title: 'Galeri',
@@ -65,19 +107,19 @@ export async function pickKitchenMenuPromoPoster(params: {
   });
   if (!granted) return { cancelled: true };
 
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsMultipleSelection: false,
-    quality: 0.85,
-  });
+  params.onProgress?.('Görsel hazırlanıyor…');
+  const result = await ImagePicker.launchImageLibraryAsync(kitchenMenuPromoPosterPickerOptions);
   if (result.canceled || !result.assets[0]?.uri) return { cancelled: true };
 
   try {
+    const jpegUri = await preparePromoPosterUri(result.assets[0].uri);
+    params.onProgress?.('Sunucuya yükleniyor…');
     const uploaded = await uploadUriToPublicBucket({
-      bucketId: STAFF_INTRO_VIDEO_BUCKET,
-      uri: result.assets[0].uri,
+      bucketId: HOTEL_KITCHEN_MENU_BUCKET,
+      uri: jpegUri,
       kind: 'image',
-      subfolder: `kitchen-menu-promo/${params.organizationId}/posters`,
+      subfolder: promoSubfolder(params.organizationId, 'posters'),
+      preferStreamUpload: true,
     });
     return { publicUrl: uploaded.publicUrl };
   } catch (e) {

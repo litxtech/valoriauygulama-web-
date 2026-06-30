@@ -26,10 +26,10 @@ export function parseKitchenMenuPromoVideos(raw: unknown): KitchenMenuPromoVideo
       typeof o.id === 'string' && o.id.trim()
         ? o.id.trim()
         : newKitchenMenuPromoVideoId();
-    if (!title || (!videoUrl && !muxPlaybackId)) continue;
+    if (!videoUrl && !muxPlaybackId) continue;
     out.push({
       id,
-      title,
+      title: title || 'Restoran tanıtımı',
       videoUrl: videoUrl || null,
       muxPlaybackId: muxPlaybackId || null,
       posterUrl: posterUrl || null,
@@ -42,12 +42,12 @@ export function kitchenMenuPromoVideosToPayload(videos: KitchenMenuPromoVideo[])
   return videos
     .map((v) => ({
       id: v.id,
-      title: v.title.trim(),
+      title: v.title.trim() || 'Restoran tanıtımı',
       videoUrl: v.videoUrl?.trim() || null,
       muxPlaybackId: v.muxPlaybackId?.trim() || null,
       posterUrl: v.posterUrl?.trim() || null,
     }))
-    .filter((v) => v.title.length > 0 && (v.videoUrl || v.muxPlaybackId));
+    .filter((v) => v.videoUrl || v.muxPlaybackId);
 }
 
 export function resolvePromoVideoPlayUrl(video: KitchenMenuPromoVideo): string | null {
