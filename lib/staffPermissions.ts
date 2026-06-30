@@ -183,7 +183,11 @@ export function canAccessKitchenOps(staff: StaffPermissionSlice): boolean {
 /** Dijital menü siparişleri ve canlı sepet (ödeme bekleyen) — mutfak paneli. */
 export function canViewStaffKitchenMenuOrders(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;
-  return canAccessKitchenOps(staff) || canManageHotelKitchenMenu(staff);
+  if (staff.role === 'admin') return true;
+  if (canAccessKitchenOps(staff) || canManageHotelKitchenMenu(staff)) return true;
+  const role = (staff.role ?? '').toLowerCase();
+  if (role === 'receptionist' || role === 'reception_chief' || role === 'manager') return true;
+  return Boolean(staff.organization_id);
 }
 
 /** Mutfak operasyon yönetimi (düzeltme, silme, limit, rapor). */

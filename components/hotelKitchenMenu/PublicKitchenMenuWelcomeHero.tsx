@@ -64,23 +64,25 @@ function PromoSlide({
 }) {
   const playUrl = resolvePromoVideoPlayUrl(video);
   const poster = resolvePromoVideoPoster(video);
-  const [loading, setLoading] = useState(!!playUrl);
+  const posterOnly = !playUrl && !!poster;
+  const [videoLoading, setVideoLoading] = useState(!!playUrl && !poster);
   const [error, setError] = useState(false);
   const webVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  const finishLoading = useCallback(() => setLoading(false), []);
+  const finishVideoLoading = useCallback(() => setVideoLoading(false), []);
 
   useEffect(() => {
     if (!playUrl) {
-      setLoading(false);
+      setVideoLoading(false);
       setError(false);
       return;
     }
-    setLoading(true);
+    setVideoLoading(!poster);
     setError(false);
-    const t = setTimeout(finishLoading, 8000);
+    if (poster) return;
+    const t = setTimeout(finishVideoLoading, 6000);
     return () => clearTimeout(t);
-  }, [playUrl, finishLoading]);
+  }, [playUrl, poster, finishVideoLoading]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !isActive || !playUrl) return;
@@ -103,9 +105,11 @@ function PromoSlide({
     [width, height]
   );
 
-  if (!playUrl && poster) {
+  const wrapStyle = [styles.playerWrap, boxStyle, edgeToEdge && styles.playerWrapEdge];
+
+  if (posterOnly) {
     return (
-      <View style={[styles.playerWrap, boxStyle, edgeToEdge && styles.playerWrapEdge]}>
+      <View style={wrapStyle}>
         <CachedImage uri={poster} style={StyleSheet.absoluteFillObject} contentFit="cover" />
       </View>
     );
@@ -119,13 +123,21 @@ function PromoSlide({
     );
   }
 
+  const showVideoSpinner = videoLoading && !error && !poster;
+
   if (Platform.OS === 'web') {
     return (
-      <View style={[styles.playerWrap, boxStyle, edgeToEdge && styles.playerWrapEdge]}>
-        {poster && loading && !error ? (
-          <CachedImage uri={poster} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+      <View style={wrapStyle}>
+        {poster ? (
+          <CachedImage
+            uri={poster}
+            style={StyleSheet.absoluteFillObject}
+            contentFit="cover"
+            onLoad={finishVideoLoading}
+            onError={finishVideoLoading}
+          />
         ) : null}
-        {loading && !error ? (
+        {showVideoSpinner ? (
           <View style={styles.playerOverlay} pointerEvents="none">
             <ActivityIndicator color={accent} />
           </View>
@@ -152,13 +164,14 @@ function PromoSlide({
               objectFit: 'cover',
               backgroundColor: '#000',
               display: 'block',
+              opacity: videoLoading && poster ? 0 : 1,
             }}
-            onLoadedMetadata={finishLoading}
-            onCanPlay={finishLoading}
-            onPlaying={finishLoading}
-            onLoadedData={finishLoading}
+            onLoadedMetadata={finishVideoLoading}
+            onCanPlay={finishVideoLoading}
+            onPlaying={finishVideoLoading}
+            onLoadedData={finishVideoLoading}
             onError={() => {
-              finishLoading();
+              finishVideoLoading();
               setError(true);
             }}
           />
@@ -168,11 +181,17 @@ function PromoSlide({
   }
 
   return (
-    <View style={[styles.playerWrap, boxStyle, edgeToEdge && styles.playerWrapEdge]}>
-      {poster && loading && !error ? (
-        <CachedImage uri={poster} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+    <View style={wrapStyle}>
+      {poster ? (
+        <CachedImage
+          uri={poster}
+          style={StyleSheet.absoluteFillObject}
+          contentFit="cover"
+          onLoad={finishVideoLoading}
+          onError={finishVideoLoading}
+        />
       ) : null}
-      {loading && !error ? (
+      {showVideoSpinner ? (
         <View style={styles.playerOverlay} pointerEvents="none">
           <ActivityIndicator color={accent} />
         </View>
@@ -184,7 +203,7 @@ function PromoSlide({
       ) : (
         <Video
           key={playUrl}
-          style={styles.videoFill}
+          style={[styles.videoFill, poster && videoLoading ? { opacity: 0 } : null]}
           source={{ uri: playUrl }}
           useNativeControls
           resizeMode={ResizeMode.COVER}
@@ -193,9 +212,10 @@ function PromoSlide({
           isLooping
           posterSource={poster ? { uri: poster } : undefined}
           usePoster={!!poster}
-          onLoad={finishLoading}
+          onLoad={finishVideoLoading}
+          onReadyForDisplay={finishVideoLoading}
           onError={() => {
-            finishLoading();
+            finishVideoLoading();
             setError(true);
           }}
         />

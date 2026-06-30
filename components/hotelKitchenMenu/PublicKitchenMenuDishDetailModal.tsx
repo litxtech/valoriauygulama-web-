@@ -104,23 +104,18 @@ export function PublicKitchenMenuDishDetailModal({
           style={[styles.mainImageWrap, { height: galleryH }]}
           onLayout={(e) => setGalleryW(e.nativeEvent.layout.width)}
         >
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={() => galleryUrls.length > 0 && setLightboxOpen(true)}
-            disabled={galleryUrls.length === 0}
-          >
-            {galleryW > 0 ? (
-              <MenuItemImageCarousel
-                urls={galleryUrls}
-                itemId={item?.id ?? 'detail'}
-                width={galleryW}
-                height={galleryH}
-                showArrows
-                recyclingKeyPrefix="detail"
-                activeIndex={photoIndex}
-                onIndexChange={setPhotoIndex}
-              />
-            ) : activeUrl ? (
+          {galleryW > 0 ? (
+            <MenuItemImageCarousel
+              urls={galleryUrls}
+              itemId={item?.id ?? 'detail'}
+              width={galleryW}
+              height={galleryH}
+              showArrows
+              recyclingKeyPrefix="detail"
+              activeIndex={photoIndex}
+              onIndexChange={setPhotoIndex}
+            />
+          ) : activeUrl ? (
             <CachedImage
               uri={activeUrl}
               style={styles.mainImage}
@@ -133,7 +128,15 @@ export function PublicKitchenMenuDishDetailModal({
               <Ionicons name="restaurant" size={48} color={menuUi.accent} />
             </View>
           )}
-          </Pressable>
+          {galleryUrls.length > 0 ? (
+            <Pressable
+              style={styles.lightboxBtn}
+              onPress={() => setLightboxOpen(true)}
+              accessibilityLabel={t('hotelKitchenMenuPhotoCount', { count: photoCount })}
+            >
+              <Ionicons name="expand-outline" size={18} color="#fff" />
+            </Pressable>
+          ) : null}
           <LinearGradient
             colors={['transparent', 'rgba(12, 24, 41, 0.35)']}
             style={styles.imageGradient}
@@ -299,6 +302,20 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: '40%',
+  },
+  lightboxBtn: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    zIndex: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   navBtn: {
     position: 'absolute',

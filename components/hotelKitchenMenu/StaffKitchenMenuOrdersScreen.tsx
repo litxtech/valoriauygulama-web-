@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -91,6 +91,8 @@ function OrderCard({
   );
 }
 
+type OrdersTab = 'paid' | 'cart';
+
 export function StaffKitchenMenuOrdersScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -103,12 +105,18 @@ export function StaffKitchenMenuOrdersScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bundle, setBundle] = useState<StaffKitchenMenuOrdersBundle>({ pending: [], paid: [] });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<OrdersTab>('paid');
+  const paidCountRef = useRef(0);
+  const initialTabSetRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!orgId) return;
     try {
-      const rows = await fetchStaffKitchenMenuOrders(orgId);
+      const rows = await fetchStaffKitchenMenuOrders(orgId, { paidLimit: 60, pendingHours: 48 });
+      const prevPaid = paidCountRef.current;
       setBundle(rows);
+      paidCountRef.current = rows.paid.length;
+      if (rows.paid.length > prevPaid) setTab('paid');
       setLoadError(null);
     } catch (e) {
       setLoadError((e as Error)?.message ?? t('staffKitchenMenuOrdersLoadError'));
@@ -134,11 +142,23 @@ export function StaffKitchenMenuOrdersScreen() {
     void load();
   });
 
+  const pendingCount = bundle.pending.length;
+  const paidCount = bundle.paid.length;
+
+  useEffect(() => {
+    if (loading || initialTabSetRef.current) return;
+    initialTabSetRef.current = true;
+    if (paidCount > 0) setTab('paid');
+    else if (pendingCount > 0) setTab('cart');
+  }, [loading, paidCount, pendingCount]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
   };
+
+  const activeOrders = tab === 'paid' ? bundle.paid : bundle.pending;
 
   if (!allowed) {
     return (
@@ -156,9 +176,6 @@ export function StaffKitchenMenuOrdersScreen() {
       </View>
     );
   }
-
-  const pendingCount = bundle.pending.length;
-  const paidCount = bundle.paid.length;
 
   return (
     <ScrollView
@@ -180,46 +197,53 @@ export function StaffKitchenMenuOrdersScreen() {
         </View>
       ) : null}
 
-      <View style={styles.sectionHead}>
-        <Ionicons name="checkmark-circle-outline" size={18} color={menuUi.liveGreen} />
-        <Text style={styles.sectionTitle}>{t('staffKitchenMenuOrdersPaidSection')}</Text>
-        {paidCount > 0 ? (
-          <View style={[styles.countBadge, styles.countBadgePaid]}>
-            <Text style={[styles.countBadgeText, styles.countBadgeTextPaid]}>{paidCount}</Text>
-          </View>
-        ) : null}
+      <View style={styles.tabRow}>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'paid' && styles.tabBtnPaid]}
+          onPress={() => setTab('paid')}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="checkmark-circle-outline" size={18} color={tab === 'paid' ? '#166534' : '#64748b'} />
+          <Text style={[styles.tabBtnText, tab === 'paid' && styles.tabBtnTextPaid]}>
+            {t('staffKitchenMenuOrdersPaidSection')}
+          </Text>
+          {paidCount > 0 ? (
+            <View style={[styles.tabBadge, styles.tabBadgePaid]}>
+              <Text style={[styles.tabBadgeText, styles.tabBadgeTextPaid]}>{paidCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'cart' && styles.tabBtnCart]}
+          onPress={() => setTab('cart')}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="cart-outline" size={18} color={tab === 'cart' ? '#b45309' : '#64748b'} />
+          <Text style={[styles.tabBtnText, tab === 'cart' && styles.tabBtnTextCart]}>
+            {t('staffKitchenMenuOrdersCartSection')}
+          </Text>
+          {pendingCount > 0 ? (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>{pendingCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
       </View>
-      {paidCount === 0 ? (
-        <Text style={styles.emptySection}>{t('staffKitchenMenuOrdersPaidEmpty')}</Text>
-      ) : (
-        bundle.paid.map((order) => (
-          <OrderCard
-            key={order.id}
-            order={order}
-            expanded={expandedId === order.id}
-            onToggle={() => setExpandedId((id) => (id === order.id ? null : order.id))}
-          />
-        ))
-      )}
 
-      <View style={[styles.sectionHead, styles.sectionHeadSpaced]}>
-        <Ionicons name="cart-outline" size={18} color="#d97706" />
-        <Text style={styles.sectionTitle}>{t('staffKitchenMenuOrdersCartSection')}</Text>
-        {pendingCount > 0 ? (
-          <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>{pendingCount}</Text>
-          </View>
-        ) : null}
-      </View>
-      <Text style={styles.sectionSub}>{t('staffKitchenMenuOrdersCartHint')}</Text>
-      {pendingCount === 0 ? (
-        <Text style={styles.emptySection}>{t('staffKitchenMenuOrdersCartEmpty')}</Text>
+      {tab === 'cart' ? (
+        <Text style={styles.sectionSub}>{t('staffKitchenMenuOrdersCartHint')}</Text>
+      ) : null}
+
+      {activeOrders.length === 0 ? (
+        <Text style={styles.emptySection}>
+          {tab === 'paid' ? t('staffKitchenMenuOrdersPaidEmpty') : t('staffKitchenMenuOrdersCartEmpty')}
+        </Text>
       ) : (
-        bundle.pending.map((order) => (
+        activeOrders.map((order) => (
           <OrderCard
             key={order.id}
             order={order}
-            highlight
+            highlight={tab === 'cart'}
             expanded={expandedId === order.id}
             onToggle={() => setExpandedId((id) => (id === order.id ? null : order.id))}
           />
@@ -260,6 +284,37 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   errorText: { flex: 1, fontSize: 13, color: '#92400e', lineHeight: 18 },
+  tabRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: menuUi.border,
+    backgroundColor: '#fff',
+  },
+  tabBtnPaid: { borderColor: menuUi.liveGreen, backgroundColor: menuUi.liveGreenBg },
+  tabBtnCart: { borderColor: '#fcd34d', backgroundColor: '#fffbeb' },
+  tabBtnText: { fontSize: 12, fontWeight: '800', color: '#64748b', flexShrink: 1 },
+  tabBtnTextPaid: { color: '#166534' },
+  tabBtnTextCart: { color: '#b45309' },
+  tabBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  tabBadgePaid: { backgroundColor: '#dcfce7' },
+  tabBadgeText: { fontSize: 11, fontWeight: '800', color: '#b45309' },
+  tabBadgeTextPaid: { color: '#166534' },
   sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   sectionHeadSpaced: { marginTop: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, flex: 1 },

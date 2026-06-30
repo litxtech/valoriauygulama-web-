@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 
+const isWeb = Platform.OS === 'web';
+
 type Props = {
   urls: string[];
   itemId: string;
@@ -24,6 +26,10 @@ type Props = {
   activeIndex?: number;
   onIndexChange?: (index: number) => void;
 };
+
+function resolveIndex(x: number, pageWidth: number, count: number): number {
+  return Math.max(0, Math.min(count - 1, Math.round(x / Math.max(pageWidth, 1))));
+}
 
 export function MenuItemImageCarousel({
   urls,
@@ -66,12 +72,12 @@ export function MenuItemImageCarousel({
 
   const onScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const x = e.nativeEvent.contentOffset.x;
-      const next = Math.round(x / Math.max(width, 1));
-      setIndex(Math.max(0, Math.min(count - 1, next)));
+      setIndex(resolveIndex(e.nativeEvent.contentOffset.x, width, count));
     },
     [count, setIndex, width]
   );
+
+  const navVisible = showArrows || (isWeb && count > 1);
 
   if (count === 0) {
     return (
@@ -110,17 +116,20 @@ export function MenuItemImageCarousel({
         showsHorizontalScrollIndicator={false}
         decelerationRate="fast"
         nestedScrollEnabled
+        bounces={false}
+        scrollEventThrottle={16}
+        keyboardShouldPersistTaps="handled"
+        snapToInterval={isWeb ? width : undefined}
+        snapToAlignment="start"
+        disableIntervalMomentum={isWeb}
         onMomentumScrollEnd={onScrollEnd}
-        style={[styles.scroller, Platform.OS === 'web' && styles.scrollerWeb, { width, height }]}
-        contentContainerStyle={{ height }}
+        onScrollEndDrag={onScrollEnd}
+        onScroll={isWeb ? onScrollEnd : undefined}
+        style={[styles.scroller, isWeb && styles.scrollerWeb, { width, height }]}
+        contentContainerStyle={[isWeb && styles.scrollerContentWeb, { height }]}
       >
-        {urls.map((url, i) => (
-          <Pressable
-            key={`${url}-${i}`}
-            style={{ width, height }}
-            onPress={onPress}
-            disabled={!onPress}
-          >
+        {urls.map((url, i) => {
+          const slide = (
             <CachedImage
               uri={url}
               style={{ width, height }}
@@ -128,11 +137,25 @@ export function MenuItemImageCarousel({
               recyclingKey={`${recyclingKeyPrefix}-${itemId}-${i}`}
               priority={i === 0 ? 'high' : 'normal'}
             />
-          </Pressable>
-        ))}
+          );
+
+          if (isWeb || !onPress) {
+            return (
+              <View key={`${url}-${i}`} style={[styles.slide, styles.slideSnap, { width, height }]}>
+                {slide}
+              </View>
+            );
+          }
+
+          return (
+            <Pressable key={`${url}-${i}`} style={{ width, height }} onPress={onPress}>
+              {slide}
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
-      {showArrows && count > 1 ? (
+      {navVisible && count > 1 ? (
         <>
           <Pressable
             style={[styles.arrow, styles.arrowLeft, index === 0 && styles.arrowDisabled]}
@@ -173,8 +196,19 @@ const styles = StyleSheet.create({
   scrollerWeb: {
     scrollSnapType: 'x mandatory',
     WebkitOverflowScrolling: 'touch',
+    touchAction: 'pan-x',
+    overscrollBehaviorX: 'contain',
+    cursor: 'grab',
+    overflowX: 'scroll',
   } as object,
-  slide: { overflow: 'hidden' },
+  scrollerContentWeb: {
+    flexDirection: 'row',
+  } as object,
+  slide: { overflow: 'hidden', flexShrink: 0 },
+  slideSnap: {
+    scrollSnapAlign: 'start',
+    scrollSnapStop: 'always',
+  } as object,
   placeholder: {
     alignItems: 'center',
     justifyContent: 'center',

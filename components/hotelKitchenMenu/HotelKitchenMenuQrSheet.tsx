@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -17,13 +17,15 @@ import * as Clipboard from 'expo-clipboard';
 import * as Sharing from 'expo-sharing';
 import ViewShot from 'react-native-view-shot';
 import { LinearGradient } from 'expo-linear-gradient';
-import { QrBrandPoster } from '@/components/admin/QrBrandPoster';
+import { MenuQrPoster } from '@/components/hotelKitchenMenu/MenuQrPoster';
 import {
-  QR_HUB_PRESETS,
-  defaultPresetIdForHubVariant,
-  getQrHubPreset,
-  type QrHubPreset,
-} from '@/lib/qrHubPresets';
+  DEFAULT_QR_MENU_POSTER_PRESET_ID,
+  QR_MENU_POSTER_TIERS,
+  getQrMenuPosterPreset,
+  qrMenuPosterPresetsForTier,
+  type QrMenuPosterPreset,
+  type QrMenuPosterTier,
+} from '@/lib/qrMenuPosterPresets';
 import {
   DEFAULT_QR_EXPORT_SIZE_ID,
   QR_EXPORT_SIZE_PRESETS,
@@ -40,30 +42,35 @@ type Props = {
   organizationName?: string | null;
 };
 
-function PresetChip({
+function PresetCard({
   preset,
   selected,
   onPress,
 }: {
-  preset: QrHubPreset;
+  preset: QrMenuPosterPreset;
   selected: boolean;
   onPress: () => void;
 }) {
   return (
     <TouchableOpacity
-      style={[styles.presetChip, selected && styles.presetChipOn]}
+      style={[styles.presetCard, selected && styles.presetCardOn]}
       onPress={onPress}
-      activeOpacity={0.85}
+      activeOpacity={0.88}
     >
-      <LinearGradient
-        colors={preset.swatch}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.presetSwatch}
-      />
+      <LinearGradient colors={preset.accent} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.presetHero}>
+        <View style={[styles.presetHeroInset, { backgroundColor: preset.surface }]}>
+          <View style={[styles.presetMiniQr, { borderColor: preset.accent[0] }]} />
+        </View>
+        {selected ? (
+          <View style={styles.presetCheck}>
+            <Ionicons name="checkmark-circle" size={18} color="#fff" />
+          </View>
+        ) : null}
+      </LinearGradient>
       <Text style={[styles.presetName, selected && styles.presetNameOn]} numberOfLines={1}>
         {preset.name}
       </Text>
+      <Text style={styles.presetTag}>{preset.tag}</Text>
     </TouchableOpacity>
   );
 }
@@ -72,7 +79,8 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [menuUrl, setMenuUrl] = useState('');
-  const [presetId, setPresetId] = useState(() => defaultPresetIdForHubVariant('menu'));
+  const [tier, setTier] = useState<QrMenuPosterTier>('premium');
+  const [presetId, setPresetId] = useState(DEFAULT_QR_MENU_POSTER_PRESET_ID);
   const [exportSizeId, setExportSizeId] = useState(DEFAULT_QR_EXPORT_SIZE_ID);
   const [downloading, setDownloading] = useState<'branded' | 'plain' | null>(null);
 
@@ -80,12 +88,50 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
   const exportPlainShotRef = useRef<ViewShot>(null);
   const brandedExportPendingRef = useRef(false);
   const plainExportPendingRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const sizeSectionOffsetRef = useRef(0);
 
-  const preset = getQrHubPreset(presetId);
+  const scrollToSizeSection = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, sizeSectionOffsetRef.current - 12),
+        animated: true,
+      });
+    });
+  }, []);
+
+  const scheduleScrollToSizeSection = useCallback(() => {
+    setTimeout(scrollToSizeSection, 200);
+  }, [scrollToSizeSection]);
+
+  const selectTier = useCallback(
+    (next: QrMenuPosterTier) => {
+      setTier(next);
+      scheduleScrollToSizeSection();
+    },
+    [scheduleScrollToSizeSection]
+  );
+
+  const selectPreset = useCallback(
+    (id: string) => {
+      setPresetId(id);
+      scheduleScrollToSizeSection();
+    },
+    [scheduleScrollToSizeSection]
+  );
+
+  const preset = getQrMenuPosterPreset(presetId);
+  const tierPresets = useMemo(() => qrMenuPosterPresetsForTier(tier), [tier]);
   const sizePreset = getQrExportSizePreset(exportSizeId);
   const exportQrSize = sizePreset.qrSize;
   const plainDesign = { ...preset.design, useLogo: false };
   const posterSubtitle = organizationName?.trim() || t('hotelKitchenMenuHeroTitle');
+
+  useEffect(() => {
+    if (!tierPresets.some((p) => p.id === presetId)) {
+      setPresetId(tierPresets[0]?.id ?? DEFAULT_QR_MENU_POSTER_PRESET_ID);
+    }
+  }, [tier, tierPresets, presetId]);
 
   const loadUrl = useCallback(async () => {
     if (!organizationId) return;
@@ -110,6 +156,7 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
   useEffect(() => {
     if (!visible) return;
     void loadUrl();
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [visible, loadUrl]);
 
   const copyUrl = async () => {
@@ -204,6 +251,7 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
         <Pressable style={styles.sheet} onPress={() => {}}>
           <View style={styles.handle} />
           <ScrollView
+            ref={scrollRef}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -214,7 +262,7 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
               </View>
               <View style={styles.headerTexts}>
                 <Text style={styles.title}>{t('publicKitchenMenuQrTitle')}</Text>
-                <Text style={styles.sub}>{t('publicKitchenMenuQrSub')}</Text>
+                <Text style={styles.sub}>{t('publicKitchenMenuQrSubModern')}</Text>
               </View>
               <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.closeIcon}>
                 <Ionicons name="close" size={24} color="#64748b" />
@@ -245,24 +293,53 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
                   <Text style={styles.copyBtnText}>{t('publicKitchenMenuQrCopy')}</Text>
                 </TouchableOpacity>
 
-                <Text style={styles.sectionLabel}>{t('publicKitchenMenuQrDesignLabel')}</Text>
+                <Text style={styles.sectionLabel}>{t('publicKitchenMenuQrPosterStyleLabel')}</Text>
+                <View style={styles.tierRow}>
+                  {QR_MENU_POSTER_TIERS.map((row) => {
+                    const active = tier === row.id;
+                    return (
+                      <TouchableOpacity
+                        key={row.id}
+                        style={[styles.tierChip, active && styles.tierChipOn]}
+                        onPress={() => selectTier(row.id)}
+                      >
+                        <Text style={[styles.tierChipText, active && styles.tierChipTextOn]}>
+                          {t(row.labelKey)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetScroll}>
-                  {QR_HUB_PRESETS.map((p) => (
-                    <PresetChip key={p.id} preset={p} selected={presetId === p.id} onPress={() => setPresetId(p.id)} />
+                  {tierPresets.map((p) => (
+                    <PresetCard key={p.id} preset={p} selected={presetId === p.id} onPress={() => selectPreset(p.id)} />
                   ))}
                 </ScrollView>
 
                 <View style={styles.previewWrap}>
-                  <QrBrandPoster
-                    url={menuUrl}
-                    qrSize={200}
-                    design={preset.design}
-                    accent={preset.swatch}
-                    surface={preset.surface}
-                    subtitle={posterSubtitle}
-                  />
+                  <View style={styles.previewFrame}>
+                    <MenuQrPoster
+                      url={menuUrl}
+                      qrSize={200}
+                      layout={preset.layout}
+                      design={preset.design}
+                      accent={preset.accent}
+                      surface={preset.surface}
+                      ink={preset.ink}
+                      subtitle={posterSubtitle}
+                    />
+                  </View>
+                  <Text style={styles.previewCaption}>
+                    {preset.name} · {preset.tag}
+                  </Text>
                 </View>
 
+                <View
+                  onLayout={(e) => {
+                    sizeSectionOffsetRef.current = e.nativeEvent.layout.y;
+                  }}
+                >
                 <Text style={styles.sectionLabel}>{t('publicKitchenMenuQrSizeLabel')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sizeScroll}>
                   {QR_EXPORT_SIZE_PRESETS.map((s) => (
@@ -313,25 +390,30 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
                     )}
                   </TouchableOpacity>
                 </View>
+                </View>
 
                 <View style={styles.hiddenExport} pointerEvents="none" collapsable={false}>
-                  <QrBrandPoster
+                  <MenuQrPoster
                     ref={exportBrandShotRef}
                     url={menuUrl}
                     qrSize={exportQrSize}
+                    layout={preset.layout}
                     design={preset.design}
-                    accent={preset.swatch}
+                    accent={preset.accent}
                     surface={preset.surface}
+                    ink={preset.ink}
                     subtitle={posterSubtitle}
                     showFooter
                   />
-                  <QrBrandPoster
+                  <MenuQrPoster
                     ref={exportPlainShotRef}
                     url={menuUrl}
                     qrSize={sizePreset.plainQrSize}
+                    layout={preset.layout}
                     design={plainDesign}
-                    accent={preset.swatch}
+                    accent={preset.accent}
                     surface={preset.surface}
+                    ink={preset.ink}
                     showFooter={false}
                   />
                 </View>
@@ -347,14 +429,14 @@ export function HotelKitchenMenuQrSheet({ visible, onClose, organizationId, orga
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'flex-end',
   },
   sheet: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '92%',
+    maxHeight: '94%',
     paddingBottom: Platform.OS === 'ios' ? 28 : 16,
   },
   handle: {
@@ -415,20 +497,68 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
-  presetScroll: { gap: 10, paddingBottom: 4, paddingRight: 8 },
-  presetChip: {
-    width: 88,
-    padding: 8,
+  tierRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  tierChip: {
+    flex: 1,
+    paddingVertical: 10,
     borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+  },
+  tierChipOn: { borderColor: menuUi.accent, backgroundColor: menuUi.accentSoft },
+  tierChipText: { fontSize: 12, fontWeight: '800', color: '#64748b' },
+  tierChipTextOn: { color: menuUi.navy },
+  presetScroll: { gap: 12, paddingBottom: 4, paddingRight: 8 },
+  presetCard: {
+    width: 108,
+    borderRadius: 14,
     borderWidth: 2,
     borderColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
+    overflow: 'hidden',
   },
-  presetChipOn: { borderColor: menuUi.accent, backgroundColor: menuUi.accentSoft },
-  presetSwatch: { height: 32, borderRadius: 8, marginBottom: 6 },
-  presetName: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  presetCardOn: { borderColor: menuUi.accent, backgroundColor: '#fff' },
+  presetHero: { height: 72, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  presetHeroInset: {
+    width: 52,
+    height: 52,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.06)',
+  },
+  presetMiniQr: {
+    width: 28,
+    height: 28,
+    borderRadius: 4,
+    borderWidth: 2,
+    backgroundColor: '#fff',
+  },
+  presetCheck: { position: 'absolute', top: 6, right: 6 },
+  presetName: { fontSize: 12, fontWeight: '800', color: '#334155', paddingHorizontal: 8, paddingTop: 8 },
   presetNameOn: { color: menuUi.navy },
-  previewWrap: { alignItems: 'center', marginVertical: 12 },
+  presetTag: { fontSize: 10, fontWeight: '600', color: '#94a3b8', paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 },
+  previewWrap: { alignItems: 'center', marginVertical: 14 },
+  previewFrame: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#dce4ec',
+    padding: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0f172a',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+      },
+      android: { elevation: 8 },
+      default: {},
+    }),
+  },
+  previewCaption: { marginTop: 10, fontSize: 12, fontWeight: '700', color: '#64748b' },
   sizeScroll: { gap: 8, paddingBottom: 4, paddingRight: 8 },
   sizeChip: {
     minWidth: 80,

@@ -6,7 +6,7 @@ export const staffLocales = {
   tr: {
     staffKitchenOpsTitle: 'Mutfak Operasyon',
     staffKitchenMenuOrdersTitle: 'Menü siparişleri',
-    staffKitchenMenuOrdersLead: 'Web menüden gelen ödenen siparişler üstte listelenir. Ödeme bekleyen sepetler altta.',
+    staffKitchenMenuOrdersLead: 'Ödenen siparişler «Gelen siparişler» sekmesinde, ödeme bekleyenler «Müşteri sepeti» sekmesinde listelenir.',
     staffKitchenMenuOrdersLoadError: 'Siparişler yüklenemedi. Bağlantıyı kontrol edip yenileyin.',
     staffKitchenMenuOrdersLive: 'Canlı',
     staffKitchenMenuOrdersCartSection: 'Müşteri sepeti',
@@ -371,7 +371,7 @@ export const staffLocales = {
   en: {
     staffKitchenOpsTitle: 'Kitchen operations',
     staffKitchenMenuOrdersTitle: 'Menu orders',
-    staffKitchenMenuOrdersLead: 'Paid web menu orders are listed first. Pending checkout carts appear below.',
+    staffKitchenMenuOrdersLead: 'Paid orders appear under Incoming orders; checkout carts appear under Customer cart.',
     staffKitchenMenuOrdersLoadError: 'Could not load orders. Check your connection and refresh.',
     staffKitchenMenuOrdersLive: 'Live',
     staffKitchenMenuOrdersCartSection: 'Customer cart',
@@ -736,7 +736,7 @@ export const staffLocales = {
   ar: {
     staffKitchenOpsTitle: 'عمليات المطبخ',
     staffKitchenMenuOrdersTitle: 'طلبات القائمة',
-    staffKitchenMenuOrdersLead: 'طلبات الويب المدفوعة في الأعلى. سلات الدفع المعلقة في الأسفل.',
+    staffKitchenMenuOrdersLead: 'الطلبات المدفوعة في «الطلبات الواردة»؛ سلات الدفع في «سلة الضيف».',
     staffKitchenMenuOrdersLoadError: 'تعذر تحميل الطلبات. تحقق من الاتصال وحاول مرة أخرى.',
     staffKitchenMenuOrdersLive: 'مباشر',
     staffKitchenMenuOrdersCartSection: 'سلة الضيف',

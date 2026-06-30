@@ -116,12 +116,13 @@ export async function fetchStaffKitchenMenuOrders(
     return parseBundle(data);
   }
 
-  const msg = error?.message ?? '';
-  if (/get_staff_kitchen_menu_orders|does not exist|schema cache/i.test(msg)) {
-    return fetchStaffKitchenMenuOrdersDirect(organizationId, opts);
+  try {
+    return await fetchStaffKitchenMenuOrdersDirect(organizationId, opts);
+  } catch (directErr) {
+    const rpcMsg = error?.message ?? '';
+    const directMsg = (directErr as Error)?.message ?? '';
+    throw new Error(rpcMsg || directMsg || 'Siparişler yüklenemedi');
   }
-
-  throw new Error(msg || 'Siparişler yüklenemedi');
 }
 
 export function kitchenMenuOrderLocation(order: KitchenMenuOrderRecord): string | null {

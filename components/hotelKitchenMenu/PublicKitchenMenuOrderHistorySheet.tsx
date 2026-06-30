@@ -22,8 +22,11 @@ import {
   type KitchenMenuOrderRecord,
 } from '@/lib/publicKitchenMenuOrderHistory';
 import {
+  downloadKitchenMenuOrderPdf,
+  formatKitchenMenuOrderWhen,
+  kitchenMenuOrderShortRef,
   sendKitchenMenuReceiptEmail,
-  shareKitchenMenuOrderPdf,
+  sendKitchenMenuReceiptWhatsAppToRestaurant,
 } from '@/lib/kitchenMenuOrderReceipt';
 
 type Props = {
@@ -34,14 +37,6 @@ type Props = {
   mode: 'web' | 'guest';
   accentColor?: string;
 };
-
-function formatWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
 
 export function PublicKitchenMenuOrderHistorySheet({
   visible,
@@ -57,6 +52,7 @@ export function PublicKitchenMenuOrderHistorySheet({
   const [orders, setOrders] = useState<KitchenMenuOrderRecord[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
+  const [waBusyId, setWaBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,11 +77,22 @@ export function PublicKitchenMenuOrderHistorySheet({
   const handlePdf = async (order: KitchenMenuOrderRecord) => {
     setPdfBusyId(order.id);
     try {
-      await shareKitchenMenuOrderPdf(order, orgName);
+      await downloadKitchenMenuOrderPdf(order, orgName);
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('publicKitchenMenuReceiptPdfError'));
     } finally {
       setPdfBusyId(null);
+    }
+  };
+
+  const handleWhatsAppRestaurant = async (order: KitchenMenuOrderRecord) => {
+    setWaBusyId(order.id);
+    try {
+      await sendKitchenMenuReceiptWhatsAppToRestaurant(order, orgName);
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('publicKitchenMenuReceiptWhatsAppError'));
+    } finally {
+      setWaBusyId(null);
     }
   };
 
@@ -119,11 +126,15 @@ export function PublicKitchenMenuOrderHistorySheet({
             <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 12 }}>
               {orders.map((order) => {
                 const open = expandedId === order.id;
+                const when = formatKitchenMenuOrderWhen(order.paid_at || order.created_at);
                 return (
                   <View key={order.id} style={styles.card}>
                     <TouchableOpacity style={styles.cardHead} onPress={() => setExpandedId(open ? null : order.id)}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.cardDate}>{formatWhen(order.paid_at || order.created_at)}</Text>
+                        <Text style={styles.cardRef}>
+                          #{kitchenMenuOrderShortRef(order.id)} · {when.date}
+                        </Text>
+                        <Text style={styles.cardTime}>{when.time}</Text>
                         <Text style={styles.cardTotal}>{formatMenuPrice(order.total_amount)}</Text>
                         <Text style={styles.cardStatus}>{t(orderStatusLabelKey(order.status))}</Text>
                       </View>
@@ -134,20 +145,30 @@ export function PublicKitchenMenuOrderHistorySheet({
                       <View style={styles.cardBody}>
                         {order.items.map((line, idx) => (
                           <View key={`${order.id}-${idx}`} style={styles.lineRow}>
-                            <Text style={styles.lineName} numberOfLines={2}>
-                              {line.item_name} ×{line.quantity}
-                            </Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.lineName} numberOfLines={2}>
+                                {line.item_name}
+                              </Text>
+                              <Text style={styles.lineMeta}>
+                                {line.quantity} × {formatMenuPrice(line.unit_price)}
+                              </Text>
+                            </View>
                             <Text style={styles.lineAmt}>{formatMenuPrice(line.line_total)}</Text>
                           </View>
                         ))}
 
                         <View style={styles.actions}>
                           <TouchableOpacity
-                            style={[styles.actionBtn, { borderColor: `${accentColor}55` }]}
-                            onPress={() => sendKitchenMenuReceiptEmail(order, orgName)}
+                            style={[styles.actionBtn, styles.actionBtnWhatsApp]}
+                            onPress={() => void handleWhatsAppRestaurant(order)}
+                            disabled={waBusyId === order.id}
                           >
-                            <Ionicons name="mail-outline" size={16} color={accentColor} />
-                            <Text style={[styles.actionText, { color: accentColor }]}>{t('publicKitchenMenuReceiptSend')}</Text>
+                            {waBusyId === order.id ? (
+                              <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                              <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+                            )}
+                            <Text style={styles.actionTextWhatsApp}>{t('publicKitchenMenuReceiptWhatsAppRestaurant')}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={[styles.actionBtn, { borderColor: `${accentColor}55` }]}
@@ -160,6 +181,13 @@ export function PublicKitchenMenuOrderHistorySheet({
                               <Ionicons name="document-outline" size={16} color={accentColor} />
                             )}
                             <Text style={[styles.actionText, { color: accentColor }]}>{t('publicKitchenMenuReceiptPdf')}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.actionBtn, { borderColor: `${accentColor}55` }]}
+                            onPress={() => sendKitchenMenuReceiptEmail(order, orgName)}
+                          >
+                            <Ionicons name="mail-outline" size={16} color={accentColor} />
+                            <Text style={[styles.actionText, { color: accentColor }]}>{t('publicKitchenMenuReceiptSend')}</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -200,14 +228,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 10 },
-  cardDate: { fontSize: 12, color: '#64748b', fontWeight: '600' },
-  cardTotal: { fontSize: 17, fontWeight: '800', color: '#0f172a', marginTop: 2 },
+  cardRef: { fontSize: 12, color: '#475569', fontWeight: '700' },
+  cardTime: { fontSize: 11, color: '#94a3b8', fontWeight: '600', marginTop: 2 },
+  cardTotal: { fontSize: 17, fontWeight: '800', color: '#0f172a', marginTop: 4 },
   cardStatus: { fontSize: 11, color: '#16a34a', fontWeight: '700', marginTop: 4 },
   cardBody: { borderTopWidth: 1, borderTopColor: '#f1f5f9', padding: 12, gap: 8 },
   lineRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  lineName: { flex: 1, fontSize: 13, color: '#334155' },
+  lineName: { fontSize: 13, color: '#334155', fontWeight: '600' },
+  lineMeta: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
   lineAmt: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -218,5 +248,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: '#fff',
   },
+  actionBtnWhatsApp: {
+    backgroundColor: '#25D366',
+    borderColor: '#25D366',
+    flexBasis: '100%',
+    justifyContent: 'center',
+  },
   actionText: { fontSize: 12, fontWeight: '700' },
+  actionTextWhatsApp: { fontSize: 13, fontWeight: '800', color: '#fff' },
 });

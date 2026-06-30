@@ -95,16 +95,7 @@ export function PublicKitchenMenuDishCard({
 
   if (isFeatured) {
     return (
-      <Pressable
-        style={({ pressed }) => [
-          styles.featuredCard,
-          { height: FEATURED_HEIGHT },
-          menuUi.shadowMd,
-          menuWebCardHoverLift,
-          pressed && styles.pressed,
-        ]}
-        onPress={onPress}
-      >
+      <View style={[styles.featuredCard, { height: FEATURED_HEIGHT }, menuUi.shadowMd, menuWebCardHoverLift]}>
         <View
           style={styles.featuredImageWrap}
           onLayout={(e) => setImageW(e.nativeEvent.layout.width)}
@@ -129,26 +120,18 @@ export function PublicKitchenMenuDishCard({
           <View style={[styles.featuredCat, { borderColor: `${themeAccent}88` }]} pointerEvents="none">
             <Text style={styles.featuredCatText} numberOfLines={1}>{displayCategory}</Text>
           </View>
-          <View style={styles.featuredBottom} pointerEvents="none">
+          <Pressable style={styles.featuredBottom} onPress={onPress}>
             <Text style={styles.featuredName} numberOfLines={2}>{displayName}</Text>
             <Text style={[styles.featuredPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
-          </View>
+          </Pressable>
         </View>
-      </Pressable>
+      </View>
     );
   }
 
   if (isPremium) {
     return (
-      <Pressable
-        style={({ pressed }) => [
-          styles.premiumCard,
-          menuUi.shadowMd,
-          menuWebCardHoverLift,
-          pressed && styles.pressed,
-        ]}
-        onPress={onPress}
-      >
+      <View style={[styles.premiumCard, menuUi.shadowMd, menuWebCardHoverLift]}>
         <View
           style={styles.premiumImageWrap}
           onLayout={(e) => setImageW(e.nativeEvent.layout.width)}
@@ -179,7 +162,10 @@ export function PublicKitchenMenuDishCard({
           </View>
         </View>
 
-        <View style={styles.premiumBody}>
+        <Pressable
+          style={({ pressed }) => [styles.premiumBody, pressed && styles.pressed]}
+          onPress={onPress}
+        >
           <Text style={[styles.premiumName, { color: themeNavy }]} numberOfLines={2}>{displayName}</Text>
           {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
           <View style={styles.premiumFooter}>
@@ -207,8 +193,8 @@ export function PublicKitchenMenuDishCard({
             ) : null}
           </View>
           {noteEditBtn}
-        </View>
-      </Pressable>
+        </Pressable>
+      </View>
     );
   }
 
@@ -299,7 +285,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(5,8,16,0.45)',
   },
   featuredCatText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase' },
-  featuredBottom: { position: 'absolute', left: 14, right: 14, bottom: 14 },
+  featuredBottom: { position: 'absolute', left: 14, right: 14, bottom: 14, zIndex: 2 },
   featuredName: { fontSize: 17, fontWeight: '800', color: '#fff', lineHeight: 22, letterSpacing: -0.3 },
   featuredPrice: { fontSize: 15, fontWeight: '800', marginTop: 6 },
   premiumCard: {

@@ -93,7 +93,8 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [orgSlug, setOrgSlug] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
-  const [promoUploadingId, setPromoUploadingId] = useState<string | null>(null);
+  const [promoVideoUploadingId, setPromoVideoUploadingId] = useState<string | null>(null);
+  const [promoPosterUploadingId, setPromoPosterUploadingId] = useState<string | null>(null);
   const [promoUploadStep, setPromoUploadStep] = useState('');
 
   useEffect(() => {
@@ -532,16 +533,72 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
           />
           <TouchableOpacity
             style={[styles.promoPickBtn, { borderColor: preview.primaryColor }]}
-            disabled={!staff?.organization_id || promoUploadingId === video.id}
+            disabled={
+              !staff?.organization_id ||
+              promoVideoUploadingId === video.id ||
+              promoPosterUploadingId === video.id
+            }
             onPress={async () => {
               if (!staff?.organization_id) return;
-              setPromoUploadingId(video.id);
+              setPromoPosterUploadingId(video.id);
+              setPromoUploadStep('');
+              const res = await pickKitchenMenuPromoPoster({
+                organizationId: staff.organization_id,
+                onProgress: setPromoUploadStep,
+              });
+              setPromoPosterUploadingId(null);
+              setPromoUploadStep('');
+              if (res.cancelled || !res.publicUrl) {
+                if (res.error) Alert.alert(t('error'), res.error);
+                return;
+              }
+              await savePromoPatch((videos) =>
+                videos.map((row) =>
+                  row.id === video.id
+                    ? {
+                        ...row,
+                        posterUrl: res.publicUrl,
+                        title: row.title.trim() || t('hotelKitchenMenuPromoVideoTitlePh'),
+                      }
+                    : row
+                )
+              );
+            }}
+          >
+            {promoPosterUploadingId === video.id ? (
+              <ActivityIndicator color={preview.primaryColor} />
+            ) : (
+              <Ionicons name="image-outline" size={18} color={preview.primaryColor} />
+            )}
+            <Text style={[styles.promoPickText, { color: preview.primaryColor }]}>
+              {promoPosterUploadingId === video.id
+                ? promoUploadStep || t('hotelKitchenMenuPromoPickingPoster')
+                : video.posterUrl
+                  ? t('hotelKitchenMenuPromoChangePoster')
+                  : t('hotelKitchenMenuPromoPickPoster')}
+            </Text>
+          </TouchableOpacity>
+          {video.posterUrl ? (
+            <Text style={styles.promoUrlHint} numberOfLines={1}>
+              {video.posterUrl}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            style={styles.promoPickBtnSecondary}
+            disabled={
+              !staff?.organization_id ||
+              promoVideoUploadingId === video.id ||
+              promoPosterUploadingId === video.id
+            }
+            onPress={async () => {
+              if (!staff?.organization_id) return;
+              setPromoVideoUploadingId(video.id);
               setPromoUploadStep('');
               const res = await pickAndUploadKitchenMenuPromoVideo({
                 organizationId: staff.organization_id,
                 onProgress: setPromoUploadStep,
               });
-              setPromoUploadingId(null);
+              setPromoVideoUploadingId(null);
               setPromoUploadStep('');
               if (res.cancelled) return;
               if (res.error) {
@@ -563,17 +620,17 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
               );
             }}
           >
-            {promoUploadingId === video.id ? (
-              <ActivityIndicator color={preview.primaryColor} />
+            {promoVideoUploadingId === video.id ? (
+              <ActivityIndicator color="#635bff" />
             ) : (
-              <Ionicons name="film-outline" size={18} color={preview.primaryColor} />
+              <Ionicons name="film-outline" size={16} color="#635bff" />
             )}
-            <Text style={[styles.promoPickText, { color: preview.primaryColor }]}>
-              {promoUploadingId === video.id
+            <Text style={styles.promoPickTextSecondary}>
+              {promoVideoUploadingId === video.id
                 ? promoUploadStep || t('hotelKitchenMenuPromoPickingVideo')
                 : video.videoUrl
                   ? t('hotelKitchenMenuPromoChangeVideo')
-                  : t('hotelKitchenMenuPromoPickVideo')}
+                  : t('hotelKitchenMenuPromoPickVideoOptional')}
             </Text>
           </TouchableOpacity>
           {video.videoUrl ? (
@@ -581,35 +638,6 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
               {video.videoUrl}
             </Text>
           ) : null}
-          <TouchableOpacity
-            style={styles.promoPickBtnSecondary}
-            disabled={!staff?.organization_id || promoUploadingId === video.id}
-            onPress={async () => {
-              if (!staff?.organization_id) return;
-              setPromoUploadingId(video.id);
-              setPromoUploadStep('');
-              const res = await pickKitchenMenuPromoPoster({
-                organizationId: staff.organization_id,
-                onProgress: setPromoUploadStep,
-              });
-              setPromoUploadingId(null);
-              setPromoUploadStep('');
-              if (res.cancelled || !res.publicUrl) {
-                if (res.error) Alert.alert(t('error'), res.error);
-                return;
-              }
-              await savePromoPatch((videos) =>
-                videos.map((row) =>
-                  row.id === video.id ? { ...row, posterUrl: res.publicUrl } : row
-                )
-              );
-            }}
-          >
-            <Ionicons name="image-outline" size={16} color="#64748b" />
-            <Text style={styles.promoPickTextSecondary}>
-              {video.posterUrl ? t('hotelKitchenMenuPromoChangePoster') : t('hotelKitchenMenuPromoPickPoster')}
-            </Text>
-          </TouchableOpacity>
         </View>
       ))}
       <TouchableOpacity
@@ -618,7 +646,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
           const row: KitchenMenuPromoVideo = {
             id: newKitchenMenuPromoVideoId(),
             title: t('hotelKitchenMenuPromoVideoTitlePh'),
-            videoUrl: '',
+            videoUrl: null,
             muxPlaybackId: null,
             posterUrl: null,
           };
@@ -626,7 +654,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
         }}
       >
         <Ionicons name="add-circle-outline" size={20} color={preview.primaryColor} />
-        <Text style={[styles.promoAddText, { color: preview.primaryColor }]}>{t('hotelKitchenMenuPromoAddVideo')}</Text>
+        <Text style={[styles.promoAddText, { color: preview.primaryColor }]}>{t('hotelKitchenMenuPromoAddSlide')}</Text>
       </TouchableOpacity>
 
       <View ref={heroImageRef} collapsable={false}>
