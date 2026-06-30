@@ -19,8 +19,8 @@ import { formatKbsNationality, formatKbsTrDate, kbsDisplayFullName } from '@/lib
 import { log } from '@/lib/logger';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
-/** GEÇİCİ teşhis: ham OCR satırları + parse sonucu loglanır. Sorun çözülünce kaldır. */
-export const KBS_OCR_DEBUG = true;
+/** Geliştirici teşhis — üretimde kapalı (OCR gecikmesini azaltır). */
+export const KBS_OCR_DEBUG = __DEV__;
 
 export type KbsCaptureSide = 'front' | 'mrz_back';
 
@@ -39,6 +39,8 @@ export type KbsOcrOptions = {
   fast?: boolean;
   /** Galeri derin tarama — tüm bölgeler, yavaş ama eksiksiz. */
   galleryDeep?: boolean;
+  /** Görüntü zaten prepareProfessionalKbsOcrUri ile işlendi — tekrar ölçekleme atlanır. */
+  imagePrepared?: boolean;
 };
 
 export { listMissingIdFields };
@@ -227,6 +229,7 @@ export async function parseIdCardImageUri(uri: string, options?: KbsOcrOptions):
     expoOnly: options?.expoOnly,
     mrzFocused,
     fast: options?.galleryDeep ? false : options?.fast !== false,
+    imagePrepared: options?.imagePrepared,
   });
   const engine = pickOcrEngine(docOcr.engine);
   return parseKbsFromDocumentOcr({

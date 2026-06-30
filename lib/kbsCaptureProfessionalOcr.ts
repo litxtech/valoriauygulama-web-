@@ -40,12 +40,17 @@ function altCaptureSide(side: KbsCaptureSide): KbsCaptureSide {
   return side === 'mrz_back' ? 'front' : 'mrz_back';
 }
 
-async function parseFast(uri: string, side: KbsCaptureSide, galleryDeep?: boolean): Promise<KbsOcrResult> {
-  const prepared = await prepareProfessionalKbsOcrUri(uri);
-  return parseIdCardImageUriWithFallback(prepared, {
+async function parseFast(
+  uri: string,
+  side: KbsCaptureSide,
+  galleryDeep?: boolean,
+  imagePrepared?: boolean
+): Promise<KbsOcrResult> {
+  return parseIdCardImageUriWithFallback(uri, {
     captureSide: side,
     fast: galleryDeep ? false : true,
     galleryDeep,
+    imagePrepared,
   });
 }
 
@@ -59,18 +64,19 @@ export async function parseIdCardImageUriProfessional(
 ): Promise<KbsOcrResult> {
   const side = options?.captureSide ?? 'front';
   const galleryDeep = options?.galleryDeep === true;
-  const prepared = await prepareProfessionalKbsOcrUri(uri);
+  const imagePrepared = options?.imagePrepared === true;
+  const prepared = imagePrepared ? uri : await prepareProfessionalKbsOcrUri(uri);
 
-  let best = await parseFast(prepared, side, galleryDeep);
+  let best = await parseFast(prepared, side, galleryDeep, true);
   if (!galleryDeep && listCoreMissingIdFields(best.parsed).length === 0) return best;
 
-  const alt = await parseFast(prepared, altCaptureSide(side), galleryDeep);
+  const alt = await parseFast(prepared, altCaptureSide(side), galleryDeep, true);
   best = pickBetterKbsOcrResult(best, alt);
   if (!galleryDeep && listCoreMissingIdFields(best.parsed).length <= 1) return best;
 
   try {
     const docUri = await cropImageForKbsOcr(prepared);
-    const docPass = await parseFast(docUri, side, galleryDeep);
+    const docPass = await parseFast(docUri, side, galleryDeep, true);
     best = pickBetterKbsOcrResult(best, docPass);
     if (!galleryDeep && listCoreMissingIdFields(best.parsed).length <= 1) return best;
 
@@ -84,7 +90,7 @@ export async function parseIdCardImageUriProfessional(
         !best.parsed.rawMrz);
     if (needsMrz) {
       const bandUri = await cropMrzBandForKbsOcr(prepared);
-      const mrzPass = await parseFast(bandUri, 'mrz_back', galleryDeep);
+      const mrzPass = await parseFast(bandUri, 'mrz_back', galleryDeep, true);
       best = pickBetterKbsOcrResult(best, mrzPass);
     }
   } catch {
@@ -92,6 +98,41 @@ export async function parseIdCardImageUriProfessional(
   }
 
   return best;
+}
+
+/**
+ * Sisteme yüklenen belgeler — önce hızlı okuma, yetersizse kademeli derinleşme.
+ * Arka plan kuyruğu için parseIdCardImageUriMaximum yerine kullanılır.
+ */
+export async function parseIdCardImageUriForUpload(
+  uri: string,
+  options?: Pick<KbsOcrOptions, 'captureSide' | 'galleryDeep'>
+): Promise<KbsOcrResult> {
+  const side = options?.captureSide ?? 'front';
+  const prepared = await prepareProfessionalKbsOcrUri(uri);
+  const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true };
+
+  let best = await parseIdCardImageUriProfessional(prepared, { ...baseOpts, fast: true });
+  if (shouldApplyKbsOcrResult(best)) return best;
+  if (hasKbsOcrApplyableData(best) && listCoreMissingIdFields(best.parsed).length <= 1) return best;
+
+  best = await parseIdCardImageUriProfessional(prepared, { ...baseOpts, fast: false });
+  if (shouldApplyKbsOcrResult(best) || listCoreMissingIdFields(best.parsed).length <= 2) {
+    if (hasKbsOcrApplyableData(best)) return best;
+  }
+
+  if (options?.galleryDeep) {
+    const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
+    return parseIdCardImageUriMaximum(prepared, { captureSide: side });
+  }
+
+  const { parseIdCardImageUriAiFallback } = await import('@/lib/kbsCaptureOcr');
+  const ai = await parseIdCardImageUriAiFallback(prepared, { captureSide: side });
+  best = pickBetterKbsOcrResult(best, ai);
+  if (hasKbsOcrApplyableData(best)) return best;
+
+  const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
+  return parseIdCardImageUriMaximum(prepared, { captureSide: side });
 }
 
 /** Kayda yazılacak anlamlı OCR verisi var mı (kısmi sonuç dahil). */

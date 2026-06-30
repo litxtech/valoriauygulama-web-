@@ -1,4 +1,3 @@
-import { InteractionManager } from 'react-native';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
 import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
@@ -200,13 +199,6 @@ export async function saveKbsCaptureItemsParallel(
     })
   );
 
-  onProgress?.(`Oda atanıyor…`);
-  const assignRes = await assignKbsRoomsBatch({
-    roomId: room.id,
-    guestDocumentIds: upserted.map((r) => r.guestDocumentId),
-  });
-  if (!assignRes.ok) throw new Error(assignRes.error.message);
-
   const ocrJobs: KbsCaptureOcrJob[] = upserted.map((row) => ({
     docId: row.guestDocumentId,
     guestId: row.guestId,
@@ -215,9 +207,14 @@ export async function saveKbsCaptureItemsParallel(
     captureSide: row.item.captureSide ?? 'front',
     captureSource: row.item.captureSource,
   }));
-  InteractionManager.runAfterInteractions(() => {
-    enqueueKbsCaptureOcrBatch(ocrJobs);
+  enqueueKbsCaptureOcrBatch(ocrJobs);
+
+  onProgress?.(`Oda atanıyor…`);
+  const assignRes = await assignKbsRoomsBatch({
+    roomId: room.id,
+    guestDocumentIds: upserted.map((r) => r.guestDocumentId),
   });
+  if (!assignRes.ok) throw new Error(assignRes.error.message);
 
   return upserted.map((row) => ({
     guestDocumentId: row.guestDocumentId,

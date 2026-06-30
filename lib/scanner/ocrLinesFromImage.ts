@@ -19,8 +19,8 @@ type OcrImageOpts = {
 
 /** MRZ OCR öncesi kare boyutunu ayarlar. */
 async function normalizeImageForOcr(uri: string, opts?: OcrImageOpts): Promise<string> {
-  const maxEdge = opts?.fast ? 2600 : opts?.document ? 3200 : 2000;
-  const minEdge = opts?.fast ? 1800 : opts?.document ? 2400 : 0;
+  const maxEdge = opts?.fast ? 2200 : opts?.document ? 3200 : 2000;
+  const minEdge = opts?.fast ? 1600 : opts?.document ? 2400 : 0;
   try {
     const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
       Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);

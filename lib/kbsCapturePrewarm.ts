@@ -1,6 +1,7 @@
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
+import { startKbsCaptureOcrPrewarm } from '@/lib/kbsCaptureOcrQueue';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 export type KbsCapturePrewarmReady = {
@@ -56,6 +57,10 @@ function runPrewarm(args: { imageUri: string }): Promise<KbsCapturePrewarmReady>
 
   return (async () => {
     const preparedUri = await prepareKbsCaptureImageUri(args.imageUri);
+    startKbsCaptureOcrPrewarm(preparedUri, {
+      captureSide: args.captureSide,
+      captureSource: args.captureSource ?? 'camera',
+    });
     const upload = await uploadPassportPrivateFromUri({
       uri: preparedUri,
       subfolder: 'kbs-documents',
@@ -72,6 +77,7 @@ export function startKbsCapturePrewarm(args: {
   itemId: string;
   imageUri: string;
   captureSide?: KbsCaptureSide;
+  captureSource?: 'camera' | 'gallery';
 }): void {
   const existing = entries.get(args.itemId);
   if (existing && !existing.cancelled) return;

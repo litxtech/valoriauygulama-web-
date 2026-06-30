@@ -1,14 +1,15 @@
-import { InteractionManager, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   hasKbsOcrApplyableData,
   kbsOcrQualityScore,
+  parseIdCardImageUriForUpload,
 } from '@/lib/kbsCaptureProfessionalOcr';
-import { parseIdCardImageUriMaximum } from '@/lib/kbsCaptureGalleryDeepOcr';
 import { listCoreMissingIdFields, kbsCaptureHasReadableData } from '@/lib/kbsCaptureParsedFields';
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { applyKbsCaptureOcrResult, markKbsCaptureOcrState } from '@/lib/kbsCaptureHistory';
 import { log } from '@/lib/logger';
+import type { KbsOcrResult } from '@/lib/kbsCaptureProfessionalOcr';
 
 export type KbsCaptureOcrJob = {
   docId: string;
@@ -20,12 +21,44 @@ export type KbsCaptureOcrJob = {
   captureSource?: 'camera' | 'gallery';
 };
 
-const OCR_GAP_MS = Platform.OS === 'android' ? 650 : 320;
-const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 120_000 : 100_000;
+const OCR_GAP_MS = Platform.OS === 'android' ? 200 : 80;
+const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 90_000 : 75_000;
 
 let jobs: KbsCaptureOcrJob[] = [];
 let draining = false;
 const queuedOrActiveDocIds = new Set<string>();
+const ocrPrewarmByUri = new Map<string, Promise<KbsOcrResult>>();
+
+/** Çekim sonrası onay beklerken OCR’yi önceden başlat. */
+export function startKbsCaptureOcrPrewarm(
+  localUri: string,
+  opts?: { captureSide?: KbsCaptureSide; captureSource?: 'camera' | 'gallery' }
+): void {
+  const key = localUri.trim();
+  if (!key || ocrPrewarmByUri.has(key)) return;
+  ocrPrewarmByUri.set(
+    key,
+    parseIdCardImageUriForUpload(key, {
+      captureSide: opts?.captureSide ?? 'front',
+      galleryDeep: opts?.captureSource === 'gallery',
+    }).catch((e) => {
+      ocrPrewarmByUri.delete(key);
+      throw e;
+    })
+  );
+}
+
+async function consumeKbsCaptureOcrPrewarm(localUri: string): Promise<KbsOcrResult | null> {
+  const key = localUri.trim();
+  const pending = ocrPrewarmByUri.get(key);
+  if (!pending) return null;
+  ocrPrewarmByUri.delete(key);
+  try {
+    return await pending;
+  } catch {
+    return null;
+  }
+}
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -68,8 +101,13 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
       local = await downloadImage(job.imageUrl, job.docId);
     }
 
+    const prewarmed = await consumeKbsCaptureOcrPrewarm(local);
     const ocr = await withTimeout(
-      parseIdCardImageUriMaximum(local, { captureSide: job.captureSide ?? 'front' }),
+      prewarmed ??
+        parseIdCardImageUriForUpload(local, {
+          captureSide: job.captureSide ?? 'front',
+          galleryDeep: job.captureSource === 'gallery',
+        }),
       OCR_JOB_TIMEOUT_MS,
       'kbs_ocr'
     );

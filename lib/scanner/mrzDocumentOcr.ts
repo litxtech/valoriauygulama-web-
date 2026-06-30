@@ -1,5 +1,6 @@
 import { cropImageForKbsOcr, cropMrzBandForKbsOcr, buildGalleryOcrRegions } from '@/lib/kbsOcrDocumentFocus';
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
+import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { ocrLinesFromImage, ocrLinesFromImageExpoOnly } from '@/lib/scanner/ocrLinesFromImage';
 
@@ -31,6 +32,16 @@ function pickEngine(...engines: string[]): string {
     : engines[0] ?? MRZ_OCR_ENGINE_VISION_MLKIT;
 }
 
+function hasConfidentMrz(lineSets: MrzDocumentOcrLineSet[]): boolean {
+  const flat = flattenMrzDocumentOcrLineSets(lineSets);
+  const best = extractMrzFromLinesBest(flat, { kbsRelaxed: true });
+  return !!best && (best.parsed.checksumsValid === true || best.score >= 72);
+}
+
+async function prepareKbsOcrUri(uri: string, imagePrepared?: boolean): Promise<string> {
+  return imagePrepared ? uri : prepareProfessionalKbsOcrUri(uri);
+}
+
 async function runPass(
   ocr: typeof ocrLinesFromImage,
   pass: MrzDocumentOcrPassId,
@@ -52,7 +63,7 @@ async function runPass(
  */
 export async function ocrLinesForKbsDocument(
   uri: string,
-  opts?: { expoOnly?: boolean; mrzFocused?: boolean; fast?: boolean }
+  opts?: { expoOnly?: boolean; mrzFocused?: boolean; fast?: boolean; imagePrepared?: boolean }
 ): Promise<MrzDocumentOcrResult> {
   const ocr = opts?.expoOnly ? ocrLinesFromImageExpoOnly : ocrLinesFromImage;
   const fast = opts?.fast !== false;
@@ -61,33 +72,40 @@ export async function ocrLinesForKbsDocument(
   const engines: string[] = [];
 
   if (fast) {
-    const prepared = await prepareProfessionalKbsOcrUri(uri);
-    const docUri = await cropImageForKbsOcr(prepared);
-    const bandUri = await cropMrzBandForKbsOcr(prepared);
-    const order: { pass: MrzDocumentOcrPassId; imageUri: string }[] = mrzFocused
-      ? [
-          { pass: 'mrz_band', imageUri: bandUri },
-          { pass: 'document_crop', imageUri: docUri },
-          { pass: 'full', imageUri: prepared },
-        ]
-      : [
-          { pass: 'mrz_band', imageUri: bandUri },
-          { pass: 'document_crop', imageUri: docUri },
-          { pass: 'full', imageUri: prepared },
-        ];
+    const prepared = await prepareKbsOcrUri(uri, opts?.imagePrepared);
+    const [docUri, bandUri] = await Promise.all([
+      cropImageForKbsOcr(prepared),
+      cropMrzBandForKbsOcr(prepared),
+    ]);
 
-    for (const { pass, imageUri } of order) {
-      const set = await runPass(ocr, pass, imageUri, true);
-      if (set) {
-        lineSets.push(set);
-        engines.push(MRZ_OCR_ENGINE_VISION_MLKIT);
-      }
+    const bandSet = await runPass(ocr, 'mrz_band', bandUri, true);
+    if (bandSet) {
+      lineSets.push(bandSet);
+      engines.push(MRZ_OCR_ENGINE_VISION_MLKIT);
+    }
+    if (mrzFocused && hasConfidentMrz(lineSets)) {
+      return { lineSets, engine: pickEngine(...engines) };
+    }
+
+    const docSet = await runPass(ocr, 'document_crop', docUri, true);
+    if (docSet) {
+      lineSets.push(docSet);
+      engines.push(MRZ_OCR_ENGINE_VISION_MLKIT);
+    }
+    if (!mrzFocused && hasConfidentMrz(lineSets) && lineSets.some((s) => s.pass === 'document_crop')) {
+      return { lineSets, engine: pickEngine(...engines) };
+    }
+
+    const fullSet = await runPass(ocr, 'full', prepared, true);
+    if (fullSet) {
+      lineSets.push(fullSet);
+      engines.push(MRZ_OCR_ENGINE_VISION_MLKIT);
     }
 
     return { lineSets, engine: pickEngine(...engines) };
   }
 
-  const prepared = await prepareProfessionalKbsOcrUri(uri);
+  const prepared = await prepareKbsOcrUri(uri, opts?.imagePrepared);
   const [docUri, bandUri] = await Promise.all([
     cropImageForKbsOcr(prepared),
     cropMrzBandForKbsOcr(prepared),
