@@ -21,6 +21,7 @@ import {
   resolveLightboxUrls,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 
 type Props = {
