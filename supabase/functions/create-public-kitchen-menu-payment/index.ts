@@ -113,7 +113,36 @@ function parseCheckoutFields(raw: unknown): CheckoutFields {
   };
 }
 
+function columnMissingError(message: string): boolean {
+  return /guest_hotel_name|delivery_lat|delivery_lng|delivery_address|kitchen_menu_orders|does not exist|schema cache/i.test(
+    message
+  );
+}
+
+async function insertKitchenMenuOrder(
+  admin: ReturnType<typeof createClient>,
+  base: Record<string, unknown>,
+  extended: Record<string, unknown>
+) {
+  const withExtras = await admin.from("kitchen_menu_orders").insert(extended).select("id").single();
+  if (!withExtras.error) return withExtras;
+  if (columnMissingError(withExtras.error.message)) {
+    return admin.from("kitchen_menu_orders").insert(base).select("id").single();
+  }
+  return withExtras;
+}
+
 Deno.serve(async (req: Request) => {
+  try {
+    return await handlePublicKitchenMenuPayment(req);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("create-public-kitchen-menu-payment crash", msg);
+    return json({ error: msg || "Internal error", error_code: "EDGE_CRASH" }, 500);
+  }
+});
+
+async function handlePublicKitchenMenuPayment(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   if (req.method !== "POST") return json({ error: "Method not allowed", error_code: "METHOD" }, 405);
 
@@ -162,14 +191,26 @@ Deno.serve(async (req: Request) => {
     .eq("slug", orgSlug)
     .maybeSingle();
 
-  if (orgErr) return json({ error: orgErr.message, error_code: "ORG_ERROR" }, 500);
-  if (!orgRow?.id) return json({ error: "Menu not found", error_code: "ORG_NOT_FOUND" }, 404);
-  if (orgRow.public_kitchen_menu_enabled !== true) {
+  let org = orgRow;
+  let orgError = orgErr;
+  if (orgError?.message?.includes("kitchen_menu_public_theme")) {
+    const retry = await admin
+      .from("organizations")
+      .select("id, name, slug, public_kitchen_menu_enabled")
+      .eq("slug", orgSlug)
+      .maybeSingle();
+    org = retry.data;
+    orgError = retry.error;
+  }
+
+  if (orgError) return json({ error: orgError.message, error_code: "ORG_ERROR" }, 500);
+  if (!org?.id) return json({ error: "Menu not found", error_code: "ORG_NOT_FOUND" }, 404);
+  if (org.public_kitchen_menu_enabled !== true) {
     return json({ error: "Public menu disabled", error_code: "MENU_DISABLED" }, 403);
   }
 
   const checkoutFields = parseCheckoutFields(
-    (orgRow as { kitchen_menu_public_theme?: unknown }).kitchen_menu_public_theme
+    (org as { kitchen_menu_public_theme?: unknown }).kitchen_menu_public_theme
   );
 
   const resolvedName = customerName.length >= 2 ? customerName : "Misafir";
@@ -183,19 +224,20 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Valid email required", error_code: "EMAIL_REQUIRED" }, 400);
   }
 
-  const orgId = orgRow.id as string;
-  const orgName = ((orgRow.name as string) ?? "Hotel").trim();
+  const orgId = org.id as string;
+  const orgName = ((org.name as string) ?? "Hotel").trim();
   const roomNumber =
     (body.room_number ?? "").trim().slice(0, 32) ||
     (authGuest?.rooms?.room_number != null ? String(authGuest.rooms.room_number) : "") ||
     null;
   const tableNumber = (body.table_number ?? "").trim().slice(0, 32) || null;
   const guestHotelName = (body.guest_hotel_name ?? "").trim().slice(0, 120) || null;
-  const deliveryAddress = (body.delivery_address ?? "").trim().slice(0, 500) || null;
+  const deliveryAddressText = (body.delivery_address ?? "").trim().slice(0, 500);
+  const deliveryAddress = deliveryAddressText || null;
   const deliveryLat = Number(body.delivery_lat);
   const deliveryLng = Number(body.delivery_lng);
   const hasLocation =
-    deliveryAddress.length > 0 ||
+    deliveryAddressText.length > 0 ||
     (Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng));
 
   if (checkoutFields.room === "required" && !roomNumber) {
@@ -295,26 +337,28 @@ Deno.serve(async (req: Request) => {
   const orderEmail =
     isValidEmail(customerEmail) ? customerEmail : `menu+${crypto.randomUUID().slice(0, 8)}@orders.valoria.local`;
 
-  const { data: orderRow, error: orderErr } = await admin
-    .from("kitchen_menu_orders")
-    .insert({
-      organization_id: orgId,
-      org_slug: orgSlug,
-      guest_id: authGuest?.id ?? null,
-      customer_name: resolvedName,
-      customer_email: orderEmail,
-      room_number: roomNumber,
-      table_number: tableNumber,
-      guest_hotel_name: guestHotelName,
-      delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
-      delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
-      delivery_address: deliveryAddress || null,
-      status: "pending_payment",
-      total_amount: total,
-      currency,
-    })
-    .select("id")
-    .single();
+  const orderBase = {
+    organization_id: orgId,
+    org_slug: orgSlug,
+    guest_id: authGuest?.id ?? null,
+    customer_name: resolvedName,
+    customer_email: orderEmail,
+    room_number: roomNumber,
+    table_number: tableNumber,
+    status: "pending_payment",
+    total_amount: total,
+    currency,
+  };
+
+  const orderExtended = {
+    ...orderBase,
+    guest_hotel_name: guestHotelName,
+    delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
+    delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
+    delivery_address: deliveryAddress,
+  };
+
+  const { data: orderRow, error: orderErr } = await insertKitchenMenuOrder(admin, orderBase, orderExtended);
 
   if (orderErr || !orderRow?.id) {
     return json({ error: orderErr?.message ?? "Order failed", error_code: "ORDER_INSERT" }, 500);
@@ -441,7 +485,7 @@ Deno.serve(async (req: Request) => {
     const msg = e instanceof Error ? e.message : String(e);
     return json({ error: msg || "Payment error", error_code: "STRIPE_ERROR" }, 500);
   }
-});
+}
 
 function json(payload: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(payload), {
