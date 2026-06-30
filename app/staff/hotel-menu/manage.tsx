@@ -28,6 +28,7 @@ import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
+import { HotelKitchenMenuQuickEditSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQuickEditSheet';
 
 const CACHE_KEY = 'list:all';
 
@@ -42,6 +43,7 @@ export default function StaffHotelMenuManageScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
+  const [quickEditItem, setQuickEditItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -170,8 +172,9 @@ export default function StaffHotelMenuManageScreen() {
           <HotelKitchenMenuListCard
             item={item}
             variant="manage"
-            trailingIcon="create-outline"
+            trailingIcon="chevron-forward"
             onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
+            onQuickEdit={() => setQuickEditItem(item)}
             onImagePress={() => openImage(item)}
           />
         )}
@@ -193,6 +196,21 @@ export default function StaffHotelMenuManageScreen() {
           organizationName={staff.organization?.name}
         />
       ) : null}
+
+      <HotelKitchenMenuQuickEditSheet
+        visible={!!quickEditItem}
+        item={quickEditItem}
+        onClose={() => setQuickEditItem(null)}
+        onSaved={(patch) => {
+          setItems((prev) =>
+            prev.map((row) =>
+              row.id === quickEditItem?.id
+                ? { ...row, name: patch.name, price: patch.price, description: patch.description }
+                : row
+            )
+          );
+        }}
+      />
     </View>
   );
 }

@@ -21,12 +21,6 @@ import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
 import { cartTotal } from '@/lib/publicKitchenMenuCart';
 import { checkoutPublicKitchenMenu } from '@/lib/publicKitchenMenuCheckout';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
-import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
-import { supabase } from '@/lib/supabase';
-import {
-  PublicKitchenMenuMapPickSheet,
-  type PublicMenuLocationPick,
-} from '@/components/hotelKitchenMenu/PublicKitchenMenuMapPickSheet';
 import {
   DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
   resolveCheckoutCustomerName,
@@ -64,8 +58,7 @@ export function PublicKitchenMenuCartSheet({
   const [room, setRoom] = useState('');
   const [table, setTable] = useState('');
   const [hotelName, setHotelName] = useState('');
-  const [locationPick, setLocationPick] = useState<PublicMenuLocationPick | null>(null);
-  const [mapOpen, setMapOpen] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionGuestEmail, setSessionGuestEmail] = useState<string | null>(null);
@@ -83,8 +76,11 @@ export function PublicKitchenMenuCartSheet({
       setPaying(false);
       return;
     }
+    if (Platform.OS === 'web') return;
     let cancelled = false;
     void (async () => {
+      const { getOrCreateGuestForCurrentSession } = await import('@/lib/getOrCreateGuestForCaller');
+      const { supabase } = await import('@/lib/supabase');
       const guest = await getOrCreateGuestForCurrentSession();
       if (cancelled || !guest?.guest_id) return;
       const { data: row } = await supabase
@@ -134,9 +130,9 @@ export function PublicKitchenMenuCartSheet({
         room,
         table,
         hotelName,
-        locationAddress: locationPick?.address ?? '',
-        locationLat: locationPick?.lat ?? null,
-        locationLng: locationPick?.lng ?? null,
+        locationAddress: deliveryAddress,
+        locationLat: null,
+        locationLng: null,
       },
       {
         nameRequired: t('publicKitchenMenuNameRequired'),
@@ -158,7 +154,6 @@ export function PublicKitchenMenuCartSheet({
     setError(null);
     setPaying(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
       const result = await checkoutPublicKitchenMenu({
         orgSlug,
         items: lines.map((l) => ({ menu_item_id: l.itemId, quantity: l.quantity })),
@@ -167,15 +162,12 @@ export function PublicKitchenMenuCartSheet({
         roomNumber: room.trim() || undefined,
         tableNumber: table.trim() || undefined,
         guestHotelName: hotelName.trim() || undefined,
-        deliveryLat: locationPick?.lat,
-        deliveryLng: locationPick?.lng,
-        deliveryAddress: locationPick?.address,
+        deliveryAddress: deliveryAddress.trim() || undefined,
         lang,
-        accessToken: sessionData.session?.access_token ?? null,
       });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         if (!result.pay_url) throw new Error(t('publicKitchenMenuCheckoutError'));
-        window.location.assign(result.pay_url);
+        window.location.href = result.pay_url;
         return;
       }
     } catch (e) {
@@ -185,10 +177,21 @@ export function PublicKitchenMenuCartSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={Platform.OS === 'web' ? 'fade' : 'slide'}
+      onRequestClose={onClose}
+    >
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
-          style={[styles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '92%' }]}
+          style={[
+            styles.sheet,
+            {
+              paddingBottom: insets.bottom + 16,
+              maxHeight: Platform.OS === 'web' ? '88%' : '94%',
+            },
+          ]}
           onPress={(e) => e.stopPropagation?.()}
         >
           <View style={styles.handle} />
@@ -326,15 +329,17 @@ export function PublicKitchenMenuCartSheet({
                 ) : null}
                 {showLocation ? (
                   <>
-                    <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuDeliveryLocation'), fields.location)}</Text>
-                    <TouchableOpacity style={styles.mapBtn} onPress={() => setMapOpen(true)}>
-                      <Ionicons name="map-outline" size={18} color={accentColor} />
-                      <Text style={styles.mapBtnText}>
-                        {locationPick?.address
-                          ? locationPick.address
-                          : t('publicKitchenMenuPickLocation')}
-                      </Text>
-                    </TouchableOpacity>
+                    <Text style={styles.fieldLabel}>
+                      {fieldLabel(t('publicKitchenMenuDeliveryAddress'), fields.location)}
+                    </Text>
+                    <TextInput
+                      style={[styles.input, styles.multiline]}
+                      value={deliveryAddress}
+                      onChangeText={setDeliveryAddress}
+                      placeholder={t('publicKitchenMenuDeliveryAddressPh')}
+                      placeholderTextColor={menuUi.webMuted}
+                      multiline
+                    />
                   </>
                 ) : null}
               </View>
@@ -367,13 +372,6 @@ export function PublicKitchenMenuCartSheet({
           ) : null}
         </Pressable>
       </Pressable>
-
-      <PublicKitchenMenuMapPickSheet
-        visible={mapOpen}
-        initial={locationPick}
-        onClose={() => setMapOpen(false)}
-        onConfirm={(pick) => setLocationPick(pick)}
-      />
     </Modal>
   );
 }
@@ -383,7 +381,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
-    ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(8px)' } as object) : {}),
+    paddingBottom: Platform.OS === 'web' ? 28 : 0,
+    ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(6px)' } as object) : {}),
   },
   sheet: {
     backgroundColor: '#fff',
@@ -433,7 +432,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '800', color: menuUi.navy, letterSpacing: -0.3 },
   sub: { fontSize: 13, color: menuUi.webMuted, marginTop: 2, fontWeight: '600' },
-  scroll: { maxHeight: 420 },
+  scroll: { maxHeight: Platform.OS === 'web' ? 480 : 420 },
   empty: { textAlign: 'center', color: menuUi.webMuted, paddingVertical: 32, fontSize: 15 },
   line: {
     flexDirection: 'row',
@@ -486,18 +485,7 @@ const styles = StyleSheet.create({
   } as object,
   formRow: { flexDirection: 'row', gap: 12 },
   formHalf: { flex: 1 },
-  mapBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: menuUi.border,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: menuUi.warmBg,
-  },
-  mapBtnText: { flex: 1, fontSize: 14, color: menuUi.webText, fontWeight: '600' },
+  multiline: { minHeight: 72, textAlignVertical: 'top' },
   footer: { paddingTop: 16, borderTopWidth: 1, borderTopColor: menuUi.border, marginTop: 8 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   totalLabel: { fontSize: 15, fontWeight: '600', color: menuUi.webMuted },

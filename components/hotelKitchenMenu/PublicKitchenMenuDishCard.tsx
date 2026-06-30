@@ -205,6 +205,7 @@ export function PublicKitchenMenuDishCard({
         <View style={styles.compactBody}>
           <Text style={[styles.compactCategory, { color: catColor }]} numberOfLines={1}>{item.category_title}</Text>
           <Text style={styles.compactName} numberOfLines={2}>{item.name}</Text>
+          {desc ? <Text style={styles.compactDesc} numberOfLines={2}>{desc}</Text> : null}
           <Text style={[styles.compactPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
         </View>
       </Pressable>
@@ -233,6 +234,7 @@ export function PublicKitchenMenuDishCard({
       </Pressable>
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
+        {desc ? <Text style={styles.desc} numberOfLines={2}>{desc}</Text> : null}
         <Text style={styles.price}>{formatMenuPrice(item.price)}</Text>
       </View>
     </Pressable>
@@ -330,6 +332,7 @@ const styles = StyleSheet.create({
   compactBody: { flex: 1, paddingRight: 12, minWidth: 0 },
   compactCategory: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
   compactName: { fontSize: 15, fontWeight: '800', color: menuUi.navy, marginTop: 2 },
+  compactDesc: { fontSize: 12, lineHeight: 16, color: menuUi.webMuted, marginTop: 2 },
   compactPrice: { fontSize: 15, fontWeight: '800', marginTop: 4 },
   card: { backgroundColor: menuUi.cardBg, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: menuUi.border },
   cardGrid: { flex: Platform.OS === 'web' ? 1 : undefined, minWidth: Platform.OS === 'web' ? 200 : undefined },
@@ -340,5 +343,6 @@ const styles = StyleSheet.create({
   image: { width: '100%', height: '100%' },
   body: { padding: 12, flex: 1 },
   name: { fontSize: 15, fontWeight: '800', color: menuUi.navy },
+  desc: { fontSize: 12, lineHeight: 16, color: menuUi.webMuted, marginTop: 4 },
   price: { fontSize: 14, fontWeight: '800', color: menuUi.price, marginTop: 6 },
 });

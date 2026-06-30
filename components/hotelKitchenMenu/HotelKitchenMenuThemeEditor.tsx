@@ -431,7 +431,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
                   ? 'publicKitchenMenuRoomNumber'
                   : key === 'table'
                     ? 'publicKitchenMenuTableNumber'
-                    : 'publicKitchenMenuDeliveryLocation';
+                    : 'publicKitchenMenuDeliveryAddress';
         return (
           <View key={key} style={styles.checkoutRow}>
             <Text style={styles.checkoutRowLabel}>{t(labelKey)}</Text>

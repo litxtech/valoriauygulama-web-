@@ -340,6 +340,33 @@ export function hotelKitchenMenuSaveUserMessage(reason: unknown): string {
   return raw || 'Kayıt yapılamadı';
 }
 
+/** Ad, fiyat ve açıklama — kategori/fotoğraf dokunulmadan güncellenir. */
+export async function updateHotelKitchenMenuItemBasics(input: {
+  id: string;
+  organizationId: string;
+  name: string;
+  price: number;
+  description: string | null;
+}): Promise<void> {
+  const row = await fetchHotelKitchenMenuItemById(input.id);
+  if (!row) throw new Error('Ürün bulunamadı');
+  if (row.organization_id !== input.organizationId) throw new Error('Yetkisiz işlem');
+
+  const imageUrls = row.images.map((im) => im.image_url).filter(Boolean);
+  await upsertHotelKitchenMenuItemWithRetry({
+    id: input.id,
+    organizationId: input.organizationId,
+    categoryTitle: row.category_title,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    price: input.price,
+    servedInHotelRestaurant: row.served_in_hotel_restaurant,
+    isAvailable: row.is_available,
+    sortOrder: row.sort_order,
+    imageUrls,
+  });
+}
+
 export async function deleteHotelKitchenMenuItem(itemId: string): Promise<void> {
   const { error } = await supabase.rpc('delete_hotel_kitchen_menu_item', {
     p_item_id: itemId,

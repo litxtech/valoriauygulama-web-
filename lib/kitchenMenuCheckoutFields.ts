@@ -79,9 +79,8 @@ export function validateCheckoutForm(
   const room = values.room.trim();
   const table = values.table.trim();
   const hotelName = values.hotelName.trim();
-  const hasLocation =
-    (values.locationAddress?.trim()?.length ?? 0) > 0 ||
-    (values.locationLat != null && values.locationLng != null);
+  const deliveryAddress = (values.locationAddress ?? '').trim();
+  const hasDeliveryAddress = deliveryAddress.length > 0;
 
   if (fields.name !== 'hidden' && fields.name === 'required' && name.length < 2) {
     return messages.nameRequired;
@@ -103,7 +102,7 @@ export function validateCheckoutForm(
   if (fields.hotelName !== 'hidden' && fields.hotelName === 'required' && !hotelName) {
     return messages.hotelNameRequired;
   }
-  if (fields.location !== 'hidden' && fields.location === 'required' && !hasLocation) {
+  if (fields.location !== 'hidden' && fields.location === 'required' && !hasDeliveryAddress) {
     return messages.locationRequired;
   }
   return null;

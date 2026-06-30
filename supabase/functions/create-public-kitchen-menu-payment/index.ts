@@ -240,9 +240,7 @@ async function handlePublicKitchenMenuPayment(req: Request): Promise<Response> {
   const deliveryAddress = deliveryAddressText || null;
   const deliveryLat = Number(body.delivery_lat);
   const deliveryLng = Number(body.delivery_lng);
-  const hasLocation =
-    deliveryAddressText.length > 0 ||
-    (Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng));
+  const hasDeliveryAddress = deliveryAddressText.length > 0;
 
   if (checkoutFields.room === "required" && !roomNumber) {
     return json({ error: "Room number required", error_code: "ROOM_REQUIRED" }, 400);
@@ -253,8 +251,8 @@ async function handlePublicKitchenMenuPayment(req: Request): Promise<Response> {
   if (checkoutFields.hotelName === "required" && !guestHotelName) {
     return json({ error: "Hotel name required", error_code: "HOTEL_NAME_REQUIRED" }, 400);
   }
-  if (checkoutFields.location === "required" && !hasLocation) {
-    return json({ error: "Location required", error_code: "LOCATION_REQUIRED" }, 400);
+  if (checkoutFields.location === "required" && !hasDeliveryAddress) {
+    return json({ error: "Delivery address required", error_code: "LOCATION_REQUIRED" }, 400);
   }
 
   const cart = Array.isArray(body.items) ? body.items : [];

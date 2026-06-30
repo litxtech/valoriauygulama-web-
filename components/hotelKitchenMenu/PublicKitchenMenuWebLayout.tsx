@@ -472,17 +472,19 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         accentColor={accent}
       />
 
-      <PublicKitchenMenuCartSheet
-        visible={cartOpen}
-        onClose={() => setCartOpen(false)}
-        orgSlug={orgSlug}
-        orgName={org.name}
-        lines={cartLines}
-        lang={menuLang}
-        onUpdateQuantity={onUpdateCartQuantity}
-        checkoutFields={menuTheme.checkoutFields}
-        accentColor={accent}
-      />
+      {cartOpen ? (
+        <PublicKitchenMenuCartSheet
+          visible={cartOpen}
+          onClose={() => setCartOpen(false)}
+          orgSlug={orgSlug}
+          orgName={org.name}
+          lines={cartLines}
+          lang={menuLang}
+          onUpdateQuantity={onUpdateCartQuantity}
+          checkoutFields={menuTheme.checkoutFields}
+          accentColor={accent}
+        />
+      ) : null}
     </View>
   );
 }

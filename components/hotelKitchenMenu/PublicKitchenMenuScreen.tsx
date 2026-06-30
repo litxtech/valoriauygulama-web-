@@ -169,15 +169,14 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   );
 
   const bootstrap = useCallback(
-    async (opts?: { silent?: boolean; forceNetwork?: boolean }) => {
-      if (!opts?.silent) {
-        const hit = getPublicMenuCache(slugKey);
-        if (hit) {
-          applyBundle(hit);
-          setLoading(false);
-        } else {
-          setLoading(true);
-        }
+    async (opts?: { silent?: boolean; forceNetwork?: boolean; cacheOnly?: boolean }) => {
+      const cached = !opts?.forceNetwork ? getPublicMenuCache(slugKey) : null;
+      if (cached) {
+        applyBundle(cached);
+        setLoading(false);
+        if (opts?.cacheOnly) return;
+      } else if (!opts?.silent) {
+        setLoading(true);
       }
       setNotFound(false);
       try {
@@ -209,7 +208,17 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
       setLoading(false);
       return;
     }
-    void bootstrap({ silent: !!cachedBoot });
+    if (cachedBoot) {
+      void bootstrap({ silent: true, cacheOnly: true });
+      const refreshTimer =
+        typeof window !== 'undefined'
+          ? window.setTimeout(() => void bootstrap({ silent: true }), 2500)
+          : undefined;
+      return () => {
+        if (refreshTimer != null) window.clearTimeout(refreshTimer);
+      };
+    }
+    void bootstrap({ silent: false });
   }, [bootstrap, slugKey, cachedBoot]);
 
   const refreshForNewItems = useCallback(async () => {

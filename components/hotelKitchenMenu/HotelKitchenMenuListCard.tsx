@@ -14,6 +14,7 @@ type Props = {
   item: HotelKitchenMenuItemWithImages;
   onPress: () => void;
   onImagePress?: () => void;
+  onQuickEdit?: () => void;
   variant?: 'browse' | 'manage';
   showFavorite?: boolean;
   favorited?: boolean;
@@ -24,6 +25,7 @@ export function HotelKitchenMenuListCard({
   item,
   onPress,
   onImagePress,
+  onQuickEdit,
   variant = 'browse',
   showFavorite,
   favorited,
@@ -61,7 +63,27 @@ export function HotelKitchenMenuListCard({
           <Text style={styles.manageName} numberOfLines={2}>
             {item.name}
           </Text>
+          {desc ? (
+            <Text style={styles.manageDesc} numberOfLines={2}>
+              {desc}
+            </Text>
+          ) : (
+            <Text style={styles.manageDescEmpty}>{t('hotelKitchenMenuNoDescription')}</Text>
+          )}
           <Text style={styles.managePrice}>{formatMenuPrice(item.price)}</Text>
+          {onQuickEdit ? (
+            <TouchableOpacity
+              style={styles.quickEditBtn}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                onQuickEdit();
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="pencil-outline" size={14} color={menuUi.accentDeep} />
+              <Text style={styles.quickEditBtnText}>{t('hotelKitchenMenuQuickEditTitle')}</Text>
+            </TouchableOpacity>
+          ) : null}
           {!item.is_available ? (
             <View style={styles.hiddenPill}>
               <Text style={styles.hiddenPillText}>{t('hotelKitchenMenuHidden')}</Text>
@@ -200,7 +222,21 @@ const styles = StyleSheet.create({
   manageBody: { flex: 1, paddingVertical: 12, paddingHorizontal: 12 },
   manageCategory: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   manageName: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginTop: 3 },
-  managePrice: { fontSize: 15, fontWeight: '700', color: menuUi.price, marginTop: 4 },
+  manageDesc: { fontSize: 12, lineHeight: 16, color: theme.colors.textSecondary, marginTop: 4 },
+  manageDescEmpty: { fontSize: 12, fontStyle: 'italic', color: theme.colors.textMuted, marginTop: 4 },
+  managePrice: { fontSize: 15, fontWeight: '700', color: menuUi.price, marginTop: 6 },
+  quickEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: menuUi.accentSoft,
+  },
+  quickEditBtnText: { fontSize: 12, fontWeight: '700', color: menuUi.accentDeep },
   hiddenPill: {
     alignSelf: 'flex-start',
     marginTop: 6,

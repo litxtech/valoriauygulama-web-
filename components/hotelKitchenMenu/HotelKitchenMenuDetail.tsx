@@ -13,6 +13,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
@@ -37,6 +38,7 @@ type Props = {
 
 export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
   const { t } = useTranslation();
+  const router = useRouter();
   const { width } = useWindowDimensions();
   const [item, setItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
   const [favorited, setFavorited] = useState(false);
@@ -197,6 +199,22 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
               <Text style={styles.descTitle}>{t('hotelKitchenMenuDescLabel')}</Text>
               <Text style={styles.desc}>{item.description}</Text>
             </View>
+          ) : mode === 'staff' ? (
+            <View style={styles.descCard}>
+              <Text style={styles.descTitle}>{t('hotelKitchenMenuDescLabel')}</Text>
+              <Text style={styles.descEmpty}>{t('hotelKitchenMenuNoDescription')}</Text>
+            </View>
+          ) : null}
+
+          {mode === 'staff' ? (
+            <TouchableOpacity
+              style={styles.staffEditBtn}
+              onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
+              activeOpacity={0.88}
+            >
+              <Ionicons name="create-outline" size={20} color="#fff" />
+              <Text style={styles.staffEditBtnText}>{t('hotelKitchenMenuEditTitle')}</Text>
+            </TouchableOpacity>
           ) : null}
 
           {mode === 'guest' ? (
@@ -356,6 +374,18 @@ const styles = StyleSheet.create({
   },
   descTitle: { fontSize: 12, fontWeight: '700', color: theme.colors.textMuted, marginBottom: 6 },
   desc: { fontSize: 15, lineHeight: 23, color: theme.colors.textSecondary },
+  descEmpty: { fontSize: 14, lineHeight: 20, color: theme.colors.textMuted, fontStyle: 'italic' },
+  staffEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 18,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: menuUi.navy,
+  },
+  staffEditBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
   favBtn: {
     flexDirection: 'row',
     alignItems: 'center',
