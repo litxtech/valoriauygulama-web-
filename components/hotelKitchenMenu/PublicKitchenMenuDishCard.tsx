@@ -28,6 +28,8 @@ type Props = {
   cartQuantity?: number;
   themeAccent?: string;
   themeNavy?: string;
+  /** Personel — kart notunu (açıklama) canlı karttan düzenle */
+  onEditNote?: () => void;
 };
 
 const COMPACT_THUMB = Platform.OS === 'web' ? 72 : 64;
@@ -47,6 +49,7 @@ export function PublicKitchenMenuDishCard({
   cartQuantity = 0,
   themeAccent = menuUi.accent,
   themeNavy = menuUi.navy,
+  onEditNote,
 }: Props) {
   const { t } = useTranslation();
   const [imageW, setImageW] = useState(0);
@@ -61,6 +64,21 @@ export function PublicKitchenMenuDishCard({
   const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid' && !isPremium && !isFeatured);
   const desc = (item.description ?? '').trim();
   const premiumImageH = imageW > 0 ? Math.round(imageW / PREMIUM_IMAGE_RATIO) : undefined;
+
+  const noteEditBtn = onEditNote ? (
+    <Pressable
+      style={[styles.noteEditBtn, { borderColor: `${themeAccent}44`, backgroundColor: `${themeAccent}12` }]}
+      onPress={(e) => {
+        e?.stopPropagation?.();
+        onEditNote();
+      }}
+    >
+      <Ionicons name="create-outline" size={13} color={themeAccent} />
+      <Text style={[styles.noteEditBtnText, { color: themeAccent }]}>
+        {desc ? t('hotelKitchenMenuCardNoteEdit') : t('hotelKitchenMenuCardNoteAdd')}
+      </Text>
+    </Pressable>
+  ) : null;
 
   if (isFeatured) {
     return (
@@ -175,6 +193,7 @@ export function PublicKitchenMenuDishCard({
               </Pressable>
             ) : null}
           </View>
+          {noteEditBtn}
         </View>
       </Pressable>
     );
@@ -207,6 +226,7 @@ export function PublicKitchenMenuDishCard({
           <Text style={styles.compactName} numberOfLines={2}>{item.name}</Text>
           {desc ? <Text style={styles.compactDesc} numberOfLines={2}>{desc}</Text> : null}
           <Text style={[styles.compactPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
+          {noteEditBtn}
         </View>
       </Pressable>
     );
@@ -236,6 +256,7 @@ export function PublicKitchenMenuDishCard({
         <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
         {desc ? <Text style={styles.desc} numberOfLines={2}>{desc}</Text> : null}
         <Text style={styles.price}>{formatMenuPrice(item.price)}</Text>
+        {noteEditBtn}
       </View>
     </Pressable>
   );
@@ -345,4 +366,16 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: '800', color: menuUi.navy },
   desc: { fontSize: 12, lineHeight: 16, color: menuUi.webMuted, marginTop: 4 },
   price: { fontSize: 14, fontWeight: '800', color: menuUi.price, marginTop: 6 },
+  noteEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  noteEditBtnText: { fontSize: 11, fontWeight: '700' },
 });

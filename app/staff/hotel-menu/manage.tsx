@@ -44,6 +44,7 @@ export default function StaffHotelMenuManageScreen() {
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
+  const [quickEditMode, setQuickEditMode] = useState<'full' | 'note'>('full');
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -174,7 +175,10 @@ export default function StaffHotelMenuManageScreen() {
             variant="manage"
             trailingIcon="chevron-forward"
             onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
-            onQuickEdit={() => setQuickEditItem(item)}
+            onQuickEdit={() => {
+              setQuickEditMode('full');
+              setQuickEditItem(item);
+            }}
             onImagePress={() => openImage(item)}
           />
         )}
@@ -200,6 +204,7 @@ export default function StaffHotelMenuManageScreen() {
       <HotelKitchenMenuQuickEditSheet
         visible={!!quickEditItem}
         item={quickEditItem}
+        mode={quickEditMode}
         onClose={() => setQuickEditItem(null)}
         onSaved={(patch) => {
           setItems((prev) =>
