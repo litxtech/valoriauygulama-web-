@@ -72,9 +72,9 @@ function pushSet(
 function hasEnoughFastLines(lineSets: MrzDocumentOcrLineSet[], mrzFocused: boolean): boolean {
   if (hasConfidentMrz(lineSets)) return true;
   const flat = flattenMrzDocumentOcrLineSets(lineSets);
-  if (flat.length < 6) return false;
+  if (flat.length < 4) return false;
   if (mrzFocused) return lineSets.some((s) => s.pass === 'mrz_band');
-  return lineSets.some((s) => s.pass === 'document_crop') && flat.length >= 10;
+  return lineSets.some((s) => s.pass === 'document_crop') && flat.length >= 6;
 }
 
 /**
@@ -96,12 +96,20 @@ export async function ocrLinesForKbsDocument(
     const variants = await buildKbsOcrEnhancedVariantsCached(prepared);
     const ocrOpts = { imagePrepared: true as const };
 
-    const [bandSet, docSet] = await Promise.all([
-      runPass(ocr, 'mrz_band', variants.mrzBand, true, ocrOpts.imagePrepared),
-      runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared),
-    ]);
-    pushSet(lineSets, engines, bandSet);
-    pushSet(lineSets, engines, docSet);
+    if (mrzFocused) {
+      const [bandSet, docSet] = await Promise.all([
+        runPass(ocr, 'mrz_band', variants.mrzBand, true, ocrOpts.imagePrepared),
+        runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared),
+      ]);
+      pushSet(lineSets, engines, bandSet);
+      pushSet(lineSets, engines, docSet);
+    } else {
+      pushSet(
+        lineSets,
+        engines,
+        await runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared)
+      );
+    }
 
     if (mrzFocused && hasConfidentMrz(lineSets)) {
       return { lineSets, engine: pickEngine(...engines) };
@@ -125,7 +133,6 @@ export async function ocrLinesForKbsDocument(
         { pass: 'full', imageUri: variants.full },
       ]
     : [
-        { pass: 'mrz_band', imageUri: variants.mrzBand },
         { pass: 'document_crop', imageUri: variants.documentCrop },
         { pass: 'full', imageUri: variants.full },
       ];

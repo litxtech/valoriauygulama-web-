@@ -52,13 +52,17 @@ export function cancelKbsCapturePrewarm(itemId: string): void {
   entries.delete(itemId);
 }
 
-function runPrewarm(args: { imageUri: string }): Promise<KbsCapturePrewarmReady> {
+function runPrewarm(args: {
+  imageUri: string;
+  captureSide?: KbsCaptureSide;
+  captureSource?: 'camera' | 'gallery';
+}): Promise<KbsCapturePrewarmReady> {
   warmKbsCaptureOpsContext();
 
   return (async () => {
     const preparedUri = await prepareKbsCaptureImageUri(args.imageUri);
     startKbsCaptureOcrPrewarm(preparedUri, {
-      captureSide: args.captureSide,
+      captureSide: args.captureSide ?? 'front',
       captureSource: args.captureSource ?? 'camera',
     });
     const upload = await uploadPassportPrivateFromUri({

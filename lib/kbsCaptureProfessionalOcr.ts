@@ -5,6 +5,7 @@ import {
   type KbsOcrOptions,
   type KbsOcrResult,
 } from '@/lib/kbsCaptureOcr';
+import { shouldPreferKbsFrontIdParse } from '@/lib/guestScan/idCardOcrParser';
 import { buildKbsCopyFields, listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 import { prepareProfessionalKbsOcrUriCached } from '@/lib/kbsOcrSessionCache';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
@@ -52,6 +53,33 @@ function isGoodEnough(result: KbsOcrResult, galleryDeep: boolean): boolean {
   return hasKbsOcrApplyableData(result) && missing <= 1;
 }
 
+function isTurkishTcDigits(docNumber: string | null | undefined): boolean {
+  return /^[1-9]\d{10}$/.test((docNumber ?? '').replace(/\D/g, ''));
+}
+
+/** Ön yüz / MRZ çekim moduna göre en uygun OCR geçişini seç. */
+function pickKbsOcrResultForSide(
+  front: KbsOcrResult,
+  mrz: KbsOcrResult,
+  side: KbsCaptureSide
+): KbsOcrResult {
+  if (side === 'front') {
+    if (shouldPreferKbsFrontIdParse(front.parsed)) return front;
+    if (isTurkishTcDigits(front.parsed.documentNumber)) {
+      const frontScore = kbsOcrQualityScore(front);
+      const mrzScore = kbsOcrQualityScore(mrz);
+      if (frontScore >= mrzScore - 18) return front;
+    }
+    return pickBetterKbsOcrResult(front, mrz);
+  }
+  if (side === 'mrz_back') {
+    if (mrz.parsed.rawMrz || hasKbsOcrApplyableData(mrz)) {
+      return pickBetterKbsOcrResult(mrz, front);
+    }
+  }
+  return pickBetterKbsOcrResult(front, mrz);
+}
+
 /** Tek OCR taraması — ön yüz + MRZ parse aynı satırlardan (tekrar OCR yok). */
 async function parseFromOcrBatch(
   prepared: string,
@@ -68,12 +96,15 @@ async function parseFromOcrBatch(
     engine,
     mrzFocused: false,
   });
+  if (opts.side === 'front' && shouldPreferKbsFrontIdParse(front.parsed)) {
+    return front;
+  }
   const mrz = parseKbsFromDocumentOcr({
     lineSets: docOcr.lineSets,
     engine,
     mrzFocused: true,
   });
-  return pickBetterKbsOcrResult(front, mrz);
+  return pickKbsOcrResultForSide(front, mrz, opts.side);
 }
 
 /**
@@ -150,7 +181,9 @@ export function shouldApplyKbsOcrResult(result: KbsOcrResult): boolean {
   const p = result.parsed;
   const score = kbsOcrQualityScore(result);
   const coreMissing = listCoreMissingIdFields(p).length;
+  const tcDigits = (p.documentNumber ?? '').replace(/\D/g, '');
 
+  if (isTurkishTcDigits(tcDigits)) return true;
   if (p.rawMrz && p.checksumsValid === true) return true;
   if (p.rawMrz && p.documentNumber) return score >= WEAK_SCORE - 10;
   if (p.rawMrz && (p.birthDate || p.expiryDate)) return true;

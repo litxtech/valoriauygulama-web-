@@ -302,7 +302,7 @@ export const staffLocales = {
     kbsSaveFailed: 'Kayıt tamamlanamadı',
     kbsRemoveFromListA11y: 'Kimliği listeden kaldır',
     kbsCapturedListA11y: 'Çekilen kimlikler',
-    kbsFrontFrameHint: 'Ön yüz tam kadraj — pasaportta alt şerit de karede olsun',
+    kbsFrontFrameHint: 'T.C. kimlik ön yüzü — kart tam kadrajda, yazılar net görünsün',
     kbsMrzFrameHint: 'MRZ şeridi — kimlik arkası veya pasaport alt 3 satırı hizalayın',
     kbsCaptureSideFront: 'Ön yüz',
     kbsCaptureSideMrz: 'MRZ',

@@ -91,6 +91,9 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
     !!p.rawMrz && mrzNamesLookValid(p.firstName, p.lastName) && !isLikelyOcrNoiseName(p.firstName);
 
   const frontOnly = (p.warnings ?? []).includes('front_ocr_only');
+  const tcDigits = (p.documentNumber ?? '').replace(/\D/g, '');
+  const isTurkishIdFront =
+    p.documentType === 'id_card' && /^[1-9]\d{10}$/.test(tcDigits) && !p.rawMrz;
 
   if (!mrzTrusted) {
     if (isLikelyOcrNoiseName(p.firstName) || !isUsablePersonName(p.firstName)) p.firstName = null;
@@ -98,6 +101,7 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
 
     if (
       !frontOnly &&
+      !isTurkishIdFront &&
       p.firstName &&
       p.lastName &&
       !p.rawMrz &&

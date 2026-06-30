@@ -37,10 +37,15 @@ const MOTHER_LINE_LABEL_RE = /^(?:anne(?:\s*n[iı]n)?\s*ad[ıi]|ana\s*ad[ıi]|mo
 const FATHER_LINE_LABEL_RE = /^(?:baba(?:\s*n[iı]n)?\s*ad[ıi]|father)/i;
 const SERIAL_LINE_LABEL_RE = /seri\s*(?:no|n[°o]|s[ıi]ra)|belge\s*seri/i;
 
-const SURNAME_INLINE_RE =
-  /(?:^|\b)(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom)(?:\s*[:\-]\s*|\s+)(.*)$/i;
-const GIVEN_INLINE_RE =
-  /(?:^|\b)(?:ad[ıi]?|adi|given\s*names?|first\s*names?|forename|prenom)(?:\s*[:\-]\s*|\s+)(.*)$/i;
+const LABEL_VALUE_SEP = '(?:\\s*[:\\/-]\\s*|\\s+)';
+const SURNAME_INLINE_RE = new RegExp(
+  `(?:^|\\b)(?:soyad[ıi]?|soyadi|surname|family\\s*name|last\\s*name|nom)${LABEL_VALUE_SEP}(.*)$`,
+  'i'
+);
+const GIVEN_INLINE_RE = new RegExp(
+  `(?:^|\\b)(?:ad[ıi]?|adi|given\\s*names?|first\\s*names?|forename|prenom)${LABEL_VALUE_SEP}(.*)$`,
+  'i'
+);
 const SURNAME_LINE_LABEL_RE =
   /^(?:soyad[ıi]?|soyadi|surname|surnames|family\s*name|last\s*name|nom)\s*$/i;
 const GIVEN_LINE_LABEL_RE =
@@ -91,10 +96,14 @@ const PASSPORT_SURNAME_LINE_RE =
   /^(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom|apellidos?)\s*$/i;
 const PASSPORT_GIVEN_LINE_RE =
   /^(?:ad[ıi]?|adi|given(?:\s*names?)?|given\s*name(?:\(s\))?|first\s*names?|forename|prenoms?|prenom)\s*$/i;
-const PASSPORT_SURNAME_INLINE_RE =
-  /(?:^|\b)(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom|apellidos?)(?:\s*[:\-]\s*|\s+)(.*)$/i;
-const PASSPORT_GIVEN_INLINE_RE =
-  /(?:^|\b)(?:ad[ıi]?|adi|given\s*names?|first\s*names?|forename|prenoms?|prenom)(?:\s*[:\-]\s*|\s+)(.*)$/i;
+const PASSPORT_SURNAME_INLINE_RE = new RegExp(
+  `(?:^|\\b)(?:soyad[ıi]?|soyadi|surname|family\\s*name|last\\s*name|nom|apellidos?)${LABEL_VALUE_SEP}(.*)$`,
+  'i'
+);
+const PASSPORT_GIVEN_INLINE_RE = new RegExp(
+  `(?:^|\\b)(?:ad[ıi]?|adi|given\\s*names?|first\\s*names?|forename|prenoms?|prenom)${LABEL_VALUE_SEP}(.*)$`,
+  'i'
+);
 
 /** Arapça pasaport — اسم العائلة / اللقب etiketleri (Latin satır genelde altında). */
 const ARABIC_SURNAME_LABEL_RE =
@@ -199,6 +208,12 @@ export function extractTurkishNationalIdFromOcr(lines: string[]): string | null 
     if (d) return d;
   }
 
+  const allDigits = joined.replace(/[^0-9]/g, '');
+  for (let i = 0; i + 11 <= allDigits.length; i++) {
+    const d = normalizeTurkishIdDigits(allDigits.slice(i, i + 11));
+    if (d) return d;
+  }
+
   return null;
 }
 
@@ -206,11 +221,10 @@ export function extractTurkishNationalIdFromOcr(lines: string[]): string | null 
 export function shouldPreferKbsFrontIdParse(frontParsed: ParsedDocument): boolean {
   const digits = (frontParsed.documentNumber ?? '').replace(/\D/g, '');
   const hasTc = /^[1-9]\d{10}$/.test(digits);
+  if (hasTc) return true;
   const hasName =
-    isUsablePersonName(frontParsed.firstName) || isUsablePersonName(frontParsed.lastName);
-  if (frontParsed.documentType === 'id_card' && hasTc) return true;
-  if (hasTc && hasName) return true;
-  return false;
+    isUsablePersonName(frontParsed.firstName) && isUsablePersonName(frontParsed.lastName);
+  return frontParsed.documentType === 'id_card' && hasName;
 }
 
 function isoFromTrDate(m: RegExpMatchArray): string | null {
@@ -417,47 +431,159 @@ function inlineNameAfterLabel(line: string, kind: 'surname' | 'given'): string |
   return cleanPersonName(tail);
 }
 
+/** T.C. kimlik — "Soyadı/Surname YILMAZ" gibi etiket+değer aynı satır. */
+function combinedTurkishIdLabelValue(line: string, kind: 'surname' | 'given'): string | null {
+  const patterns =
+    kind === 'surname'
+      ? [
+          /^(?:soyad[ıi]?|soyadi)(?:\s*\/\s*surname)?\s+(.+)$/i,
+          /^(?:surname|family\s*name|last\s*name)\s+(.+)$/i,
+        ]
+      : [
+          /^(?:ad[ıi]?|adi)(?:\s*\/\s*(?:given\s*names?(?:\(s\))?|name(?:\(s\)|s)?))?\s+(.+)$/i,
+          /^(?:given\s*names?(?:\(s\))?|forename|first\s*names?)\s+(.+)$/i,
+        ];
+  for (const re of patterns) {
+    const m = line.trim().match(re);
+    if (m?.[1]) {
+      const v = cleanPersonName(m[1]);
+      if (v) return v;
+    }
+  }
+  return null;
+}
+
+function isTurkishIdSurnameLabelLine(line: string): boolean {
+  return (
+    isSurnameLabelLine(line) ||
+    SURNAME_LINE_LABEL_RE.test(line) ||
+    TR_ID_SURNAME_LABEL_RE.test(line)
+  );
+}
+
+function isTurkishIdGivenLabelLine(line: string): boolean {
+  if (isTurkishIdSurnameLabelLine(line)) return false;
+  return (
+    isGivenLabelLine(line) || GIVEN_LINE_LABEL_RE.test(line) || TR_ID_GIVEN_LABEL_RE.test(line)
+  );
+}
+
+function valueFromTurkishIdLabelLine(line: string, kind: 'surname' | 'given'): string | null {
+  return (
+    coalescePersonName(
+      combinedTurkishIdLabelValue(line, kind),
+      inlineNameAfterLabel(line, kind)
+    ) ?? null
+  );
+}
+
+/** Etiket aralığındaki tüm geçerli ad/soyad değerleri (sırayla). */
+function scanNameValuesInRange(
+  L: string[],
+  start: number,
+  end: number,
+  exclude?: string | null
+): string[] {
+  const excludeKey = exclude?.replace(/\s+/g, ' ').trim().toUpperCase() ?? '';
+  const out: string[] = [];
+  for (let j = start; j < Math.min(end, L.length); j++) {
+    const raw = (L[j] ?? '').trim();
+    if (!raw) continue;
+    if (isAnyNameLabelLine(raw) || isOtherFieldLabelLine(raw)) continue;
+    if (TC_RE.test(raw) || YKN_RE.test(raw) || DATE_RE.test(raw)) continue;
+    const v = cleanPersonName(raw);
+    if (!v) continue;
+    if (excludeKey && v.replace(/\s+/g, ' ').trim().toUpperCase() === excludeKey) continue;
+    out.push(v);
+  }
+  return out;
+}
+
 /**
- * T.C. kimlik ön yüz — "Soyadı/Surname" ve "Adı/Given Name(s)" etiketlerinin ALTINDAKİ değerler.
+ * T.C. kimlik ön yüz — kartta üstte soyadı, altta adı.
+ * Etiket satırı + alt satır veya "Soyadı/Surname YILMAZ" tek satır.
  */
 function extractTurkishIdCardNamesFromOcr(L: string[]): {
   firstName: string | null;
   lastName: string | null;
 } {
-  let firstName: string | null = null;
-  let lastName: string | null = null;
+  let surnameLabelIdx = -1;
+  let givenLabelIdx = -1;
 
   for (let i = 0; i < L.length; i++) {
     const line = L[i]!;
-    const surnameLabel =
-      isSurnameLabelLine(line) || SURNAME_LINE_LABEL_RE.test(line) || TR_ID_SURNAME_LABEL_RE.test(line);
-    if (!surnameLabel) continue;
-    lastName =
-      coalescePersonName(inlineNameAfterLabel(line, 'surname'), nextNameValueLine(L, i + 1)) ?? lastName;
-    if (lastName) break;
+    if (surnameLabelIdx < 0 && isTurkishIdSurnameLabelLine(line)) surnameLabelIdx = i;
+    if (givenLabelIdx < 0 && isTurkishIdGivenLabelLine(line)) givenLabelIdx = i;
   }
 
-  for (let i = 0; i < L.length; i++) {
-    const line = L[i]!;
-    const givenLabel =
-      isGivenLabelLine(line) || GIVEN_LINE_LABEL_RE.test(line) || TR_ID_GIVEN_LABEL_RE.test(line);
-    if (!givenLabel) continue;
-    const candidate = coalescePersonName(
-      inlineNameAfterLabel(line, 'given'),
-      nextNameValueLine(L, i + 1, lastName)
-    );
-    if (candidate) {
-      firstName = candidate;
-      break;
+  let lastName =
+    surnameLabelIdx >= 0 ? valueFromTurkishIdLabelLine(L[surnameLabelIdx]!, 'surname') : null;
+  let firstName =
+    givenLabelIdx >= 0 ? valueFromTurkishIdLabelLine(L[givenLabelIdx]!, 'given') : null;
+
+  // Kart düzeni: soyad etiketi her zaman ad etiketinin üstünde.
+  if (surnameLabelIdx >= 0 && givenLabelIdx > surnameLabelIdx) {
+    const between = scanNameValuesInRange(L, surnameLabelIdx + 1, givenLabelIdx, null);
+    const afterGiven = scanNameValuesInRange(L, givenLabelIdx + 1, givenLabelIdx + 6, null);
+
+    if (!lastName && between[0]) lastName = between[0];
+    if (!firstName && afterGiven.length === 1) firstName = afterGiven[0]!;
+
+    // Etiketler bitişik — değerler ad etiketinin altında üst üste: soyad, ad.
+    if (between.length === 0 && afterGiven.length >= 2) {
+      if (!lastName) lastName = afterGiven[0]!;
+      if (!firstName) firstName = afterGiven[1]!;
+    } else if (!firstName && afterGiven[0] && afterGiven[0] !== lastName) {
+      firstName = afterGiven[0]!;
+    }
+  } else if (surnameLabelIdx >= 0 && givenLabelIdx >= 0 && givenLabelIdx < surnameLabelIdx) {
+    // OCR etiket sırası karttan farklı — değer etiketinin hemen altında.
+    if (!firstName) firstName = nextNameValueLine(L, givenLabelIdx + 1, lastName);
+    if (!lastName) lastName = nextNameValueLine(L, surnameLabelIdx + 1, firstName);
+  } else {
+    if (!lastName && surnameLabelIdx >= 0) {
+      lastName = nextNameValueLine(L, surnameLabelIdx + 1, firstName);
+    }
+    if (!firstName && givenLabelIdx >= 0) {
+      firstName = nextNameValueLine(L, givenLabelIdx + 1, lastName);
     }
   }
 
-  return correctSwappedMrzNames({
-    firstName,
-    lastName,
-    nationalityCode: 'TUR',
-    issuingCountryCode: 'TUR',
-  });
+  // Etiket sırası ters ve hâlâ eksik — karttaki soyad→ad sırasıyla değerleri dene.
+  if (
+    surnameLabelIdx >= 0 &&
+    givenLabelIdx >= 0 &&
+    givenLabelIdx < surnameLabelIdx &&
+    (!isUsablePersonName(lastName) || !isUsablePersonName(firstName) || lastName === firstName)
+  ) {
+    const afterTopLabel = scanNameValuesInRange(
+      L,
+      Math.min(surnameLabelIdx, givenLabelIdx) + 1,
+      L.length,
+      null
+    );
+    if (afterTopLabel.length >= 2) {
+      lastName = afterTopLabel[0]!;
+      firstName = afterTopLabel[1]!;
+    }
+  }
+
+  if (!lastName || !firstName) {
+    const candidates = L.filter((l) => isNameCandidateLine(l))
+      .map((l) => cleanPersonName(l))
+      .filter((n): n is string => !!n && !isOcrLabelOnlyName(n));
+    const uniq = [...new Set(candidates)];
+    if (!lastName && !firstName && uniq.length >= 2) {
+      lastName = uniq[0]!;
+      firstName = uniq[1]!;
+    } else if (!lastName && uniq.length >= 1) {
+      lastName = uniq.find((n) => n !== firstName) ?? uniq[0]!;
+    } else if (!firstName && uniq.length >= 1) {
+      firstName = uniq.find((n) => n !== lastName) ?? null;
+    }
+  }
+
+  return { firstName, lastName };
 }
 
 function isNameCandidateLine(line: string): boolean {
@@ -680,13 +806,19 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
   if (!firstName || !lastName) {
     const joined = L.join('\n');
     if (!lastName) {
-      const m = joined.match(/(?:SOYAD[İI]?)\s*[:\s]*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i);
+      const m = joined.match(
+        /(?:SOYAD[İI]?)(?:\s*\/\s*SURNAME)?\s*[:\/\s]+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i
+      );
       lastName = cleanPersonName(m?.[1]) ?? lastName;
     }
     if (!firstName) {
       const m =
-        joined.match(/(?:^|\n)\s*AD[İI]?\s*[:\s]+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i) ??
-        joined.match(/(?:GIVEN\s*NAMES?)\s*[:\s]*([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i);
+        joined.match(
+          /(?:^|\n)\s*AD[İI]?(?:\s*\/\s*(?:GIVEN\s*NAME(?:\(S\))?|NAME(?:\(S\))?))?\s*[:\/\s]+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i
+        ) ??
+        joined.match(
+          /(?:GIVEN\s*NAME(?:S)?(?:\(S\))?)\s*[:\/\s]+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s'-]{1,40})/i
+        );
       firstName = cleanPersonName(m?.[1]) ?? firstName;
     }
   }
@@ -710,6 +842,7 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
     const trNames = extractTurkishIdCardNamesFromOcr(L);
     firstName = coalescePersonName(trNames.firstName, firstName);
     lastName = coalescePersonName(trNames.lastName, lastName);
+    return { firstName, lastName };
   }
 
   if (mrzNamesLookSwapped(firstName, lastName)) {
@@ -755,13 +888,20 @@ function resolveNames(lines: string[]): { firstName: string | null; lastName: st
 
   const labeled = extractNamesFromOcr(lines);
   if (isUsablePersonName(labeled.firstName) && isUsablePersonName(labeled.lastName)) {
-    return correctSwappedMrzNames(labeled);
+    return tc ? labeled : correctSwappedMrzNames(labeled);
   }
   const guessed = guessNamesFromLayout(lines);
   const merged = {
     firstName: coalescePersonName(labeled.firstName, guessed.firstName),
     lastName: coalescePersonName(labeled.lastName, guessed.lastName),
   };
+  if (tc) {
+    const trNames = extractTurkishIdCardNamesFromOcr(L);
+    return {
+      firstName: coalescePersonName(trNames.firstName, merged.firstName),
+      lastName: coalescePersonName(trNames.lastName, merged.lastName),
+    };
+  }
   return correctSwappedMrzNames(merged);
 }
 
