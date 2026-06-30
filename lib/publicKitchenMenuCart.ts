@@ -1,5 +1,7 @@
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import { coverImageUrl } from '@/lib/hotelKitchenMenu';
+import { resolveKitchenMenuItemName } from '@/lib/kitchenMenuI18n';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 export type PublicMenuCartLine = {
   itemId: string;
@@ -46,11 +48,15 @@ export function clearPublicMenuCart(orgSlug: string) {
   }
 }
 
-export function cartLineFromItem(item: HotelKitchenMenuItemWithImages, quantity = 1): PublicMenuCartLine {
+export function cartLineFromItem(
+  item: HotelKitchenMenuItemWithImages,
+  quantity = 1,
+  lang: PublicMenuLang = 'tr'
+): PublicMenuCartLine {
   return {
     itemId: item.id,
     quantity,
-    name: item.name,
+    name: resolveKitchenMenuItemName(item, lang),
     price: Number(item.price) || 0,
     coverUrl: coverImageUrl(item),
   };
@@ -83,14 +89,15 @@ export function cartQuantityFor(lines: PublicMenuCartLine[], itemId: string): nu
 
 export function syncPublicMenuCartLines(
   lines: PublicMenuCartLine[],
-  items: HotelKitchenMenuItemWithImages[]
+  items: HotelKitchenMenuItemWithImages[],
+  lang: PublicMenuLang = 'tr'
 ): PublicMenuCartLine[] {
   const byId = new Map(items.map((item) => [item.id, item]));
   return lines
     .map((line) => {
       const item = byId.get(line.itemId);
       if (!item) return null;
-      return cartLineFromItem(item, line.quantity);
+      return cartLineFromItem(item, line.quantity, lang);
     })
     .filter((line): line is PublicMenuCartLine => line != null);
 }

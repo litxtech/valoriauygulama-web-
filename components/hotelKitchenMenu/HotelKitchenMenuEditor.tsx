@@ -27,6 +27,7 @@ import {
   newHotelKitchenMenuItemId,
   upsertHotelKitchenMenuItemWithRetry,
 } from '@/lib/hotelKitchenMenu';
+import { buildKitchenMenuItemI18nFields } from '@/lib/kitchenMenuItemAutoTranslate';
 import { uploadHotelKitchenMenuImagesParallel } from '@/lib/hotelKitchenMenuUpload';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
@@ -53,6 +54,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
   const [images, setImages] = useState<PendingImage[]>([]);
   const [loading, setLoading] = useState(!!itemId);
   const [saving, setSaving] = useState(false);
+  const [translating, setTranslating] = useState(false);
 
   useEffect(() => {
     if (!itemId) return;
@@ -152,10 +154,24 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         localUris: pendingUris,
       });
 
+      setTranslating(true);
+      const i18n = await buildKitchenMenuItemI18nFields({
+        categoryTitle: cat,
+        name: nm,
+        description: description.trim() || null,
+      });
+      setTranslating(false);
+
       await upsertHotelKitchenMenuItemWithRetry({
         ...base,
         id: savedId,
         imageUrls: [...existingUrls, ...uploaded].slice(0, MAX_HOTEL_KITCHEN_MENU_IMAGES),
+        nameEn: i18n.nameEn,
+        nameAr: i18n.nameAr,
+        descriptionEn: i18n.descriptionEn,
+        descriptionAr: i18n.descriptionAr,
+        categoryTitleEn: i18n.categoryTitleEn,
+        categoryTitleAr: i18n.categoryTitleAr,
       });
 
       router.replace(backFallback as never);
@@ -172,6 +188,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
       Alert.alert(t('error'), hotelKitchenMenuSaveUserMessage(e));
     } finally {
       setSaving(false);
+      setTranslating(false);
     }
   };
 
@@ -219,6 +236,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         />
 
         <Text style={styles.label}>{t('hotelKitchenMenuNameLabel')}</Text>
+        <Text style={styles.hint}>{t('hotelKitchenMenuAutoTranslateHint')}</Text>
         <TextInput
           style={styles.input}
           value={name}
@@ -285,6 +303,9 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
             <Text style={styles.saveBtnText}>{isEdit ? t('save') : t('hotelKitchenMenuCreate')}</Text>
           )}
         </TouchableOpacity>
+        {translating ? (
+          <Text style={styles.translatingHint}>{t('hotelKitchenMenuTranslating')}</Text>
+        ) : null}
 
         {isEdit ? (
           <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
@@ -349,4 +370,5 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   deleteBtn: { marginTop: 16, alignItems: 'center', paddingVertical: 12 },
   deleteBtnText: { color: '#ef4444', fontWeight: '600' },
+  translatingHint: { marginTop: 10, textAlign: 'center', fontSize: 12, color: theme.colors.textMuted },
 });

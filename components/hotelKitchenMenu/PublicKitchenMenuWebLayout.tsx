@@ -33,6 +33,11 @@ import { cartItemCount, cartQuantityFor, cartTotal } from '@/lib/publicKitchenMe
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import type { ResolvedKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
 import { resolveKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
+import {
+  localizedCategoryLabel,
+  localizedProductLabel,
+  resolveKitchenMenuCategoryTitle,
+} from '@/lib/kitchenMenuI18n';
 
 type CategoryChip = { title: string; count: number };
 type ProductChip = { name: string; count: number };
@@ -201,7 +206,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
               onPress={() => pickCategory(categoryFilter === c.title ? null : c.title)}
             >
               <Text style={[styles.sidebarChipText, categoryFilter === c.title && styles.sidebarChipTextOn]}>
-                {c.title}
+                {localizedCategoryLabel(items, c.title, menuLang)}
               </Text>
               <Text style={[styles.sidebarCount, categoryFilter === c.title && styles.sidebarChipTextOn]}>{c.count}</Text>
             </TouchableOpacity>
@@ -221,7 +226,9 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                 setTagFilter(null);
               }}
             >
-              <Text style={[styles.sidebarChipText, productFilter === p.name && styles.sidebarChipTextOn]}>{p.name}</Text>
+              <Text style={[styles.sidebarChipText, productFilter === p.name && styles.sidebarChipTextOn]}>
+                {localizedProductLabel(items, p.name, menuLang)}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -322,7 +329,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                 style={[styles.mobileChip, categoryFilter === c.title && { backgroundColor: navy }]}
                 onPress={() => pickCategory(categoryFilter === c.title ? null : c.title)}
               >
-                <Text style={[styles.mobileChipText, categoryFilter === c.title && styles.mobileChipTextOn]}>{c.title}</Text>
+                <Text style={[styles.mobileChipText, categoryFilter === c.title && styles.mobileChipTextOn]}>{localizedCategoryLabel(items, c.title, menuLang)}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -378,6 +385,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                             layout="featured"
                             themeAccent={accent}
                             themeNavy={navy}
+                            displayLang={menuLang}
                             onPress={() => setDetailItem(item)}
                             onAddToCart={() => onAddToCart(item)}
                             cartQuantity={cartQuantityFor(cartLines, item.id)}
@@ -392,7 +400,9 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                   <View key={grp.title || 'all'} style={styles.block}>
                     {grp.title ? (
                       <View style={styles.catHead}>
-                        <Text style={[styles.blockTitle, { color: navy }]}>{grp.title}</Text>
+                        <Text style={[styles.blockTitle, { color: navy }]}>
+                          {resolveKitchenMenuCategoryTitle(grp.items[0]!, menuLang)}
+                        </Text>
                         <View style={[styles.catLine, { backgroundColor: `${accent}55` }]} />
                         <Text style={styles.catCount}>{grp.items.length}</Text>
                       </View>
@@ -405,6 +415,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                             layout="premium"
                             themeAccent={accent}
                             themeNavy={navy}
+                            displayLang={menuLang}
                             onPress={() => setDetailItem(item)}
                             onAddToCart={() => onAddToCart(item)}
                             cartQuantity={cartQuantityFor(cartLines, item.id)}
@@ -432,6 +443,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         onClose={() => setDetailItem(null)}
         onAddToCart={detailItem ? () => onAddToCart(detailItem) : undefined}
         cartQuantity={detailItem ? cartQuantityFor(cartLines, detailItem.id) : 0}
+        displayLang={menuLang}
       />
 
       <PublicKitchenMenuCartBar

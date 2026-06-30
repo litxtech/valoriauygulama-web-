@@ -6,6 +6,12 @@ export type HotelKitchenMenuItemRow = {
   category_title: string;
   name: string;
   description: string | null;
+  name_en?: string | null;
+  name_ar?: string | null;
+  description_en?: string | null;
+  description_ar?: string | null;
+  category_title_en?: string | null;
+  category_title_ar?: string | null;
   price: number;
   served_in_hotel_restaurant: boolean;
   is_available: boolean;

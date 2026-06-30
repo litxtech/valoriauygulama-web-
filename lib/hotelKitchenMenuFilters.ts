@@ -148,12 +148,22 @@ export function filterMenuItems<T extends HotelKitchenMenuItemRow>(params: {
 
   const q = params.search.trim().toLowerCase();
   if (q) {
-    list = list.filter(
-      (i) =>
-        i.name.toLowerCase().includes(q) ||
-        i.category_title.toLowerCase().includes(q) ||
-        (i.description ?? '').toLowerCase().includes(q)
-    );
+    list = list.filter((i) => {
+      const haystack = [
+        i.name,
+        i.category_title,
+        i.description ?? '',
+        i.name_en ?? '',
+        i.name_ar ?? '',
+        i.category_title_en ?? '',
+        i.category_title_ar ?? '',
+        i.description_en ?? '',
+        i.description_ar ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
   }
 
   return list;

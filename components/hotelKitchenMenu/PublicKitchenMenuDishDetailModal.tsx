@@ -21,6 +21,12 @@ import {
   resolveLightboxUrls,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import {
+  resolveKitchenMenuCategoryTitle,
+  resolveKitchenMenuItemDescription,
+  resolveKitchenMenuItemName,
+} from '@/lib/kitchenMenuI18n';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 
@@ -30,6 +36,7 @@ type Props = {
   onClose: () => void;
   onAddToCart?: () => void;
   cartQuantity?: number;
+  displayLang?: PublicMenuLang;
 };
 
 export function PublicKitchenMenuDishDetailModal({
@@ -38,6 +45,7 @@ export function PublicKitchenMenuDishDetailModal({
   onClose,
   onAddToCart,
   cartQuantity = 0,
+  displayLang = 'tr',
 }: Props) {
   const { t } = useTranslation();
   const { width, height } = useWindowDimensions();
@@ -83,7 +91,9 @@ export function PublicKitchenMenuDishDetailModal({
 
   const activeUrl = galleryUrls[photoIndex] ?? galleryUrls[0] ?? null;
   const catColor = item ? categoryAccentColor(item.category_title) : menuUi.accent;
-  const desc = (item?.description ?? '').trim();
+  const displayName = item ? resolveKitchenMenuItemName(item, displayLang) : '';
+  const displayCategory = item ? resolveKitchenMenuCategoryTitle(item, displayLang) : '';
+  const desc = (item ? resolveKitchenMenuItemDescription(item, displayLang) : null)?.trim() ?? '';
   const photoCount = galleryUrls.length;
   const galleryH = isWide ? modalH - 120 : Math.min(280, modalH * 0.42);
 
@@ -176,10 +186,10 @@ export function PublicKitchenMenuDishDetailModal({
             >
               <View style={[styles.categoryPill, { backgroundColor: `${catColor}18`, borderColor: `${catColor}55` }]}>
                 <View style={[styles.categoryDot, { backgroundColor: catColor }]} />
-                <Text style={[styles.categoryText, { color: catColor }]}>{item.category_title}</Text>
+                <Text style={[styles.categoryText, { color: catColor }]}>{displayCategory}</Text>
               </View>
 
-              <Text style={styles.dishName}>{item.name}</Text>
+              <Text style={styles.dishName}>{displayName}</Text>
 
               <View style={styles.priceRow}>
                 <Text style={styles.price}>{formatMenuPrice(item.price)}</Text>

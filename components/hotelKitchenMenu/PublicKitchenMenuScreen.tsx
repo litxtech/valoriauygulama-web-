@@ -52,6 +52,11 @@ import {
   readPublicMenuLang,
   type PublicMenuLang,
 } from '@/lib/publicKitchenMenuLang';
+import {
+  localizedCategoryLabel,
+  localizedProductLabel,
+  resolveKitchenMenuCategoryTitle,
+} from '@/lib/kitchenMenuI18n';
 import { resolveKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
 import {
   fetchPublicKitchenMenuOrderByPayment,
@@ -156,8 +161,8 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   }, []);
 
   const handleAddToCart = useCallback((item: HotelKitchenMenuItemWithImages) => {
-    setCartLines((prev) => mergeCartLine(prev, cartLineFromItem(item, 1)));
-  }, []);
+    setCartLines((prev) => mergeCartLine(prev, cartLineFromItem(item, 1, menuLang)));
+  }, [menuLang]);
 
   const handleUpdateCartQuantity = useCallback((itemId: string, quantity: number) => {
     setCartLines((prev) => setCartQuantity(prev, itemId, quantity));
@@ -176,14 +181,19 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
       setOrg(bundle.org);
       setItems(bundle.items);
       setNotFound(false);
-      setCartLines((prev) => syncPublicMenuCartLines(prev, bundle.items));
+      setCartLines((prev) => syncPublicMenuCartLines(prev, bundle.items, menuLang));
       scheduleMenuImagePrefetch(bundle.items);
       if (isWeb && typeof document !== 'undefined') {
         document.title = `${bundle.org.name} — ${t('hotelKitchenMenuHeroTitle')}`;
       }
     },
-    [t, isWeb]
+    [t, isWeb, menuLang]
   );
+
+  useEffect(() => {
+    if (!items.length) return;
+    setCartLines((prev) => syncPublicMenuCartLines(prev, items, menuLang));
+  }, [menuLang, items]);
 
   const bootstrap = useCallback(
     async (opts?: { silent?: boolean; forceNetwork?: boolean; cacheOnly?: boolean }) => {
@@ -480,7 +490,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
               onPress={() => pickCategory(categoryFilter === c.title ? null : c.title)}
             >
               <Text style={[styles.catChipText, categoryFilter === c.title && styles.catChipTextOn]}>
-                {c.title}
+                {localizedCategoryLabel(items, c.title, menuLang)}
               </Text>
               <View style={[styles.countBadge, categoryFilter === c.title && styles.countBadgeOn]}>
                 <Text style={[styles.countBadgeText, categoryFilter === c.title && styles.countBadgeTextOn]}>
@@ -506,7 +516,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
                 }}
               >
                 <Text style={[styles.productChipText, productFilter === p.name && styles.productChipTextOn]}>
-                  {p.name}
+                  {localizedProductLabel(items, p.name, menuLang)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -593,7 +603,9 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
                 {grp.title ? (
                   <View style={styles.categoryHead}>
                     <View style={styles.categoryDot} />
-                    <Text style={styles.categoryTitle}>{grp.title}</Text>
+                    <Text style={styles.categoryTitle}>
+                      {resolveKitchenMenuCategoryTitle(grp.items[0]!, menuLang)}
+                    </Text>
                     <View style={styles.categoryLine} />
                   </View>
                 ) : null}
@@ -617,6 +629,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
                       <PublicKitchenMenuDishCard
                         item={item}
                         layout={isWeb ? 'compact' : 'list'}
+                        displayLang={menuLang}
                         onPress={() => openImage(item)}
                         onImagePress={() => openImage(item)}
                       />

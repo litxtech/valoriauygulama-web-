@@ -9,6 +9,13 @@ import {
   formatMenuPrice,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import {
+  resolveKitchenMenuCategoryTitle,
+  resolveKitchenMenuItemDescription,
+  resolveKitchenMenuItemName,
+} from '@/lib/kitchenMenuI18n';
+import { appLangCode } from '@/lib/translateText';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type Props = {
   item: HotelKitchenMenuItemWithImages;
@@ -34,9 +41,15 @@ export function HotelKitchenMenuListCard({
   const { t } = useTranslation();
   const cover = coverImageUrl(item);
   const isManage = variant === 'manage';
+  const rawLang = appLangCode();
+  const displayLang: PublicMenuLang =
+    !isManage && (rawLang === 'en' || rawLang === 'ar') ? rawLang : 'tr';
+  const displayName = resolveKitchenMenuItemName(item, displayLang);
+  const displayCategory = resolveKitchenMenuCategoryTitle(item, displayLang);
+  const manageDesc = (item.description ?? '').trim();
+  const browseDesc = (resolveKitchenMenuItemDescription(item, displayLang) ?? '').trim();
   const photoCount = item.image_count ?? item.images.length;
   const catColor = categoryAccentColor(item.category_title);
-  const desc = (item.description ?? '').trim();
   const thumbSize = isManage ? 72 : 76;
 
   if (isManage) {
@@ -63,9 +76,9 @@ export function HotelKitchenMenuListCard({
           <Text style={styles.manageName} numberOfLines={2}>
             {item.name}
           </Text>
-          {desc ? (
+          {manageDesc ? (
             <Text style={styles.manageDesc} numberOfLines={2}>
-              {desc}
+              {manageDesc}
             </Text>
           ) : (
             <Text style={styles.manageDescEmpty}>{t('hotelKitchenMenuNoDescription')}</Text>
@@ -131,14 +144,14 @@ export function HotelKitchenMenuListCard({
 
       <View style={styles.browseBody}>
         <Text style={[styles.browseCategory, { color: catColor }]} numberOfLines={1}>
-          {item.category_title}
+          {displayCategory}
         </Text>
         <Text style={styles.browseName} numberOfLines={2}>
-          {item.name}
+          {displayName}
         </Text>
-        {desc ? (
+        {browseDesc ? (
           <Text style={styles.browseDesc} numberOfLines={1}>
-            {desc}
+            {browseDesc}
           </Text>
         ) : null}
         <View style={styles.browseFooter}>

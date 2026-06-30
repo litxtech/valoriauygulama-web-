@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { invalidatePublicAppOriginCache } from '@/lib/appPublicUrl';
+import { buildKitchenMenuItemI18nFields } from '@/lib/kitchenMenuItemAutoTranslate';
 import {
   extractErrorMessage,
   isSupabaseUnavailableError,
@@ -50,6 +51,12 @@ function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImage
     category_title: raw.category_title as string,
     name: raw.name as string,
     description: (raw.description as string | null) ?? null,
+    name_en: (raw.name_en as string | null) ?? null,
+    name_ar: (raw.name_ar as string | null) ?? null,
+    description_en: (raw.description_en as string | null) ?? null,
+    description_ar: (raw.description_ar as string | null) ?? null,
+    category_title_en: (raw.category_title_en as string | null) ?? null,
+    category_title_ar: (raw.category_title_ar as string | null) ?? null,
     price: Number(raw.price),
     served_in_hotel_restaurant: !!raw.served_in_hotel_restaurant,
     is_available: !!raw.is_available,
@@ -74,6 +81,12 @@ function mapDetailRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithIma
     category_title: raw.category_title as string,
     name: raw.name as string,
     description: (raw.description as string | null) ?? null,
+    name_en: (raw.name_en as string | null) ?? null,
+    name_ar: (raw.name_ar as string | null) ?? null,
+    description_en: (raw.description_en as string | null) ?? null,
+    description_ar: (raw.description_ar as string | null) ?? null,
+    category_title_en: (raw.category_title_en as string | null) ?? null,
+    category_title_ar: (raw.category_title_ar as string | null) ?? null,
     price: Number(raw.price),
     served_in_hotel_restaurant: !!raw.served_in_hotel_restaurant,
     is_available: !!raw.is_available,
@@ -85,6 +98,15 @@ function mapDetailRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithIma
     images: imgs,
   };
 }
+
+const I18N_SELECT = `
+  name_en,
+  name_ar,
+  description_en,
+  description_ar,
+  category_title_en,
+  category_title_ar
+`;
 
 const LIST_SELECT = `
   id,
@@ -99,7 +121,8 @@ const LIST_SELECT = `
   cover_image_url,
   image_count,
   created_at,
-  updated_at
+  updated_at,
+  ${I18N_SELECT}
 `;
 
 const DETAIL_SELECT = `
@@ -253,6 +276,12 @@ export type UpsertHotelKitchenMenuInput = {
   isAvailable: boolean;
   sortOrder?: number;
   imageUrls: string[];
+  nameEn?: string | null;
+  nameAr?: string | null;
+  descriptionEn?: string | null;
+  descriptionAr?: string | null;
+  categoryTitleEn?: string | null;
+  categoryTitleAr?: string | null;
 };
 
 export async function upsertHotelKitchenMenuItem(input: UpsertHotelKitchenMenuInput): Promise<string> {
@@ -267,6 +296,12 @@ export async function upsertHotelKitchenMenuItem(input: UpsertHotelKitchenMenuIn
     p_is_available: input.isAvailable,
     p_sort_order: input.sortOrder ?? 0,
     p_image_urls: input.imageUrls.slice(0, MAX_HOTEL_KITCHEN_MENU_IMAGES),
+    p_name_en: input.nameEn?.trim() || null,
+    p_name_ar: input.nameAr?.trim() || null,
+    p_description_en: input.descriptionEn?.trim() || null,
+    p_description_ar: input.descriptionAr?.trim() || null,
+    p_category_title_en: input.categoryTitleEn?.trim() || null,
+    p_category_title_ar: input.categoryTitleAr?.trim() || null,
   });
   if (error) {
     const msg = error.message ?? '';
@@ -353,6 +388,11 @@ export async function updateHotelKitchenMenuItemBasics(input: {
   if (row.organization_id !== input.organizationId) throw new Error('Yetkisiz işlem');
 
   const imageUrls = row.images.map((im) => im.image_url).filter(Boolean);
+  const i18n = await buildKitchenMenuItemI18nFields({
+    categoryTitle: row.category_title,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+  });
   await upsertHotelKitchenMenuItemWithRetry({
     id: input.id,
     organizationId: input.organizationId,
@@ -364,6 +404,12 @@ export async function updateHotelKitchenMenuItemBasics(input: {
     isAvailable: row.is_available,
     sortOrder: row.sort_order,
     imageUrls,
+    nameEn: i18n.nameEn,
+    nameAr: i18n.nameAr,
+    descriptionEn: i18n.descriptionEn,
+    descriptionAr: i18n.descriptionAr,
+    categoryTitleEn: i18n.categoryTitleEn,
+    categoryTitleAr: i18n.categoryTitleAr,
   });
 }
 

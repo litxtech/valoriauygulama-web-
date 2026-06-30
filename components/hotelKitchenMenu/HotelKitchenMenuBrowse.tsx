@@ -38,6 +38,9 @@ import {
   type MenuSectionFilter,
 } from '@/lib/hotelKitchenMenuFilters';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
+import { resolveKitchenMenuCategoryTitle } from '@/lib/kitchenMenuI18n';
+import { appLangCode } from '@/lib/translateText';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type MenuSection = { title: string; data: HotelKitchenMenuItemWithImages[] };
 
@@ -80,6 +83,8 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [ordersOpen, setOrdersOpen] = useState(false);
+  const rawLang = appLangCode();
+  const menuLang: PublicMenuLang = rawLang === 'en' || rawLang === 'ar' ? rawLang : 'tr';
 
   const applyRows = useCallback(
     (rows: HotelKitchenMenuItemWithImages[], favIds?: Set<string>) => {
@@ -411,7 +416,9 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
           sec.title ? (
             <View style={styles.sectionHeader}>
               <View style={styles.sectionLine} />
-              <Text style={styles.sectionTitle}>{sec.title}</Text>
+              <Text style={styles.sectionTitle}>
+                {sec.data[0] ? resolveKitchenMenuCategoryTitle(sec.data[0], mode === 'guest' ? menuLang : 'tr') : sec.title}
+              </Text>
               <View style={styles.sectionLine} />
             </View>
           ) : null

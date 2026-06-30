@@ -30,6 +30,13 @@ import { requestKitchenMenuItemOrder } from '@/lib/kitchenMenuGuestOrder';
 import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import {
+  resolveKitchenMenuCategoryTitle,
+  resolveKitchenMenuItemDescription,
+  resolveKitchenMenuItemName,
+} from '@/lib/kitchenMenuI18n';
+import { appLangCode } from '@/lib/translateText';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type Props = {
   itemId: string;
@@ -123,6 +130,12 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
   const cover = coverImageUrl(item);
   const thumbs = item.images;
   const catColor = categoryAccentColor(item.category_title);
+  const rawLang = appLangCode();
+  const displayLang: PublicMenuLang =
+    mode === 'guest' && (rawLang === 'en' || rawLang === 'ar') ? rawLang : 'tr';
+  const displayName = resolveKitchenMenuItemName(item, displayLang);
+  const displayCategory = resolveKitchenMenuCategoryTitle(item, displayLang);
+  const displayDesc = resolveKitchenMenuItemDescription(item, displayLang);
 
   return (
     <>
@@ -155,10 +168,10 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
 
         <View style={styles.sheet}>
           <View style={[styles.catPill, { backgroundColor: catColor }]}>
-            <Text style={styles.catPillText}>{item.category_title}</Text>
+            <Text style={styles.catPillText}>{displayCategory}</Text>
           </View>
 
-          <Text style={styles.name}>{item.name}</Text>
+          <Text style={styles.name}>{displayName}</Text>
 
           <View style={styles.priceRow}>
             <View style={styles.priceMain}>
@@ -194,10 +207,10 @@ export function HotelKitchenMenuDetail({ itemId, mode }: Props) {
             </ScrollView>
           ) : null}
 
-          {item.description ? (
+          {displayDesc ? (
             <View style={styles.descCard}>
               <Text style={styles.descTitle}>{t('hotelKitchenMenuDescLabel')}</Text>
-              <Text style={styles.desc}>{item.description}</Text>
+              <Text style={styles.desc}>{displayDesc}</Text>
             </View>
           ) : mode === 'staff' ? (
             <View style={styles.descCard}>

@@ -16,6 +16,12 @@ import {
   resolveLightboxUrlsSync,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
+import {
+  resolveKitchenMenuCategoryTitle,
+  resolveKitchenMenuItemDescription,
+  resolveKitchenMenuItemName,
+} from '@/lib/kitchenMenuI18n';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type Layout = 'grid' | 'list' | 'compact' | 'premium' | 'featured';
 
@@ -30,6 +36,7 @@ type Props = {
   themeNavy?: string;
   /** Personel — kart notunu (açıklama) canlı karttan düzenle */
   onEditNote?: () => void;
+  displayLang?: PublicMenuLang;
 };
 
 const COMPACT_THUMB = Platform.OS === 'web' ? 72 : 64;
@@ -50,19 +57,25 @@ export function PublicKitchenMenuDishCard({
   themeAccent = menuUi.accent,
   themeNavy = menuUi.navy,
   onEditNote,
+  displayLang = 'tr',
 }: Props) {
   const { t } = useTranslation();
   const [imageW, setImageW] = useState(0);
   const imageUrls = useItemImageUrls(item);
   const cover = coverImageUrl(item);
   const catColor = categoryAccentColor(item.category_title);
+  const displayName = useMemo(() => resolveKitchenMenuItemName(item, displayLang), [item, displayLang]);
+  const displayCategory = useMemo(
+    () => resolveKitchenMenuCategoryTitle(item, displayLang),
+    [item, displayLang]
+  );
   const photoCount = item.image_count ?? imageUrls.length;
   const isFeatured = layout === 'featured';
   const isPremium = layout === 'premium';
   const isCompact = layout === 'compact';
   const isGrid = layout === 'grid' && Platform.OS === 'web' && !isCompact && !isPremium && !isFeatured;
   const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid' && !isPremium && !isFeatured);
-  const desc = (item.description ?? '').trim();
+  const desc = (resolveKitchenMenuItemDescription(item, displayLang) ?? '').trim();
   const premiumImageH = imageW > 0 ? Math.round(imageW / PREMIUM_IMAGE_RATIO) : undefined;
 
   const noteEditBtn = onEditNote ? (
@@ -114,10 +127,10 @@ export function PublicKitchenMenuDishCard({
           <LinearGradient colors={['transparent', 'rgba(5, 8, 16, 0.88)']} style={styles.featuredFade} pointerEvents="none" />
           <View style={[styles.featuredAccent, { backgroundColor: themeAccent }]} pointerEvents="none" />
           <View style={[styles.featuredCat, { borderColor: `${themeAccent}88` }]} pointerEvents="none">
-            <Text style={styles.featuredCatText} numberOfLines={1}>{item.category_title}</Text>
+            <Text style={styles.featuredCatText} numberOfLines={1}>{displayCategory}</Text>
           </View>
           <View style={styles.featuredBottom} pointerEvents="none">
-            <Text style={styles.featuredName} numberOfLines={2}>{item.name}</Text>
+            <Text style={styles.featuredName} numberOfLines={2}>{displayName}</Text>
             <Text style={[styles.featuredPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
           </View>
         </View>
@@ -162,12 +175,12 @@ export function PublicKitchenMenuDishCard({
             </View>
           ) : null}
           <View style={[styles.catPill, { backgroundColor: catColor }]} pointerEvents="none">
-            <Text style={styles.catPillText} numberOfLines={1}>{item.category_title}</Text>
+            <Text style={styles.catPillText} numberOfLines={1}>{displayCategory}</Text>
           </View>
         </View>
 
         <View style={styles.premiumBody}>
-          <Text style={[styles.premiumName, { color: themeNavy }]} numberOfLines={2}>{item.name}</Text>
+          <Text style={[styles.premiumName, { color: themeNavy }]} numberOfLines={2}>{displayName}</Text>
           {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
           <View style={styles.premiumFooter}>
             <Text style={[styles.premiumPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
@@ -222,8 +235,8 @@ export function PublicKitchenMenuDishCard({
           )}
         </Pressable>
         <View style={styles.compactBody}>
-          <Text style={[styles.compactCategory, { color: catColor }]} numberOfLines={1}>{item.category_title}</Text>
-          <Text style={styles.compactName} numberOfLines={2}>{item.name}</Text>
+          <Text style={[styles.compactCategory, { color: catColor }]} numberOfLines={1}>{displayCategory}</Text>
+          <Text style={styles.compactName} numberOfLines={2}>{displayName}</Text>
           {desc ? <Text style={styles.compactDesc} numberOfLines={2}>{desc}</Text> : null}
           <Text style={[styles.compactPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
           {noteEditBtn}
@@ -253,7 +266,7 @@ export function PublicKitchenMenuDishCard({
         )}
       </Pressable>
       <View style={styles.body}>
-        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
+        <Text style={styles.name} numberOfLines={2}>{displayName}</Text>
         {desc ? <Text style={styles.desc} numberOfLines={2}>{desc}</Text> : null}
         <Text style={styles.price}>{formatMenuPrice(item.price)}</Text>
         {noteEditBtn}
