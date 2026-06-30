@@ -24,7 +24,8 @@ const ORDER_SELECT = `
 `;
 
 function mapRow(raw: Record<string, unknown>): KitchenMenuOrderRecord {
-  const items = (raw.kitchen_menu_order_items as KitchenMenuOrderRecord['items'] | undefined) ?? [];
+  const itemsRaw = raw.items ?? raw.kitchen_menu_order_items;
+  const items = (itemsRaw as KitchenMenuOrderRecord['items'] | undefined) ?? [];
   return {
     id: raw.id as string,
     org_slug: (raw.org_slug as string | undefined) ?? undefined,
@@ -53,8 +54,19 @@ export type StaffKitchenMenuOrdersBundle = {
   paid: KitchenMenuOrderRecord[];
 };
 
-/** Mutfak paneli — ödeme bekleyen (sepet/checkout) ve ödenen dijital menü siparişleri. */
-export async function fetchStaffKitchenMenuOrders(
+function parseBundle(raw: unknown): StaffKitchenMenuOrdersBundle {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { pending: [], paid: [] };
+  }
+  const o = raw as { pending?: unknown; paid?: unknown };
+  const pending = Array.isArray(o.pending)
+    ? o.pending.map((row) => mapRow(row as Record<string, unknown>))
+    : [];
+  const paid = Array.isArray(o.paid) ? o.paid.map((row) => mapRow(row as Record<string, unknown>)) : [];
+  return { pending, paid };
+}
+
+async function fetchStaffKitchenMenuOrdersDirect(
   organizationId: string,
   opts?: { paidLimit?: number; pendingHours?: number }
 ): Promise<StaffKitchenMenuOrdersBundle> {
@@ -76,7 +88,6 @@ export async function fetchStaffKitchenMenuOrders(
       .select(ORDER_SELECT)
       .eq('organization_id', organizationId)
       .eq('status', 'paid')
-      .order('paid_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(paidLimit),
   ]);
@@ -88,6 +99,29 @@ export async function fetchStaffKitchenMenuOrders(
     pending: ((pendingRes.data ?? []) as Record<string, unknown>[]).map(mapRow),
     paid: ((paidRes.data ?? []) as Record<string, unknown>[]).map(mapRow),
   };
+}
+
+/** Mutfak paneli — ödeme bekleyen (sepet/checkout) ve ödenen dijital menü siparişleri. */
+export async function fetchStaffKitchenMenuOrders(
+  organizationId: string,
+  opts?: { paidLimit?: number; pendingHours?: number }
+): Promise<StaffKitchenMenuOrdersBundle> {
+  const { data, error } = await supabase.rpc('get_staff_kitchen_menu_orders', {
+    p_organization_id: organizationId,
+    p_paid_limit: opts?.paidLimit ?? 40,
+    p_pending_hours: opts?.pendingHours ?? 24,
+  });
+
+  if (!error && data) {
+    return parseBundle(data);
+  }
+
+  const msg = error?.message ?? '';
+  if (/get_staff_kitchen_menu_orders|does not exist|schema cache/i.test(msg)) {
+    return fetchStaffKitchenMenuOrdersDirect(organizationId, opts);
+  }
+
+  throw new Error(msg || 'Siparişler yüklenemedi');
 }
 
 export function kitchenMenuOrderLocation(order: KitchenMenuOrderRecord): string | null {

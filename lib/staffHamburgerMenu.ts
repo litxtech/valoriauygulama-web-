@@ -18,6 +18,7 @@ import {
   canManageStaffMealMenu,
   canManageHotelKitchenMenu,
   canAccessKitchenOps,
+  canViewStaffKitchenMenuOrders,
   canAccessKitchenReceptionAccounting,
   isKitchenStaffMember,
   hasTechnicalAssetsStaffAccess,
@@ -231,8 +232,8 @@ export function buildStaffHamburgerMenuSections(
     });
   }
 
-  // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
-  if (isKitchenStaff) {
+  // —— Dijital menü siparişleri (mutfak + menü yöneticisi) ——
+  if (canViewStaffKitchenMenuOrders(staff)) {
     push('kitchen', {
       id: 'kitchen_menu_orders',
       label: t('staffKitchenMenuOrdersTitle'),
@@ -240,6 +241,10 @@ export function buildStaffHamburgerMenuSections(
       icon: 'bag-handle-outline',
       accent: '#d97706',
     });
+  }
+
+  // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
+  if (isKitchenStaff) {
     push('kitchen', {
       id: 'kitchen_ops',
       label: t('staffKitchenOpsTitle'),
@@ -1022,7 +1027,7 @@ export function buildStaffHamburgerMenuLayout(
 
   const isKitchenStaff = staff ? isKitchenStaffMember(staff) && canAccessKitchenOps(staff) : false;
   const menuOrdersItem = all.find((i) => i.id === 'kitchen_menu_orders');
-  if (isKitchenStaff && menuOrdersItem && !used.has(menuOrdersItem.id)) {
+  if (staff && canViewStaffKitchenMenuOrders(staff) && menuOrdersItem && !used.has(menuOrdersItem.id)) {
     hubs = [menuOrdersItem, ...hubs];
     used.add(menuOrdersItem.id);
   }

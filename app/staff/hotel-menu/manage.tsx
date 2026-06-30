@@ -173,6 +173,15 @@ export default function StaffHotelMenuManageScreen() {
           <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
         </TouchableOpacity>
         <TouchableOpacity
+          style={styles.themeBtn}
+          onPress={() => router.push('/staff/kitchen-ops/menu-orders')}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="bag-handle-outline" size={20} color={menuUi.navy} />
+          <Text style={styles.themeBtnText}>{t('staffKitchenMenuOrdersTitle')}</Text>
+          <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+        </TouchableOpacity>
+        <TouchableOpacity
           style={styles.addBtn}
           onPress={() => router.push('/staff/hotel-menu/edit')}
           activeOpacity={0.88}

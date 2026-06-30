@@ -100,6 +100,7 @@ export function StaffKitchenMenuOrdersScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [bundle, setBundle] = useState<StaffKitchenMenuOrdersBundle>({ pending: [], paid: [] });
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -108,10 +109,11 @@ export function StaffKitchenMenuOrdersScreen() {
     try {
       const rows = await fetchStaffKitchenMenuOrders(orgId);
       setBundle(rows);
-    } catch {
-      /* ağ — mevcut listeyi koru */
+      setLoadError(null);
+    } catch (e) {
+      setLoadError((e as Error)?.message ?? t('staffKitchenMenuOrdersLoadError'));
     }
-  }, [orgId]);
+  }, [orgId, t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -121,7 +123,10 @@ export function StaffKitchenMenuOrdersScreen() {
       }
       setLoading(true);
       void load().finally(() => setLoading(false));
-      return undefined;
+      const poll = setInterval(() => {
+        void load();
+      }, 30_000);
+      return () => clearInterval(poll);
     }, [allowed, orgId, load])
   );
 
@@ -168,7 +173,36 @@ export function StaffKitchenMenuOrdersScreen() {
       </View>
       <Text style={styles.lead}>{t('staffKitchenMenuOrdersLead')}</Text>
 
+      {loadError ? (
+        <View style={styles.errorBanner}>
+          <Ionicons name="warning-outline" size={18} color="#b45309" />
+          <Text style={styles.errorText}>{loadError}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.sectionHead}>
+        <Ionicons name="checkmark-circle-outline" size={18} color={menuUi.liveGreen} />
+        <Text style={styles.sectionTitle}>{t('staffKitchenMenuOrdersPaidSection')}</Text>
+        {paidCount > 0 ? (
+          <View style={[styles.countBadge, styles.countBadgePaid]}>
+            <Text style={[styles.countBadgeText, styles.countBadgeTextPaid]}>{paidCount}</Text>
+          </View>
+        ) : null}
+      </View>
+      {paidCount === 0 ? (
+        <Text style={styles.emptySection}>{t('staffKitchenMenuOrdersPaidEmpty')}</Text>
+      ) : (
+        bundle.paid.map((order) => (
+          <OrderCard
+            key={order.id}
+            order={order}
+            expanded={expandedId === order.id}
+            onToggle={() => setExpandedId((id) => (id === order.id ? null : order.id))}
+          />
+        ))
+      )}
+
+      <View style={[styles.sectionHead, styles.sectionHeadSpaced]}>
         <Ionicons name="cart-outline" size={18} color="#d97706" />
         <Text style={styles.sectionTitle}>{t('staffKitchenMenuOrdersCartSection')}</Text>
         {pendingCount > 0 ? (
@@ -186,28 +220,6 @@ export function StaffKitchenMenuOrdersScreen() {
             key={order.id}
             order={order}
             highlight
-            expanded={expandedId === order.id}
-            onToggle={() => setExpandedId((id) => (id === order.id ? null : order.id))}
-          />
-        ))
-      )}
-
-      <View style={[styles.sectionHead, styles.sectionHeadSpaced]}>
-        <Ionicons name="checkmark-circle-outline" size={18} color={menuUi.liveGreen} />
-        <Text style={styles.sectionTitle}>{t('staffKitchenMenuOrdersPaidSection')}</Text>
-        {paidCount > 0 ? (
-          <View style={[styles.countBadge, styles.countBadgePaid]}>
-            <Text style={[styles.countBadgeText, styles.countBadgeTextPaid]}>{paidCount}</Text>
-          </View>
-        ) : null}
-      </View>
-      {paidCount === 0 ? (
-        <Text style={styles.emptySection}>{t('staffKitchenMenuOrdersPaidEmpty')}</Text>
-      ) : (
-        bundle.paid.map((order) => (
-          <OrderCard
-            key={order.id}
-            order={order}
             expanded={expandedId === order.id}
             onToggle={() => setExpandedId((id) => (id === order.id ? null : order.id))}
           />
@@ -236,6 +248,18 @@ const styles = StyleSheet.create({
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: menuUi.liveGreen },
   liveText: { fontSize: 12, fontWeight: '800', color: '#166534' },
   lead: { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20, marginBottom: 16 },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorText: { flex: 1, fontSize: 13, color: '#92400e', lineHeight: 18 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   sectionHeadSpaced: { marginTop: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, flex: 1 },

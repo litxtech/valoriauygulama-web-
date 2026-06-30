@@ -38,6 +38,15 @@ export function useStaffKitchenMenuOrdersLive(
           },
           () => flush()
         )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'kitchen_menu_order_items',
+          },
+          () => flush()
+        )
         .subscribe();
     }, REALTIME_DELAY_MS);
 
