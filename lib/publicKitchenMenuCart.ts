@@ -80,3 +80,17 @@ export function cartItemCount(lines: PublicMenuCartLine[]): number {
 export function cartQuantityFor(lines: PublicMenuCartLine[], itemId: string): number {
   return lines.find((l) => l.itemId === itemId)?.quantity ?? 0;
 }
+
+export function syncPublicMenuCartLines(
+  lines: PublicMenuCartLine[],
+  items: HotelKitchenMenuItemWithImages[]
+): PublicMenuCartLine[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  return lines
+    .map((line) => {
+      const item = byId.get(line.itemId);
+      if (!item) return null;
+      return cartLineFromItem(item, line.quantity);
+    })
+    .filter((line): line is PublicMenuCartLine => line != null);
+}

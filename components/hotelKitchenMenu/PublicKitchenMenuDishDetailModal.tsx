@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   View,
@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CachedImage } from '@/components/CachedImage';
+import { MenuItemImageCarousel } from '@/components/hotelKitchenMenu/MenuItemImageCarousel';
 import { categoryAccentColor, menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import {
   coverImageUrl,
@@ -20,7 +21,7 @@ import {
   resolveLightboxUrls,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
-import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 
 type Props = {
   visible: boolean;
@@ -41,6 +42,8 @@ export function PublicKitchenMenuDishDetailModal({
   const { width, height } = useWindowDimensions();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [galleryUrls, setGalleryUrls] = useState<string[]>([]);
+  const [galleryW, setGalleryW] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const isWide = width >= 900;
   const modalW = Math.min(width - 24, isWide ? 1080 : width - 24);
@@ -50,6 +53,7 @@ export function PublicKitchenMenuDishDetailModal({
     if (!visible || !item) {
       setPhotoIndex(0);
       setGalleryUrls([]);
+      setLightboxOpen(false);
       return;
     }
     const immediate = item.images.map((im) => im.image_url).filter(Boolean);
@@ -80,18 +84,32 @@ export function PublicKitchenMenuDishDetailModal({
   const catColor = item ? categoryAccentColor(item.category_title) : menuUi.accent;
   const desc = (item?.description ?? '').trim();
   const photoCount = galleryUrls.length;
-
-  const goPrev = useCallback(() => setPhotoIndex((i) => Math.max(0, i - 1)), []);
-  const goNext = useCallback(
-    () => setPhotoIndex((i) => Math.min(galleryUrls.length - 1, i + 1)),
-    [galleryUrls.length]
-  );
+  const galleryH = isWide ? modalH - 120 : Math.min(280, modalH * 0.42);
 
   const gallery = useMemo(
     () => (
       <View style={[styles.galleryCol, isWide && styles.galleryColWide]}>
-        <View style={[styles.mainImageWrap, { height: isWide ? modalH - 120 : Math.min(320, modalH * 0.45) }]}>
-          {activeUrl ? (
+        <View
+          style={[styles.mainImageWrap, { height: galleryH }]}
+          onLayout={(e) => setGalleryW(e.nativeEvent.layout.width)}
+        >
+          <Pressable
+            style={{ flex: 1 }}
+            onPress={() => galleryUrls.length > 0 && setLightboxOpen(true)}
+            disabled={galleryUrls.length === 0}
+          >
+            {galleryW > 0 ? (
+              <MenuItemImageCarousel
+                urls={galleryUrls}
+                itemId={item?.id ?? 'detail'}
+                width={galleryW}
+                height={galleryH}
+                showArrows
+                recyclingKeyPrefix="detail"
+                activeIndex={photoIndex}
+                onIndexChange={setPhotoIndex}
+              />
+            ) : activeUrl ? (
             <CachedImage
               uri={activeUrl}
               style={styles.mainImage}
@@ -104,39 +122,12 @@ export function PublicKitchenMenuDishDetailModal({
               <Ionicons name="restaurant" size={48} color={menuUi.accent} />
             </View>
           )}
+          </Pressable>
           <LinearGradient
-            colors={['transparent', 'rgba(12, 24, 41, 0.55)']}
+            colors={['transparent', 'rgba(12, 24, 41, 0.35)']}
             style={styles.imageGradient}
+            pointerEvents="none"
           />
-          {photoCount > 1 ? (
-            <>
-              <Pressable
-                style={[styles.navBtn, styles.navBtnLeft, photoIndex === 0 && styles.navBtnDisabled]}
-                onPress={goPrev}
-                disabled={photoIndex === 0}
-                accessibilityLabel={t('publicKitchenMenuPrevPhoto')}
-              >
-                <Ionicons name="chevron-back" size={22} color="#fff" />
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.navBtn,
-                  styles.navBtnRight,
-                  photoIndex >= photoCount - 1 && styles.navBtnDisabled,
-                ]}
-                onPress={goNext}
-                disabled={photoIndex >= photoCount - 1}
-                accessibilityLabel={t('publicKitchenMenuNextPhoto')}
-              >
-                <Ionicons name="chevron-forward" size={22} color="#fff" />
-              </Pressable>
-              <View style={styles.photoCounter}>
-                <Text style={styles.photoCounterText}>
-                  {photoIndex + 1} / {photoCount}
-                </Text>
-              </View>
-            </>
-          ) : null}
         </View>
 
         {photoCount > 1 ? (
@@ -159,7 +150,7 @@ export function PublicKitchenMenuDishDetailModal({
         ) : null}
       </View>
     ),
-    [activeUrl, catColor, galleryUrls, goNext, goPrev, isWide, item?.id, modalH, photoCount, photoIndex, t]
+    [activeUrl, galleryH, galleryUrls, galleryW, isWide, item?.id, photoCount, photoIndex]
   );
 
   if (!item) return null;
@@ -236,6 +227,13 @@ export function PublicKitchenMenuDishDetailModal({
           </View>
         </Pressable>
       </Pressable>
+
+      <HotelKitchenMenuImageLightbox
+        visible={lightboxOpen}
+        urls={galleryUrls}
+        initialIndex={photoIndex}
+        onClose={() => setLightboxOpen(false)}
+      />
     </Modal>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   View,
@@ -18,11 +18,21 @@ import { CachedImage } from '@/components/CachedImage';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { formatMenuPrice } from '@/lib/hotelKitchenMenu';
 import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
-import { cartTotal, clearPublicMenuCart } from '@/lib/publicKitchenMenuCart';
+import { cartTotal } from '@/lib/publicKitchenMenuCart';
 import { checkoutPublicKitchenMenu } from '@/lib/publicKitchenMenuCheckout';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { supabase } from '@/lib/supabase';
+import {
+  PublicKitchenMenuMapPickSheet,
+  type PublicMenuLocationPick,
+} from '@/components/hotelKitchenMenu/PublicKitchenMenuMapPickSheet';
+import {
+  DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
+  resolveCheckoutCustomerName,
+  validateCheckoutForm,
+  type KitchenMenuCheckoutFields,
+} from '@/lib/kitchenMenuCheckoutFields';
 
 type Props = {
   visible: boolean;
@@ -32,7 +42,8 @@ type Props = {
   lines: PublicMenuCartLine[];
   lang: PublicMenuLang;
   onUpdateQuantity: (itemId: string, quantity: number) => void;
-  onCartCleared: () => void;
+  checkoutFields?: KitchenMenuCheckoutFields;
+  accentColor?: string;
 };
 
 export function PublicKitchenMenuCartSheet({
@@ -43,7 +54,8 @@ export function PublicKitchenMenuCartSheet({
   lines,
   lang,
   onUpdateQuantity,
-  onCartCleared,
+  checkoutFields = DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
+  accentColor = menuUi.accent,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -51,9 +63,19 @@ export function PublicKitchenMenuCartSheet({
   const [email, setEmail] = useState('');
   const [room, setRoom] = useState('');
   const [table, setTable] = useState('');
+  const [hotelName, setHotelName] = useState('');
+  const [locationPick, setLocationPick] = useState<PublicMenuLocationPick | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionGuestEmail, setSessionGuestEmail] = useState<string | null>(null);
+
+  const fields = checkoutFields;
+
+  const fieldLabel = (label: string, mode: 'required' | 'optional' | 'hidden') => {
+    if (mode === 'hidden') return null;
+    return `${label}${mode === 'required' ? ' *' : ''}`;
+  };
 
   useEffect(() => {
     if (!visible) {
@@ -74,32 +96,65 @@ export function PublicKitchenMenuCartSheet({
       const fullName = (row as { full_name?: string | null }).full_name?.trim();
       const guestEmail = (row as { email?: string | null }).email?.trim() ?? '';
       const roomNum = (row as { rooms?: { room_number?: string | null } | null }).rooms?.room_number;
-      if (fullName) setName((prev) => prev.trim() || fullName);
-      if (guestEmail) {
+      if (fullName && fields.name !== 'hidden') setName((prev) => prev.trim() || fullName);
+      if (guestEmail && fields.email !== 'hidden') {
         setSessionGuestEmail(guestEmail);
         setEmail((prev) => prev.trim() || guestEmail);
       }
-      if (roomNum) setRoom((prev) => prev.trim() || String(roomNum));
+      if (roomNum && fields.room !== 'hidden') setRoom((prev) => prev.trim() || String(roomNum));
     })();
     return () => {
       cancelled = true;
     };
-  }, [visible]);
+  }, [visible, fields.email, fields.name, fields.room]);
 
   const total = cartTotal(lines);
+  const showRoom = fields.room !== 'hidden';
+  const showTable = fields.table !== 'hidden';
+  const showHotelName = fields.hotelName !== 'hidden';
+  const showLocation = fields.location !== 'hidden';
+  const showContactForm = useMemo(
+    () =>
+      fields.name !== 'hidden' ||
+      fields.email !== 'hidden' ||
+      showRoom ||
+      showTable ||
+      showHotelName ||
+      showLocation,
+    [fields.email, fields.name, showHotelName, showLocation, showRoom, showTable]
+  );
 
   const handlePay = async () => {
     if (lines.length === 0) return;
-    const customerName = name.trim();
+    const validationError = validateCheckoutForm(
+      fields,
+      {
+        name,
+        email,
+        room,
+        table,
+        hotelName,
+        locationAddress: locationPick?.address ?? '',
+        locationLat: locationPick?.lat ?? null,
+        locationLng: locationPick?.lng ?? null,
+      },
+      {
+        nameRequired: t('publicKitchenMenuNameRequired'),
+        emailRequired: t('publicKitchenMenuEmailRequired'),
+        roomRequired: t('publicKitchenMenuRoomRequired'),
+        tableRequired: t('publicKitchenMenuTableRequired'),
+        hotelNameRequired: t('publicKitchenMenuHotelNameRequired'),
+        locationRequired: t('publicKitchenMenuLocationRequired'),
+      }
+    );
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    const customerName = resolveCheckoutCustomerName(fields, name);
     const customerEmail = (email.trim() || sessionGuestEmail?.trim() || '').trim();
-    if (customerName.length < 2) {
-      setError(t('publicKitchenMenuNameRequired'));
-      return;
-    }
-    if (!sessionGuestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
-      setError(t('publicKitchenMenuEmailRequired'));
-      return;
-    }
+
     setError(null);
     setPaying(true);
     try {
@@ -110,12 +165,16 @@ export function PublicKitchenMenuCartSheet({
         customerEmail: customerEmail || undefined,
         roomNumber: room.trim() || undefined,
         tableNumber: table.trim() || undefined,
+        guestHotelName: hotelName.trim() || undefined,
+        deliveryLat: locationPick?.lat,
+        deliveryLng: locationPick?.lng,
+        deliveryAddress: locationPick?.address,
         lang,
       });
-      clearPublicMenuCart(orgSlug);
-      onCartCleared();
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.location.href = result.pay_url;
+        if (!result.pay_url) throw new Error(t('publicKitchenMenuCheckoutError'));
+        window.location.assign(result.pay_url);
+        return;
       }
     } catch (e) {
       setError((e as Error)?.message ?? t('publicKitchenMenuCheckoutError'));
@@ -132,12 +191,15 @@ export function PublicKitchenMenuCartSheet({
         >
           <View style={styles.handle} />
           <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>{t('publicKitchenMenuCheckoutTitle')}</Text>
+            <View style={styles.headerIcon}>
+              <Ionicons name="bag-handle-outline" size={20} color={accentColor} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>{t('publicKitchenMenuCart')}</Text>
               <Text style={styles.sub}>{orgName}</Text>
             </View>
-            <Pressable onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={24} color={menuUi.navy} />
+            <Pressable onPress={onClose} hitSlop={12} style={styles.closeBtn}>
+              <Ionicons name="close" size={20} color={menuUi.webMuted} />
             </Pressable>
           </View>
 
@@ -151,7 +213,7 @@ export function PublicKitchenMenuCartSheet({
                     <CachedImage uri={line.coverUrl} style={styles.thumb} contentFit="cover" />
                   ) : (
                     <View style={[styles.thumb, styles.thumbPh]}>
-                      <Ionicons name="restaurant-outline" size={20} color={menuUi.accent} />
+                      <Ionicons name="restaurant-outline" size={20} color={accentColor} />
                     </View>
                   )}
                   <View style={styles.lineBody}>
@@ -163,16 +225,24 @@ export function PublicKitchenMenuCartSheet({
                       <TouchableOpacity
                         style={styles.qtyBtn}
                         onPress={() => onUpdateQuantity(line.itemId, line.quantity - 1)}
+                        accessibilityLabel={t('publicKitchenMenuRemoveFromCart')}
                       >
-                        <Ionicons name="remove" size={18} color={menuUi.navy} />
+                        <Ionicons
+                          name={line.quantity <= 1 ? 'trash-outline' : 'remove'}
+                          size={16}
+                          color={line.quantity <= 1 ? '#dc2626' : menuUi.webText}
+                        />
                       </TouchableOpacity>
                       <Text style={styles.qtyVal}>{line.quantity}</Text>
                       <TouchableOpacity
                         style={styles.qtyBtn}
                         onPress={() => onUpdateQuantity(line.itemId, line.quantity + 1)}
                       >
-                        <Ionicons name="add" size={18} color={menuUi.navy} />
+                        <Ionicons name="add" size={16} color={menuUi.webText} />
                       </TouchableOpacity>
+                      {line.quantity <= 1 ? (
+                        <Text style={styles.removeHint}>{t('publicKitchenMenuRemoveFromCart')}</Text>
+                      ) : null}
                     </View>
                   </View>
                   <Text style={styles.lineTotal}>{formatMenuPrice(line.price * line.quantity)}</Text>
@@ -180,55 +250,91 @@ export function PublicKitchenMenuCartSheet({
               ))
             )}
 
-            {lines.length > 0 ? (
+            {lines.length > 0 && showContactForm ? (
               <View style={styles.form}>
                 <Text style={styles.formHint}>{t('publicKitchenMenuCheckoutHint')}</Text>
-                <Text style={styles.fieldLabel}>{t('publicKitchenMenuYourName')} *</Text>
-                <TextInput
-                  style={styles.input}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder={t('publicKitchenMenuYourName')}
-                  placeholderTextColor={menuUi.webMuted}
-                  autoComplete="name"
-                />
-                <Text style={styles.fieldLabel}>
-                  {t('publicKitchenMenuYourEmail')}
-                  {sessionGuestEmail ? '' : ' *'}
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder={t('publicKitchenMenuYourEmail')}
-                  placeholderTextColor={menuUi.webMuted}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                  editable={!sessionGuestEmail}
-                />
-                <View style={styles.formRow}>
-                  <View style={styles.formHalf}>
-                    <Text style={styles.fieldLabel}>{t('publicKitchenMenuRoomNumber')}</Text>
+                {fields.name !== 'hidden' ? (
+                  <>
+                    <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuYourName'), fields.name)}</Text>
                     <TextInput
                       style={styles.input}
-                      value={room}
-                      onChangeText={setRoom}
-                      placeholder="101"
+                      value={name}
+                      onChangeText={setName}
+                      placeholder={t('publicKitchenMenuYourName')}
                       placeholderTextColor={menuUi.webMuted}
+                      autoComplete="name"
                     />
-                  </View>
-                  <View style={styles.formHalf}>
-                    <Text style={styles.fieldLabel}>{t('publicKitchenMenuTableNumber')}</Text>
+                  </>
+                ) : null}
+                {fields.email !== 'hidden' ? (
+                  <>
+                    <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuYourEmail'), fields.email)}</Text>
                     <TextInput
                       style={styles.input}
-                      value={table}
-                      onChangeText={setTable}
-                      placeholder="12"
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder="ornek@email.com"
+                      placeholderTextColor={menuUi.webMuted}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoComplete="email"
+                      editable={!sessionGuestEmail}
+                    />
+                  </>
+                ) : null}
+                {showRoom || showTable ? (
+                  <View style={styles.formRow}>
+                    {showRoom ? (
+                      <View style={styles.formHalf}>
+                        <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuRoomNumber'), fields.room)}</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={room}
+                          onChangeText={setRoom}
+                          placeholder="101"
+                          placeholderTextColor={menuUi.webMuted}
+                        />
+                      </View>
+                    ) : null}
+                    {showTable ? (
+                      <View style={[styles.formHalf, !showRoom && { flex: 1 }]}>
+                        <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuTableNumber'), fields.table)}</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={table}
+                          onChangeText={setTable}
+                          placeholder="12"
+                          placeholderTextColor={menuUi.webMuted}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                {showHotelName ? (
+                  <>
+                    <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuHotelName'), fields.hotelName)}</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={hotelName}
+                      onChangeText={setHotelName}
+                      placeholder={orgName}
                       placeholderTextColor={menuUi.webMuted}
                     />
-                  </View>
-                </View>
+                  </>
+                ) : null}
+                {showLocation ? (
+                  <>
+                    <Text style={styles.fieldLabel}>{fieldLabel(t('publicKitchenMenuDeliveryLocation'), fields.location)}</Text>
+                    <TouchableOpacity style={styles.mapBtn} onPress={() => setMapOpen(true)}>
+                      <Ionicons name="map-outline" size={18} color={accentColor} />
+                      <Text style={styles.mapBtnText}>
+                        {locationPick?.address
+                          ? locationPick.address
+                          : t('publicKitchenMenuPickLocation')}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
               </View>
             ) : null}
           </ScrollView>
@@ -241,16 +347,16 @@ export function PublicKitchenMenuCartSheet({
               </View>
               {error ? <Text style={styles.error}>{error}</Text> : null}
               <TouchableOpacity
-                style={[styles.payBtn, paying && styles.payBtnDisabled]}
+                style={[styles.payBtn, { backgroundColor: accentColor }, paying && styles.payBtnDisabled]}
                 onPress={() => void handlePay()}
                 disabled={paying}
                 activeOpacity={0.9}
               >
                 {paying ? (
-                  <ActivityIndicator color={menuUi.navy} />
+                  <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <Ionicons name="card-outline" size={20} color={menuUi.navy} />
+                    <Ionicons name="card-outline" size={20} color="#fff" />
                     <Text style={styles.payBtnText}>{t('publicKitchenMenuPayNow')}</Text>
                   </>
                 )}
@@ -259,6 +365,13 @@ export function PublicKitchenMenuCartSheet({
           ) : null}
         </Pressable>
       </Pressable>
+
+      <PublicKitchenMenuMapPickSheet
+        visible={mapOpen}
+        initial={locationPick}
+        onClose={() => setMapOpen(false)}
+        onConfirm={(pick) => setLocationPick(pick)}
+      />
     </Modal>
   );
 }
@@ -266,9 +379,9 @@ export function PublicKitchenMenuCartSheet({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(12, 18, 34, 0.55)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
-    ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(6px)' } as object) : {}),
+    ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(8px)' } as object) : {}),
   },
   sheet: {
     backgroundColor: '#fff',
@@ -291,12 +404,33 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
     marginBottom: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: menuUi.border,
   },
-  title: { fontSize: 22, fontWeight: '800', color: menuUi.navy, letterSpacing: -0.4 },
-  sub: { fontSize: 13, color: menuUi.webMuted, marginTop: 4, fontWeight: '600' },
+  headerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: menuUi.warmBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: menuUi.border,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: menuUi.warmBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { fontSize: 20, fontWeight: '800', color: menuUi.navy, letterSpacing: -0.3 },
+  sub: { fontSize: 13, color: menuUi.webMuted, marginTop: 2, fontWeight: '600' },
   scroll: { maxHeight: 420 },
   empty: { textAlign: 'center', color: menuUi.webMuted, paddingVertical: 32, fontSize: 15 },
   line: {
@@ -307,23 +441,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: menuUi.border,
   },
-  thumb: { width: 64, height: 64, borderRadius: 14, backgroundColor: menuUi.imagePlaceholder },
+  thumb: { width: 60, height: 60, borderRadius: 12, backgroundColor: menuUi.imagePlaceholder },
   thumbPh: { alignItems: 'center', justifyContent: 'center' },
   lineBody: { flex: 1, minWidth: 0 },
   lineName: { fontSize: 15, fontWeight: '700', color: menuUi.navy },
   linePrice: { fontSize: 13, color: menuUi.webMuted, marginTop: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' },
   qtyBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     backgroundColor: menuUi.warmBg,
     borderWidth: 1,
     borderColor: menuUi.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  qtyVal: { fontSize: 15, fontWeight: '800', color: menuUi.navy, minWidth: 20, textAlign: 'center' },
+  qtyVal: { fontSize: 14, fontWeight: '800', color: menuUi.navy, minWidth: 18, textAlign: 'center' },
+  removeHint: { fontSize: 11, fontWeight: '600', color: '#dc2626' },
   lineTotal: { fontSize: 15, fontWeight: '800', color: menuUi.price },
   form: { marginTop: 20, paddingBottom: 8 },
   formHint: { fontSize: 13, color: menuUi.webMuted, lineHeight: 20, marginBottom: 16 },
@@ -349,6 +484,18 @@ const styles = StyleSheet.create({
   } as object,
   formRow: { flexDirection: 'row', gap: 12 },
   formHalf: { flex: 1 },
+  mapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: menuUi.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: menuUi.warmBg,
+  },
+  mapBtnText: { flex: 1, fontSize: 14, color: menuUi.webText, fontWeight: '600' },
   footer: { paddingTop: 16, borderTopWidth: 1, borderTopColor: menuUi.border, marginTop: 8 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   totalLabel: { fontSize: 15, fontWeight: '600', color: menuUi.webMuted },
@@ -359,11 +506,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    backgroundColor: menuUi.accent,
-    borderRadius: 16,
-    paddingVertical: 16,
+    borderRadius: 14,
+    paddingVertical: 15,
     ...menuUi.shadowMd,
   },
   payBtnDisabled: { opacity: 0.7 },
-  payBtnText: { fontSize: 17, fontWeight: '800', color: menuUi.navy },
+  payBtnText: { fontSize: 16, fontWeight: '800', color: '#fff' },
 });

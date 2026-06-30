@@ -1,14 +1,21 @@
+import { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
+import { MenuItemImageCarousel } from '@/components/hotelKitchenMenu/MenuItemImageCarousel';
 import {
   categoryAccentColor,
   menuUi,
   menuWebCardHoverLift,
 } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
-import { coverImageUrl, formatMenuPrice, type HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
+import {
+  coverImageUrl,
+  formatMenuPrice,
+  resolveLightboxUrlsSync,
+  type HotelKitchenMenuItemWithImages,
+} from '@/lib/hotelKitchenMenu';
 
 type Layout = 'grid' | 'list' | 'compact' | 'premium' | 'featured';
 
@@ -23,7 +30,13 @@ type Props = {
   themeNavy?: string;
 };
 
-const COMPACT_THUMB = Platform.OS === 'web' ? 88 : 76;
+const COMPACT_THUMB = Platform.OS === 'web' ? 72 : 64;
+const PREMIUM_IMAGE_RATIO = 16 / 10;
+const FEATURED_HEIGHT = Platform.OS === 'web' ? 200 : 190;
+
+function useItemImageUrls(item: HotelKitchenMenuItemWithImages) {
+  return useMemo(() => resolveLightboxUrlsSync(item), [item.id, item.images, item.cover_image_url]);
+}
 
 export function PublicKitchenMenuDishCard({
   item,
@@ -36,41 +49,56 @@ export function PublicKitchenMenuDishCard({
   themeNavy = menuUi.navy,
 }: Props) {
   const { t } = useTranslation();
+  const [imageW, setImageW] = useState(0);
+  const imageUrls = useItemImageUrls(item);
   const cover = coverImageUrl(item);
   const catColor = categoryAccentColor(item.category_title);
-  const photoCount = item.image_count ?? item.images.length;
+  const photoCount = item.image_count ?? imageUrls.length;
   const isFeatured = layout === 'featured';
   const isPremium = layout === 'premium';
   const isCompact = layout === 'compact';
   const isGrid = layout === 'grid' && Platform.OS === 'web' && !isCompact && !isPremium && !isFeatured;
   const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid' && !isPremium && !isFeatured);
   const desc = (item.description ?? '').trim();
+  const premiumImageH = imageW > 0 ? Math.round(imageW / PREMIUM_IMAGE_RATIO) : undefined;
 
   if (isFeatured) {
     return (
       <Pressable
         style={({ pressed }) => [
           styles.featuredCard,
-          menuUi.shadowLg,
+          { height: FEATURED_HEIGHT },
+          menuUi.shadowMd,
           menuWebCardHoverLift,
           pressed && styles.pressed,
         ]}
         onPress={onPress}
       >
-        <View style={styles.featuredImageWrap}>
-          {cover ? (
+        <View
+          style={styles.featuredImageWrap}
+          onLayout={(e) => setImageW(e.nativeEvent.layout.width)}
+        >
+          {imageW > 0 ? (
+            <MenuItemImageCarousel
+              urls={imageUrls}
+              itemId={item.id}
+              width={imageW}
+              height={FEATURED_HEIGHT}
+              recyclingKeyPrefix="featured"
+            />
+          ) : cover ? (
             <CachedImage uri={cover} style={styles.featuredImage} contentFit="cover" recyclingKey={item.id} priority="high" />
           ) : (
             <View style={[styles.featuredImage, styles.imagePh]}>
-              <Ionicons name="restaurant" size={36} color={themeAccent} />
+              <Ionicons name="restaurant" size={30} color={themeAccent} />
             </View>
           )}
-          <LinearGradient colors={['transparent', 'rgba(5, 8, 16, 0.88)']} style={styles.featuredFade} />
-          <View style={[styles.featuredAccent, { backgroundColor: themeAccent }]} />
-          <View style={[styles.featuredCat, { borderColor: `${themeAccent}88` }]}>
+          <LinearGradient colors={['transparent', 'rgba(5, 8, 16, 0.88)']} style={styles.featuredFade} pointerEvents="none" />
+          <View style={[styles.featuredAccent, { backgroundColor: themeAccent }]} pointerEvents="none" />
+          <View style={[styles.featuredCat, { borderColor: `${themeAccent}88` }]} pointerEvents="none">
             <Text style={styles.featuredCatText} numberOfLines={1}>{item.category_title}</Text>
           </View>
-          <View style={styles.featuredBottom}>
+          <View style={styles.featuredBottom} pointerEvents="none">
             <Text style={styles.featuredName} numberOfLines={2}>{item.name}</Text>
             <Text style={[styles.featuredPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
           </View>
@@ -90,21 +118,32 @@ export function PublicKitchenMenuDishCard({
         ]}
         onPress={onPress}
       >
-        <View style={styles.premiumImageWrap}>
-          {cover ? (
+        <View
+          style={styles.premiumImageWrap}
+          onLayout={(e) => setImageW(e.nativeEvent.layout.width)}
+        >
+          {imageW > 0 && premiumImageH ? (
+            <MenuItemImageCarousel
+              urls={imageUrls}
+              itemId={item.id}
+              width={imageW}
+              height={premiumImageH}
+              recyclingKeyPrefix="premium"
+            />
+          ) : cover ? (
             <CachedImage uri={cover} style={styles.premiumImage} contentFit="cover" recyclingKey={item.id} priority="high" />
           ) : (
             <View style={[styles.premiumImage, styles.imagePh]}>
-              <Ionicons name="restaurant" size={32} color={themeAccent} />
+              <Ionicons name="restaurant" size={28} color={themeAccent} />
             </View>
           )}
           {photoCount > 1 ? (
-            <View style={styles.photoBadge}>
-              <Ionicons name="images-outline" size={11} color="#fff" />
+            <View style={styles.photoBadge} pointerEvents="none">
+              <Ionicons name="images-outline" size={10} color="#fff" />
               <Text style={styles.photoBadgeText}>{photoCount}</Text>
             </View>
           ) : null}
-          <View style={[styles.catPill, { backgroundColor: catColor }]}>
+          <View style={[styles.catPill, { backgroundColor: catColor }]} pointerEvents="none">
             <Text style={styles.catPillText} numberOfLines={1}>{item.category_title}</Text>
           </View>
         </View>
@@ -204,10 +243,9 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.97, transform: [{ scale: 0.992 }] },
   imagePh: { justifyContent: 'center', alignItems: 'center', backgroundColor: menuUi.imagePlaceholder },
   featuredCard: {
-    borderRadius: 24,
+    borderRadius: 18,
     overflow: 'hidden',
     backgroundColor: menuUi.navy,
-    height: 320,
     width: '100%',
   },
   featuredImageWrap: { flex: 1, position: 'relative' },
@@ -225,18 +263,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(5,8,16,0.45)',
   },
   featuredCatText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase' },
-  featuredBottom: { position: 'absolute', left: 18, right: 18, bottom: 18 },
-  featuredName: { fontSize: 21, fontWeight: '800', color: '#fff', lineHeight: 26, letterSpacing: -0.3 },
-  featuredPrice: { fontSize: 17, fontWeight: '800', marginTop: 8 },
+  featuredBottom: { position: 'absolute', left: 14, right: 14, bottom: 14 },
+  featuredName: { fontSize: 17, fontWeight: '800', color: '#fff', lineHeight: 22, letterSpacing: -0.3 },
+  featuredPrice: { fontSize: 15, fontWeight: '800', marginTop: 6 },
   premiumCard: {
     backgroundColor: menuUi.cardBg,
-    borderRadius: 22,
+    borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: menuUi.border,
     height: '100%',
   },
-  premiumImageWrap: { width: '100%', aspectRatio: 4 / 5, position: 'relative', backgroundColor: menuUi.imagePlaceholder },
+  premiumImageWrap: { width: '100%', aspectRatio: PREMIUM_IMAGE_RATIO, position: 'relative', backgroundColor: menuUi.imagePlaceholder },
   premiumImage: { width: '100%', height: '100%' },
   photoBadge: {
     position: 'absolute',
@@ -260,22 +298,22 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     maxWidth: '75%',
   },
-  catPillText: { color: '#fff', fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
-  premiumBody: { padding: 18, gap: 8, flex: 1 },
-  premiumName: { fontSize: 17, fontWeight: '800', lineHeight: 22, letterSpacing: -0.3 },
-  premiumDesc: { fontSize: 13, lineHeight: 18, color: menuUi.webMuted },
-  premiumFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto', gap: 8 },
-  premiumPrice: { fontSize: 18, fontWeight: '800' },
+  catPillText: { color: '#fff', fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  premiumBody: { padding: 10, gap: 4, flex: 1 },
+  premiumName: { fontSize: 14, fontWeight: '800', lineHeight: 18, letterSpacing: -0.15 },
+  premiumDesc: { fontSize: 11, lineHeight: 15, color: menuUi.webMuted },
+  premiumFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto', gap: 4 },
+  premiumPrice: { fontSize: 14, fontWeight: '800' },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
   },
-  addBtnText: { fontSize: 11, fontWeight: '800' },
+  addBtnText: { fontSize: 10, fontWeight: '800' },
   compactCard: {
     flexDirection: 'row',
     alignItems: 'center',

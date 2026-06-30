@@ -18,7 +18,7 @@ import { theme } from '@/constants/theme';
 import { PublicKitchenMenuDishCard } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
-import { usePublicKitchenMenuLive } from '@/hooks/usePublicKitchenMenuRealtime';
+import { usePublicKitchenMenuLive, type PublicMenuLiveEvent } from '@/hooks/usePublicKitchenMenuRealtime';
 import {
   fetchPublicKitchenMenuBySlug,
   invalidatePublicMenuCache,
@@ -39,10 +39,12 @@ import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
 import {
   cartLineFromItem,
+  clearPublicMenuCart,
   loadPublicMenuCart,
   mergeCartLine,
   savePublicMenuCart,
   setCartQuantity,
+  syncPublicMenuCartLines,
   type PublicMenuCartLine,
 } from '@/lib/publicKitchenMenuCart';
 import {
@@ -89,7 +91,8 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [updateToast, setUpdateToast] = useState(false);
-  const [menuLang, setMenuLang] = useState<PublicMenuLang>('en');
+  const [updateToastKind, setUpdateToastKind] = useState<'new_item' | 'updated'>('updated');
+  const [menuLang, setMenuLang] = useState<PublicMenuLang>('tr');
   const [cartLines, setCartLines] = useState<PublicMenuCartLine[]>([]);
   const [paymentBanner, setPaymentBanner] = useState<'success' | 'cancel' | null>(null);
 
@@ -97,7 +100,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     if (!isWeb) return;
     const lang = readPublicMenuLang();
     setMenuLang(lang);
-    applyPublicMenuLang(lang);
+    void applyPublicMenuLang(lang);
   }, [isWeb]);
 
   useEffect(() => {
@@ -116,6 +119,10 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     const payment = params.get('payment');
     if (payment === 'success' || payment === 'cancel') {
       setPaymentBanner(payment);
+      if (payment === 'success' && slugKey) {
+        clearPublicMenuCart(slugKey);
+        setCartLines([]);
+      }
       params.delete('payment');
       params.delete('id');
       params.delete('token');
@@ -126,7 +133,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
 
   const handleMenuLangChange = useCallback((lang: PublicMenuLang) => {
     setMenuLang(lang);
-    applyPublicMenuLang(lang);
+    void applyPublicMenuLang(lang);
   }, []);
 
   const handleAddToCart = useCallback((item: HotelKitchenMenuItemWithImages) => {
@@ -150,6 +157,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
       setOrg(bundle.org);
       setItems(bundle.items);
       setNotFound(false);
+      setCartLines((prev) => syncPublicMenuCartLines(prev, bundle.items));
       scheduleMenuImagePrefetch(bundle.items);
       if (isWeb && typeof document !== 'undefined') {
         document.title = `${bundle.org.name} — ${t('hotelKitchenMenuHeroTitle')}`;
@@ -202,12 +210,20 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     void bootstrap({ silent: !!cachedBoot });
   }, [bootstrap, slugKey, cachedBoot]);
 
-  const onRealtime = useCallback(() => {
-    setUpdateToast(true);
-    void bootstrap({ silent: true, forceNetwork: true });
-  }, [bootstrap]);
+  const onLiveEvent = useCallback(
+    (event: PublicMenuLiveEvent) => {
+      const showNewToast = event.kind === 'item_insert';
+      void bootstrap({ silent: true, forceNetwork: true }).then(() => {
+        if (showNewToast) {
+          setUpdateToastKind('new_item');
+          setUpdateToast(true);
+        }
+      });
+    },
+    [bootstrap]
+  );
 
-  usePublicKitchenMenuLive(org?.id, onRealtime);
+  usePublicKitchenMenuLive(org?.id, onLiveEvent);
 
   const categoryChips = useMemo(() => buildCategoryChips(items, section), [items, section]);
 
@@ -322,6 +338,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         setSearch={setSearch}
         hasActiveFilters={hasActiveFilters}
         updateToast={updateToast}
+        updateToastKind={updateToastKind}
         onUpdateToastHidden={() => setUpdateToast(false)}
         menuLang={menuLang}
         onMenuLangChange={handleMenuLangChange}
@@ -508,7 +525,11 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
 
   return (
     <View style={styles.container}>
-      <KitchenMenuUpdatedToast visible={updateToast} onHidden={() => setUpdateToast(false)} />
+      <KitchenMenuUpdatedToast
+        visible={updateToast}
+        kind={updateToastKind}
+        onHidden={() => setUpdateToast(false)}
+      />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}

@@ -24,6 +24,10 @@ type Body = {
   customer_email?: string | null;
   room_number?: string | null;
   table_number?: string | null;
+  guest_hotel_name?: string | null;
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_address?: string | null;
   lang?: string | null;
 };
 
@@ -61,6 +65,54 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+/** supabase-js public checkout always sends the anon JWT — getUser() on it hangs in Edge. */
+function isAnonAccessToken(token: string, anonKey: string): boolean {
+  if (!token || token === anonKey) return true;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
+    return payload?.role === "anon";
+  } catch {
+    return false;
+  }
+}
+
+type CheckoutFieldMode = "required" | "optional" | "hidden";
+
+type CheckoutFields = {
+  name: CheckoutFieldMode;
+  email: CheckoutFieldMode;
+  room: CheckoutFieldMode;
+  table: CheckoutFieldMode;
+  hotelName: CheckoutFieldMode;
+  location: CheckoutFieldMode;
+};
+
+const DEFAULT_CHECKOUT_FIELDS: CheckoutFields = {
+  name: "required",
+  email: "optional",
+  room: "optional",
+  table: "optional",
+  hotelName: "optional",
+  location: "optional",
+};
+
+function parseCheckoutFields(raw: unknown): CheckoutFields {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_CHECKOUT_FIELDS };
+  const theme = raw as { checkoutFields?: Record<string, unknown> };
+  const f = theme.checkoutFields;
+  if (!f || typeof f !== "object") return { ...DEFAULT_CHECKOUT_FIELDS };
+  const mode = (v: unknown, fallback: CheckoutFieldMode): CheckoutFieldMode =>
+    v === "required" || v === "optional" || v === "hidden" ? v : fallback;
+  return {
+    name: mode(f.name, DEFAULT_CHECKOUT_FIELDS.name),
+    email: mode(f.email, DEFAULT_CHECKOUT_FIELDS.email),
+    room: mode(f.room, DEFAULT_CHECKOUT_FIELDS.room),
+    table: mode(f.table, DEFAULT_CHECKOUT_FIELDS.table),
+    hotelName: mode(f.hotelName, DEFAULT_CHECKOUT_FIELDS.hotelName),
+    location: mode(f.location, DEFAULT_CHECKOUT_FIELDS.location),
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   if (req.method !== "POST") return json({ error: "Method not allowed", error_code: "METHOD" }, 405);
@@ -73,7 +125,7 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get("Authorization") ?? "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   let authGuest: Awaited<ReturnType<typeof resolveGuestForPayment>> = null;
-  if (token) {
+  if (token && !isAnonAccessToken(token, anonKey)) {
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
@@ -98,29 +150,15 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Invalid organization", error_code: "INVALID_SLUG" }, 400);
   }
 
-  const customerName = ((body.customer_name ?? "").trim() || authGuest?.full_name?.trim() || "Misafir").slice(0, 120);
+  const customerName = ((body.customer_name ?? "").trim() || authGuest?.full_name?.trim() || "").slice(0, 120);
   let customerEmail = (body.customer_email ?? "").trim().toLowerCase().slice(0, 254);
   if (!isValidEmail(customerEmail) && authGuest) {
     customerEmail = stripeCustomerEmailFromGuest(authGuest) ?? "";
   }
-  if (customerName.length < 2) {
-    return json({ error: "Name required", error_code: "NAME_REQUIRED" }, 400);
-  }
-  if (!isValidEmail(customerEmail)) {
-    return json({ error: "Valid email required", error_code: "EMAIL_REQUIRED" }, 400);
-  }
-
-  const cart = Array.isArray(body.items) ? body.items : [];
-  if (cart.length === 0) {
-    return json({ error: "Cart is empty", error_code: "CART_EMPTY" }, 400);
-  }
-  if (cart.length > 30) {
-    return json({ error: "Too many items", error_code: "CART_TOO_LARGE" }, 400);
-  }
 
   const { data: orgRow, error: orgErr } = await admin
     .from("organizations")
-    .select("id, name, slug, public_kitchen_menu_enabled")
+    .select("id, name, slug, public_kitchen_menu_enabled, kitchen_menu_public_theme")
     .eq("slug", orgSlug)
     .maybeSingle();
 
@@ -130,6 +168,21 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Public menu disabled", error_code: "MENU_DISABLED" }, 403);
   }
 
+  const checkoutFields = parseCheckoutFields(
+    (orgRow as { kitchen_menu_public_theme?: unknown }).kitchen_menu_public_theme
+  );
+
+  const resolvedName = customerName.length >= 2 ? customerName : "Misafir";
+  if (checkoutFields.name === "required" && customerName.length < 2) {
+    return json({ error: "Name required", error_code: "NAME_REQUIRED" }, 400);
+  }
+  if (checkoutFields.email === "required" && !isValidEmail(customerEmail)) {
+    return json({ error: "Valid email required", error_code: "EMAIL_REQUIRED" }, 400);
+  }
+  if (customerEmail && !isValidEmail(customerEmail)) {
+    return json({ error: "Valid email required", error_code: "EMAIL_REQUIRED" }, 400);
+  }
+
   const orgId = orgRow.id as string;
   const orgName = ((orgRow.name as string) ?? "Hotel").trim();
   const roomNumber =
@@ -137,6 +190,34 @@ Deno.serve(async (req: Request) => {
     (authGuest?.rooms?.room_number != null ? String(authGuest.rooms.room_number) : "") ||
     null;
   const tableNumber = (body.table_number ?? "").trim().slice(0, 32) || null;
+  const guestHotelName = (body.guest_hotel_name ?? "").trim().slice(0, 120) || null;
+  const deliveryAddress = (body.delivery_address ?? "").trim().slice(0, 500) || null;
+  const deliveryLat = Number(body.delivery_lat);
+  const deliveryLng = Number(body.delivery_lng);
+  const hasLocation =
+    deliveryAddress.length > 0 ||
+    (Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng));
+
+  if (checkoutFields.room === "required" && !roomNumber) {
+    return json({ error: "Room number required", error_code: "ROOM_REQUIRED" }, 400);
+  }
+  if (checkoutFields.table === "required" && !tableNumber) {
+    return json({ error: "Table number required", error_code: "TABLE_REQUIRED" }, 400);
+  }
+  if (checkoutFields.hotelName === "required" && !guestHotelName) {
+    return json({ error: "Hotel name required", error_code: "HOTEL_NAME_REQUIRED" }, 400);
+  }
+  if (checkoutFields.location === "required" && !hasLocation) {
+    return json({ error: "Location required", error_code: "LOCATION_REQUIRED" }, 400);
+  }
+
+  const cart = Array.isArray(body.items) ? body.items : [];
+  if (cart.length === 0) {
+    return json({ error: "Cart is empty", error_code: "CART_EMPTY" }, 400);
+  }
+  if (cart.length > 30) {
+    return json({ error: "Too many items", error_code: "CART_TOO_LARGE" }, 400);
+  }
 
   const menuIds = [...new Set(cart.map((c) => (c.menu_item_id ?? "").trim()).filter(Boolean))];
   if (menuIds.length === 0) {
@@ -198,11 +279,21 @@ Deno.serve(async (req: Request) => {
   }
 
   const itemsSummary = buildItemsSummary(orderLines, currency);
-  const roomLabel = roomNumber ? `Room ${roomNumber}` : tableNumber ? `Table ${tableNumber}` : "—";
+  const roomLabel = [
+    guestHotelName,
+    roomNumber ? `Oda ${roomNumber}` : null,
+    tableNumber ? `Masa ${tableNumber}` : null,
+    deliveryAddress || null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "—";
   const title = `${orgName} · Menu · ${roundMoney(total).toFixed(2)} ${currency.toUpperCase()}`;
-  const description = `${roomLabel} · ${customerName} · ${itemsSummary}`;
+  const description = `${roomLabel} · ${resolvedName} · ${itemsSummary}`;
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const lang = (body.lang ?? "en").toString().slice(0, 8);
+
+  const orderEmail =
+    isValidEmail(customerEmail) ? customerEmail : `menu+${crypto.randomUUID().slice(0, 8)}@orders.valoria.local`;
 
   const { data: orderRow, error: orderErr } = await admin
     .from("kitchen_menu_orders")
@@ -210,10 +301,14 @@ Deno.serve(async (req: Request) => {
       organization_id: orgId,
       org_slug: orgSlug,
       guest_id: authGuest?.id ?? null,
-      customer_name: customerName,
-      customer_email: customerEmail,
+      customer_name: resolvedName,
+      customer_email: orderEmail,
       room_number: roomNumber,
       table_number: tableNumber,
+      guest_hotel_name: guestHotelName,
+      delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
+      delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
+      delivery_address: deliveryAddress || null,
       status: "pending_payment",
       total_amount: total,
       currency,
@@ -257,10 +352,14 @@ Deno.serve(async (req: Request) => {
       guest_id: authGuest?.id ?? null,
       created_by_staff_id: null,
       metadata: {
-        customer_name: customerName,
-        customer_email: customerEmail,
+        customer_name: resolvedName,
+        customer_email: isValidEmail(customerEmail) ? customerEmail : null,
         room_number: roomNumber,
         table_number: tableNumber,
+        guest_hotel_name: guestHotelName,
+        delivery_address: deliveryAddress || null,
+        delivery_lat: Number.isFinite(deliveryLat) ? deliveryLat : null,
+        delivery_lng: Number.isFinite(deliveryLng) ? deliveryLng : null,
         items_summary: itemsSummary,
         kitchen_menu_order_id: orderId,
         org_slug: orgSlug,
@@ -289,7 +388,7 @@ Deno.serve(async (req: Request) => {
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      customer_email: customerEmail,
+      ...(isValidEmail(customerEmail) ? { customer_email: customerEmail } : {}),
       success_url: urls.success,
       cancel_url: urls.cancel,
       line_items: [

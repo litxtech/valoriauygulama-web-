@@ -9,9 +9,15 @@ type Props = {
   itemCount: number;
   total: number;
   onOpenCart: () => void;
+  accentColor?: string;
 };
 
-export function PublicKitchenMenuCartBar({ itemCount, total, onOpenCart }: Props) {
+export function PublicKitchenMenuCartBar({
+  itemCount,
+  total,
+  onOpenCart,
+  accentColor = menuUi.accent,
+}: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
@@ -21,14 +27,14 @@ export function PublicKitchenMenuCartBar({ itemCount, total, onOpenCart }: Props
     <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
       <TouchableOpacity style={styles.bar} onPress={onOpenCart} activeOpacity={0.92}>
         <View style={styles.left}>
-          <View style={styles.badge}>
+          <View style={[styles.badge, { backgroundColor: accentColor }]}>
             <Text style={styles.badgeText}>{itemCount}</Text>
           </View>
-          <Text style={styles.label}>{t('publicKitchenMenuCart')}</Text>
+          <Text style={styles.label}>{t('publicKitchenMenuViewCart')}</Text>
         </View>
         <View style={styles.right}>
           <Text style={styles.total}>{formatMenuPrice(total)}</Text>
-          <Ionicons name="chevron-forward" size={18} color="#fff" />
+          <Ionicons name="chevron-forward" size={18} color={menuUi.webMuted} />
         </View>
       </TouchableOpacity>
     </View>
@@ -55,26 +61,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: menuUi.navy,
+    backgroundColor: 'rgba(255,255,255,0.96)',
     borderRadius: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
     ...menuUi.shadowLg,
     borderWidth: 1,
-    borderColor: 'rgba(212, 168, 75, 0.35)',
+    borderColor: menuUi.border,
+    ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(14px)' } as object) : {}),
   },
   left: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   badge: {
     minWidth: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: menuUi.accent,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
-  badgeText: { fontSize: 13, fontWeight: '800', color: menuUi.navy },
-  label: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  badgeText: { fontSize: 13, fontWeight: '800', color: '#fff' },
+  label: { fontSize: 15, fontWeight: '700', color: menuUi.navy },
   right: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  total: { fontSize: 17, fontWeight: '800', color: menuUi.accentLight },
+  total: { fontSize: 16, fontWeight: '800', color: menuUi.price },
 });

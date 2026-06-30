@@ -10,7 +10,7 @@ type Entry = { at: number; bundle: PublicMenuBundle };
 
 const memory = new Map<string, Entry>();
 const TTL_MS = 120_000;
-const STORAGE_PREFIX = 'valoria-public-menu-v1:';
+const STORAGE_PREFIX = 'valoria-public-menu-v2:';
 
 function storageKey(slug: string): string {
   return `${STORAGE_PREFIX}${slug.trim().toLowerCase()}`;

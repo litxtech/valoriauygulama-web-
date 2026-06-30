@@ -33,12 +33,38 @@ const LIST_SELECT = `
   cover_image_url,
   image_count,
   created_at,
-  updated_at
+  updated_at,
+  hotel_kitchen_menu_images (
+    id,
+    image_url,
+    sort_order
+  )
 `;
+
+function mapImagesFromRow(raw: Record<string, unknown>, itemId: string) {
+  const nested = raw.hotel_kitchen_menu_images;
+  if (Array.isArray(nested) && nested.length > 0) {
+    return [...nested]
+      .sort((a, b) => Number((a as { sort_order?: number }).sort_order ?? 0) - Number((b as { sort_order?: number }).sort_order ?? 0))
+      .map((im) => {
+        const row = im as { id: string; image_url: string; sort_order?: number };
+        return {
+          id: row.id,
+          item_id: itemId,
+          image_url: row.image_url,
+          sort_order: Number(row.sort_order ?? 0),
+        };
+      })
+      .filter((im) => Boolean(im.image_url));
+  }
+  const cover = (raw.cover_image_url as string | null) ?? null;
+  return cover ? [{ id: `${itemId}-cover`, item_id: itemId, image_url: cover, sort_order: 0 }] : [];
+}
 
 function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImages {
   const cover = (raw.cover_image_url as string | null) ?? null;
   const id = raw.id as string;
+  const images = mapImagesFromRow(raw, id);
   return {
     id,
     organization_id: raw.organization_id as string,
@@ -50,12 +76,10 @@ function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImage
     is_available: !!raw.is_available,
     sort_order: Number(raw.sort_order ?? 0),
     cover_image_url: cover,
-    image_count: Number(raw.image_count ?? 0),
+    image_count: Number(raw.image_count ?? images.length ?? 0),
     created_at: raw.created_at as string | undefined,
     updated_at: raw.updated_at as string | undefined,
-    images: cover
-      ? [{ id: `${id}-cover`, item_id: id, image_url: cover, sort_order: 0 }]
-      : [],
+    images,
   };
 }
 

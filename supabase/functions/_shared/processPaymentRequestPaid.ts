@@ -5,6 +5,7 @@ import {
   notifyOrgAdminsPayment,
   type PaymentRequestPaidRow,
 } from "./notifyOrgAdminsPayment.ts";
+import { notifyKitchenMenuOrderPaid } from "./notifyKitchenMenuOrderPaid.ts";
 import {
   guestTipPaidNotif,
   parseTipNotifLang,
@@ -312,6 +313,7 @@ export async function processPaymentRequestPaid(ctx: ProcessPaidContext): Promis
       .update({ status: "paid", paid_at: new Date().toISOString(), payment_request_id: ctx.requestId })
       .eq("id", row.reference_id)
       .in("status", ["pending_payment"]);
+    await notifyKitchenMenuOrderPaid(ctx.admin, ctx.supabaseUrl, row.reference_id as string, ctx.requestId);
   }
 
   return { processed: true };

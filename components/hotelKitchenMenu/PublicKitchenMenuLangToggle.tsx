@@ -7,27 +7,30 @@ type Props = {
   onChange: (lang: PublicMenuLang) => void;
 };
 
+const OPTIONS: { code: PublicMenuLang; label: string }[] = [
+  { code: 'tr', label: 'TR' },
+  { code: 'en', label: 'EN' },
+  { code: 'ar', label: 'العربية' },
+];
+
 export function PublicKitchenMenuLangToggle({ lang, onChange }: Props) {
   return (
     <View style={styles.wrap}>
-      <TouchableOpacity
-        style={[styles.btn, lang === 'en' && styles.btnOn]}
-        onPress={() => onChange('en')}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityState={{ selected: lang === 'en' }}
-      >
-        <Text style={[styles.btnText, lang === 'en' && styles.btnTextOn]}>EN</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.btn, lang === 'ar' && styles.btnOn]}
-        onPress={() => onChange('ar')}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityState={{ selected: lang === 'ar' }}
-      >
-        <Text style={[styles.btnText, lang === 'ar' && styles.btnTextOn]}>العربية</Text>
-      </TouchableOpacity>
+      {OPTIONS.map(({ code, label }) => {
+        const active = lang === code;
+        return (
+          <TouchableOpacity
+            key={code}
+            style={[styles.btn, active && styles.btnOn]}
+            onPress={() => onChange(code)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.btnText, active && styles.btnTextOn]}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -35,7 +38,7 @@ export function PublicKitchenMenuLangToggle({ lang, onChange }: Props) {
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 4,
     backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 14,
     padding: 4,
@@ -43,7 +46,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.18)',
   },
   btn: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
   },
@@ -54,7 +57,7 @@ const styles = StyleSheet.create({
       : menuUi.shadowSm),
   },
   btnText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.75)',
   },

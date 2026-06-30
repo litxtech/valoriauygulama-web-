@@ -60,6 +60,7 @@ type Props = {
   setSearch: (v: string) => void;
   hasActiveFilters: boolean;
   updateToast: boolean;
+  updateToastKind?: 'new_item' | 'updated';
   onUpdateToastHidden: () => void;
   menuLang: PublicMenuLang;
   onMenuLangChange: (lang: PublicMenuLang) => void;
@@ -116,6 +117,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
     setSearch,
     hasActiveFilters,
     updateToast,
+    updateToastKind = 'updated',
     onUpdateToastHidden,
     menuLang,
     onMenuLangChange,
@@ -140,18 +142,39 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const [detailItem, setDetailItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [menuTab, setMenuTab] = useState<'explore' | 'menu'>(
+    menuTheme.landingMode === 'explore' ? 'explore' : 'menu'
+  );
+
+  useEffect(() => {
+    setMenuTab(menuTheme.landingMode === 'explore' ? 'explore' : 'menu');
+  }, [menuTheme.landingMode, orgSlug]);
 
   const accent = menuTheme.primaryColor;
   const navy = menuTheme.navyColor;
   const heroImage = menuTheme.heroImageUrl;
+  const isRtl = menuLang === 'ar';
+  const heroTitle =
+    menuLang === 'tr'
+      ? (menuTheme.heroTitle ?? t('hotelKitchenMenuHeroTitle'))
+      : t('hotelKitchenMenuHeroTitle');
+  const heroSubtitle =
+    menuLang === 'tr'
+      ? (menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub'))
+      : t('publicKitchenMenuHeroSub');
   const wide = width >= 960;
-  const columns = width >= 1200 ? 3 : width >= 720 ? 2 : 1;
-  const maxW = columns === 3 ? 1160 : columns === 2 ? 920 : 680;
-  const cellW = columns === 3 ? '31.5%' : columns === 2 ? '48%' : '100%';
+  const columns = width >= 1280 ? 4 : width >= 900 ? 3 : width >= 560 ? 2 : 1;
+  const maxW = columns === 4 ? 1240 : columns === 3 ? 1040 : columns === 2 ? 760 : 640;
+  const cellW =
+    columns === 4 ? '23.5%' : columns === 3 ? '31.5%' : columns === 2 ? '48%' : '100%';
 
   const featured = useMemo(() => items.filter((it) => coverImageUrl(it)).slice(0, 3), [items]);
   const showFeatured =
-    menuTheme.layout !== 'compact' && featured.length >= 2 && !hasActiveFilters && section === 'all' && !categoryFilter;
+    menuTheme.layout !== 'compact' && featured.length >= 2 && !hasActiveFilters && section === 'all' && !categoryFilter && menuTab === 'menu';
+
+  const activeGrouped =
+    menuTab === 'explore' ? [{ title: '', items: filtered }] : grouped;
+  const compactHero = menuTheme.landingMode === 'explore';
 
   const clearAll = () => {
     pickCategory(null);
@@ -252,8 +275,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   );
 
   return (
-    <View style={[styles.root, menuWebPageBg]}>
-      <KitchenMenuUpdatedToast visible={updateToast} onHidden={onUpdateToastHidden} />
+    <View style={[styles.root, menuWebPageBg, isRtl && styles.rtl]}>
+      <KitchenMenuUpdatedToast visible={updateToast} kind={updateToastKind} onHidden={onUpdateToastHidden} />
 
       {paymentBanner ? (
         <View style={[styles.payBanner, paymentBanner === 'success' ? styles.payOk : styles.payCancel, { paddingTop: insets.top + 8 }]}>
@@ -274,7 +297,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
       >
         {/* Hero */}
         <View style={styles.heroWrap}>
-          <LinearGradient colors={[...menuTheme.webHeroGradient]} style={styles.hero}>
+          <LinearGradient colors={[...menuTheme.webHeroGradient]} style={[styles.hero, compactHero && styles.heroCompact]}>
             {heroImage ? (
               <>
                 <CachedImage uri={heroImage} style={StyleSheet.absoluteFillObject} contentFit="cover" recyclingKey={`hero-${orgSlug}`} />
@@ -291,10 +314,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                 </View>
               </View>
               <Text style={[styles.heroKicker, { color: accent }]}>{org.name.toUpperCase()}</Text>
-              <Text style={styles.heroHotel}>
-                {menuTheme.heroTitle ?? t('hotelKitchenMenuHeroTitle')}
-              </Text>
-              <Text style={styles.heroSub}>{menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub')}</Text>
+              <Text style={styles.heroHotel}>{heroTitle}</Text>
+              <Text style={styles.heroSub}>{heroSubtitle}</Text>
               <View style={[styles.searchBox, { borderColor: `${accent}33` }]}>
                 <View style={[styles.searchIconWrap, { backgroundColor: `${accent}22` }]}>
                   <Ionicons name="search" size={16} color={accent} />
@@ -342,8 +363,31 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           {wide ? filterSidebar : null}
 
           <View style={styles.menuCol}>
+            <View style={styles.menuTabs}>
+              <TouchableOpacity
+                style={[styles.menuTab, menuTab === 'explore' && { backgroundColor: navy }]}
+                onPress={() => setMenuTab('explore')}
+              >
+                <Text style={[styles.menuTabText, menuTab === 'explore' && styles.menuTabTextOn]}>
+                  {t('publicKitchenMenuExplore')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.menuTab, menuTab === 'menu' && { backgroundColor: navy }]}
+                onPress={() => setMenuTab('menu')}
+              >
+                <Text style={[styles.menuTabText, menuTab === 'menu' && styles.menuTabTextOn]}>
+                  {t('publicKitchenMenuCategories')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.resultsRow}>
-              <Text style={styles.resultsText}>{t('hotelKitchenMenuResultCount', { count: filtered.length })}</Text>
+              <Text style={styles.resultsText}>
+                {menuTab === 'explore'
+                  ? t('publicKitchenMenuExploreSub', { count: filtered.length })
+                  : t('hotelKitchenMenuResultCount', { count: filtered.length })}
+              </Text>
             </View>
 
             {filtered.length === 0 ? (
@@ -359,7 +403,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                     <Text style={[styles.blockTitle, { color: navy }]}>{t('publicKitchenMenuFeatured')}</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredRow}>
                       {featured.map((item) => (
-                        <View key={item.id} style={{ width: width >= 720 ? 320 : 260 }}>
+                        <View key={item.id} style={{ width: width >= 720 ? 240 : 200 }}>
                           <PublicKitchenMenuDishCard
                             item={item}
                             layout="featured"
@@ -375,7 +419,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                   </View>
                 ) : null}
 
-                {grouped.map((grp) => (
+                {activeGrouped.map((grp) => (
                   <View key={grp.title || 'all'} style={styles.block}>
                     {grp.title ? (
                       <View style={styles.catHead}>
@@ -406,10 +450,10 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           </View>
         </View>
 
-        <View style={[styles.footer, { backgroundColor: navy }]}>
-          <View style={[styles.footerGold, { backgroundColor: accent }]} />
+        <View style={styles.footer}>
+          <View style={[styles.footerAccent, { backgroundColor: accent }]} />
           <Text style={styles.footerBrand}>{org.name}</Text>
-          <Text style={styles.footerMeta}>Menu · {PUBLIC_MENU_WEB_BUILD}</Text>
+          <Text style={styles.footerMeta}>{t('homePortalMenu')} · {PUBLIC_MENU_WEB_BUILD}</Text>
         </View>
       </ScrollView>
 
@@ -421,7 +465,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         cartQuantity={detailItem ? cartQuantityFor(cartLines, detailItem.id) : 0}
       />
 
-      <PublicKitchenMenuCartBar itemCount={cartItemCount(cartLines)} total={cartTotal(cartLines)} onOpenCart={() => setCartOpen(true)} />
+      <PublicKitchenMenuCartBar
+        itemCount={cartItemCount(cartLines)}
+        total={cartTotal(cartLines)}
+        onOpenCart={() => setCartOpen(true)}
+        accentColor={accent}
+      />
 
       <PublicKitchenMenuCartSheet
         visible={cartOpen}
@@ -431,10 +480,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         lines={cartLines}
         lang={menuLang}
         onUpdateQuantity={onUpdateCartQuantity}
-        onCartCleared={() => {
-          onCartCleared();
-          setCartOpen(false);
-        }}
+        checkoutFields={menuTheme.checkoutFields}
+        accentColor={accent}
       />
     </View>
   );
@@ -442,9 +489,11 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  rtl: { direction: 'rtl' } as object,
   scroll: { flex: 1 },
   heroWrap: { width: '100%', position: 'relative' },
-  hero: { minHeight: 360, position: 'relative', overflow: 'hidden' },
+  hero: { minHeight: 300, position: 'relative', overflow: 'hidden' },
+  heroCompact: { minHeight: 220 },
   heroGlow: {
     position: 'absolute',
     top: -80,
@@ -463,12 +512,12 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
   },
-  heroInner: { alignSelf: 'center', width: '100%', paddingHorizontal: 28, paddingBottom: 44, zIndex: 2 },
-  heroTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
+  heroInner: { alignSelf: 'center', width: '100%', paddingHorizontal: 24, paddingBottom: 36, zIndex: 2 },
+  heroTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
   heroLang: { marginLeft: 'auto' },
   heroKicker: { fontSize: 11, fontWeight: '800', letterSpacing: 3.5, marginBottom: 8 },
-  heroHotel: { fontSize: 40, fontWeight: '800', color: '#fff', letterSpacing: -1.4, lineHeight: 44 },
-  heroSub: { fontSize: 16, color: 'rgba(255,255,255,0.72)', marginTop: 12, lineHeight: 24, maxWidth: 520, fontWeight: '500' },
+  heroHotel: { fontSize: 34, fontWeight: '800', color: '#fff', letterSpacing: -1.2, lineHeight: 38 },
+  heroSub: { fontSize: 15, color: 'rgba(255,255,255,0.72)', marginTop: 10, lineHeight: 22, maxWidth: 520, fontWeight: '500' },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -527,9 +576,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    gap: 28,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    gap: 20,
   },
   sidebar: { width: 220 },
   sidebarWide: {
@@ -579,22 +628,42 @@ const styles = StyleSheet.create({
   sidebarCount: { fontSize: 11, fontWeight: '800', color: '#94a3b8', marginLeft: 8 },
   clearLink: { fontSize: 13, fontWeight: '700', marginTop: 8 },
   menuCol: { flex: 1, minWidth: 0 },
-  resultsRow: { marginBottom: 20 },
+  menuTabs: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  menuTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: menuUi.border,
+    backgroundColor: menuUi.cardBg,
+    alignItems: 'center',
+  },
+  menuTabText: { fontSize: 13, fontWeight: '700', color: menuUi.webMuted },
+  menuTabTextOn: { color: '#fff' },
+  resultsRow: { marginBottom: 14 },
   resultsText: { fontSize: 13, color: menuUi.webMuted, fontWeight: '600' },
-  block: { marginBottom: 36 },
-  blockTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
-  featuredRow: { gap: 16, paddingTop: 14, paddingRight: 8 },
-  catHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  block: { marginBottom: 28 },
+  blockTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
+  featuredRow: { gap: 12, paddingTop: 10, paddingRight: 8 },
+  catHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   catLine: { flex: 1, height: 1 },
   catCount: { fontSize: 13, fontWeight: '800', color: menuUi.webMuted },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   empty: { alignItems: 'center', paddingVertical: 60, gap: 10 },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: menuUi.navy },
   emptyBody: { fontSize: 14, color: menuUi.webMuted, textAlign: 'center', maxWidth: 320 },
-  footer: { alignItems: 'center', paddingVertical: 36, marginTop: 12, position: 'relative' },
-  footerGold: { position: 'absolute', top: 0, left: '30%', right: '30%', height: 2 },
-  footerBrand: { fontSize: 16, fontWeight: '800', color: '#fff' },
-  footerMeta: { fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 6, letterSpacing: 0.5 },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    marginTop: 12,
+    position: 'relative',
+    borderTopWidth: 1,
+    borderTopColor: menuUi.border,
+    backgroundColor: menuUi.webSurface,
+  },
+  footerAccent: { position: 'absolute', top: 0, left: '35%', right: '35%', height: 2, borderRadius: 1 },
+  footerBrand: { fontSize: 15, fontWeight: '800', color: menuUi.navy },
+  footerMeta: { fontSize: 11, color: menuUi.webMuted, marginTop: 6, letterSpacing: 0.5 },
   payBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 10, zIndex: 50 },
   payOk: { backgroundColor: '#ecfdf3' },
   payCancel: { backgroundColor: '#fffbeb' },

@@ -1,7 +1,17 @@
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { DEFAULT_KITCHEN_MENU_LAYOUT } from '@/lib/kitchenMenuThemePresets';
+import {
+  DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
+  kitchenMenuCheckoutFieldsToPayload,
+  parseKitchenMenuCheckoutFields,
+  type KitchenMenuCheckoutFields,
+} from '@/lib/kitchenMenuCheckoutFields';
+
+export type { KitchenMenuCheckoutFields, CheckoutFieldMode } from '@/lib/kitchenMenuCheckoutFields';
 
 export type KitchenMenuLayoutMode = 'classic' | 'compact' | 'featured';
+
+export type KitchenMenuLandingMode = 'hero' | 'explore';
 
 export type KitchenMenuPublicTheme = {
   heroTitle?: string | null;
@@ -11,6 +21,8 @@ export type KitchenMenuPublicTheme = {
   accentLightColor?: string | null;
   layout?: KitchenMenuLayoutMode | null;
   heroImageUrl?: string | null;
+  landingMode?: KitchenMenuLandingMode | null;
+  checkoutFields?: KitchenMenuCheckoutFields | null;
 };
 
 export type ResolvedKitchenMenuTheme = {
@@ -21,6 +33,8 @@ export type ResolvedKitchenMenuTheme = {
   accentLightColor: string;
   layout: KitchenMenuLayoutMode;
   heroImageUrl: string | null;
+  landingMode: KitchenMenuLandingMode;
+  checkoutFields: KitchenMenuCheckoutFields;
   webHeroGradient: readonly [string, string, string, string];
   webHeroGlow: string;
 };
@@ -58,6 +72,8 @@ export function parseKitchenMenuPublicTheme(raw: unknown): KitchenMenuPublicThem
         ? layout
         : null,
     heroImageUrl: typeof o.heroImageUrl === 'string' ? o.heroImageUrl : null,
+    landingMode: o.landingMode === 'hero' || o.landingMode === 'explore' ? o.landingMode : null,
+    checkoutFields: parseKitchenMenuCheckoutFields(o.checkoutFields),
   };
 }
 
@@ -80,6 +96,8 @@ export function resolveKitchenMenuTheme(
     accentLightColor: accentLight,
     layout: theme.layout ?? DEFAULT_KITCHEN_MENU_LAYOUT,
     heroImageUrl: theme.heroImageUrl?.trim() || null,
+    landingMode: theme.landingMode === 'explore' ? 'explore' : 'hero',
+    checkoutFields: theme.checkoutFields ?? { ...DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS },
     webHeroGradient: [blendHex(navy, '#000000', 0.35), navy, navyMid, navySoft] as const,
     webHeroGlow: hexToRgba(primary, 0.18),
   };
@@ -97,6 +115,8 @@ export function kitchenMenuThemeToPayload(theme: KitchenMenuPublicTheme): Kitche
   if (accentLight) out.accentLightColor = accentLight;
   if (theme.layout) out.layout = theme.layout;
   if (theme.heroImageUrl?.trim()) out.heroImageUrl = theme.heroImageUrl.trim();
+  if (theme.landingMode) out.landingMode = theme.landingMode;
+  if (theme.checkoutFields) out.checkoutFields = kitchenMenuCheckoutFieldsToPayload(theme.checkoutFields);
   return out;
 }
 

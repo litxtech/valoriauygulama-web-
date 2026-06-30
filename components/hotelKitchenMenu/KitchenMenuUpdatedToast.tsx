@@ -9,10 +9,11 @@ const SHOW_MS = 2600;
 
 type Props = {
   visible: boolean;
+  kind?: 'new_item' | 'updated';
   onHidden?: () => void;
 };
 
-export function KitchenMenuUpdatedToast({ visible, onHidden }: Props) {
+export function KitchenMenuUpdatedToast({ visible, kind = 'updated', onHidden }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const slide = useRef(new Animated.Value(-72)).current;
@@ -63,7 +64,9 @@ export function KitchenMenuUpdatedToast({ visible, onHidden }: Props) {
         <View style={styles.iconWrap}>
           <Ionicons name="checkmark-circle" size={22} color={menuUi.liveGreen} />
         </View>
-        <Text style={styles.text}>{t('publicKitchenMenuLiveUpdate')}</Text>
+        <Text style={styles.text}>
+          {kind === 'new_item' ? t('publicKitchenMenuNewItemAdded') : t('publicKitchenMenuLiveUpdate')}
+        </Text>
       </View>
     </Animated.View>
   );

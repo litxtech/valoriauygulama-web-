@@ -34,11 +34,22 @@ import {
   type KitchenMenuLayoutMode,
   type KitchenMenuPublicTheme,
 } from '@/lib/kitchenMenuTheme';
+import {
+  DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
+  type CheckoutFieldMode,
+} from '@/lib/kitchenMenuCheckoutFields';
 import { fetchOrganizationSlugById, invalidatePublicMenuCache } from '@/lib/publicKitchenMenu';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
 import { KITCHEN_MENU_THEME_PRESETS } from '@/lib/kitchenMenuThemePresets';
 import { LinearGradient } from 'expo-linear-gradient';
 
+const CHECKOUT_FIELD_KEYS = ['name', 'email', 'hotelName', 'room', 'table', 'location'] as const;
+
+const CHECKOUT_MODES: { value: CheckoutFieldMode; labelKey: string }[] = [
+  { value: 'required', labelKey: 'hotelKitchenMenuCheckoutRequired' },
+  { value: 'optional', labelKey: 'hotelKitchenMenuCheckoutOptional' },
+  { value: 'hidden', labelKey: 'hotelKitchenMenuCheckoutHidden' },
+];
 const LAYOUTS: { value: KitchenMenuLayoutMode; label: string }[] = [
   { value: 'classic', label: 'Klasik' },
   { value: 'featured', label: 'Öne çıkan görseller' },
@@ -67,7 +78,10 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [form, setForm] = useState<KitchenMenuPublicTheme>({ layout: 'featured' });
+  const [form, setForm] = useState<KitchenMenuPublicTheme>({
+    layout: 'featured',
+    checkoutFields: { ...DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS },
+  });
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [orgSlug, setOrgSlug] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
@@ -381,6 +395,74 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
         })}
       </View>
 
+      <Text style={styles.label}>{t('hotelKitchenMenuLandingMode')}</Text>
+      <View style={styles.layoutRow}>
+        {([
+          { value: 'hero' as const, label: t('hotelKitchenMenuLandingHero') },
+          { value: 'explore' as const, label: t('hotelKitchenMenuLandingExplore') },
+        ]).map((opt) => {
+          const active = (form.landingMode ?? 'hero') === opt.value;
+          return (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.layoutChip, active && { backgroundColor: preview.primaryColor, borderColor: preview.primaryColor }]}
+              onPress={() => setForm((f) => ({ ...f, landingMode: opt.value }))}
+            >
+              <Text style={[styles.layoutChipText, active && styles.layoutChipTextActive]}>{opt.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={styles.presetHint}>{t('hotelKitchenMenuLandingModeHint')}</Text>
+
+      <Text style={styles.label}>{t('hotelKitchenMenuCheckoutFieldsTitle')}</Text>
+      <Text style={styles.checkoutLead}>{t('hotelKitchenMenuCheckoutFieldsLead')}</Text>
+      {CHECKOUT_FIELD_KEYS.map((key) => {
+        const current =
+          form.checkoutFields?.[key] ?? DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS[key];
+        const labelKey =
+          key === 'name'
+            ? 'publicKitchenMenuYourName'
+            : key === 'email'
+              ? 'publicKitchenMenuYourEmail'
+              : key === 'hotelName'
+                ? 'publicKitchenMenuHotelName'
+                : key === 'room'
+                  ? 'publicKitchenMenuRoomNumber'
+                  : key === 'table'
+                    ? 'publicKitchenMenuTableNumber'
+                    : 'publicKitchenMenuDeliveryLocation';
+        return (
+          <View key={key} style={styles.checkoutRow}>
+            <Text style={styles.checkoutRowLabel}>{t(labelKey)}</Text>
+            <View style={styles.checkoutModes}>
+              {CHECKOUT_MODES.map((mode) => {
+                const active = current === mode.value;
+                return (
+                  <TouchableOpacity
+                    key={mode.value}
+                    style={[styles.checkoutModeChip, active && { backgroundColor: preview.primaryColor, borderColor: preview.primaryColor }]}
+                    onPress={() =>
+                      setForm((f) => ({
+                        ...f,
+                        checkoutFields: {
+                          ...(f.checkoutFields ?? DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS),
+                          [key]: mode.value,
+                        },
+                      }))
+                    }
+                  >
+                    <Text style={[styles.checkoutModeText, active && styles.checkoutModeTextOn]}>
+                      {t(mode.labelKey)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        );
+      })}
+
       <View ref={heroImageRef} collapsable={false}>
       <Text style={styles.label}>{t('hotelKitchenMenuThemeHeroImage')}</Text>
       <TextInput
@@ -509,4 +591,18 @@ const styles = StyleSheet.create({
   presetName: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
   presetTag: { fontSize: 10, fontWeight: '600', color: '#94a3b8', marginTop: 2 },
   presetHint: { fontSize: 12, color: '#94a3b8', marginBottom: 12, lineHeight: 17 },
+  checkoutLead: { fontSize: 12, color: '#64748b', lineHeight: 18, marginBottom: 10 },
+  checkoutRow: { marginBottom: 12 },
+  checkoutRowLabel: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8 },
+  checkoutModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  checkoutModeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#fff',
+  },
+  checkoutModeText: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  checkoutModeTextOn: { color: '#fff' },
 });
