@@ -263,7 +263,13 @@ function PromoCarousel({
         scrollEventThrottle={16}
         style={[
           { width: pageWidth },
-          Platform.OS === 'web' ? ({ scrollSnapType: 'x mandatory' } as object) : null,
+          Platform.OS === 'web'
+            ? ({
+                scrollSnapType: 'x mandatory',
+                touchAction: 'pan-x pinch-zoom',
+                overscrollBehaviorX: 'contain',
+              } as object)
+            : null,
         ]}
         contentContainerStyle={{ alignItems: 'stretch' }}
       >

@@ -293,12 +293,14 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
       <ScrollView
         ref={scrollRef}
-        style={styles.scroll}
+        style={[styles.scroll, Platform.OS === 'web' && styles.scrollWeb]}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: insets.bottom + (cartItemCount(cartLines) > 0 ? 110 : 40) },
         ]}
         showsVerticalScrollIndicator
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
       >
         <View
           style={[
@@ -517,27 +519,26 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: Platform.select({
+    web: { flex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' } as object,
+    default: { flex: 1 },
+  }),
   rtl: { direction: 'rtl' } as object,
   scroll: { flex: 1 },
-  scrollContent: Platform.select({
-    web: { scrollSnapType: 'y proximity' } as object,
-    default: {},
-  }),
+  scrollWeb: {
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    touchAction: 'pan-y',
+    minHeight: 0,
+    overscrollBehaviorY: 'auto',
+  } as object,
+  scrollContent: { flexGrow: 1 },
   welcomeViewport: {
     width: '100%',
     overflow: 'hidden',
-    ...Platform.select({
-      web: { scrollSnapAlign: 'start', scrollSnapStop: 'always' } as object,
-      default: {},
-    }),
   },
   menuSection: {
     width: '100%',
-    ...Platform.select({
-      web: { scrollSnapAlign: 'start' } as object,
-      default: {},
-    }),
   },
   heroWrap: { width: '100%', position: 'relative', paddingTop: 16, paddingBottom: 4 },
   hero: { minHeight: 300, position: 'relative', overflow: 'hidden' },

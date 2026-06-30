@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   scrollerWeb: {
     scrollSnapType: 'x mandatory',
     WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-x',
+    touchAction: 'pan-x pan-y',
     overscrollBehaviorX: 'contain',
     cursor: 'grab',
     overflowX: 'scroll',
