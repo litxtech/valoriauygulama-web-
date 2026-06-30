@@ -231,6 +231,7 @@ export default function KbsCaptureIdScreen() {
           itemId: row.id,
           imageUri: row.imageUri,
           captureSide: row.captureSide,
+          captureSource: row.captureSource,
         });
       }
     },
