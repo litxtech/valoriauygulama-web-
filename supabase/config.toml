@@ -114,6 +114,9 @@ verify_jwt = true
 [functions.create-public-kitchen-menu-payment]
 verify_jwt = false
 
+[functions.confirm-public-kitchen-menu-payment]
+verify_jwt = false
+
 [functions.refund-staff-tip]
 verify_jwt = true
 

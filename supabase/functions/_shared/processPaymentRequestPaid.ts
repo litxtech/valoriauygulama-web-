@@ -308,12 +308,15 @@ export async function processPaymentRequestPaid(ctx: ProcessPaidContext): Promis
   }
 
   if (row.reference_type === "kitchen_menu_order" && row.reference_id) {
-    await ctx.admin
+    const { data: paidOrders } = await ctx.admin
       .from("kitchen_menu_orders")
       .update({ status: "paid", paid_at: new Date().toISOString(), payment_request_id: ctx.requestId })
       .eq("id", row.reference_id)
-      .in("status", ["pending_payment"]);
-    await notifyKitchenMenuOrderPaid(ctx.admin, ctx.supabaseUrl, row.reference_id as string, ctx.requestId);
+      .in("status", ["pending_payment"])
+      .select("id");
+    if (paidOrders?.length) {
+      await notifyKitchenMenuOrderPaid(ctx.admin, ctx.supabaseUrl, row.reference_id as string, ctx.requestId);
+    }
   }
 
   return { processed: true };

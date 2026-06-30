@@ -165,3 +165,61 @@ export async function checkoutPublicKitchenMenu(
   }
   return payload;
 }
+
+export type ConfirmPublicMenuPaymentInput = {
+  orgSlug: string;
+  paymentRequestId: string;
+  publicToken: string;
+  orderId?: string;
+};
+
+export type ConfirmPublicMenuPaymentResult = {
+  ok: boolean;
+  order_id: string;
+  status: string;
+  skipped?: string;
+};
+
+/** Stripe dönüşünde webhook gecikirse ödemeyi doğrula ve siparişi paid yap. */
+export async function confirmPublicKitchenMenuPayment(
+  input: ConfirmPublicMenuPaymentInput
+): Promise<ConfirmPublicMenuPaymentResult> {
+  const base = edgeBaseUrl();
+  const key = anonKey();
+  if (!base || !key) {
+    throw new Error(mapPublicMenuCheckoutError('EDGE_DEPLOY', 'Supabase yapılandırması eksik'));
+  }
+
+  const res = await fetch(`${base}/functions/v1/confirm-public-kitchen-menu-payment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+      apikey: key,
+    },
+    body: JSON.stringify({
+      payment_request_id: input.paymentRequestId,
+      public_token: input.publicToken,
+      org_slug: input.orgSlug,
+      order_id: input.orderId ?? null,
+    }),
+  });
+
+  const data = await parseCheckoutResponse(res);
+  const payloadErr = readPayloadError(data);
+
+  if (!res.ok || payloadErr?.error) {
+    throw new Error(
+      mapPublicMenuCheckoutError(
+        payloadErr?.error_code,
+        payloadErr?.error || payloadErr?.message || `HTTP ${res.status}`
+      )
+    );
+  }
+
+  const payload = data as ConfirmPublicMenuPaymentResult & CheckoutErrorPayload;
+  if (!payload?.order_id) {
+    throw new Error(i18n.t('publicKitchenMenuCheckoutError'));
+  }
+  return payload;
+}

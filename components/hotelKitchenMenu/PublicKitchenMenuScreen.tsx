@@ -64,6 +64,7 @@ import {
   fetchPublicKitchenMenuOrderByPayment,
   rememberPublicKitchenMenuOrder,
 } from '@/lib/publicKitchenMenuOrderHistory';
+import { confirmPublicKitchenMenuPayment } from '@/lib/publicKitchenMenuCheckout';
 
 type Props = {
   orgSlug: string;
@@ -138,14 +139,30 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         const orderId = params.get('order');
         const paymentId = params.get('id');
         const token = params.get('token');
-        if (orderId) {
-          rememberPublicKitchenMenuOrder(slugKey, orderId);
-        } else if (paymentId && token) {
-          void fetchPublicKitchenMenuOrderByPayment(slugKey, paymentId, token)
-            .then((order) => {
-              if (order?.id) rememberPublicKitchenMenuOrder(slugKey, order.id);
+        if (paymentId && token) {
+          void confirmPublicKitchenMenuPayment({
+            orgSlug: slugKey,
+            paymentRequestId: paymentId,
+            publicToken: token,
+            orderId: orderId ?? undefined,
+          })
+            .then((result) => {
+              const resolvedOrderId = result.order_id || orderId;
+              if (resolvedOrderId) rememberPublicKitchenMenuOrder(slugKey, resolvedOrderId);
             })
-            .catch(() => {});
+            .catch(() => {
+              if (orderId) {
+                rememberPublicKitchenMenuOrder(slugKey, orderId);
+              } else {
+                void fetchPublicKitchenMenuOrderByPayment(slugKey, paymentId, token)
+                  .then((order) => {
+                    if (order?.id) rememberPublicKitchenMenuOrder(slugKey, order.id);
+                  })
+                  .catch(() => {});
+              }
+            });
+        } else if (orderId) {
+          rememberPublicKitchenMenuOrder(slugKey, orderId);
         }
       }
       params.delete('payment');
