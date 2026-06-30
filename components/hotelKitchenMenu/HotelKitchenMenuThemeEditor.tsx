@@ -67,7 +67,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [form, setForm] = useState<KitchenMenuPublicTheme>({ layout: 'classic' });
+  const [form, setForm] = useState<KitchenMenuPublicTheme>({ layout: 'featured' });
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [orgSlug, setOrgSlug] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
@@ -496,4 +496,17 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.7 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  presetScroll: { gap: 10, paddingBottom: 4, marginBottom: 4 },
+  presetChip: {
+    width: 108,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  presetSwatch: { height: 40, borderRadius: 10, marginBottom: 8 },
+  presetName: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
+  presetTag: { fontSize: 10, fontWeight: '600', color: '#94a3b8', marginTop: 2 },
+  presetHint: { fontSize: 12, color: '#94a3b8', marginBottom: 12, lineHeight: 17 },
 });
