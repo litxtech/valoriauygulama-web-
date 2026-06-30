@@ -29,9 +29,17 @@ type Props = {
   item: HotelKitchenMenuItemWithImages | null;
   onClose: () => void;
   onSaved: (patch: { name: string; price: number; description: string | null }) => void;
+  /** Sadece kart notu (açıklama) — canlı web kartından açılır */
+  mode?: 'full' | 'note';
 };
 
-export function HotelKitchenMenuQuickEditSheet({ visible, item, onClose, onSaved }: Props) {
+export function HotelKitchenMenuQuickEditSheet({
+  visible,
+  item,
+  onClose,
+  onSaved,
+  mode = 'full',
+}: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const staff = useAuthStore((s) => s.staff);
@@ -50,10 +58,12 @@ export function HotelKitchenMenuQuickEditSheet({ visible, item, onClose, onSaved
     setSaving(false);
   }, [visible, item?.id, item?.name, item?.price, item?.description]);
 
+  const noteOnly = mode === 'note';
+
   const handleSave = async () => {
     if (!item || !staff?.organization_id) return;
-    const nm = name.trim();
-    const pr = parseFloat(price.replace(',', '.'));
+    const nm = noteOnly ? item.name.trim() : name.trim();
+    const pr = noteOnly ? item.price : parseFloat(price.replace(',', '.'));
     if (!nm || !Number.isFinite(pr) || pr < 0) {
       setError(t('hotelKitchenMenuValidation'));
       return;
@@ -98,8 +108,12 @@ export function HotelKitchenMenuQuickEditSheet({ visible, item, onClose, onSaved
                 <Ionicons name="pencil" size={18} color={menuUi.accent} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.title}>{t('hotelKitchenMenuQuickEditTitle')}</Text>
-                <Text style={styles.sub}>{t('hotelKitchenMenuQuickEditSub')}</Text>
+                <Text style={styles.title}>
+                  {noteOnly ? t('hotelKitchenMenuCardNoteEditTitle') : t('hotelKitchenMenuQuickEditTitle')}
+                </Text>
+                <Text style={styles.sub}>
+                  {noteOnly ? t('hotelKitchenMenuCardNoteEditSub') : t('hotelKitchenMenuQuickEditSub')}
+                </Text>
               </View>
               <Pressable onPress={onClose} hitSlop={12}>
                 <Ionicons name="close" size={24} color={theme.colors.textMuted} />
@@ -107,26 +121,36 @@ export function HotelKitchenMenuQuickEditSheet({ visible, item, onClose, onSaved
             </View>
 
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>{t('hotelKitchenMenuNameLabel')}</Text>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder={t('hotelKitchenMenuNamePh')}
-                placeholderTextColor={theme.colors.textMuted}
-              />
+              {noteOnly ? (
+                <Text style={styles.itemName} numberOfLines={2}>
+                  {item.name}
+                </Text>
+              ) : (
+                <>
+                  <Text style={styles.label}>{t('hotelKitchenMenuNameLabel')}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder={t('hotelKitchenMenuNamePh')}
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
 
-              <Text style={styles.label}>{t('hotelKitchenMenuPriceLabel')}</Text>
-              <TextInput
-                style={styles.input}
-                value={price}
-                onChangeText={setPrice}
-                keyboardType="decimal-pad"
-                placeholder="0"
-                placeholderTextColor={theme.colors.textMuted}
-              />
+                  <Text style={styles.label}>{t('hotelKitchenMenuPriceLabel')}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={price}
+                    onChangeText={setPrice}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={theme.colors.textMuted}
+                  />
+                </>
+              )}
 
-              <Text style={styles.label}>{t('hotelKitchenMenuDescLabel')}</Text>
+              <Text style={styles.label}>
+                {noteOnly ? t('hotelKitchenMenuCardNoteLabel') : t('hotelKitchenMenuDescLabel')}
+              </Text>
               <TextInput
                 style={[styles.input, styles.multiline]}
                 value={description}
@@ -183,6 +207,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: '800', color: theme.colors.text },
   sub: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2, lineHeight: 16 },
+  itemName: { fontSize: 15, fontWeight: '700', color: theme.colors.text, marginTop: 4, marginBottom: 4 },
   label: { fontSize: 13, fontWeight: '700', color: theme.colors.text, marginTop: 12, marginBottom: 6 },
   input: {
     borderWidth: 1,
