@@ -26,6 +26,7 @@ import {
   fetchHotelKitchenMenuForGuest,
   fetchHotelKitchenMenuItems,
   getHotelKitchenMenuCache,
+  hydrateHotelKitchenMenuCache,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
 import {
@@ -64,9 +65,12 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const { t } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>([]);
+  const cacheKey = 'list:available';
+  const bootCache = getHotelKitchenMenuCache(cacheKey);
+
+  const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>(() => bootCache ?? []);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(bootCache?.length));
   const [refreshing, setRefreshing] = useState(false);
   const [section, setSection] = useState<MenuSectionFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -74,8 +78,6 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
-
-  const cacheKey = 'list:available';
 
   const applyRows = useCallback(
     (rows: HotelKitchenMenuItemWithImages[], favIds?: Set<string>) => {
@@ -119,16 +121,34 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
 
   useFocusEffect(
     useCallback(() => {
-      const cached = getHotelKitchenMenuCache(cacheKey);
-      if (cached?.length) {
-        applyRows(cached);
-        setLoading(false);
-        void load({ silent: true });
-      } else {
-        setLoading(true);
-        void load({ skipCache: true }).finally(() => setLoading(false));
-      }
-      return undefined;
+      let cancelled = false;
+      let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+      void (async () => {
+        let cached = getHotelKitchenMenuCache(cacheKey);
+        if (!cached?.length) {
+          const disk = await hydrateHotelKitchenMenuCache(cacheKey);
+          cached = disk ?? undefined;
+        }
+        if (cancelled) return;
+        if (cached?.length) {
+          applyRows(cached);
+          setLoading(false);
+          void load({ silent: true });
+          refreshTimer = setTimeout(() => {
+            if (!cancelled) void load({ silent: true, skipCache: true });
+          }, 3000);
+        } else {
+          setLoading(true);
+          await load({ skipCache: true });
+          if (!cancelled) setLoading(false);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        if (refreshTimer) clearTimeout(refreshTimer);
+      };
     }, [load, cacheKey, applyRows])
   );
 

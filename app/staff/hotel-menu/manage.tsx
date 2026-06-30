@@ -24,6 +24,7 @@ import { canManageHotelKitchenMenu } from '@/lib/staffPermissions';
 import {
   fetchHotelKitchenMenuItems,
   getHotelKitchenMenuCache,
+  hydrateHotelKitchenMenuCache,
   type HotelKitchenMenuItemWithImages,
 } from '@/lib/hotelKitchenMenu';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
@@ -34,6 +35,7 @@ import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitc
 import { HotelKitchenMenuQuickEditSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQuickEditSheet';
 
 const CACHE_KEY = 'list:all';
+const bootManageCache = getHotelKitchenMenuCache(CACHE_KEY);
 
 export default function StaffHotelMenuManageScreen() {
   const { t } = useTranslation();
@@ -41,8 +43,8 @@ export default function StaffHotelMenuManageScreen() {
   const { qr } = useLocalSearchParams<{ qr?: string }>();
   const navigation = useNavigation();
   const staff = useAuthStore((s) => s.staff);
-  const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>(() => bootManageCache ?? []);
+  const [loading, setLoading] = useState(() => !(bootManageCache?.length));
   const [refreshing, setRefreshing] = useState(false);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
@@ -73,17 +75,36 @@ export default function StaffHotelMenuManageScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const cached = getHotelKitchenMenuCache(CACHE_KEY);
-      if (cached?.length) {
-        setItems(cached);
-        setLoading(false);
-        void load({ skipCache: false }).catch(() => {});
-      } else {
-        setLoading(true);
-        void load({ skipCache: true }).finally(() => setLoading(false));
-      }
-      if (qr === '1') setQrOpen(true);
-      return undefined;
+      let cancelled = false;
+      let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+      void (async () => {
+        let cached = getHotelKitchenMenuCache(CACHE_KEY);
+        if (!cached?.length) {
+          const disk = await hydrateHotelKitchenMenuCache(CACHE_KEY);
+          cached = disk ?? undefined;
+        }
+        if (cancelled) return;
+        if (cached?.length) {
+          setItems(cached);
+          setLoading(false);
+          void load({ skipCache: false }).catch(() => {});
+          refreshTimer = setTimeout(() => {
+            if (!cancelled) void load({ skipCache: true }).catch(() => {});
+          }, 3000);
+        } else {
+          setLoading(true);
+          await load({ skipCache: true }).finally(() => {
+            if (!cancelled) setLoading(false);
+          });
+        }
+        if (!cancelled && qr === '1') setQrOpen(true);
+      })();
+
+      return () => {
+        cancelled = true;
+        if (refreshTimer) clearTimeout(refreshTimer);
+      };
     }, [load, qr])
   );
 

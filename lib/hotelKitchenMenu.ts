@@ -19,7 +19,7 @@ import type {
 
 export type { HotelKitchenMenuItemRow, HotelKitchenMenuImageRow, HotelKitchenMenuItemWithImages };
 
-export { invalidateHotelKitchenMenuCache, getHotelKitchenMenuCache } from '@/lib/hotelKitchenMenuCache';
+export { invalidateHotelKitchenMenuCache, getHotelKitchenMenuCache, hydrateHotelKitchenMenuCache } from '@/lib/hotelKitchenMenuCache';
 
 export const HOTEL_KITCHEN_MENU_BUCKET = 'hotel-kitchen-menu';
 export const MAX_HOTEL_KITCHEN_MENU_IMAGES = 5;
