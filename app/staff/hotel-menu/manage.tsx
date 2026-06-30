@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,15 +7,17 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Platform,
+  ScrollView,
+  useWindowDimensions,
 } from 'react-native';
-import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StaffStackBackButton } from '@/lib/staffStackBack';
-import { useNavigation } from 'expo-router';
 import { useLayoutEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { canManageHotelKitchenMenu } from '@/lib/staffPermissions';
@@ -26,6 +28,7 @@ import {
 } from '@/lib/hotelKitchenMenu';
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
+import { PublicKitchenMenuDishCard } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
 import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
 import { HotelKitchenMenuQuickEditSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQuickEditSheet';
@@ -45,6 +48,11 @@ export default function StaffHotelMenuManageScreen() {
   const [qrOpen, setQrOpen] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
   const [quickEditMode, setQuickEditMode] = useState<'full' | 'note'>('full');
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
+  const webColumns = width >= 1280 ? 4 : width >= 900 ? 3 : width >= 560 ? 2 : 1;
+  const webCellW =
+    webColumns === 4 ? '23.5%' : webColumns === 3 ? '31.5%' : webColumns === 2 ? '48%' : '100%';
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -89,6 +97,89 @@ export default function StaffHotelMenuManageScreen() {
     openHotelMenuLightbox(item, setLightbox, 0);
   }, []);
 
+  const openQuickEdit = useCallback((item: HotelKitchenMenuItemWithImages, mode: 'full' | 'note') => {
+    setQuickEditMode(mode);
+    setQuickEditItem(item);
+  }, []);
+
+  const patchItem = useCallback(
+    (patch: { name: string; price: number; description: string | null }) => {
+      setItems((prev) =>
+        prev.map((row) =>
+          row.id === quickEditItem?.id
+            ? { ...row, name: patch.name, price: patch.price, description: patch.description }
+            : row
+        )
+      );
+    },
+    [quickEditItem?.id]
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <>
+        <LinearGradient
+          colors={[...menuUi.heroGradient]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.manageHero}
+        >
+          <Text style={styles.manageHeroTitle}>{t('hotelKitchenMenuManageHero')}</Text>
+          <Text style={styles.manageHeroSub}>{t('hotelKitchenMenuManageHeroSub')}</Text>
+        </LinearGradient>
+        <TouchableOpacity style={styles.qrBtn} onPress={() => setQrOpen(true)} activeOpacity={0.88}>
+          <LinearGradient
+            colors={[menuUi.navy, menuUi.navyMid]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.qrBtnGrad}
+          >
+            <Ionicons name="qr-code-outline" size={22} color="#fff" />
+            <View style={styles.qrBtnTexts}>
+              <Text style={styles.qrBtnTitle}>{t('publicKitchenMenuQrOpenBtn')}</Text>
+              <Text style={styles.qrBtnSub}>{t('publicKitchenMenuQrSub')}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
+          </LinearGradient>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.themeBtn}
+          onPress={() => router.push('/staff/fnb-hub/menu-theme')}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="color-palette-outline" size={20} color={menuUi.navy} />
+          <Text style={styles.themeBtnText}>{t('hotelKitchenMenuThemeTitle')}</Text>
+          <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.addBtn}
+          onPress={() => router.push('/staff/hotel-menu/edit')}
+          activeOpacity={0.88}
+        >
+          <LinearGradient
+            colors={[menuUi.accent, menuUi.accentDeep]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.addBtnGrad}
+          >
+            <Ionicons name="add-circle-outline" size={22} color="#fff" />
+            <Text style={styles.addBtnText}>{t('hotelKitchenMenuAddItem')}</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+        {isWeb ? (
+          <View style={styles.liveCardsHead}>
+            <View style={styles.liveCardsBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveCardsBadgeText}>{t('hotelKitchenMenuLiveCardsTitle')}</Text>
+            </View>
+            <Text style={styles.liveCardsSub}>{t('hotelKitchenMenuLiveCardsSub')}</Text>
+          </View>
+        ) : null}
+      </>
+    ),
+    [isWeb, router, t]
+  );
+
   if (!canManageHotelKitchenMenu(staff)) {
     return (
       <View style={styles.centered}>
@@ -105,85 +196,59 @@ export default function StaffHotelMenuManageScreen() {
     );
   }
 
+  const renderLiveCard = (item: HotelKitchenMenuItemWithImages) => (
+    <View key={item.id} style={[styles.webCell, { width: webCellW as `${number}%` }]}>
+      <PublicKitchenMenuDishCard
+        item={item}
+        layout="premium"
+        themeAccent={menuUi.accent}
+        themeNavy={menuUi.navy}
+        onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
+        onImagePress={() => openImage(item)}
+        onEditNote={() => openQuickEdit(item, 'note')}
+      />
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={[...menuUi.heroGradient]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.manageHero}
-      >
-        <Text style={styles.manageHeroTitle}>{t('hotelKitchenMenuManageHero')}</Text>
-        <Text style={styles.manageHeroSub}>{t('hotelKitchenMenuManageHeroSub')}</Text>
-      </LinearGradient>
-      <TouchableOpacity
-        style={styles.qrBtn}
-        onPress={() => setQrOpen(true)}
-        activeOpacity={0.88}
-      >
-        <LinearGradient
-          colors={[menuUi.navy, menuUi.navyMid]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.qrBtnGrad}
+      {isWeb ? (
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          contentContainerStyle={items.length === 0 ? styles.listEmpty : styles.webScroll}
+          showsVerticalScrollIndicator={false}
         >
-          <Ionicons name="qr-code-outline" size={22} color="#fff" />
-          <View style={styles.qrBtnTexts}>
-            <Text style={styles.qrBtnTitle}>{t('publicKitchenMenuQrOpenBtn')}</Text>
-            <Text style={styles.qrBtnSub}>{t('publicKitchenMenuQrSub')}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
-        </LinearGradient>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.themeBtn}
-        onPress={() => router.push('/staff/fnb-hub/menu-theme')}
-        activeOpacity={0.88}
-      >
-        <Ionicons name="color-palette-outline" size={20} color={menuUi.navy} />
-        <Text style={styles.themeBtnText}>{t('hotelKitchenMenuThemeTitle')}</Text>
-        <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.addBtn}
-        onPress={() => router.push('/staff/hotel-menu/edit')}
-        activeOpacity={0.88}
-      >
-        <LinearGradient
-          colors={[menuUi.accent, menuUi.accentDeep]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.addBtnGrad}
-        >
-          <Ionicons name="add-circle-outline" size={22} color="#fff" />
-          <Text style={styles.addBtnText}>{t('hotelKitchenMenuAddItem')}</Text>
-        </LinearGradient>
-      </TouchableOpacity>
-
-      <FlatList
-        data={items}
-        keyExtractor={(i) => i.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={items.length === 0 ? styles.listEmpty : styles.list}
-        initialNumToRender={10}
-        maxToRenderPerBatch={12}
-        windowSize={8}
-        removeClippedSubviews
-        renderItem={({ item }) => (
-          <HotelKitchenMenuListCard
-            item={item}
-            variant="manage"
-            trailingIcon="chevron-forward"
-            onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
-            onQuickEdit={() => {
-              setQuickEditMode('full');
-              setQuickEditItem(item);
-            }}
-            onImagePress={() => openImage(item)}
-          />
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>{t('hotelKitchenMenuManageEmpty')}</Text>}
-      />
+          {listHeader}
+          {items.length === 0 ? (
+            <Text style={styles.empty}>{t('hotelKitchenMenuManageEmpty')}</Text>
+          ) : (
+            <View style={styles.webGrid}>{items.map(renderLiveCard)}</View>
+          )}
+        </ScrollView>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(i) => i.id}
+          ListHeaderComponent={listHeader}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          contentContainerStyle={items.length === 0 ? styles.listEmpty : styles.list}
+          initialNumToRender={10}
+          maxToRenderPerBatch={12}
+          windowSize={8}
+          removeClippedSubviews
+          renderItem={({ item }) => (
+            <HotelKitchenMenuListCard
+              item={item}
+              variant="manage"
+              trailingIcon="chevron-forward"
+              onPress={() => router.push(`/staff/hotel-menu/edit?id=${item.id}`)}
+              onQuickEdit={() => openQuickEdit(item, 'full')}
+              onImagePress={() => openImage(item)}
+            />
+          )}
+          ListEmptyComponent={<Text style={styles.empty}>{t('hotelKitchenMenuManageEmpty')}</Text>}
+        />
+      )}
 
       <HotelKitchenMenuImageLightbox
         visible={!!lightbox}
@@ -206,15 +271,7 @@ export default function StaffHotelMenuManageScreen() {
         item={quickEditItem}
         mode={quickEditMode}
         onClose={() => setQuickEditItem(null)}
-        onSaved={(patch) => {
-          setItems((prev) =>
-            prev.map((row) =>
-              row.id === quickEditItem?.id
-                ? { ...row, name: patch.name, price: patch.price, description: patch.description }
-                : row
-            )
-          );
-        }}
+        onSaved={patchItem}
       />
     </View>
   );
@@ -274,7 +331,31 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   addBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  liveCardsHead: { marginHorizontal: 16, marginTop: 16, marginBottom: 4 },
+  liveCardsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: menuUi.liveGreenBg,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: menuUi.liveGreen },
+  liveCardsBadgeText: { fontSize: 12, fontWeight: '800', color: '#166534' },
+  liveCardsSub: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 8, lineHeight: 18 },
+  webScroll: { paddingBottom: 32 },
+  webGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    justifyContent: 'flex-start',
+  },
+  webCell: { marginBottom: 4 },
   list: { paddingHorizontal: 16, paddingBottom: 32, paddingTop: 8 },
   listEmpty: { flexGrow: 1, padding: 24 },
-  empty: { textAlign: 'center', color: theme.colors.textMuted, fontSize: 15 },
+  empty: { textAlign: 'center', color: theme.colors.textMuted, fontSize: 15, paddingHorizontal: 16 },
 });
