@@ -1,5 +1,6 @@
 import {
   isUsablePersonName,
+  isOcrLabelOnlyName,
   sanitizePersonName,
   splitFullNameToFirstLast,
 } from '@/lib/guestScan/personNameUtils';
@@ -133,6 +134,7 @@ export function mrzNamesLookSwapped(firstName: string | null, lastName: string |
 
 export function mrzNamesLookValid(firstName: string | null, lastName: string | null): boolean {
   if (!isUsablePersonName(firstName) || !isUsablePersonName(lastName)) return false;
+  if (isOcrLabelOnlyName(firstName) || isOcrLabelOnlyName(lastName)) return false;
   const fn = firstName!.toUpperCase();
   const ln = lastName!.toUpperCase();
   if (fn === ln) return false;

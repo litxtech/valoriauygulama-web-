@@ -1,3 +1,20 @@
+/** Kimlik / pasaport OCR etiket kelimeleri — gerçek ad değil. */
+const OCR_LABEL_ONLY_NAME_RE =
+  /^(?:SURNAME|SURNAMES|GIVEN|GIVEN\s*NAMES?|GIVEN\s*NAME(?:\(S\))?|FORENAMES?|FIRST\s*NAMES?|FAMILY\s*NAMES?|NAME|NAMES|SOYAD[İI]?|SOYADI|AD[İI]|ADI|NOM|PRENOMS?|APELLIDOS?)$/i;
+
+const OCR_LABEL_TOKEN_RE =
+  /^(?:SURNAME|SURNAMES|GIVEN|GIVENNAMES?|NAMES?|NAME|FORENAMES?|FIRSTNAMES?|FAMILY|FAMILYNAME|SOYAD[İI]?|SOYADI|AD[İI]|ADI)$/i;
+
+/** "SURNAME", "GIVEN NAMES" vb. — OCR etiketinin değer sanılması. */
+export function isOcrLabelOnlyName(raw: string | null | undefined): boolean {
+  const s = sanitizePersonName(raw);
+  if (!s) return true;
+  if (OCR_LABEL_ONLY_NAME_RE.test(s.replace(/\s+/g, ' ').trim())) return true;
+  const tokens = s.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every((t) => OCR_LABEL_TOKEN_RE.test(t));
+}
+
 /** MRZ / OCR kişi adı — boş, filler ve gürültü temizliği. */
 export function sanitizePersonName(raw: string | null | undefined): string | null {
   if (raw == null) return null;
@@ -16,13 +33,13 @@ export function sanitizePersonName(raw: string | null | undefined): string | nul
 
 export function isUsablePersonName(raw: string | null | undefined): boolean {
   const s = sanitizePersonName(raw);
-  return !!s && s.length >= 2;
+  return !!s && s.length >= 2 && !isOcrLabelOnlyName(s);
 }
 
 export function coalescePersonName(...candidates: (string | null | undefined)[]): string | null {
   for (const c of candidates) {
-    const s = sanitizePersonName(c);
-    if (s) return s;
+    if (!isUsablePersonName(c)) continue;
+    return sanitizePersonName(c);
   }
   return null;
 }

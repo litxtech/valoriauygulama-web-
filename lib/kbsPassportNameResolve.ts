@@ -102,6 +102,8 @@ export function applyBestPassportNamesToParsed(
   parsed: ParsedDocument,
   lines: string[]
 ): ParsedDocument {
+  if (parsed.documentType === 'id_card') return parsed;
+
   const isPassport =
     parsed.documentType === 'passport' || !!parsed.rawMrz || lines.join(' ').toUpperCase().includes('PASSPORT');
   if (!isPassport) return parsed;

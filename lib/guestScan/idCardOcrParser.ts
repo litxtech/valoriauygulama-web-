@@ -2,6 +2,7 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 import { normalizeOcrLines } from '@/lib/guestScan/ocrLineNormalize';
 import {
   coalescePersonName,
+  isOcrLabelOnlyName,
   isUsablePersonName,
   sanitizePersonName,
   splitFullNameToFirstLast,
@@ -40,8 +41,10 @@ const SURNAME_INLINE_RE =
   /(?:^|\b)(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom)(?:\s*[:\-]\s*|\s+)(.*)$/i;
 const GIVEN_INLINE_RE =
   /(?:^|\b)(?:ad[ıi]?|adi|given\s*names?|first\s*names?|forename|prenom)(?:\s*[:\-]\s*|\s+)(.*)$/i;
-const SURNAME_LINE_LABEL_RE = /^(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom)\s*$/i;
-const GIVEN_LINE_LABEL_RE = /^(?:ad[ıi]?|adi|given\s*names?|first\s*names?|forename)\s*$/i;
+const SURNAME_LINE_LABEL_RE =
+  /^(?:soyad[ıi]?|soyadi|surname|surnames|family\s*name|last\s*name|nom)\s*$/i;
+const GIVEN_LINE_LABEL_RE =
+  /^(?:ad[ıi]?|adi|given(?:\s*names?)?|given\s*name(?:\(s\))?|first\s*names?|forename|forenames?|names?)\s*$/i;
 /** T.C. kimlik kartı — "Soyadı / Surname", "Adı / Given Name(s)" çift dilli etiketler. */
 const TR_ID_SURNAME_LABEL_RE = /^(?:soyad[ıi]?|soyadi)(?:\s*\/\s*surname)?\s*$/i;
 const TR_ID_GIVEN_LABEL_RE =
@@ -87,7 +90,7 @@ const PASSPORT_HEADER_RE =
 const PASSPORT_SURNAME_LINE_RE =
   /^(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom|apellidos?)\s*$/i;
 const PASSPORT_GIVEN_LINE_RE =
-  /^(?:ad[ıi]?|adi|given\s*names?|first\s*names?|forename|prenoms?|prenom|names?)\s*$/i;
+  /^(?:ad[ıi]?|adi|given(?:\s*names?)?|given\s*name(?:\(s\))?|first\s*names?|forename|prenoms?|prenom)\s*$/i;
 const PASSPORT_SURNAME_INLINE_RE =
   /(?:^|\b)(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom|apellidos?)(?:\s*[:\-]\s*|\s+)(.*)$/i;
 const PASSPORT_GIVEN_INLINE_RE =
@@ -218,16 +221,29 @@ function isoFromTrDate(m: RegExpMatchArray): string | null {
   return `${y}-${mo}-${d}`;
 }
 
+function stripLabelTokensFromName(value: string): string | null {
+  const tokens = value
+    .replace(/[().]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => !LABEL_TOKEN_RE.test(t));
+  if (tokens.length === 0) return null;
+  return tokens.join(' ');
+}
+
 function cleanPersonName(raw: string | null | undefined): string | null {
   const s = sanitizePersonName(raw);
   if (!s || NOISE_NAME_RE.test(s)) return null;
   if (PASSPORT_HEADER_RE.test(s)) return null;
   if (isNationalityLikeText(s)) return null;
+  if (isOcrLabelOnlyName(s)) return null;
   if (TC_RE.test(s) || YKN_RE.test(s) || DATE_RE.test(s)) return null;
   if (SERIAL_FALLBACK_RE.test(s) && s.replace(/\s/g, '').length <= 12) return null;
   if (GENDER_LINE_RE.test(s)) return null;
-  if (allTokensAreLabels(s)) return null;
-  return s;
+  const stripped = stripLabelTokensFromName(s);
+  if (!stripped || allTokensAreLabels(stripped) || isOcrLabelOnlyName(stripped)) return null;
+  return stripped;
 }
 
 /** Pasaport görsel OCR — fazla kelime / etiket gürültüsünü kes. */
@@ -319,18 +335,39 @@ function compactSerial(raw: string): string | null {
 
 /** "Soyadı / Surname" gibi çift dilli soyad etiketi satırı (değer değil). */
 function isSurnameLabelLine(line: string): boolean {
-  return /soyad[ıi]?/i.test(line) || /\bsurnames?\b/i.test(line) || /family\s*name/i.test(line);
+  const t = line.trim();
+  if (TR_ID_SURNAME_LABEL_RE.test(t) || SURNAME_LINE_LABEL_RE.test(t)) return true;
+  if (/^soyad[ıi]?\s*\/\s*surname\s*$/i.test(t)) return true;
+  if (/^(?:surname|surnames|family\s*name|last\s*name)\s*$/i.test(t)) return true;
+  return /soyad[ıi]?/i.test(t) && /\bsurname\b/i.test(t) && !cleanPersonName(t.replace(/soyad[ıi]?/i, '').replace(/surname/i, ''));
 }
 
 /** "Adı / Given Name(s)" gibi çift dilli ad etiketi satırı (değer değil). */
 function isGivenLabelLine(line: string): boolean {
   if (isSurnameLabelLine(line)) return false;
-  if (/given\s*names?|forename|first\s*names?/i.test(line)) return true;
-  return /^\s*ad[ıi]\s*(?:[\/:.\-]|given|name|$)/i.test(line.trim());
+  const t = line.trim();
+  if (TR_ID_GIVEN_LABEL_RE.test(t) || GIVEN_LINE_LABEL_RE.test(t)) return true;
+  if (/^given(?:\s*names?|\s*name(?:\(s\))?)\s*$/i.test(t)) return true;
+  if (/given\s*names?|forename|first\s*names?/i.test(t) && !cleanPersonName(t.replace(/given\s*names?/i, '').replace(/forename/i, ''))) {
+    return true;
+  }
+  return /^\s*ad[ıi]\s*(?:[\/:.\-]|given|name|$)/i.test(t);
+}
+
+function isPureEnglishNameLabelLine(line: string): boolean {
+  const t = line
+    .trim()
+    .replace(/[().]/g, '')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+  return /^(?:SURNAME|SURNAMES|GIVEN(?:\s+NAMES?)?|GIVEN\s*NAME(?:\(S\))?|FORENAME(?:S)?|FIRST\s*NAME(?:S)?|FAMILY\s*NAME|LAST\s*NAME|NAMES?)$/.test(
+    t
+  );
 }
 
 function isAnyNameLabelLine(line: string): boolean {
   return (
+    isPureEnglishNameLabelLine(line) ||
     isSurnameLabelLine(line) ||
     isGivenLabelLine(line) ||
     SURNAME_LINE_LABEL_RE.test(line) ||
@@ -355,16 +392,72 @@ function isOtherFieldLabelLine(line: string): boolean {
 }
 
 /** Etiket satırından sonraki ilk geçerli ad/soyad değeri (etiket satırları atlanır). */
-function nextNameValueLine(L: string[], start: number): string | null {
-  for (let j = start; j < Math.min(start + 3, L.length); j++) {
+function nextNameValueLine(L: string[], start: number, exclude?: string | null): string | null {
+  const excludeKey = exclude?.replace(/\s+/g, ' ').trim().toUpperCase() ?? '';
+  for (let j = start; j < Math.min(start + 6, L.length); j++) {
     const raw = (L[j] ?? '').trim();
     if (!raw) continue;
     if (isAnyNameLabelLine(raw) || isOtherFieldLabelLine(raw)) continue;
+    if (TC_RE.test(raw) || YKN_RE.test(raw) || DATE_RE.test(raw)) continue;
     if (!isNameCandidateLine(raw)) continue;
     const v = cleanPersonName(raw);
-    if (v) return v;
+    if (!v) continue;
+    if (excludeKey && v.replace(/\s+/g, ' ').trim().toUpperCase() === excludeKey) continue;
+    return v;
   }
   return null;
+}
+
+function inlineNameAfterLabel(line: string, kind: 'surname' | 'given'): string | null {
+  const re = kind === 'surname' ? SURNAME_INLINE_RE : GIVEN_INLINE_RE;
+  const m = line.match(re);
+  if (!m?.[1]) return null;
+  const tail = m[1].replace(/^[\/:\-\s]+/, '').trim();
+  if (!tail) return null;
+  return cleanPersonName(tail);
+}
+
+/**
+ * T.C. kimlik ön yüz — "Soyadı/Surname" ve "Adı/Given Name(s)" etiketlerinin ALTINDAKİ değerler.
+ */
+function extractTurkishIdCardNamesFromOcr(L: string[]): {
+  firstName: string | null;
+  lastName: string | null;
+} {
+  let firstName: string | null = null;
+  let lastName: string | null = null;
+
+  for (let i = 0; i < L.length; i++) {
+    const line = L[i]!;
+    const surnameLabel =
+      isSurnameLabelLine(line) || SURNAME_LINE_LABEL_RE.test(line) || TR_ID_SURNAME_LABEL_RE.test(line);
+    if (!surnameLabel) continue;
+    lastName =
+      coalescePersonName(inlineNameAfterLabel(line, 'surname'), nextNameValueLine(L, i + 1)) ?? lastName;
+    if (lastName) break;
+  }
+
+  for (let i = 0; i < L.length; i++) {
+    const line = L[i]!;
+    const givenLabel =
+      isGivenLabelLine(line) || GIVEN_LINE_LABEL_RE.test(line) || TR_ID_GIVEN_LABEL_RE.test(line);
+    if (!givenLabel) continue;
+    const candidate = coalescePersonName(
+      inlineNameAfterLabel(line, 'given'),
+      nextNameValueLine(L, i + 1, lastName)
+    );
+    if (candidate) {
+      firstName = candidate;
+      break;
+    }
+  }
+
+  return correctSwappedMrzNames({
+    firstName,
+    lastName,
+    nationalityCode: 'TUR',
+    issuingCountryCode: 'TUR',
+  });
 }
 
 function isNameCandidateLine(line: string): boolean {
@@ -378,6 +471,7 @@ function isNameCandidateLine(line: string): boolean {
   if (SERIAL_LINE_LABEL_RE.test(line)) return false;
   if (GENDER_LINE_RE.test(line)) return false;
   if (SURNAME_LINE_LABEL_RE.test(line) || GIVEN_LINE_LABEL_RE.test(line)) return false;
+  if (isPureEnglishNameLabelLine(line)) return false;
   if (isSurnameLabelLine(line) || isGivenLabelLine(line)) return false;
   if (NOISE_NAME_RE.test(line) || isNationalityLikeText(line)) return false;
   if (!/[A-Za-zÇĞİÖŞÜçğıöşü]/.test(line)) return false;
@@ -531,6 +625,14 @@ export function extractPassportNamesFromOcr(lines: string[]): {
 /** Ad / soyad — etiketli satırlar, MRZ’siz ön yüz. */
 export function extractNamesFromOcr(lines: string[]): { firstName: string | null; lastName: string | null } {
   const L = normLines(lines);
+  const tc = extractTurkishNationalIdFromOcr(L);
+  if (tc) {
+    const trNames = extractTurkishIdCardNamesFromOcr(L);
+    if (isUsablePersonName(trNames.firstName) && isUsablePersonName(trNames.lastName)) {
+      return trNames;
+    }
+  }
+
   const isPassport = detectPassportFromOcr(L);
   if (isPassport) {
     const passportNames = extractPassportNamesFromOcr(L);
@@ -551,7 +653,7 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
       SURNAME_LINE_LABEL_RE.test(line) ||
       TR_ID_SURNAME_LABEL_RE.test(line);
     const surnameInline = line.match(SURNAME_INLINE_RE);
-    const surnameInlineVal = surnameInline ? cleanPersonName(surnameInline[1]) : null;
+    const surnameInlineVal = surnameInline ? inlineNameAfterLabel(line, 'surname') : null;
     if (surnameInlineVal) {
       lastName = surnameInlineVal;
     } else if (surnameLabel) {
@@ -566,7 +668,7 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
         GIVEN_LINE_LABEL_RE.test(line) ||
         TR_ID_GIVEN_LABEL_RE.test(line));
     const givenInline = !surnameLabel ? line.match(GIVEN_INLINE_RE) : null;
-    const givenInlineVal = givenInline ? cleanPersonName(givenInline[1]) : null;
+    const givenInlineVal = givenInline ? inlineNameAfterLabel(line, 'given') : null;
     if (givenInlineVal) {
       firstName = givenInlineVal;
     } else if (givenLabel) {
@@ -592,7 +694,7 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
   if (!firstName || !lastName) {
     const candidates = L.filter((l) => isNameCandidateLine(l))
       .map((l) => cleanPersonName(l))
-      .filter((n): n is string => !!n && !isNationalityLikeText(n));
+      .filter((n): n is string => !!n && !isNationalityLikeText(n) && !isOcrLabelOnlyName(n));
     const uniq = [...new Set(candidates)];
     if (!lastName && !firstName && uniq.length >= 2) {
       lastName = uniq[0]!;
@@ -602,6 +704,12 @@ export function extractNamesFromOcr(lines: string[]): { firstName: string | null
     } else if (!firstName && uniq.length >= 1) {
       firstName = uniq.find((n) => n !== lastName) ?? null;
     }
+  }
+
+  if (tc) {
+    const trNames = extractTurkishIdCardNamesFromOcr(L);
+    firstName = coalescePersonName(trNames.firstName, firstName);
+    lastName = coalescePersonName(trNames.lastName, lastName);
   }
 
   if (mrzNamesLookSwapped(firstName, lastName)) {
@@ -636,6 +744,15 @@ function guessNamesFromLayout(lines: string[]): { firstName: string | null; last
 }
 
 function resolveNames(lines: string[]): { firstName: string | null; lastName: string | null } {
+  const L = normLines(lines);
+  const tc = extractTurkishNationalIdFromOcr(L);
+  if (tc) {
+    const trNames = extractTurkishIdCardNamesFromOcr(L);
+    if (isUsablePersonName(trNames.firstName) && isUsablePersonName(trNames.lastName)) {
+      return trNames;
+    }
+  }
+
   const labeled = extractNamesFromOcr(lines);
   if (isUsablePersonName(labeled.firstName) && isUsablePersonName(labeled.lastName)) {
     return correctSwappedMrzNames(labeled);
@@ -1010,7 +1127,14 @@ export function enrichMrzParsedWithFrontOcr(
   const natCode = parsed.nationalityCode ?? extractNationalityFromOcr(lines);
   const { birthDate, expiryDate } = extractIdCardDates(lines);
 
-  const bestNames = resolveBestPassportNames({ parsed, ocrLines: lines });
+  const bestNames =
+    parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines))
+      ? (() => {
+          const tr = extractTurkishIdCardNamesFromOcr(normLines(lines));
+          if (isUsablePersonName(tr.firstName) && isUsablePersonName(tr.lastName)) return tr;
+          return resolveBestPassportNames({ parsed, ocrLines: lines });
+        })()
+      : resolveBestPassportNames({ parsed, ocrLines: lines });
   const firstName = bestNames.firstName ?? parsed.firstName;
   const lastName = bestNames.lastName ?? parsed.lastName;
   const fullName =
