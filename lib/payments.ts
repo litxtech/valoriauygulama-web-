@@ -161,24 +161,33 @@ export async function archivePaymentRequest(paymentRequestId: string): Promise<v
   if (!payload?.ok) throw new Error('Link kapatılamadı');
 }
 
+const ADMIN_PAYMENT_REQUEST_SELECT = `*,
+  guest_detail:guest_id(
+    id, full_name, phone, email, status, id_number,
+    check_in_at, check_out_at, created_at, auth_user_id, is_guest_app_account,
+    rooms:room_id(room_number)
+  ),
+  creator_staff:created_by_staff_id(full_name)`;
+
 export async function fetchAdminPaymentRequests(limit = 500): Promise<AdminPaymentRequestRow[]> {
   const { data, error } = await supabase
     .from('payment_requests')
-    .select(
-      `*,
-      guest_detail:guest_id(
-        id, full_name, phone, email, status, id_number,
-        check_in_at, check_out_at, created_at, auth_user_id, is_guest_app_account,
-        rooms:room_id(room_number)
-      ),
-      creator_staff:created_by_staff_id(full_name)`
-    )
+    .select(ADMIN_PAYMENT_REQUEST_SELECT)
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) throw new Error(error.message);
-
-  const rows = (data ?? []) as AdminPaymentRequestRow[];
+  let rows: AdminPaymentRequestRow[];
+  if (error) {
+    const fallback = await supabase
+      .from('payment_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (fallback.error) throw new Error(fallback.error.message);
+    rows = (fallback.data ?? []) as AdminPaymentRequestRow[];
+  } else {
+    rows = (data ?? []) as AdminPaymentRequestRow[];
+  }
   const tipIds = rows
     .filter((r) => r.service_kind === 'staff_tip' && r.reference_id)
     .map((r) => r.reference_id as string);

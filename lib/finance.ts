@@ -31,11 +31,11 @@ export const CHECK_DIRECTION_LABELS: Record<FinanceCheckDirection, string> = {
 
 export const CHECK_STATUS_LABELS: Record<FinanceCheckStatus, string> = {
   draft: 'Taslak',
-  registered: 'Kayıtlı',
+  registered: 'Çek girildi',
   presented: 'İbraz',
   partial: 'Kısmi tahsil (borç ödemesi)',
-  paid: 'Ödendi / Tahsil',
-  bounced: 'Karşılıksız',
+  paid: 'Ödendi',
+  bounced: 'Ödenmedi',
   cancelled: 'İptal',
 };
 

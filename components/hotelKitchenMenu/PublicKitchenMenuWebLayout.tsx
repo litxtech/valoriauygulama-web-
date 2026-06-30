@@ -278,37 +278,43 @@ export function PublicKitchenMenuWebLayout(props: Props) {
             {heroImage ? (
               <>
                 <CachedImage uri={heroImage} style={StyleSheet.absoluteFillObject} contentFit="cover" recyclingKey={`hero-${orgSlug}`} />
-                <LinearGradient colors={['rgba(5,8,16,0.5)', 'rgba(5,8,16,0.92)']} style={StyleSheet.absoluteFillObject} />
+                <LinearGradient colors={['rgba(4,6,12,0.35)', 'rgba(4,6,12,0.88)']} style={StyleSheet.absoluteFillObject} />
               </>
-            ) : null}
-            <View style={[styles.heroFrame, { borderColor: `${accent}44` }]} pointerEvents="none" />
-            <View style={[styles.heroInner, { paddingTop: insets.top + 28, maxWidth: maxW + 80 }]}>
+            ) : (
+              <View style={[styles.heroGlow, { backgroundColor: menuTheme.webHeroGlow }]} pointerEvents="none" />
+            )}
+            <View style={[styles.heroInner, { paddingTop: insets.top + 32, maxWidth: maxW + 80 }]}>
               <View style={styles.heroTop}>
                 <LiveDot label={t('publicKitchenMenuLiveBadge')} />
                 <View style={styles.heroLang}>
                   <PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />
                 </View>
               </View>
-              <Text style={[styles.heroKicker, { color: accent }]}>{t('hotelKitchenMenuHeroTitle').toUpperCase()}</Text>
-              <Text style={styles.heroHotel}>{org.name}</Text>
+              <Text style={[styles.heroKicker, { color: accent }]}>{org.name.toUpperCase()}</Text>
+              <Text style={styles.heroHotel}>
+                {menuTheme.heroTitle ?? t('hotelKitchenMenuHeroTitle')}
+              </Text>
               <Text style={styles.heroSub}>{menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub')}</Text>
-              <View style={[styles.searchBox, { borderColor: `${accent}44` }]}>
-                <Ionicons name="search" size={18} color="rgba(255,255,255,0.55)" />
+              <View style={[styles.searchBox, { borderColor: `${accent}33` }]}>
+                <View style={[styles.searchIconWrap, { backgroundColor: `${accent}22` }]}>
+                  <Ionicons name="search" size={16} color={accent} />
+                </View>
                 <TextInput
                   style={styles.searchInput}
                   placeholder={t('hotelKitchenMenuSearchPh')}
-                  placeholderTextColor="rgba(255,255,255,0.4)"
+                  placeholderTextColor="rgba(255,255,255,0.38)"
                   value={search}
                   onChangeText={setSearch}
                 />
                 {search ? (
                   <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-                    <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.5)" />
+                    <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.45)" />
                   </TouchableOpacity>
                 ) : null}
               </View>
             </View>
           </LinearGradient>
+          <View style={[styles.heroCurve, { backgroundColor: menuUi.webSurface }]} />
         </View>
 
         {/* Mobile filters strip */}
@@ -437,35 +443,52 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scroll: { flex: 1 },
-  heroWrap: { width: '100%' },
-  hero: { minHeight: 340, position: 'relative', overflow: 'hidden' },
-  heroFrame: {
+  heroWrap: { width: '100%', position: 'relative' },
+  hero: { minHeight: 360, position: 'relative', overflow: 'hidden' },
+  heroGlow: {
     position: 'absolute',
-    top: 16,
-    left: 16,
-    right: 16,
-    bottom: 16,
-    borderWidth: 1,
-    borderRadius: 4,
-    zIndex: 1,
+    top: -80,
+    right: -40,
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    opacity: 0.9,
   },
-  heroInner: { alignSelf: 'center', width: '100%', paddingHorizontal: 28, paddingBottom: 36, zIndex: 2 },
-  heroTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  heroCurve: {
+    position: 'absolute',
+    bottom: -1,
+    left: 0,
+    right: 0,
+    height: 28,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  heroInner: { alignSelf: 'center', width: '100%', paddingHorizontal: 28, paddingBottom: 44, zIndex: 2 },
+  heroTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 22 },
   heroLang: { marginLeft: 'auto' },
-  heroKicker: { fontSize: 11, fontWeight: '800', letterSpacing: 4, marginBottom: 10 },
-  heroHotel: { fontSize: 42, fontWeight: '800', color: '#fff', letterSpacing: -1.2, lineHeight: 46 },
-  heroSub: { fontSize: 15, color: 'rgba(255,255,255,0.65)', marginTop: 10, lineHeight: 22, maxWidth: 480 },
+  heroKicker: { fontSize: 11, fontWeight: '800', letterSpacing: 3.5, marginBottom: 8 },
+  heroHotel: { fontSize: 40, fontWeight: '800', color: '#fff', letterSpacing: -1.4, lineHeight: 44 },
+  heroSub: { fontSize: 16, color: 'rgba(255,255,255,0.72)', marginTop: 12, lineHeight: 24, maxWidth: 520, fontWeight: '500' },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 22,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
+    gap: 12,
+    marginTop: 26,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    minHeight: 50,
-    maxWidth: 440,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    minHeight: 54,
+    maxWidth: 460,
+    backdropFilter: 'blur(12px)',
+  } as object,
+  searchIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchInput: { flex: 1, fontSize: 15, color: '#fff', paddingVertical: 10, outlineStyle: 'none' } as object,
   livePill: {
@@ -482,7 +505,12 @@ const styles = StyleSheet.create({
   liveRing: { width: 10, height: 10, borderRadius: 5, backgroundColor: menuUi.liveGreen, position: 'absolute', left: 10 },
   liveCore: { width: 8, height: 8, borderRadius: 4, backgroundColor: menuUi.liveGreen },
   liveText: { fontSize: 11, fontWeight: '800', color: '#86efac', marginLeft: 14 },
-  mobileStrip: { backgroundColor: menuUi.webGlass, borderBottomWidth: 1, borderBottomColor: menuUi.border },
+  mobileStrip: {
+    backgroundColor: menuUi.webGlass,
+    borderBottomWidth: 1,
+    borderBottomColor: menuUi.webGlassBorder,
+    marginTop: -8,
+  },
   mobileStripInner: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   mobileChip: {
     paddingHorizontal: 14,
@@ -500,7 +528,7 @@ const styles = StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     paddingHorizontal: 20,
-    paddingTop: 28,
+    paddingTop: 8,
     gap: 28,
   },
   sidebar: { width: 220 },
@@ -554,12 +582,12 @@ const styles = StyleSheet.create({
   resultsRow: { marginBottom: 20 },
   resultsText: { fontSize: 13, color: menuUi.webMuted, fontWeight: '600' },
   block: { marginBottom: 36 },
-  blockTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.4 },
+  blockTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
   featuredRow: { gap: 16, paddingTop: 14, paddingRight: 8 },
   catHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   catLine: { flex: 1, height: 1 },
   catCount: { fontSize: 13, fontWeight: '800', color: menuUi.webMuted },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
   empty: { alignItems: 'center', paddingVertical: 60, gap: 10 },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: menuUi.navy },
   emptyBody: { fontSize: 14, color: menuUi.webMuted, textAlign: 'center', maxWidth: 320 },

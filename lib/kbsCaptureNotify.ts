@@ -8,14 +8,16 @@ export async function notifyKbsDocumentCaptured(params: {
   count?: number;
 }): Promise<{ count: number }> {
   const { organizationId, createdByStaffId, roomNumber, count } = params;
-  const staffIds = await fetchKbsCaptureNotifyStaffIds(organizationId);
+  const staffIds = (await fetchKbsCaptureNotifyStaffIds(organizationId)).filter(
+    (id) => id !== createdByStaffId
+  );
   if (staffIds.length === 0) return { count: 0 };
 
   const n = count && count > 1 ? count : 1;
   const body =
     n > 1
-      ? `${n} yeni kimlik kaydı ${roomNumber} odasına eklendi.`
-      : `${roomNumber} odası için yeni kimlik kaydı oluşturuldu.`;
+      ? `${n} yeni kimlik ${roomNumber} numaralı odaya yüklendi.`
+      : `${roomNumber} numaralı odaya yeni kimlik yüklendi.`;
 
   const result = await sendNotificationToStaffIds({
     staffIds,

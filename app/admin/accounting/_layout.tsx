@@ -50,6 +50,7 @@ export default function AccountingLayout() {
       <Stack.Screen name="counterparties/edit" options={{ title: 'Kişi düzenle' }} />
       <Stack.Screen name="categories/index" options={{ title: 'Kategoriler' }} />
       <Stack.Screen name="activity/index" options={{ title: 'Son işlemler' }} />
+      <Stack.Screen name="bank-import/index" options={{ title: 'Banka ekstresi içe aktar' }} />
     </Stack>
   );
 }

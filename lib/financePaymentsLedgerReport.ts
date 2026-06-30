@@ -56,8 +56,23 @@ function matchesKindFilter(kind: FinanceMovementKind, filter: FinanceReportKindF
   return kind === 'income';
 }
 
+const PAYMENTS_LEDGER_SELECT = `
+  id,
+  kind,
+  amount,
+  movement_date,
+  category,
+  description,
+  ledger_scope,
+  payment_method,
+  counterparty_name,
+  counterparty:counterparty_id(name),
+  guest:guest_id(full_name),
+  agreement:agreement_id(title)
+`;
+
 export async function fetchPaymentsLedger(params: {
-  organizationId: string;
+  organizationId: string | 'all';
   dateStart?: string | null;
   dateEnd?: string | null;
   limit?: number;
@@ -65,32 +80,43 @@ export async function fetchPaymentsLedger(params: {
   const limit = params.limit ?? 500;
   let q = supabase
     .from('finance_movements')
-    .select(
-      `
-      id,
-      kind,
-      amount,
-      movement_date,
-      category,
-      description,
-      ledger_scope,
-      payment_method,
-      counterparty_name,
-      counterparty:counterparty_id(name),
-      guest:guest_id(full_name),
-      agreement:agreement_id(title)
-    `
-    )
-    .eq('organization_id', params.organizationId)
+    .select(PAYMENTS_LEDGER_SELECT)
     .order('movement_date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(limit);
+
+  if (params.organizationId !== 'all') {
+    q = q.eq('organization_id', params.organizationId);
+  }
 
   if (params.dateStart) q = q.gte('movement_date', params.dateStart);
   if (params.dateEnd) q = q.lte('movement_date', params.dateEnd);
 
   const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  if (error) {
+    let fallback = supabase
+      .from('finance_movements')
+      .select(
+        'id, kind, amount, movement_date, category, description, ledger_scope, payment_method, counterparty_name'
+      )
+      .order('movement_date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (params.organizationId !== 'all') {
+      fallback = fallback.eq('organization_id', params.organizationId);
+    }
+    if (params.dateStart) fallback = fallback.gte('movement_date', params.dateStart);
+    if (params.dateEnd) fallback = fallback.lte('movement_date', params.dateEnd);
+    const fb = await fallback;
+    if (fb.error) throw new Error(fb.error.message);
+    return ((fb.data ?? []) as PaymentLedgerRow[]).map((r) => ({
+      ...r,
+      amount: Number(r.amount) || 0,
+      ledger_scope: r.ledger_scope === 'personal' ? 'personal' : 'hotel',
+      description: r.description ?? '',
+      payment_method: r.payment_method ?? 'cash',
+    }));
+  }
 
   return ((data ?? []) as PaymentLedgerRow[]).map((r) => ({
     ...r,

@@ -18,11 +18,15 @@ import { listDocuments, type DocumentRow } from '@/lib/documentManagement';
 import { supabase } from '@/lib/supabase';
 import { CachedImage } from '@/components/CachedImage';
 import { getDocumentsBucketPublicUrl, isDocumentImageMime } from '@/lib/documentsSignedUrl';
+import { DocumentScreenIntro } from '@/components/documents/DocumentScreenIntro';
+import { documentDetailHref, useDocumentsBasePath } from '@/lib/documentManagementRoutes';
+import { docTheme } from '@/constants/documentManagementTheme';
 
 type LightboxState = { uri: string; title: string } | null;
 
 export default function AdminDocumentsAll() {
   const router = useRouter();
+  const base = useDocumentsBasePath();
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
   const [rows, setRows] = useState<DocumentRow[]>([]);
@@ -81,7 +85,7 @@ export default function AdminDocumentsAll() {
 
   const emptyText = useMemo(() => (loading ? 'Yükleniyor…' : 'Kayıt yok'), [loading]);
 
-  const goDetail = (docId: string) => router.push(`/admin/documents/${docId}` as never);
+  const goDetail = (docId: string) => router.push(documentDetailHref(base, docId) as never);
 
   const openLightbox = (uri: string, title: string) => {
     setLightbox({ uri, title });
@@ -97,7 +101,8 @@ export default function AdminDocumentsAll() {
         data={rows}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={docTheme.accent} />}
+        ListHeaderComponent={<DocumentScreenIntro screenKey="all" />}
         ListEmptyComponent={<Text style={styles.sub}>{emptyText}</Text>}
         renderItem={({ item }) => {
           const ver = item.current_version_id ? versionsById[item.current_version_id] : undefined;
@@ -188,7 +193,7 @@ export default function AdminDocumentsAll() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  container: { flex: 1, backgroundColor: docTheme.bg },
   content: { padding: 20, paddingBottom: 96 },
   sub: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted, lineHeight: 18 },
   card: {

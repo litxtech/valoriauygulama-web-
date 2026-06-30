@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isSupabaseInCooldown } from '@/lib/supabaseHealthGate';
 
 /** Admin kök paneli istatistikleri — bellek + disk önbellek (stale-while-revalidate). */
 export type AdminDashboardStats = {
@@ -106,7 +107,11 @@ export function getAdminDashboardCacheAgeMs(key: string): number | null {
 
 export function shouldSkipAdminDashboardNetwork(key: string, force?: boolean): boolean {
   if (force) return false;
-  if (!entry || entry.key !== key) return false;
+  const hasCache = !!entry && entry.key === key;
+  // Cooldown yalnızca gösterilecek önbellek varsa ağı atlasın; ilk yüklemede panel boş kalıp
+  // 12 sn boyunca veri çekmemesini önler.
+  if (isSupabaseInCooldown() && hasCache) return true;
+  if (!hasCache) return false;
   return isEntryFresh(entry, ADMIN_DASHBOARD_FOCUS_REFRESH_MS);
 }
 

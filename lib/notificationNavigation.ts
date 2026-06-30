@@ -176,6 +176,30 @@ function resolveByNotificationType(
       return '/staff/breakfast-confirm';
     case 'breakfast_morning_briefing':
       return '/staff/breakfast-briefing';
+    case 'breakfast_partner_entry':
+    case 'breakfast_partner_remind':
+      return isStaff ? '/staff/breakfast-partners' : '/admin/breakfast-partners';
+    case 'breakfast_partner_payment_staff': {
+      const partnerHotelId = pickStr(data, 'partnerHotelId', 'partner_hotel_id');
+      if (partnerHotelId) {
+        return { pathname: '/admin/breakfast-partners/[id]', params: { id: partnerHotelId } } as Href;
+      }
+      return '/admin/breakfast-partners';
+    }
+    case 'breakfast_partner_approved':
+    case 'breakfast_partner_price':
+    case 'breakfast_partner_campaign':
+    case 'breakfast_partner_payment':
+    case 'breakfast_partner_remind':
+    case 'breakfast_partner_suspended':
+      return '/partner/(tabs)';
+    case 'breakfast_partner_camera_video': {
+      const requestId = pickStr(data, 'requestId', 'request_id');
+      if (requestId) {
+        return { pathname: '/partner/camera-requests/[id]', params: { id: requestId } } as Href;
+      }
+      return '/partner/camera-requests';
+    }
     case 'tech_fault_report':
       return isStaff ? '/staff/technical-assets/faults' : '/admin/technical-assets/faults';
     case 'tech_asset_status':
@@ -213,6 +237,13 @@ function resolveByNotificationType(
     case 'kitchen_expense_entry':
     case 'kitchen_monthly_market_expense':
       return '/staff/kitchen-ops/expenses';
+    case 'staff_quick_note': {
+      const noteId = pickStr(data, 'noteId', 'note_id');
+      if (noteId) {
+        return { pathname: '/admin/notes/[id]', params: { id: noteId } } as Href;
+      }
+      return '/admin/notes';
+    }
     case 'message':
     case 'chat_message':
     case 'chat_mention':

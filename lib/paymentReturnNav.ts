@@ -5,16 +5,20 @@ import { dismissTipSheetsForPaymentReturn } from '@/stores/staffTipPaymentStore'
 export function resolvePaymentReturnTarget(params: {
   isStaff: boolean;
   isGuest: boolean;
+  isPartner?: boolean;
   paymentId?: string;
   referenceType?: string | null;
 }): string {
-  const { isStaff, isGuest, paymentId, referenceType } = params;
+  const { isStaff, isGuest, isPartner, paymentId, referenceType } = params;
 
   if (isStaff && paymentId) {
     return `/staff/payments/${paymentId}`;
   }
   if (isStaff) {
     return '/staff/payments';
+  }
+  if (isPartner || referenceType === 'breakfast_partner_hotel') {
+    return '/partner/(tabs)/account';
   }
   if (isGuest) {
     if (referenceType === 'staff_tip') {

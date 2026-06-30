@@ -1,5 +1,5 @@
 import { mrzScoreToConfidence, scoreMrzCandidate } from '@/lib/scanner/mrzCandidateScore';
-import { canLockMrzLiveScan, canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
+import { canLockMrzLiveScan, canSaveMrzDocument, canUseKbsCaptureMrz } from '@/lib/scanner/mrzScanGate';
 import { mrzOcrAmbiguityVariants, normalizeMrzOcrLine, normalizeMrzOcrLines } from '@/lib/scanner/mrzOcrNormalize';
 import { parseMrzToNormalized } from '@/lib/scanner/mrzParser';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -106,10 +106,11 @@ export type MrzExtractResult = { mrz: string; parsed: ParsedDocument; score: num
 
 type RankedMrz = MrzExtractResult & { strictSave: boolean };
 
-function rankMrzCandidate(raw: string, parsed: ParsedDocument): RankedMrz | null {
+function rankMrzCandidate(raw: string, parsed: ParsedDocument, kbsRelaxed?: boolean): RankedMrz | null {
   const gate = canSaveMrzDocument({ rawMrz: raw, parsed });
   const lockOk = canLockMrzLiveScan({ rawMrz: raw, parsed });
-  if (!gate.allowed && !lockOk) return null;
+  const kbsOk = kbsRelaxed && canUseKbsCaptureMrz({ rawMrz: raw, parsed });
+  if (!gate.allowed && !lockOk && !kbsOk) return null;
   const score = scoreMrzCandidate({ rawMrz: raw, parsed });
   return {
     mrz: raw,
@@ -123,14 +124,17 @@ function rankMrzCandidate(raw: string, parsed: ParsedDocument): RankedMrz | null
 }
 
 /** OCR satırlarından en iyi geçerli MRZ (tüm adaylar puanlanır). */
-export function extractMrzFromLinesBest(lines: string[]): MrzExtractResult | null {
+export function extractMrzFromLinesBest(
+  lines: string[],
+  opts?: { kbsRelaxed?: boolean }
+): MrzExtractResult | null {
   const candidates = buildCandidateStrings(lines);
   const ranked: RankedMrz[] = [];
 
   for (const raw of candidates) {
     for (const variant of mrzOcrAmbiguityVariants(raw)) {
       const parsed = parseMrzToNormalized(variant);
-      const row = rankMrzCandidate(variant, parsed);
+      const row = rankMrzCandidate(variant, parsed, opts?.kbsRelaxed);
       if (row) ranked.push(row);
     }
   }

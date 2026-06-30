@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,28 +7,18 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
-  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { sendBulkToStaff } from '@/lib/notificationService';
 import { GlassSurface } from '@/components/premium/GlassSurface';
-import { PressableScale } from '@/components/premium/PressableScale';
 import { CleaningJobCard } from '@/components/staff/CleaningJobCard';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
-import {
-  ROOM_CLEANING_CHECKLIST_KEYS,
-  cleaningChecklistLabel,
-  emptyCleaningChecklist,
-  isCleaningChecklistComplete,
-  parseCleaningChecklist,
-  type RoomCleaningChecklistKey,
-} from '@/lib/roomCleaningChecklist';
 import {
   fetchStaffCleaningPlanBundle,
   type CleaningAssignmentRow,
@@ -59,26 +49,6 @@ function formatPlanDate(iso: string | undefined, locale: string): string {
   }
 }
 
-function LivePulse({ label }: { label: string }) {
-  const pulse = useRef(new Animated.Value(0.4)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-  return (
-    <View style={liveStyles.wrap}>
-      <Animated.View style={[liveStyles.dot, { opacity: pulse, transform: [{ scale: pulse }] }]} />
-      <Text style={liveStyles.text}>{label}</Text>
-    </View>
-  );
-}
-
 function applyBundleToState(
   bundle: CleaningPlanBundle,
   setters: {
@@ -87,28 +57,20 @@ function applyBundleToState(
     setPlanRoomsByPlanId: (v: Record<string, CleaningPlanRoomRow[]>) => void;
     setRoomMetaByRoomId: (v: Record<string, CleaningRoomMeta>) => void;
     setNotesByAssignmentId: (v: Record<string, string>) => void;
-    setChecklistByAssignmentId: (v: Record<string, Record<RoomCleaningChecklistKey, boolean>>) => void;
+    setStaffNamesByPlanId: (v: Record<string, string[]>) => void;
   }
 ) {
   setters.setAssignments(bundle.assignments);
   setters.setPlansById(bundle.plansById);
   setters.setPlanRoomsByPlanId(bundle.planRoomsByPlanId);
   setters.setRoomMetaByRoomId(bundle.roomMetaByRoomId);
+  setters.setStaffNamesByPlanId(bundle.staffNamesByPlanId ?? {});
   setters.setNotesByAssignmentId(
     Object.fromEntries(bundle.assignments.map((a) => [a.id, a.staff_note || '']))
-  );
-  setters.setChecklistByAssignmentId(
-    Object.fromEntries(
-      bundle.assignments.map((a) => [
-        a.id,
-        a.completed_at ? parseCleaningChecklist(a.completion_checklist) : emptyCleaningChecklist(),
-      ])
-    )
   );
 }
 
 export default function StaffCleaningPlanScreen() {
-  const router = useRouter();
   const { t, i18n } = useTranslation();
   const insets = useSafeAreaInsets();
   const pds = usePersonelDesign();
@@ -124,10 +86,7 @@ export default function StaffCleaningPlanScreen() {
   const [planRoomsByPlanId, setPlanRoomsByPlanId] = useState<Record<string, CleaningPlanRoomRow[]>>({});
   const [roomMetaByRoomId, setRoomMetaByRoomId] = useState<Record<string, CleaningRoomMeta>>({});
   const [notesByAssignmentId, setNotesByAssignmentId] = useState<Record<string, string>>({});
-  const [checklistByAssignmentId, setChecklistByAssignmentId] = useState<
-    Record<string, Record<RoomCleaningChecklistKey, boolean>>
-  >({});
-  const [liveConnected, setLiveConnected] = useState(false);
+  const [staffNamesByPlanId, setStaffNamesByPlanId] = useState<Record<string, string[]>>({});
 
   const planIdSet = useMemo(() => new Set(assignments.map((a) => a.plan_id)), [assignments]);
 
@@ -138,7 +97,7 @@ export default function StaffCleaningPlanScreen() {
       setPlanRoomsByPlanId,
       setRoomMetaByRoomId,
       setNotesByAssignmentId,
-      setChecklistByAssignmentId,
+      setStaffNamesByPlanId,
     });
   }, []);
 
@@ -217,33 +176,15 @@ export default function StaffCleaningPlanScreen() {
           void loadData(true);
         }
       )
-      .subscribe((status) => {
-        setLiveConnected(status === 'SUBSCRIBED');
-      });
+      .subscribe();
     return () => {
-      setLiveConnected(false);
       void supabase.removeChannel(channel);
     };
   }, [staff?.id, planIdSet, loadData]);
 
-  const toggleChecklistItem = (assignmentId: string, key: RoomCleaningChecklistKey) => {
-    setChecklistByAssignmentId((prev) => ({
-      ...prev,
-      [assignmentId]: {
-        ...(prev[assignmentId] ?? emptyCleaningChecklist()),
-        [key]: !(prev[assignmentId]?.[key] ?? false),
-      },
-    }));
-  };
-
-  async function submitBulkCompletion(assignment: CleaningAssignmentRow) {
+  async function submitCompletion(assignment: CleaningAssignmentRow) {
     if (!staff?.id) {
       Alert.alert(t('error'), t('assignPage_errSession'));
-      return;
-    }
-    const checklist = checklistByAssignmentId[assignment.id] ?? emptyCleaningChecklist();
-    if (!isCleaningChecklistComplete(checklist)) {
-      Alert.alert(t('cleaningPage_step2Title'), t('cleaningPage_checklistIncomplete'));
       return;
     }
 
@@ -258,19 +199,12 @@ export default function StaffCleaningPlanScreen() {
       t('cleaningPage_confirmBody', { count: planRooms.length }),
       [
         { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('cleaningPage_confirmYes'),
-          onPress: () => void executeBulkCompletion(assignment, checklist, planRooms),
-        },
+        { text: t('cleaningPage_confirmYes'), onPress: () => void executeCompletion(assignment, planRooms) },
       ]
     );
   }
 
-  async function executeBulkCompletion(
-    assignment: CleaningAssignmentRow,
-    checklist: Record<RoomCleaningChecklistKey, boolean>,
-    planRooms: CleaningPlanRoomRow[]
-  ) {
+  async function executeCompletion(assignment: CleaningAssignmentRow, planRooms: CleaningPlanRoomRow[]) {
     if (!staff?.id) return;
 
     const plan = plansById[assignment.plan_id];
@@ -298,7 +232,6 @@ export default function StaffCleaningPlanScreen() {
       .update({
         staff_note: staffNote,
         completed_at: now,
-        completion_checklist: checklist,
       })
       .eq('id', assignment.id);
 
@@ -360,10 +293,9 @@ export default function StaffCleaningPlanScreen() {
   const activeAssignments = sortedAssignments.filter((a) => !isPlanCompleted(a));
   const completedAssignments = sortedAssignments.filter((a) => isPlanCompleted(a));
 
-  const pageBg = isNight ? pds.pageBg : '#f0fdfa';
-  const hasContent = assignments.length > 0 || !loading;
+  const pageBg = isNight ? pds.pageBg : '#f8fafc';
 
-  if (loading && !hasContent) {
+  if (loading && assignments.length === 0) {
     return (
       <View style={[styles.centered, { backgroundColor: pageBg }]}>
         <ActivityIndicator size="large" color={CLEANING_ACCENT} />
@@ -384,36 +316,13 @@ export default function StaffCleaningPlanScreen() {
             void loadData(true);
           }}
           tintColor={CLEANING_ACCENT}
-          title={refreshing ? t('cleaningPage_pullRefresh') : undefined}
         />
       }
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.hero}>
-        <View style={styles.heroTop}>
-          <View style={styles.heroIconWrap}>
-            <Ionicons name="sparkles" size={20} color="#fff" />
-          </View>
-          <View style={styles.heroTextCol}>
-            <Text style={styles.heroTitle}>{t('staffCleaningNavTitle')}</Text>
-            <Text style={styles.heroSub}>{t('cleaningPage_subtitle')}</Text>
-          </View>
-          <View style={styles.heroActions}>
-            {liveConnected ? <LivePulse label={t('cleaningPage_live')} /> : null}
-            <PressableScale
-              onPress={() => router.push('/staff/cleaning-history' as never)}
-              style={styles.historyChip}
-              haptic
-            >
-              <Ionicons name="time-outline" size={14} color="#fff" />
-            </PressableScale>
-          </View>
-        </View>
-      </View>
-
       {activeAssignments.length === 0 ? (
         <GlassSurface style={styles.emptyCard} borderRadius={14}>
-          <Ionicons name="checkmark-done-circle-outline" size={36} color={CLEANING_ACCENT} />
+          <Ionicons name="bed-outline" size={32} color={pds.muted} />
           <Text style={[styles.emptyText, { color: pds.subtext }]}>{t('cleaningPage_emptyActive')}</Text>
         </GlassSurface>
       ) : (
@@ -421,7 +330,6 @@ export default function StaffCleaningPlanScreen() {
           const plan = plansById[a.plan_id];
           if (!plan) return null;
           const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
-          const checklistReady = isCleaningChecklistComplete(checklistByAssignmentId[a.id]);
 
           return (
             <CleaningJobCard
@@ -429,13 +337,11 @@ export default function StaffCleaningPlanScreen() {
               plan={plan}
               planRooms={planRooms}
               roomMetaByRoomId={roomMetaByRoomId}
-              checklist={checklistByAssignmentId[a.id] ?? emptyCleaningChecklist()}
+              assignedNames={staffNamesByPlanId[a.plan_id] ?? []}
               note={notesByAssignmentId[a.id] ?? ''}
               onNoteChange={(v) => setNotesByAssignmentId((prev) => ({ ...prev, [a.id]: v }))}
-              onToggleCheck={(key) => toggleChecklistItem(a.id, key)}
-              onSubmit={() => void submitBulkCompletion(a)}
+              onSubmit={() => void submitCompletion(a)}
               saving={savingId === a.id}
-              checklistReady={checklistReady}
               locale={locale}
               t={t}
               pds={pds}
@@ -445,110 +351,65 @@ export default function StaffCleaningPlanScreen() {
         })
       )}
 
-      <Text style={[styles.completedSectionTitle, { color: pds.text }]}>{t('cleaningPage_completedSection')}</Text>
-      {completedAssignments.length === 0 ? (
-        <GlassSurface style={styles.emptyCard} borderRadius={14}>
-          <Ionicons name="archive-outline" size={32} color={pds.muted} />
-          <Text style={[styles.emptyText, { color: pds.subtext }]}>{t('cleaningPage_noCompleted')}</Text>
-        </GlassSurface>
-      ) : (
-        completedAssignments.map((a) => {
-          const plan = plansById[a.plan_id];
-          const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
-          const dateLabel = formatPlanDate(plan?.target_date, locale) || t('cleaningPage_dateUnknown');
-          const savedChecklist = parseCleaningChecklist(a.completion_checklist);
-          return (
-            <GlassSurface key={`completed-${a.id}`} style={styles.completedCard} borderRadius={14}>
-              <Text style={[styles.completedCardTitle, { color: pds.text }]}>
-                {t('cleaningPage_planTitle', { date: dateLabel })}
-              </Text>
-              <Text style={[styles.completedCardSub, { color: pds.subtext }]}>
-                {t('cleaningPage_progress', { done: planRooms.length, total: planRooms.length })}
-              </Text>
-              <View style={[styles.doneStrip, { backgroundColor: isNight ? 'rgba(34,197,94,0.12)' : '#ecfdf5' }]}>
-                <Text style={styles.doneStripText}>
-                  {planRooms.map((r) => roomMetaByRoomId[r.room_id]?.room_number || '-').join(' · ')}
-                </Text>
+      {completedAssignments.length > 0 ? (
+        <>
+          <Text style={[styles.completedSectionTitle, { color: pds.text }]}>{t('cleaningPage_completedSection')}</Text>
+          {completedAssignments.map((a) => {
+            const plan = plansById[a.plan_id];
+            const planRooms = planRoomsByPlanId[a.plan_id] ?? [];
+            const dateLabel = formatPlanDate(plan?.target_date, locale) || t('cleaningPage_dateUnknown');
+            const roomNumbers = planRooms
+              .map((r) => roomMetaByRoomId[r.room_id]?.room_number)
+              .filter(Boolean)
+              .join(', ');
+
+            return (
+              <View
+                key={`completed-${a.id}`}
+                style={[
+                  styles.completedCard,
+                  { borderColor: pds.cardBorder, backgroundColor: isNight ? pds.cardBg : '#fff' },
+                ]}
+              >
+                <View style={styles.completedHeader}>
+                  <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+                  <Text style={[styles.completedDate, { color: pds.text }]}>{dateLabel}</Text>
+                </View>
+                <Text style={[styles.completedRooms, { color: pds.text }]}>{roomNumbers}</Text>
+                {(staffNamesByPlanId[a.plan_id] ?? []).length > 0 ? (
+                  <Text style={[styles.completedAssignees, { color: pds.subtext }]}>
+                    {t('cleaningPage_assignees')}: {(staffNamesByPlanId[a.plan_id] ?? []).join(', ')}
+                  </Text>
+                ) : null}
+                {(a.staff_note || '').trim() ? (
+                  <Text style={[styles.completedNote, { color: pds.subtext }]}>{a.staff_note}</Text>
+                ) : null}
               </View>
-              <View style={styles.checklistDone}>
-                {ROOM_CLEANING_CHECKLIST_KEYS.filter((k) => savedChecklist[k]).map((k) => (
-                  <View key={k} style={styles.checklistDoneRow}>
-                    <Ionicons name="checkmark" size={14} color="#16a34a" />
-                    <Text style={[styles.checklistDoneText, { color: pds.text }]}>{cleaningChecklistLabel(k)}</Text>
-                  </View>
-                ))}
-              </View>
-              <View style={[styles.savedNoteWrap, { borderColor: pds.cardBorder }]}>
-                <Text style={[styles.savedNoteTitle, { color: pds.subtext }]}>{t('cleaningPage_savedNote')}</Text>
-                <Text style={[styles.savedNoteText, { color: pds.text }]}>
-                  {(a.staff_note || '').trim() || t('cleaningPage_noNote')}
-                </Text>
-              </View>
-            </GlassSurface>
-          );
-        })
-      )}
+            );
+          })}
+        </>
+      ) : null}
     </ScrollView>
   );
 }
 
-const liveStyles = StyleSheet.create({
-  wrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ade80' },
-  text: { fontSize: 9, fontWeight: '700', color: '#ecfdf5', letterSpacing: 0.4 },
-});
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 14, gap: 2 },
+  content: { padding: 14 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  hero: {
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    backgroundColor: CLEANING_ACCENT,
+  emptyCard: { alignItems: 'center', paddingVertical: 32, gap: 10 },
+  emptyText: { fontSize: 14, textAlign: 'center', paddingHorizontal: 20 },
+  completedSectionTitle: { fontSize: 15, fontWeight: '700', marginTop: 8, marginBottom: 10 },
+  completedCard: {
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 12,
+    marginBottom: 8,
+    gap: 4,
   },
-  heroTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  heroActions: { alignItems: 'flex-end', gap: 6 },
-  heroIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroTextCol: { flex: 1, minWidth: 0 },
-  heroTitle: { fontSize: 18, fontWeight: '800', color: '#fff', letterSpacing: -0.2 },
-  heroSub: { fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.82)', marginTop: 3 },
-  historyChip: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyCard: { alignItems: 'center', paddingVertical: 24, gap: 8, marginBottom: 10 },
-  emptyText: { fontSize: 13, textAlign: 'center', paddingHorizontal: 16 },
-  doneStrip: { borderRadius: 8, padding: 8, marginTop: 6 },
-  doneStripText: { fontSize: 12, color: '#166534', fontWeight: '600', lineHeight: 16 },
-  checklistDone: { marginTop: 8, gap: 4 },
-  checklistDoneRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  checklistDoneText: { fontSize: 12, flex: 1 },
-  completedSectionTitle: { fontSize: 16, fontWeight: '700', marginTop: 6, marginBottom: 8 },
-  completedCard: { padding: 12, marginBottom: 8, gap: 4 },
-  completedCardTitle: { fontSize: 14, fontWeight: '700' },
-  completedCardSub: { fontSize: 12 },
-  savedNoteWrap: { marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
-  savedNoteTitle: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
-  savedNoteText: { fontSize: 13, lineHeight: 18 },
+  completedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  completedDate: { fontSize: 14, fontWeight: '700' },
+  completedRooms: { fontSize: 15, fontWeight: '600', marginTop: 2 },
+  completedAssignees: { fontSize: 13, marginTop: 4, fontWeight: '500' },
+  completedNote: { fontSize: 13, marginTop: 4, fontStyle: 'italic' },
 });

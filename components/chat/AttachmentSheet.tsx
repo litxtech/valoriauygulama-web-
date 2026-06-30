@@ -97,12 +97,20 @@ export function AttachmentSheet({ visible, onPick }: Props) {
 }
 
 /** WhatsApp: paperclip when closed, keyboard when tray open */
-export function AttachmentToggleIcon({ open }: { open: boolean }) {
+export function AttachmentToggleIcon({
+  open,
+  accentColor,
+  mutedColor,
+}: {
+  open: boolean;
+  accentColor?: string;
+  mutedColor?: string;
+}) {
   return (
     <Ionicons
       name={open ? 'keypad-outline' : 'attach'}
       size={24}
-      color={open ? chatTheme.accent : chatTheme.textSecondary}
+      color={open ? (accentColor ?? chatTheme.accent) : (mutedColor ?? chatTheme.textSecondary)}
     />
   );
 }

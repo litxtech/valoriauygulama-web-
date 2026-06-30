@@ -60,6 +60,9 @@ export async function uploadChatVideoThumbnail(
     if (actor.kind === 'staff') {
       return await uploadImageMessageForStaff(buffer, 'image/jpeg');
     }
+    if (actor.kind === 'partner') {
+      return await uploadImageMessageForPartner(buffer, 'image/jpeg');
+    }
     return await uploadImageMessageForGuest(actor.appToken, actor.conversationId, buffer, 'image/jpeg');
   } catch {
     return null;

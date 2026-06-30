@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
-import { View, TextInput, Pressable, StyleSheet, ScrollView, Text } from 'react-native';
+import { useMemo, type RefObject } from 'react';
+import { View, TextInput, Pressable, StyleSheet, ScrollView, Text, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { chatTheme, chatLayout } from '@/constants/chatTheme';
+import { partnerTheme } from '@/lib/breakfastPartnerTheme';
 import { ChatVoiceInputPreview } from '@/components/chat/ChatVoiceInputPreview';
 import { ChatInputTrailingActions } from '@/components/chat/ChatInputTrailingActions';
 import { AttachmentToggleIcon } from '@/components/chat/AttachmentSheet';
@@ -37,6 +38,9 @@ type Props = {
   sending?: boolean;
   showQuickChips?: boolean;
   bottomPadding?: number;
+  /** Koyu arka planlı ekranlar (partner sohbet vb.) */
+  variant?: 'light' | 'dark';
+  inputRef?: RefObject<TextInput | null>;
 };
 
 export function ChatInputBar({
@@ -51,8 +55,32 @@ export function ChatInputBar({
   sending,
   showQuickChips = true,
   bottomPadding = 8,
+  variant = 'light',
+  inputRef,
 }: Props) {
   const { t } = useTranslation();
+  const palette = useMemo(() => {
+    if (variant === 'dark') {
+      return {
+        surface: partnerTheme.bg,
+        background: partnerTheme.surfaceInput,
+        text: partnerTheme.text,
+        textMuted: partnerTheme.mutedSoft,
+        textSecondary: partnerTheme.muted,
+        border: partnerTheme.cardBorder,
+        accent: partnerTheme.accent,
+      };
+    }
+    return {
+      surface: chatTheme.surface,
+      background: chatTheme.background,
+      text: chatTheme.text,
+      textMuted: chatTheme.textMuted,
+      textSecondary: chatTheme.textSecondary,
+      border: chatTheme.border,
+      accent: chatTheme.accent,
+    };
+  }, [variant]);
   const hasText = value.trim().length > 0;
   const inputPlaceholder = placeholder ?? t('staffChatMessagePlaceholder');
   const voiceActive = voice && voice.phase !== 'idle';
@@ -63,7 +91,7 @@ export function ChatInputBar({
   );
 
   return (
-    <View style={[styles.wrap, { paddingBottom: bottomPadding }]}>
+    <View style={[styles.wrap, { paddingBottom: bottomPadding, backgroundColor: palette.surface, borderTopColor: palette.border }]}>
       {showQuickChips && !voiceActive ? (
         <ScrollView
           horizontal
@@ -74,19 +102,29 @@ export function ChatInputBar({
           {quickMessages.map((chip) => (
             <Pressable
               key={chip.key}
-              style={styles.chip}
+              style={[styles.chip, { backgroundColor: palette.background, borderColor: palette.border }]}
               onPress={() => onChangeText(value ? `${value} ${chip.text}` : chip.text)}
             >
-              <Text style={styles.chipText}>{chip.text}</Text>
+              <Text style={[styles.chipText, { color: palette.text }]}>{chip.text}</Text>
             </Pressable>
           ))}
         </ScrollView>
       ) : null}
       <View style={styles.row}>
         <Pressable onPress={onAttach} style={styles.iconBtn} hitSlop={8} disabled={voiceActive}>
-          <AttachmentToggleIcon open={attachOpen} />
+          <AttachmentToggleIcon
+            open={attachOpen}
+            accentColor={palette.accent}
+            mutedColor={palette.textSecondary}
+          />
         </Pressable>
-        <View style={[styles.input, voiceActive && styles.inputVoice]}>
+        <View
+          style={[
+            styles.input,
+            voiceActive && styles.inputVoice,
+            { backgroundColor: palette.background, borderColor: palette.border },
+          ]}
+        >
           {voiceActive && voice ? (
             <ChatVoiceInputPreview
               phase={voice.phase}
@@ -95,14 +133,16 @@ export function ChatInputBar({
             />
           ) : (
             <TextInput
-              style={styles.textInput}
+              ref={inputRef}
+              style={[styles.textInput, { color: palette.text }]}
               placeholder={inputPlaceholder}
-              placeholderTextColor={chatTheme.textMuted}
+              placeholderTextColor={palette.textMuted}
               value={value}
               onChangeText={onChangeText}
               multiline
               maxLength={4000}
-              editable={!sending}
+              blurOnSubmit={false}
+              returnKeyType="default"
             />
           )}
         </View>
@@ -117,15 +157,20 @@ export function ChatInputBar({
           />
         ) : hasText ? (
           <Pressable
-            onPress={onSend}
+            onPress={() => {
+              onSend();
+              if (inputRef) {
+                requestAnimationFrame(() => inputRef.current?.focus());
+              }
+            }}
             disabled={sending}
-            style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
+            style={[styles.sendBtn, { backgroundColor: palette.accent }, sending && styles.sendBtnDisabled]}
           >
             <Ionicons name="send" size={20} color="#fff" />
           </Pressable>
         ) : onCamera ? (
           <Pressable onPress={onCamera} style={styles.iconBtn} hitSlop={8}>
-            <Ionicons name="camera-outline" size={24} color={chatTheme.textSecondary} />
+            <Ionicons name="camera-outline" size={24} color={palette.textSecondary} />
           </Pressable>
         ) : (
           <View style={styles.iconBtnPlaceholder} />
@@ -137,9 +182,7 @@ export function ChatInputBar({
 
 const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: chatTheme.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: chatTheme.border,
   },
   chipsRow: {
     paddingHorizontal: 10,
@@ -151,14 +194,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: chatTheme.background,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: chatTheme.border,
     marginRight: 8,
   },
   chipText: {
     fontSize: 13,
-    color: chatTheme.text,
     fontWeight: '500',
   },
   row: {
@@ -181,29 +221,30 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 40,
     maxHeight: 96,
-    backgroundColor: chatTheme.background,
     borderRadius: chatLayout.inputRadius,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: chatTheme.border,
-    justifyContent: 'center',
+    overflow: 'hidden',
   },
   inputVoice: {
     maxHeight: 56,
     paddingVertical: 4,
   },
   textInput: {
+    flex: 1,
     minHeight: 40,
-    maxHeight: 96,
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 15,
-    color: chatTheme.text,
+    backgroundColor: 'transparent',
+    ...Platform.select({
+      android: { textAlignVertical: 'top', includeFontPadding: false },
+      default: {},
+    }),
   },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: chatTheme.accent,
     justifyContent: 'center',
     alignItems: 'center',
   },

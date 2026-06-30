@@ -1,4 +1,5 @@
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
+import { DEFAULT_KITCHEN_MENU_LAYOUT } from '@/lib/kitchenMenuThemePresets';
 
 export type KitchenMenuLayoutMode = 'classic' | 'compact' | 'featured';
 
@@ -77,7 +78,7 @@ export function resolveKitchenMenuTheme(
     primaryColor: primary,
     navyColor: navy,
     accentLightColor: accentLight,
-    layout: theme.layout ?? 'classic',
+    layout: theme.layout ?? DEFAULT_KITCHEN_MENU_LAYOUT,
     heroImageUrl: theme.heroImageUrl?.trim() || null,
     webHeroGradient: [blendHex(navy, '#000000', 0.35), navy, navyMid, navySoft] as const,
     webHeroGlow: hexToRgba(primary, 0.18),

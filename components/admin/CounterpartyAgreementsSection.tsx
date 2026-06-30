@@ -76,6 +76,8 @@ type Props = {
   onPayDebt?: (row: CounterpartyAgreementRow) => void;
   /** Hızlı tahsilat sheet (alacak kayıtları) */
   onCollectDebt?: (row: CounterpartyAgreementRow) => void;
+  /** Fatura OCR ile borç aç */
+  onOpenInvoiceScan?: () => void;
   /** Başlık ve + butonunu gizle (üst aksiyon hub kullanılıyorsa) */
   hideHeader?: boolean;
 };
@@ -100,6 +102,7 @@ export function CounterpartyAgreementsSection({
   openNewDebtRequest,
   onPayDebt,
   onCollectDebt,
+  onOpenInvoiceScan,
   hideHeader,
 }: Props) {
   const router = useRouter();
@@ -482,6 +485,23 @@ export function CounterpartyAgreementsSection({
           </View>
         </View>
 
+        {row.line_items.length > 0 ? (
+          <View style={styles.lineItemsBlock}>
+            <Text style={styles.lineItemsTitle}>Malzeme kalemleri ({row.line_items.length})</Text>
+            {row.line_items.slice(0, 6).map((item) => (
+              <View key={item.id} style={styles.lineItemRow}>
+                <Text style={styles.lineItemName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.lineItemAmt}>{fmtMoneyTry(item.total)}</Text>
+              </View>
+            ))}
+            {row.line_items.length > 6 ? (
+              <Text style={styles.lineItemsMore}>+{row.line_items.length - 6} kalem daha</Text>
+            ) : null}
+          </View>
+        ) : null}
+
         {isOpen ? (
           <View style={styles.inlineActionsBlock}>
             <View style={styles.inlinePrimaryRow}>
@@ -673,6 +693,23 @@ export function CounterpartyAgreementsSection({
           <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>{defaultKindLabels.debtOpen}</Text>
             <Text style={styles.modalHint}>{defaultKindLabels.debtHint}</Text>
+            {onOpenInvoiceScan ? (
+              <TouchableOpacity
+                style={styles.invoiceScanBanner}
+                onPress={() => {
+                  setNewModal(false);
+                  onOpenInvoiceScan();
+                }}
+                activeOpacity={0.88}
+              >
+                <Ionicons name="scan-outline" size={22} color="#7c3aed" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.invoiceScanTitle}>Faturadan otomatik oku</Text>
+                  <Text style={styles.invoiceScanSub}>Fotoğraf/PDF → kalemler + toplam</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#7c3aed" />
+              </TouchableOpacity>
+            ) : null}
             <Text style={styles.inputLbl}>Kayıt yönü</Text>
             <View style={styles.kindRow}>
               {(['income', 'expense'] as AgreementMovementKind[]).map((k) => {
@@ -1262,6 +1299,30 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 17, fontWeight: '800', color: adminTheme.colors.text },
   modalHint: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 6, marginBottom: 14, lineHeight: 17 },
+  invoiceScanBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#f5f3ff',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  invoiceScanTitle: { fontSize: 14, fontWeight: '800', color: '#5b21b6' },
+  invoiceScanSub: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
+  lineItemsBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: adminTheme.colors.border,
+  },
+  lineItemsTitle: { fontSize: 12, fontWeight: '800', color: adminTheme.colors.textMuted, marginBottom: 6 },
+  lineItemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 3 },
+  lineItemName: { flex: 1, fontSize: 13, color: adminTheme.colors.text },
+  lineItemAmt: { fontSize: 13, fontWeight: '700', color: '#7c3aed' },
+  lineItemsMore: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4, fontStyle: 'italic' },
   inputLbl: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted, marginBottom: 4 },
   kindRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   kindChip: {

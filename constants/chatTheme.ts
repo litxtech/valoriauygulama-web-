@@ -2,23 +2,25 @@
  * Telegram-style staff chat palette (light, professional).
  */
 export const chatTheme = {
-  background: '#F6F7FB',
+  background: '#FFFFFF',
   surface: '#FFFFFF',
-  text: '#111827',
-  textSecondary: '#6B7280',
-  textMuted: '#9CA3AF',
-  border: '#E5E7EB',
-  accent: '#B88900',
-  accentPurple: '#8B5CF6',
-  bubbleOutgoing: '#CFA64A',
-  bubbleOutgoingAlt: '#C89B2E',
+  searchBg: '#F0F2F5',
+  rowPressed: '#F4F4F5',
+  text: '#000000',
+  textSecondary: '#707579',
+  textMuted: '#8E8E93',
+  border: '#E7E7E7',
+  accent: '#2AABEE',
+  accentPurple: '#7C5CFF',
+  bubbleOutgoing: '#EFFDDE',
+  bubbleOutgoingAlt: '#DCF8C6',
   bubbleIncoming: '#FFFFFF',
-  selected: '#EEF2FF',
+  selected: '#E8F4FC',
   danger: '#EF4444',
-  success: '#22C55E',
-  unreadBadge: '#B88900',
-  readCheck: '#B88900',
-  deliveredCheck: '#9CA3AF',
+  success: '#3CCB4A',
+  unreadBadge: '#2AABEE',
+  readCheck: '#2AABEE',
+  deliveredCheck: '#8E8E93',
 } as const;
 
 export const chatTypography = {
@@ -33,7 +35,10 @@ export const chatTypography = {
 
 export const chatLayout = {
   listRowHeight: 76,
-  avatarSize: 48,
+  avatarSize: 54,
+  listCardRadius: 0,
+  listCardMarginH: 0,
+  listCardMarginV: 0,
   bubbleMaxWidthRatio: 0.75,
   inputRadius: 22,
   composeFabSize: 56,

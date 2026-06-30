@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import {
   listAdminAppLinks,
@@ -114,10 +115,12 @@ export default function AdminAppLinksScreen() {
     if (result.canceled || !result.assets[0]?.uri) return;
     setUploadingIcon(true);
     try {
-      const arrayBuffer = await uriToArrayBuffer(result.assets[0].uri);
-      const path = `app-links/${Date.now()}.png`;
+      const uploadUri = await prepareCrossPlatformUploadImageUri(result.assets[0].uri);
+      const isPng = uploadUri.toLowerCase().includes('.png');
+      const arrayBuffer = await uriToArrayBuffer(uploadUri);
+      const path = `app-links/${Date.now()}.${isPng ? 'png' : 'jpg'}`;
       const { error } = await supabase.storage.from('app-link-icons').upload(path, arrayBuffer, {
-        contentType: 'image/png',
+        contentType: isPng ? 'image/png' : 'image/jpeg',
         upsert: true,
       });
       if (error) throw error;

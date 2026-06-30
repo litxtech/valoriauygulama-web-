@@ -48,7 +48,7 @@ export function createOptimisticVoiceMessage(params: {
   tempId: string;
   conversationId: string;
   senderId: string;
-  senderType: 'staff' | 'guest' | 'admin';
+  senderType: 'staff' | 'guest' | 'admin' | 'partner';
   senderName: string;
   senderAvatar: string | null;
   localUri: string;
@@ -90,6 +90,7 @@ export function createOptimisticImageMessage(params: {
   senderId: string;
   senderName: string;
   senderAvatar: string | null;
+  senderType?: 'staff' | 'partner';
   localUri: string;
   albumContent?: string;
 }): Message {
@@ -98,7 +99,7 @@ export function createOptimisticImageMessage(params: {
     id: params.tempId,
     conversation_id: params.conversationId,
     sender_id: params.senderId,
-    sender_type: 'staff',
+    sender_type: params.senderType ?? 'staff',
     sender_name: params.senderName,
     sender_avatar: params.senderAvatar,
     message_type: 'image',

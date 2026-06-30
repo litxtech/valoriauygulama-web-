@@ -34,6 +34,7 @@ import { isAssignmentMediaVideoUrl } from '@/lib/staffAssignmentMedia';
 import { completeStaffAssignment, failStaffAssignment } from '@/lib/staffAssignmentComplete';
 import { dispatchTaskCompletionNotify, dispatchTaskFailureNotify } from '@/lib/staffAssignmentCreate';
 import { CachedImage } from '@/components/CachedImage';
+import { TaskAssignmentBody } from '@/components/tasks/TaskAssignmentBody';
 import { TaskCompletionSheet } from '@/components/TaskCompletionSheet';
 import { TaskFailureSheet } from '@/components/TaskFailureSheet';
 import { PremiumTaskProgress } from '@/components/premium/PremiumTaskProgress';
@@ -42,6 +43,7 @@ import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintStore';
 import { recordStaffAssignmentView, recordStaffTasksTabOpen } from '@/lib/staffAssignmentViews';
+import { prefetchTranslations } from '@/lib/translateText';
 
 type Room = {
   id: string;
@@ -69,6 +71,7 @@ type AssignmentRow = {
   attachment_urls?: string[] | null;
   completion_proof_urls?: string[] | null;
   completion_note?: string | null;
+  group_staff_ids?: string[] | null;
 };
 
 type CreatorMini = { id: string; full_name: string | null; role: string | null };
@@ -135,6 +138,26 @@ function formatDt(iso: string | null | undefined, locale: string) {
   }
 }
 
+function formatTaskAssigneeNames(
+  row: AssignmentRow,
+  map: Record<string, AssigneeMini>,
+  selfId: string | undefined,
+  youLabel: string
+): string | null {
+  const ids =
+    row.group_staff_ids && row.group_staff_ids.length > 0
+      ? row.group_staff_ids
+      : row.assigned_staff_id
+        ? [row.assigned_staff_id]
+        : [];
+  if (ids.length === 0) return null;
+  const names = ids.map((id) => {
+    if (selfId && id === selfId) return youLabel;
+    return map[id]?.full_name?.trim() || '—';
+  });
+  return names.join(', ');
+}
+
 export default function StaffTasksTabScreen() {
   const router = useRouter();
   const { t, i18n } = useTranslation();
@@ -174,13 +197,13 @@ export default function StaffTasksTabScreen() {
     if (!staff?.id) return;
     try {
       const selectCols =
-        'id, title, body, task_type, priority, status, assigned_staff_id, room_ids, due_at, created_at, started_at, completed_at, failed_at, failure_reason, created_by_staff_id, attachment_urls, completion_proof_urls, completion_note';
+        'id, title, body, task_type, priority, status, assigned_staff_id, room_ids, due_at, created_at, started_at, completed_at, failed_at, failure_reason, created_by_staff_id, attachment_urls, completion_proof_urls, completion_note, group_staff_ids';
       let { data, error } = await supabase
         .from('staff_assignments')
         .select(selectCols)
         .order('created_at', { ascending: false })
         .limit(120);
-      if (error && (error.message?.includes('attachment_urls') || error.message?.includes('completion_') || error.message?.includes('failure_') || error.code === 'PGRST204')) {
+      if (error && (error.message?.includes('attachment_urls') || error.message?.includes('completion_') || error.message?.includes('failure_') || error.message?.includes('group_staff_ids') || error.code === 'PGRST204')) {
         const r2 = await supabase
           .from('staff_assignments')
           .select(
@@ -209,7 +232,11 @@ export default function StaffTasksTabScreen() {
         nextCreatorMap = Object.fromEntries((creators ?? []).map((c: CreatorMini) => [c.id, c]));
       }
       let nextAssigneeMap: Record<string, AssigneeMini> = {};
-      const assigneeIds = [...new Set(list.map((a) => a.assigned_staff_id).filter(Boolean))] as string[];
+      const assigneeIds = [
+        ...new Set(
+          list.flatMap((a) => [a.assigned_staff_id, ...(a.group_staff_ids ?? [])]).filter(Boolean)
+        ),
+      ] as string[];
       if (assigneeIds.length) {
         const { data: assignees } = await supabase
           .from('staff')
@@ -227,6 +254,7 @@ export default function StaffTasksTabScreen() {
       setCreatorMap(nextCreatorMap);
       setAssigneeMap(nextAssigneeMap);
       setRoomMap(nextRoomMap);
+      prefetchTranslations(list.map((a) => a.body ?? '').filter((b) => b.trim().length >= 2));
       const bundle: AssignmentsCacheBundle = {
         staffId: staff.id,
         assignments: list,
@@ -681,6 +709,8 @@ export default function StaffTasksTabScreen() {
             const assignee = assigneeMap[r.assigned_staff_id];
             const canAct = isMyTask(r);
             const urls = (r.attachment_urls ?? []).filter(Boolean);
+            const groupAssigneeNames = formatTaskAssigneeNames(r, assigneeMap, staff?.id, t('staffTasks_youLabel'));
+            const isMultiAssign = (r.group_staff_ids?.length ?? 0) > 1;
             const prioColor =
               r.priority === 'urgent'
                 ? theme.colors.error
@@ -730,7 +760,17 @@ export default function StaffTasksTabScreen() {
                       </Text>
                     </View>
                   ) : null}
-                  {scope === 'all' && assignee ? (
+                  {isMultiAssign && groupAssigneeNames ? (
+                    <View style={styles.assignerRow}>
+                      <View style={[styles.assignerAvatar, { backgroundColor: theme.colors.primary + '18' }]}>
+                        <Ionicons name="people-outline" size={14} color={theme.colors.primary} />
+                      </View>
+                      <Text style={styles.assignerText}>
+                        <Text style={styles.assignerLabel}>{t('staffTasks_groupAssignees')}: </Text>
+                        {groupAssigneeNames}
+                      </Text>
+                    </View>
+                  ) : scope === 'all' && assignee ? (
                     <View style={styles.assignerRow}>
                       <View style={[styles.assignerAvatar, { backgroundColor: theme.colors.primary + '18' }]}>
                         <Ionicons name="person-circle-outline" size={14} color={theme.colors.primary} />
@@ -798,7 +838,7 @@ export default function StaffTasksTabScreen() {
                     </View>
                   )}
                   {r.body ? (
-                    <Text style={styles.cardBody} numberOfLines={expanded ? undefined : 3}>{r.body}</Text>
+                    <TaskAssignmentBody body={r.body} numberOfLines={expanded ? undefined : 3} />
                   ) : null}
                   <View style={styles.cardMetaRow}>
                     <View style={[styles.prioChip, { backgroundColor: prioColor + '15' }]}>
@@ -862,6 +902,8 @@ export default function StaffTasksTabScreen() {
             const urls = (r.attachment_urls ?? []).filter(Boolean);
             const proofUrls = (r.completion_proof_urls ?? []).filter(Boolean);
             const pts = PRIORITY_POINTS[r.priority] ?? 10;
+            const groupAssigneeNames = formatTaskAssigneeNames(r, assigneeMap, staff?.id, t('staffTasks_youLabel'));
+            const isMultiAssign = (r.group_staff_ids?.length ?? 0) > 1;
             return (
               <View style={[styles.card, styles.cardCompleted]}>
                 <TouchableOpacity activeOpacity={0.9} onPress={() => setExpandedId((x) => (x === r.id ? null : r.id))}>
@@ -885,6 +927,17 @@ export default function StaffTasksTabScreen() {
                       <Text style={styles.assignerText}>
                         <Text style={styles.assignerLabel}>{t('staffTasks_assigner')} </Text>
                         {creator.full_name ?? t('staffTasks_managerDefault')}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {isMultiAssign && groupAssigneeNames ? (
+                    <View style={styles.assignerRow}>
+                      <View style={[styles.assignerAvatar, { backgroundColor: theme.colors.primary + '18' }]}>
+                        <Ionicons name="people-outline" size={14} color={theme.colors.primary} />
+                      </View>
+                      <Text style={styles.assignerText}>
+                        <Text style={styles.assignerLabel}>{t('staffTasks_groupAssignees')}: </Text>
+                        {groupAssigneeNames}
                       </Text>
                     </View>
                   ) : null}
@@ -954,9 +1007,7 @@ export default function StaffTasksTabScreen() {
                       </ScrollView>
                     </View>
                   ) : null}
-                  {expanded && r.body ? (
-                    <Text style={styles.cardBody}>{r.body}</Text>
-                  ) : null}
+                  {expanded && r.body ? <TaskAssignmentBody body={r.body} /> : null}
                 </TouchableOpacity>
               </View>
             );
@@ -982,6 +1033,8 @@ export default function StaffTasksTabScreen() {
           renderItem={({ item: r }) => {
             const expanded = expandedId === r.id;
             const assignee = assigneeMap[r.assigned_staff_id];
+            const groupAssigneeNames = formatTaskAssigneeNames(r, assigneeMap, staff?.id, t('staffTasks_youLabel'));
+            const isMultiAssign = (r.group_staff_ids?.length ?? 0) > 1;
             return (
               <View style={[styles.card, styles.cardFailed]}>
                 <TouchableOpacity activeOpacity={0.9} onPress={() => setExpandedId((x) => (x === r.id ? null : r.id))}>
@@ -998,7 +1051,17 @@ export default function StaffTasksTabScreen() {
                     </View>
                   </View>
                   <Text style={styles.cardTitle}>{r.title}</Text>
-                  {scope === 'all' && assignee ? (
+                  {isMultiAssign && groupAssigneeNames ? (
+                    <View style={styles.assignerRow}>
+                      <View style={[styles.assignerAvatar, { backgroundColor: theme.colors.primary + '18' }]}>
+                        <Ionicons name="people-outline" size={14} color={theme.colors.primary} />
+                      </View>
+                      <Text style={styles.assignerText}>
+                        <Text style={styles.assignerLabel}>{t('staffTasks_groupAssignees')}: </Text>
+                        {groupAssigneeNames}
+                      </Text>
+                    </View>
+                  ) : scope === 'all' && assignee ? (
                     <Text style={styles.assignerText}>
                       {t('staffTasks_assignedStaff')}: {assignee.full_name ?? '—'}
                     </Text>
@@ -1014,7 +1077,7 @@ export default function StaffTasksTabScreen() {
                       <Text style={styles.failureReasonText}>{r.failure_reason.trim()}</Text>
                     </View>
                   ) : null}
-                  {expanded && r.body ? <Text style={styles.cardBody}>{r.body}</Text> : null}
+                  {expanded && r.body ? <TaskAssignmentBody body={r.body} /> : null}
                 </TouchableOpacity>
               </View>
             );

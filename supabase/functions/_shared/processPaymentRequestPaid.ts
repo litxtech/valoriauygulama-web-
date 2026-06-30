@@ -192,9 +192,13 @@ export async function processPaymentRequestPaid(ctx: ProcessPaidContext): Promis
 
   if (wasUpdated) {
     try {
-      await ctx.admin.rpc("record_stripe_payment_income", { p_request_id: ctx.requestId });
+      if (row.service_kind === "breakfast_partner") {
+        await ctx.admin.rpc("record_breakfast_partner_stripe_payment", { p_request_id: ctx.requestId });
+      } else {
+        await ctx.admin.rpc("record_stripe_payment_income", { p_request_id: ctx.requestId });
+      }
     } catch (ledgerErr) {
-      console.warn("record_stripe_payment_income", ledgerErr);
+      console.warn("stripe payment ledger", ledgerErr);
     }
 
     await notifyPaymentCreator(ctx.admin, ctx.supabaseUrl, ctx.serviceKey, ctx.requestId, "paid");

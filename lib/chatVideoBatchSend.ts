@@ -8,6 +8,7 @@ import { uploadChatVideoForGuest, uploadChatVideoForStaff } from '@/lib/muxChatU
 import {
   staffSendMessage,
   guestSendMessage,
+  partnerSendMessage,
   patchChatMessageThumbnail,
   resolveStaffConversationIdForSend,
   resolveGuestConversationIdForSend,
@@ -133,6 +134,15 @@ function buildOptimisticVideoMessage(
       sender_avatar: actor.staffAvatar,
     };
   }
+  if (actor.kind === 'partner') {
+    return {
+      ...base,
+      sender_id: actor.partnerUserId,
+      sender_type: 'partner',
+      sender_name: actor.partnerDisplayName,
+      sender_avatar: null,
+    };
+  }
   return {
     ...base,
     sender_id: '',
@@ -185,6 +195,33 @@ async function createVideoMessage(
       resolvedConversationId
     );
     return { message: data, error };
+  }
+  if (actor.kind === 'partner') {
+    const { messageId, error } = await partnerSendMessage(
+      resolvedConversationId,
+      content,
+      'video',
+      pendingUrl,
+      thumbnailUrl
+    );
+    if (!messageId) return { message: null, error: error ?? 'partner_send_failed' };
+    return {
+      message: {
+        id: messageId,
+        conversation_id: resolvedConversationId,
+        sender_id: actor.partnerUserId,
+        sender_type: 'partner',
+        sender_name: actor.partnerDisplayName,
+        sender_avatar: null,
+        message_type: 'video',
+        content: albumContent,
+        media_url: pendingUrl,
+        media_thumbnail: thumbnailUrl,
+        ...emptyMessageFields(),
+        created_at: new Date().toISOString(),
+      },
+      error: null,
+    };
   }
   const { messageId, conversationId: cid } = await guestSendMessage(
     actor.appToken,
@@ -292,14 +329,16 @@ async function runChatVideoUploadPipeline(
     publishStates();
   };
 
-  const ownSenderId = actor.kind === 'staff' ? actor.staffId : undefined;
-  const ownSenderType = actor.kind === 'guest' ? ('guest' as const) : undefined;
+  const ownSenderId =
+    actor.kind === 'staff' ? actor.staffId : actor.kind === 'partner' ? actor.partnerUserId : undefined;
+  const ownSenderType =
+    actor.kind === 'guest' ? ('guest' as const) : actor.kind === 'partner' ? ('partner' as const) : undefined;
 
   let resolvedConversationId = initialConversationId;
   try {
     if (actor.kind === 'staff') {
       resolvedConversationId = await resolveStaffConversationIdForSend(initialConversationId, actor.staffId);
-    } else {
+    } else if (actor.kind === 'guest') {
       resolvedConversationId = await resolveGuestConversationIdForSend(actor.appToken, initialConversationId);
     }
     handlers.onConversationId?.(resolvedConversationId);
@@ -418,7 +457,7 @@ async function runChatVideoUploadPipeline(
         onUploadProgress: (ratio: number) =>
           setState(realKey, { phase: 'uploading', progress: phaseProgress('uploading', ratio) }),
       };
-      if (actor.kind === 'staff') {
+      if (actor.kind === 'staff' || actor.kind === 'partner') {
         await uploadChatVideoForStaff(uploadParams);
       } else {
         await uploadChatVideoForGuest({ ...uploadParams, appToken: actor.appToken });
@@ -524,7 +563,7 @@ export async function retryChatVideoUpload(
       onUploadProgress: (ratio: number) =>
         setState({ phase: 'uploading', progress: phaseProgress('uploading', ratio) }),
     };
-    if (actor.kind === 'staff') {
+    if (actor.kind === 'staff' || actor.kind === 'partner') {
       await uploadChatVideoForStaff(retryUpload);
     } else {
       await uploadChatVideoForGuest({ ...retryUpload, appToken: actor.appToken });

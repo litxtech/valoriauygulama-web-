@@ -12,6 +12,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { getInfoAsync, uploadAsync, FileSystemUploadType } from 'expo-file-system/legacy';
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import { uriToArrayBuffer, getMimeAndExt, isLocalFileUriForUpload, copyUriToCacheForUpload } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri, ensureCrossPlatformJpegUriForUpload, uriMayBeHeic } from '@/lib/crossPlatformImage';
 import { sanitizeSupabaseErrorMessage } from '@/lib/supabaseTransientErrors';
 
 const EXPENSE_RECEIPT_BUCKET = 'expense-receipts';
@@ -21,7 +22,7 @@ const EXPENSE_RECEIPT_MAX_WIDTH = 1600;
 const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
 
 /** Edge deploy/522 sorunlarında doğrudan Storage yeterli (RLS: authenticated insert). */
-const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'expense-receipts']);
+const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'expense-receipts', 'breakfast-partner-camera']);
 
 /** `feed-media` bucket `file_size_limit` (155_feed_media_bucket_file_size_limit.sql) ile aynı */
 const FEED_MEDIA_MAX_BYTES = 157286400;
@@ -265,6 +266,17 @@ export async function uploadUriToPublicBucket(params: {
   const kind = params.kind ?? 'image';
   let uploadUri = params.uri;
 
+  // iOS HEIC/HEIF ve uzantısız görüntüleri her platformda görüntülenebilir JPEG'e çevir.
+  if (kind === 'image') {
+    uploadUri = await prepareCrossPlatformUploadImageUri(uploadUri);
+    if (uriMayBeHeic(uploadUri)) {
+      uploadUri = await ensureCrossPlatformJpegUriForUpload(uploadUri, {
+        maxWidth: 2048,
+        compress: 0.82,
+      });
+    }
+  }
+
   if (
     params.bucketId === 'facility-journal' &&
     (kind === 'video' || !isLocalFileUriForUpload(uploadUri))
@@ -283,7 +295,14 @@ export async function uploadUriToPublicBucket(params: {
     uploadUri = await copyUriToCacheForUpload(uploadUri, 'image');
   }
 
-  const { ext, mime } = getMimeAndExt(uploadUri, kind === 'video' ? 'video' : 'image');
+  const { ext: rawExt, mime: rawMime } = getMimeAndExt(uploadUri, kind === 'video' ? 'video' : 'image');
+  let ext = rawExt;
+  let mime = rawMime;
+  // Güvenlik ağı: dönüşüm sonrası bile HEIC uzantısı kalırsa JPEG olarak kaydet.
+  if (kind === 'image' && (ext === 'heic' || ext === 'heif' || mime.includes('heic') || mime.includes('heif'))) {
+    ext = 'jpg';
+    mime = 'image/jpeg';
+  }
   const uploadMime = storageContentType(params.bucketId, kind, ext, mime);
 
   const sub = (params.subfolder ?? '').replace(/^\/+|\/+$/g, '');
@@ -421,12 +440,26 @@ export async function uploadGuestFeedMedia(params: {
   kind?: PublicUploadKind;
 }): Promise<{ publicUrl: string; path: string }> {
   const kind = params.kind ?? 'image';
-  const { ext, mime } = getMimeAndExt(params.uri, kind === 'video' ? 'video' : 'image');
+  let guestUri = params.uri;
+  // iOS HEIC/HEIF → Android uyumlu JPEG (misafir feed paylaşımları).
+  if (kind === 'image') {
+    guestUri = await prepareCrossPlatformUploadImageUri(guestUri);
+    if (uriMayBeHeic(guestUri)) {
+      guestUri = await ensureCrossPlatformJpegUriForUpload(guestUri, {
+        maxWidth: 2048,
+        compress: 0.82,
+      });
+    }
+  }
+
+  let { ext, mime } = getMimeAndExt(guestUri, kind === 'video' ? 'video' : 'image');
+  if (kind === 'image' && (ext === 'heic' || ext === 'heif')) {
+    ext = 'jpg';
+    mime = 'image/jpeg';
+  }
   const uploadMime = contentTypeForFeedUpload(kind, ext, mime);
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const fileName = `guest_${params.guestId}/${unique}.${ext}`;
-
-  let guestUri = params.uri;
   if (kind === 'video' && !isLocalFileUriForUpload(guestUri)) {
     guestUri = await copyUriToCacheForUpload(guestUri, 'video');
   }

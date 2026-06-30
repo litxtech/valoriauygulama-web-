@@ -13,6 +13,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
@@ -21,14 +22,16 @@ import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { pickGalleryImages } from '@/lib/galleryPicker';
+import { CHECK_DIR_META } from '@/lib/financeCheckTheme';
 import {
   CHECK_DIRECTION_LABELS,
   CHECK_STATUS_LABELS,
   type FinanceCheckDirection,
   type FinanceCheckStatus,
 } from '@/lib/finance';
+import { FinanceCheckQuickStatusButtons } from '@/components/financeChecks/FinanceCheckQuickStatusButtons';
 
-const STATUSES: FinanceCheckStatus[] = ['draft', 'registered', 'presented', 'partial', 'paid', 'bounced', 'cancelled'];
+const ADVANCED_STATUSES: FinanceCheckStatus[] = ['draft', 'presented', 'partial', 'cancelled'];
 
 export default function AdminFinanceCheckNew() {
   const router = useRouter();
@@ -55,6 +58,8 @@ export default function AdminFinanceCheckNew() {
     }
     return me?.organization_id;
   }, [me, selectedOrganizationId]);
+
+  const dirMeta = CHECK_DIR_META[direction];
 
   const addImage = async (uri: string) => {
     setUploading(true);
@@ -138,46 +143,77 @@ export default function AdminFinanceCheckNew() {
         canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
         ownOrganizationId={me?.organization_id}
       />
-      <AdminCard>
-        <Text style={styles.label}>Yön</Text>
-        <View style={styles.row}>
-          {(['given', 'received'] as FinanceCheckDirection[]).map((d) => (
-            <TouchableOpacity
-              key={d}
-              style={[styles.opt, direction === d && styles.optOn]}
-              onPress={() => setDirection(d)}
-            >
-              <Text style={[styles.optText, direction === d && styles.optTextOn]}>{CHECK_DIRECTION_LABELS[d]}</Text>
+
+      <Text style={styles.sectionLabel}>Çek yönü</Text>
+      <View style={styles.dirRow}>
+        {(['given', 'received'] as FinanceCheckDirection[]).map((d) => {
+          const meta = CHECK_DIR_META[d];
+          const active = direction === d;
+          return (
+            <TouchableOpacity key={d} style={styles.dirOptWrap} onPress={() => setDirection(d)} activeOpacity={0.9}>
+              {active ? (
+                <LinearGradient colors={meta.gradient} style={styles.dirOpt}>
+                  <Ionicons name={meta.icon} size={22} color="#fff" />
+                  <Text style={styles.dirOptTextOn}>{CHECK_DIRECTION_LABELS[d]}</Text>
+                  <Text style={styles.dirOptSubOn}>
+                    {d === 'given' ? 'Ödeme çıkışı' : 'Tahsilat girişi'}
+                  </Text>
+                </LinearGradient>
+              ) : (
+                <View style={[styles.dirOpt, { backgroundColor: meta.bg, borderColor: meta.border }]}>
+                  <Ionicons name={meta.icon} size={22} color={meta.color} />
+                  <Text style={[styles.dirOptText, { color: meta.color }]}>{CHECK_DIRECTION_LABELS[d]}</Text>
+                  <Text style={styles.dirOptSub}>
+                    {d === 'given' ? 'Ödeme çıkışı' : 'Tahsilat girişi'}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.label}>Karşı taraf (kimden / kime)</Text>
+          );
+        })}
+      </View>
+
+      <AdminCard style={[styles.card, { borderLeftColor: dirMeta.color, borderLeftWidth: 4 }]}>
+        <Text style={styles.label}>Karşı taraf</Text>
         <TextInput
           style={styles.input}
           value={counterparty}
           onChangeText={setCounterparty}
-          placeholder="Örn. Tedarikçi adı, banka…"
+          placeholder="Tedarikçi, müşteri, banka…"
         />
         <Text style={styles.label}>Tutar (₺)</Text>
-        <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0,00" />
+        <TextInput
+          style={[styles.input, styles.amountInput]}
+          value={amount}
+          onChangeText={setAmount}
+          keyboardType="decimal-pad"
+          placeholder="0,00"
+        />
         <Text style={styles.label}>Durum</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
-          {STATUSES.map((s) => (
+        <FinanceCheckQuickStatusButtons status={status} onSelect={setStatus} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScroll}>
+          {ADVANCED_STATUSES.map((s) => (
             <TouchableOpacity key={s} style={[styles.tag, status === s && styles.tagOn]} onPress={() => setStatus(s)}>
               <Text style={[styles.tagText, status === s && styles.tagTextOn]}>{CHECK_STATUS_LABELS[s]}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
         <Text style={styles.label}>Çek no</Text>
-        <TextInput style={styles.input} value={checkNumber} onChangeText={setCheckNumber} />
+        <TextInput style={styles.input} value={checkNumber} onChangeText={setCheckNumber} placeholder="Opsiyonel" />
         <Text style={styles.label}>Banka / Şube</Text>
         <TextInput style={styles.input} value={bankName} onChangeText={setBankName} placeholder="Banka" />
         <TextInput style={[styles.input, { marginTop: 8 }]} value={branchName} onChangeText={setBranchName} placeholder="Şube" />
-        <Text style={styles.label}>Düzenleme tarihi</Text>
-        <TextInput style={styles.input} value={issueDate} onChangeText={setIssueDate} placeholder="YYYY-MM-DD" />
-        <Text style={styles.label}>Vade tarihi</Text>
-        <TextInput style={styles.input} value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />
-        <Text style={styles.label}>Amaç / açıklama</Text>
+        <View style={styles.dateRow}>
+          <View style={styles.dateCol}>
+            <Text style={styles.label}>Düzenleme</Text>
+            <TextInput style={styles.input} value={issueDate} onChangeText={setIssueDate} placeholder="YYYY-MM-DD" />
+          </View>
+          <View style={styles.dateCol}>
+            <Text style={styles.label}>Vade</Text>
+            <TextInput style={styles.input} value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />
+          </View>
+        </View>
+        <Text style={styles.label}>Amaç</Text>
         <TextInput style={[styles.input, styles.multiline]} value={purpose} onChangeText={setPurpose} multiline />
         <Text style={styles.label}>Notlar</Text>
         <TextInput style={[styles.input, styles.multiline]} value={notes} onChangeText={setNotes} multiline />
@@ -203,51 +239,59 @@ export default function AdminFinanceCheckNew() {
         </View>
       </AdminCard>
 
-      <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
+      <TouchableOpacity style={[styles.saveBtn, { backgroundColor: dirMeta.color }]} onPress={save} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Kaydet</Text>}
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
+const T = adminTheme;
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  scroll: { flex: 1, backgroundColor: T.colors.surfaceSecondary },
   content: { padding: 16, paddingBottom: 40 },
-  label: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textSecondary, marginBottom: 6 },
+  sectionLabel: { fontSize: 13, fontWeight: '700', color: T.colors.textSecondary, marginBottom: 8 },
+  dirRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  dirOptWrap: { flex: 1 },
+  dirOpt: {
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    minHeight: 100,
+    justifyContent: 'center',
+  },
+  dirOptText: { fontSize: 13, fontWeight: '800', marginTop: 4 },
+  dirOptSub: { fontSize: 11, color: T.colors.textMuted },
+  dirOptTextOn: { fontSize: 13, fontWeight: '800', color: '#fff', marginTop: 4 },
+  dirOptSubOn: { fontSize: 11, color: 'rgba(255,255,255,0.85)' },
+  card: { marginBottom: 12 },
+  label: { fontSize: 13, fontWeight: '600', color: T.colors.textSecondary, marginBottom: 6, marginTop: 10 },
   input: {
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    backgroundColor: adminTheme.colors.surface,
-    color: adminTheme.colors.text,
+    backgroundColor: T.colors.surface,
+    color: T.colors.text,
   },
+  amountInput: { fontSize: 20, fontWeight: '800' },
   multiline: { minHeight: 72, textAlignVertical: 'top' },
-  row: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  opt: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    alignItems: 'center',
-  },
-  optOn: { borderColor: adminTheme.colors.info, backgroundColor: adminTheme.colors.infoLight },
-  optText: { fontSize: 14, color: adminTheme.colors.textSecondary },
-  optTextOn: { fontWeight: '700', color: adminTheme.colors.info },
-  hScroll: { marginBottom: 12 },
+  hScroll: { gap: 8, paddingVertical: 4 },
   tag: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    marginRight: 8,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
+    backgroundColor: T.colors.surfaceTertiary,
   },
-  tagOn: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
-  tagText: { fontSize: 12, color: adminTheme.colors.textSecondary },
+  tagOn: { backgroundColor: T.colors.primary },
+  tagText: { fontSize: 12, color: T.colors.textSecondary },
   tagTextOn: { color: '#fff', fontWeight: '600' },
+  dateRow: { flexDirection: 'row', gap: 10 },
+  dateCol: { flex: 1 },
   imgActions: { flexDirection: 'row', gap: 12 },
   imgBtn: {
     flexDirection: 'row',
@@ -257,13 +301,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
   },
-  imgBtnText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
+  imgBtnText: { fontSize: 14, fontWeight: '600', color: T.colors.primary },
   thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   thumb: { width: 72, height: 72, borderRadius: 8 },
   saveBtn: {
-    backgroundColor: adminTheme.colors.primary,
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',

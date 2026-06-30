@@ -3,6 +3,97 @@ import {
   sanitizePersonName,
   splitFullNameToFirstLast,
 } from '@/lib/guestScan/personNameUtils';
+import { isKnownIcao3 } from '@/lib/kbsNationalityMap';
+
+const MRZ_NAME_NOISE_WORDS = new Set([
+  'PASSPORT',
+  'PASAPORT',
+  'PASSEPORT',
+  'PASSE',
+  'SURNAME',
+  'FAMILY',
+  'NAME',
+  'NAMES',
+  'GIVEN',
+  'FIRST',
+  'FORENAME',
+  'PRENOM',
+  'PRENOMS',
+  'NOM',
+  'DATE',
+  'BIRTH',
+  'SEX',
+  'GENDER',
+  'NATIONALITY',
+  'UYRUK',
+  'VALID',
+  'EXPIRY',
+  'EXPIRES',
+  'REPUBLIC',
+  'KINGDOM',
+  'STATE',
+  'DOCUMENT',
+  'TYPE',
+  'SPECIMEN',
+  'HOLDER',
+  'SIGNATURE',
+  'AUTHORITY',
+  'ISSUE',
+  'PLACE',
+  'CODE',
+  'MALE',
+  'FEMALE',
+  'ERKEK',
+  'KADIN',
+]);
+
+/** TD3 satır 1: P<SAU… — belge tipi + ülke kodu önekini soyad alanından ayır. */
+function stripIcaoMrzNameLinePrefix(alpha: string): string {
+  const m = alpha.match(/^[IPAVC]<?[A-Z]{3}(.+)$/i);
+  if (m?.[1]?.includes('<<')) return m[1];
+  return alpha;
+}
+
+/** MRZ / OCR ad-soyad — baştaki/sondaki gürültü kelimeleri ve fazla tokenları kes. */
+export function trimMrzPersonNameTokens(
+  raw: string | null | undefined,
+  opts?: { maxWords?: number; role?: 'surname' | 'given' }
+): string | null {
+  const maxWords = opts?.maxWords ?? (opts?.role === 'surname' ? 4 : 6);
+  let s = sanitizePersonName(raw);
+  if (!s) return null;
+  let words = s.split(/\s+/).filter(Boolean);
+
+  while (words.length > 0) {
+    const w = words[0]!;
+    if (w.length === 1 || MRZ_NAME_NOISE_WORDS.has(w)) {
+      words.shift();
+      continue;
+    }
+    if (w.length === 3 && isKnownIcao3(w) && words.length > 1) {
+      words.shift();
+      continue;
+    }
+    break;
+  }
+
+  const kept: string[] = [];
+  for (const w of words) {
+    if (MRZ_NAME_NOISE_WORDS.has(w)) break;
+    if (w.length === 1) break;
+    if (/^\d{4,}$/.test(w)) break;
+    kept.push(w);
+    if (kept.length >= maxWords) break;
+  }
+
+  const out = kept.join(' ').trim();
+  return isUsablePersonName(out) ? out : null;
+}
+
+function trimMrzGivenRaw(givenRaw: string): string {
+  const cut = givenRaw.split(/\s+(?=\d{6,})/)[0]?.trim() ?? givenRaw;
+  return cut.replace(/\s+\d{6,}.*$/, '').trim();
+}
 
 const GCC_NAT = new Set([
   'OMN',
@@ -59,17 +150,13 @@ export function correctSwappedMrzNames(args: {
 }): { firstName: string | null; lastName: string | null } {
   let firstName = sanitizePersonName(args.firstName);
   let lastName = sanitizePersonName(args.lastName);
-  const nat = (args.nationalityCode ?? '').toUpperCase();
-  const iss = (args.issuingCountryCode ?? '').toUpperCase();
-  if (
-    isGccNationality(nat) ||
-    isGccNationality(iss) ||
-    isTurkishMrzDocument(nat, iss)
-  ) {
-    return { firstName, lastName };
-  }
   if (mrzNamesLookSwapped(firstName, lastName)) {
     return { firstName: lastName, lastName: firstName };
+  }
+  const nat = (args.nationalityCode ?? '').toUpperCase();
+  const iss = (args.issuingCountryCode ?? '').toUpperCase();
+  if (isGccNationality(nat) || isGccNationality(iss) || isTurkishMrzDocument(nat, iss)) {
+    return { firstName, lastName };
   }
   return { firstName, lastName };
 }
@@ -90,19 +177,25 @@ export function parseChevronNamesFromMrz(rawMrz: string | null | undefined): {
   const ranked = [...lines].sort((a, b) => (b.match(/</g) ?? []).length - (a.match(/</g) ?? []).length);
 
   for (const line of ranked) {
-    const alpha = line.replace(/[^A-Z<]/g, '');
+    let alpha = stripIcaoMrzNameLinePrefix(line.replace(/[^A-Z<]/g, ''));
     const sep = alpha.indexOf('<<');
     if (sep < 1) continue;
 
-    const surnameRaw = alpha.slice(0, sep).replace(/</g, '').trim();
-    const givenRaw = alpha
-      .slice(sep + 2)
+    const surnameRaw = alpha
+      .slice(0, sep)
       .replace(/</g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+    const givenRaw = trimMrzGivenRaw(
+      alpha
+        .slice(sep + 2)
+        .replace(/</g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
 
-    const surname = sanitizePersonName(surnameRaw);
-    const given = sanitizePersonName(givenRaw);
+    const surname = trimMrzPersonNameTokens(surnameRaw, { role: 'surname' });
+    const given = trimMrzPersonNameTokens(givenRaw, { role: 'given' });
 
     if (isUsablePersonName(surname)) {
       return {
@@ -193,10 +286,10 @@ export function finalizeMrzPersonNames(args: {
 
   const chevron = parseChevronNamesFromMrz(args.rawMrz);
   if (chevron.surname) {
-    lastName = chevron.surname;
+    lastName = trimMrzPersonNameTokens(chevron.surname, { role: 'surname' }) ?? chevron.surname;
   }
   if (chevron.given) {
-    firstName = chevron.given;
+    firstName = trimMrzPersonNameTokens(chevron.given, { role: 'given' }) ?? chevron.given;
   }
 
   ({ firstName, lastName } = correctSwappedMrzNames({

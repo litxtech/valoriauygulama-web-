@@ -1,5 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { fmtMoneyTry, type FinanceCounterpartyType } from '@/lib/financeLedger';
+import { deserializeLineItems, serializeLineItems } from '@/lib/financeInvoiceOcr/parseInvoiceText';
+import type { InvoiceLineItem } from '@/lib/financeInvoiceOcr/types';
 
 export type AgreementMovementKind = 'expense' | 'income';
 export type AgreementStatus = 'open' | 'partial' | 'paid' | 'cancelled';
@@ -16,6 +18,7 @@ export type CounterpartyAgreementRow = {
   started_on: string;
   notes: string | null;
   contract_urls: string[];
+  line_items: InvoiceLineItem[];
   is_active: boolean;
   movement_kind: AgreementMovementKind;
 };
@@ -72,6 +75,15 @@ export function formatAgreementSummary(row: CounterpartyAgreementRow): string {
   return `${fmtMoneyTry(row.amount_paid)} / ${fmtMoneyTry(row.target_amount)} · Kalan ${fmtMoneyTry(row.amount_remaining)}`;
 }
 
+/** Açık veya kısmi planların kalan tutar toplamı */
+export function sumOpenAgreementRemaining(
+  agreements: Pick<CounterpartyAgreementRow, 'status' | 'amount_remaining'>[]
+): number {
+  return agreements
+    .filter((a) => a.status === 'open' || a.status === 'partial')
+    .reduce((s, a) => s + (Number(a.amount_remaining) || 0), 0);
+}
+
 export async function fetchCounterpartyAgreements(
   counterpartyId: string,
   activeOnly = true
@@ -79,7 +91,7 @@ export async function fetchCounterpartyAgreements(
   let q = supabase
     .from('finance_counterparty_agreements')
     .select(
-      'id, organization_id, counterparty_id, title, target_amount, amount_paid, amount_remaining, status, started_on, notes, contract_urls, is_active, movement_kind'
+      'id, organization_id, counterparty_id, title, target_amount, amount_paid, amount_remaining, status, started_on, notes, contract_urls, line_items, is_active, movement_kind'
     )
     .eq('counterparty_id', counterpartyId)
     .order('started_on', { ascending: false })
@@ -93,6 +105,7 @@ export async function fetchCounterpartyAgreements(
     amount_paid: Number(r.amount_paid) || 0,
     amount_remaining: Number(r.amount_remaining) || 0,
     contract_urls: Array.isArray(r.contract_urls) ? r.contract_urls : [],
+    line_items: deserializeLineItems((r as { line_items?: unknown }).line_items),
     movement_kind: (r.movement_kind === 'income' ? 'income' : 'expense') as AgreementMovementKind,
   }));
 }
@@ -101,7 +114,7 @@ export async function fetchAgreementById(id: string): Promise<CounterpartyAgreem
   const { data, error } = await supabase
     .from('finance_counterparty_agreements')
     .select(
-      'id, organization_id, counterparty_id, title, target_amount, amount_paid, amount_remaining, status, started_on, notes, contract_urls, is_active, movement_kind'
+      'id, organization_id, counterparty_id, title, target_amount, amount_paid, amount_remaining, status, started_on, notes, contract_urls, line_items, is_active, movement_kind'
     )
     .eq('id', id)
     .maybeSingle();
@@ -114,6 +127,7 @@ export async function fetchAgreementById(id: string): Promise<CounterpartyAgreem
     amount_paid: Number(r.amount_paid) || 0,
     amount_remaining: Number(r.amount_remaining) || 0,
     contract_urls: Array.isArray(r.contract_urls) ? r.contract_urls : [],
+    line_items: deserializeLineItems((r as { line_items?: unknown }).line_items),
     movement_kind: (r.movement_kind === 'income' ? 'income' : 'expense') as AgreementMovementKind,
   };
 }
@@ -158,6 +172,7 @@ export async function createCounterpartyAgreement(input: {
   startedOn?: string;
   notes?: string;
   contractUrls?: string[];
+  lineItems?: InvoiceLineItem[];
   createdByStaffId?: string | null;
   movementKind?: AgreementMovementKind;
 }): Promise<{ id: string } | { error: string }> {
@@ -176,6 +191,7 @@ export async function createCounterpartyAgreement(input: {
       started_on: input.startedOn ?? new Date().toISOString().slice(0, 10),
       notes: input.notes?.trim() || null,
       contract_urls: input.contractUrls?.length ? input.contractUrls : [],
+      line_items: input.lineItems?.length ? serializeLineItems(input.lineItems) : [],
       created_by_staff_id: input.createdByStaffId ?? null,
       movement_kind: input.movementKind ?? 'expense',
     })
@@ -205,6 +221,31 @@ export async function fetchOpenCounterpartyAgreements(
       (r.status === 'open' || r.status === 'partial') &&
       (movementKind == null || r.movement_kind === movementKind)
   );
+}
+
+/** Kişi başına mevcut (açık) borç toplamı — liste PDF raporu için */
+export async function fetchOpenDebtTotalsByCounterparty(
+  organizationId: string | 'all',
+  counterpartyIds?: string[]
+): Promise<Map<string, number>> {
+  let q = supabase
+    .from('finance_counterparty_agreements')
+    .select('counterparty_id, amount_remaining')
+    .in('status', ['open', 'partial'])
+    .eq('is_active', true);
+  if (organizationId !== 'all') q = q.eq('organization_id', organizationId);
+  if (counterpartyIds?.length) q = q.in('counterparty_id', counterpartyIds);
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+
+  const map = new Map<string, number>();
+  for (const row of data ?? []) {
+    const id = String((row as { counterparty_id: string }).counterparty_id);
+    const rem = Number((row as { amount_remaining: number }).amount_remaining) || 0;
+    map.set(id, (map.get(id) ?? 0) + rem);
+  }
+  return map;
 }
 
 export type UnlinkedExpenseMovementRow = {

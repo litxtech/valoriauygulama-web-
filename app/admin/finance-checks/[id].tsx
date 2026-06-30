@@ -9,7 +9,6 @@ import {
   Alert,
   ActivityIndicator,
   Image,
-  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,6 +28,16 @@ import {
   type FinanceCheckDirection,
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
+import { LinearGradient } from 'expo-linear-gradient';
+import { CHECK_DIR_META, checkStatusTone, daysUntilDue, dueUrgencyLabel } from '@/lib/financeCheckTheme';
+import { FinanceCheckQuickStatusButtons } from '@/components/financeChecks/FinanceCheckQuickStatusButtons';
+import { FinanceCheckPreviewCard } from '@/components/financeChecks/FinanceCheckPreviewCard';
+import { FinanceCheckExportButtons } from '@/components/financeChecks/FinanceCheckExportButtons';
+import { ImageLightboxModal } from '@/components/admin/ImageLightboxModal';
+import {
+  financeCheckPdfInputFromPreview,
+  type FinanceCheckPdfInput,
+} from '@/lib/financeCheckPdf';
 
 type Row = {
   id: string;
@@ -44,6 +53,7 @@ type Row = {
   purpose: string | null;
   notes: string | null;
   image_urls: string[] | unknown;
+  organizationName?: string;
 };
 
 type LinkedPayment = {
@@ -98,18 +108,23 @@ export default function AdminFinanceCheckDetail() {
   const [counterparty, setCounterparty] = useState('');
   const [purpose, setPurpose] = useState('');
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-    const { data, error } = await supabase.from('finance_checks').select('*').eq('id', id).single();
+    const { data, error } = await supabase
+      .from('finance_checks')
+      .select('*, organizations(name)')
+      .eq('id', id)
+      .single();
     if (error || !data) {
       setLoading(false);
       Alert.alert('Hata', error?.message ?? 'Bulunamadı');
       setRow(null);
       return;
     }
-    const r = data as Row;
+    const r = data as Row & { organizations?: { name?: string } | null };
     setRow(r);
     setStatus(r.status);
     setNotes(r.notes ?? '');
@@ -212,25 +227,54 @@ export default function AdminFinanceCheckDetail() {
   }
 
   const linkedTotal = linkedPayments.reduce((a, p) => a + p.amount, 0);
+  const dirMeta = CHECK_DIR_META[row.direction];
+  const dueDays = daysUntilDue(row.due_date);
+  const urgency = dueUrgencyLabel(dueDays);
+  const exportData: FinanceCheckPdfInput = financeCheckPdfInputFromPreview(
+    {
+      direction: row.direction,
+      counterparty_name: row.counterparty_name,
+      amount: Number(row.amount),
+      status,
+      check_number: row.check_number,
+      bank_name: row.bank_name,
+      branch_name: row.branch_name,
+      issue_date: row.issue_date,
+      due_date: row.due_date,
+      purpose: purpose || row.purpose,
+      notes: notes || row.notes,
+      image_urls: imageUrls,
+    },
+    { id: String(id), organizationName: (row as Row & { organizations?: { name?: string } }).organizations?.name },
+  );
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-      <AdminCard style={styles.heroCard}>
+      <LinearGradient colors={dirMeta.gradient} style={styles.heroCard}>
         <View style={styles.heroTop}>
           <View style={styles.heroBadge}>
-            <Ionicons name={row.direction === 'given' ? 'arrow-up-circle' : 'arrow-down-circle'} size={18} color="#fff" />
+            <Ionicons name={dirMeta.icon} size={18} color="#fff" />
             <Text style={styles.heroBadgeText}>{CHECK_DIRECTION_LABELS[row.direction]}</Text>
           </View>
-          {saving ? <ActivityIndicator size="small" color={adminTheme.colors.accent} /> : null}
+          <View style={[styles.statusHeroPill, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+            <Text style={styles.statusHeroText}>{CHECK_STATUS_LABELS[status]}</Text>
+          </View>
+          {saving ? <ActivityIndicator size="small" color="#fff" /> : null}
         </View>
         <Text style={styles.heroAmount}>{fmtMoneyTry(Number(row.amount))}</Text>
         <Text style={styles.heroCp}>{row.counterparty_name}</Text>
         <View style={styles.heroMetaRow}>
-          <Ionicons name="calendar-outline" size={14} color={adminTheme.colors.textMuted} />
+          <Ionicons name="calendar-outline" size={14} color="rgba(255,255,255,0.8)" />
           <Text style={styles.heroMeta}>
             Düzenleme {formatDateShort(row.issue_date)} · Vade {row.due_date ? formatDateShort(row.due_date) : '—'}
           </Text>
         </View>
+        {urgency && status !== 'paid' && status !== 'cancelled' ? (
+          <View style={styles.urgencyPill}>
+            <Ionicons name="time-outline" size={13} color="#fff" />
+            <Text style={styles.urgencyText}>{urgency}</Text>
+          </View>
+        ) : null}
         {(row.check_number || row.bank_name || row.branch_name) && (
           <View style={styles.bankBox}>
             {row.check_number ? (
@@ -248,19 +292,75 @@ export default function AdminFinanceCheckDetail() {
             ) : null}
           </View>
         )}
+      </LinearGradient>
+
+      <View style={styles.heroActions}>
+        <TouchableOpacity
+          style={styles.heroActionBtn}
+          onPress={() => router.push({ pathname: '/admin/finance-checks/preview/[id]', params: { id: String(id) } } as never)}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="eye-outline" size={18} color={adminTheme.colors.primary} />
+          <Text style={styles.heroActionText}>Önizleme</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.heroActionBtn, styles.heroActionBtnPrimary]}
+          onPress={() => router.push({ pathname: '/admin/finance-checks/edit/[id]', params: { id: String(id) } } as never)}
+          activeOpacity={0.9}
+        >
+          <Ionicons name="create-outline" size={18} color="#fff" />
+          <Text style={[styles.heroActionText, styles.heroActionTextOn]}>Düzenle</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.exportWrap}>
+        <FinanceCheckExportButtons data={exportData} disabled={saving} />
+      </View>
+
+      <AdminCard style={styles.previewCard} padded={false}>
+        <FinanceCheckPreviewCard
+          data={{
+            direction: row.direction,
+            counterparty_name: row.counterparty_name,
+            amount: Number(row.amount),
+            status,
+            check_number: row.check_number,
+            bank_name: row.bank_name,
+            branch_name: row.branch_name,
+            issue_date: row.issue_date,
+            due_date: row.due_date,
+            purpose: purpose || row.purpose,
+            notes: notes || row.notes,
+            image_urls: imageUrls,
+          }}
+          onImagePress={setLightbox}
+        />
       </AdminCard>
 
       <AdminCard>
-        <Text style={styles.sectionTitle}>Durum</Text>
+        <Text style={styles.sectionTitle}>Durum işaretle</Text>
         <Text style={styles.sectionHint}>
-          Borç ödemesinde bu çeke bağlantı verildiğinde tutar otomatik hesaplanır; kısmi tahsilatta «Kısmi tahsil», tam
-          tahsilatta «Ödendi» güncellenir.
+          Çek deftere girildiğinde «Çek girildi», bankadan tahsil/ödeme olduğunda «Ödendi», karşılıksız veya
+          ödenmediğinde «Ödenmedi» seçin. Borç ödemesine bağlanırsa tutar otomatik güncellenir.
         </Text>
+        <FinanceCheckQuickStatusButtons
+          status={status}
+          saving={saving}
+          onSelect={(s) => {
+            setStatus(s);
+            void persist({ status: s });
+          }}
+        />
+        <Text style={styles.advancedLabel}>Diğer durumlar</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusStrip}>
-          {STATUSES.map((s) => (
+          {STATUSES.filter((s) => s !== 'registered' && s !== 'paid' && s !== 'bounced').map((s) => (
             <TouchableOpacity
               key={s}
-              style={[styles.statusChip, status === s && styles.statusChipOn]}
+              style={[
+                styles.statusChip,
+                status === s && styles.statusChipOn,
+                status === s && { backgroundColor: checkStatusTone(s).color, borderColor: checkStatusTone(s).color },
+              ]}
               onPress={() => {
                 setStatus(s);
                 void persist({ status: s });
@@ -361,12 +461,14 @@ export default function AdminFinanceCheckDetail() {
         {uploading ? <ActivityIndicator /> : null}
         <View style={styles.thumbs}>
           {imageUrls.map((u) => (
-            <TouchableOpacity key={u} onPress={() => Linking.openURL(u)}>
+            <TouchableOpacity key={u} onPress={() => setLightbox(u)}>
               <Image source={{ uri: u }} style={styles.thumb} />
             </TouchableOpacity>
           ))}
         </View>
       </AdminCard>
+
+      <ImageLightboxModal visible={!!lightbox} uri={lightbox} onClose={() => setLightbox(null)} />
 
       {me?.role === 'admin' ? (
         <TouchableOpacity style={styles.delBtn} onPress={removeAdmin} disabled={saving}>
@@ -381,33 +483,71 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
   content: { padding: 16, paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  heroCard: { backgroundColor: adminTheme.colors.surface, borderLeftWidth: 4, borderLeftColor: adminTheme.colors.primary },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  heroCard: { borderRadius: 16, padding: 16, marginBottom: 4 },
+  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   heroBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: adminTheme.colors.primary,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 20,
   },
   heroBadgeText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  heroAmount: { fontSize: 28, fontWeight: '800', color: adminTheme.colors.accent, marginTop: 12 },
-  heroCp: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text, marginTop: 6 },
+  statusHeroPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  statusHeroText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  heroAmount: { fontSize: 30, fontWeight: '800', color: '#fff', marginTop: 14 },
+  heroCp: { fontSize: 17, fontWeight: '700', color: '#fff', marginTop: 6 },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
-  heroMeta: { fontSize: 13, color: adminTheme.colors.textMuted },
+  heroMeta: { fontSize: 13, color: 'rgba(255,255,255,0.85)' },
+  urgencyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  urgencyText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   bankBox: {
     marginTop: 12,
     padding: 10,
     borderRadius: 10,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  bankLine: { fontSize: 13, color: adminTheme.colors.text, marginBottom: 4 },
-  bankKey: { fontWeight: '700', color: adminTheme.colors.textSecondary },
+  bankLine: { fontSize: 13, color: '#fff', marginBottom: 4 },
+  bankKey: { fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
+  heroActions: { flexDirection: 'row', gap: 10, marginTop: 12, marginBottom: 8 },
+  heroActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  heroActionBtnPrimary: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
+  heroActionText: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.primary },
+  heroActionTextOn: { color: '#fff' },
+  exportWrap: { marginBottom: 12 },
+  previewCard: { padding: 0, overflow: 'hidden', marginBottom: 4 },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text, marginBottom: 6 },
   sectionHint: { fontSize: 12, color: adminTheme.colors.textMuted, lineHeight: 17, marginBottom: 12 },
+  advancedLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: adminTheme.colors.textSecondary,
+    marginTop: 16,
+    marginBottom: 8,
+  },
   statusStrip: { flexDirection: 'row', gap: 10, paddingVertical: 4 },
   statusChip: {
     width: 112,

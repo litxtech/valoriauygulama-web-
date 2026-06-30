@@ -3,13 +3,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { chatTheme } from '@/constants/chatTheme';
 
-export type MessageAction = 'reply' | 'copy' | 'select' | 'info' | 'delete_me' | 'delete_all';
+export type MessageAction = 'reply' | 'copy' | 'edit' | 'select' | 'info' | 'delete_me' | 'delete_all';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   canDeleteForEveryone: boolean;
   showMessageInfo?: boolean;
+  showEdit?: boolean;
   onAction: (action: MessageAction) => void;
 };
 
@@ -18,6 +19,7 @@ export function MessageActionSheet({
   onClose,
   canDeleteForEveryone,
   showMessageInfo = false,
+  showEdit = false,
   onAction,
 }: Props) {
   const { t } = useTranslation();
@@ -40,6 +42,7 @@ export function MessageActionSheet({
       <Pressable style={styles.overlay} onPress={onClose}>
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
           {row('reply', t('staffChatActionReply'), 'arrow-undo-outline')}
+          {showEdit ? row('edit', t('staffChatActionEdit'), 'create-outline') : null}
           {row('copy', t('staffChatActionCopy'), 'copy-outline')}
           {showMessageInfo ? row('info', t('staffChatActionInfo'), 'information-circle-outline') : null}
           {row('select', t('staffChatActionSelect'), 'checkbox-outline')}

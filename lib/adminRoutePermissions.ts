@@ -1,4 +1,4 @@
-import { hasStaffAppPermission, type StaffPermissionSlice } from '@/lib/staffPermissions';
+import { hasStaffAppPermission, canViewSecurityBlacklist, type StaffPermissionSlice } from '@/lib/staffPermissions';
 import { canAccessFnbHub } from '@/lib/fnbHub';
 import { canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
@@ -120,6 +120,12 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
   if (staff.role === 'admin') return true;
   if (href.startsWith('/admin/fnb-hub')) return canAccessFnbHub(staff);
   if (href.startsWith('/admin/kitchen-ops/reception')) return canAccessKitchenReceptionAccounting(staff);
+
+  if (href.startsWith('/admin/blacklist')) return staff.role === 'admin';
+  if (href.startsWith('/admin/breakfast-partners')) return staff.role === 'admin';
+  if (href.startsWith('/admin/camera-requests')) return staff.role === 'admin';
+  if (href.startsWith('/admin/trade-partners')) return staff.role === 'admin';
+  if (href.startsWith('/staff/blacklist')) return canViewSecurityBlacklist(staff);
 
   const key = adminRoutePermissionKey(href);
   if (key) return hasStaffAppPermission(staff, key);

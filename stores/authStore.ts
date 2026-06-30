@@ -14,6 +14,8 @@ import {
 } from '@/lib/staffSessionCache';
 import { normalizeHiddenMenuItemIds } from '@/lib/staffMenuCatalog';
 import { clearLastRoute } from '@/lib/lastRoutePersistence';
+import { clearPartnerSession, usePartnerAuthStore } from '@/stores/partnerAuthStore';
+import { clearTradePartnerSession, useTradePartnerAuthStore } from '@/stores/tradePartnerAuthStore';
 
 const STAFF_FETCH_TIMEOUT_MS = 8_000;
 const STAFF_RETRY_FAST_MAX = 3;
@@ -69,6 +71,8 @@ let staffRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let staffFastRetryCount = 0;
 let staffRetryUserId: string | null = null;
 let lastStaffCheckUserId: string | null = null;
+/** Personel sorgusu üst üste kaç kez boş döndü — geçici boşlukta veriyi silmemek için. */
+let staffEmptyRowStreak = 0;
 let staffBootWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearStaffBootWatchdog() {
@@ -221,6 +225,7 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
   const { row, error } = await fetchStaffRow(user.id);
 
   if (!error && row) {
+    staffEmptyRowStreak = 0;
     const staff = staffFromRow(row);
     if (staff) {
       await writeStaffSessionCache(user.id, staff);
@@ -231,6 +236,21 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
   }
 
   if (!error && !row) {
+    // Sorgu başarılı ama satır boş döndü. Geçerli (silinmemiş) bir personel
+    // önbelleği varsa bu büyük olasılıkla geçici (RLS/replica gecikmesi) bir boşluk;
+    // tek seferde misafire düşürüp önbelleği silmek "veriler kayboluyor sonra geliyor"
+    // titremesine yol açıyordu. Bu yüzden önce bir kez daha doğrula (retry), ardından düşür.
+    const cachedForEmpty = await readStaffSessionCache(user.id);
+    if (cachedForEmpty && !cachedForEmpty.deleted_at) {
+      staffEmptyRowStreak += 1;
+      if (staffEmptyRowStreak < 2) {
+        log.warn('authStore', 'staff boş döndü — geçici sayılıp tekrar denenecek', {
+          streak: staffEmptyRowStreak,
+        });
+        return { status: 'unknown', reason: 'empty_row_transient' };
+      }
+    }
+    staffEmptyRowStreak = 0;
     await clearStaffSessionCache();
     return { status: 'guest' };
   }
@@ -302,6 +322,7 @@ function applyStaffResolve(user: User, result: StaffResolveResult): void {
   clearStaffBootWatchdog();
   staffFastRetryCount = 0;
   staffRetryUserId = null;
+  staffEmptyRowStreak = 0;
   lastStaffCheckUserId = user.id;
 
   const staff = result.status === 'staff' ? result.staff : null;
@@ -321,6 +342,7 @@ function resetAuthPipeline(): void {
   clearStaffRetryTimer();
   staffFastRetryCount = 0;
   staffRetryUserId = null;
+  staffEmptyRowStreak = 0;
   lastStaffCheckUserId = null;
   clearStaffBootWatchdog();
 }
@@ -328,8 +350,14 @@ function resetAuthPipeline(): void {
 /** Giriş sonrası anında oturum — staff kontrolü arka planda. */
 export async function completeSignIn(user: User): Promise<void> {
   const cur = useAuthStore.getState();
+  if (cur.user?.id !== user.id) {
+    clearPartnerSession();
+    clearTradePartnerSession();
+  }
   if (cur.user?.id === user.id && cur.staffCheckComplete) {
     void runStaffCheck(user, { background: true });
+    await usePartnerAuthStore.getState().resolvePartner(user);
+    await useTradePartnerAuthStore.getState().resolvePartner(user);
     return;
   }
   resetAuthPipeline();
@@ -342,6 +370,8 @@ export async function completeSignIn(user: User): Promise<void> {
     staffCheckUnavailable: false,
   });
   void runStaffCheck(user, { background: true });
+  await usePartnerAuthStore.getState().resolvePartner(user);
+  await useTradePartnerAuthStore.getState().resolvePartner(user);
 }
 
 function runStaffCheck(user: User, _opts?: { background?: boolean }): Promise<void> {
@@ -387,6 +417,8 @@ async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => Au
       clearStaffRetryTimer();
       staffFastRetryCount = 0;
       lastStaffCheckUserId = null;
+      clearPartnerSession();
+      clearTradePartnerSession();
       set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
       return;
     }
@@ -408,10 +440,30 @@ async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => Au
     if (lastStaffCheckUserId !== user.id) {
       void runStaffCheck(user, { background: true });
     }
+    // Personel oturumunda partner/ticari-partner sorgusu yapma: aynı hesap hem
+    // personel hem partner olmaz ve bu sorgular (RLS personeli süzdüğü için)
+    // 4 sn timeout'a takılıp boşuna ağ turu/yavaşlık üretiyordu.
+    if (staff) {
+      usePartnerAuthStore.getState().setPartner(null);
+      useTradePartnerAuthStore.getState().clearPartner();
+    } else {
+      void usePartnerAuthStore.getState().resolvePartner(user);
+      void useTradePartnerAuthStore.getState().resolvePartner(user);
+    }
   } catch (e) {
     const msg = (e as Error)?.message ?? '';
     log.warn('authStore', 'loadSession', msg);
     if (msg.includes('getSession timed out')) {
+      // Zaman aşımı gerçek bir çıkış DEĞİLDİR (gerçek çıkış SIGNED_OUT olayından geçer).
+      // Mevcut oturum varsa kullanıcı/staff'ı DÜŞÜRME; aksi halde tüm staff ekranları bir anda
+      // boşalıp sonra dolar ("veriler kayboluyor sonra geliyor"). Sadece geçici timeout'ta koru.
+      const existingUser = get().user;
+      if (existingUser) {
+        set({ loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
+        return;
+      }
+      clearPartnerSession();
+      clearTradePartnerSession();
       set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
       return;
     }
@@ -463,6 +515,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     log.info('authStore', 'signOut');
     resetAuthPipeline();
 
+    clearPartnerSession();
+    clearTradePartnerSession();
     set({ user: null, staff: null, loading: false, staffCheckComplete: true, staffCheckUnavailable: false });
 
     try {
@@ -488,6 +542,8 @@ export function initAuthListener() {
       void supabase.auth.getSession().then(({ data: { session: live } }) => {
         if (live?.user) return;
         resetAuthPipeline();
+        clearPartnerSession();
+        clearTradePartnerSession();
         void clearGuestMessagingLocalState();
         void clearStaffSessionCache();
         useAuthStore.setState({

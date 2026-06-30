@@ -4,10 +4,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchAppIconBadgeForGuest, fetchAppIconBadgeForStaff, iconBadgeForPush } from "../_shared/appBadgeFromRpc.ts";
 import { buildExpoPushMessage } from "../_shared/buildExpoPushMessage.ts";
 import { getExpoPushHeaders } from "../_shared/expoPushHeaders.ts";
+import { resolveNotificationFeatureKey } from "../_shared/resolveNotificationFeatureKey.ts";
+import { createOrgPushSoundResolver, orgPushSoundDataExtras } from "../_shared/orgPushSound.ts";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const BATCH_SIZE = 100;
-const ANDROID_CHANNEL_ID = "valoria_urgent";
+// Org ses ayarı (admin paneli) yoksa sohbet için varsayılan kanal (Instagram tarzı mesaj sesi).
+const ANDROID_CHANNEL_ID = "valoria_messages_v2";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -22,6 +25,7 @@ type Body = {
   onlyStaffIds?: string[];
   onlyGuestIds?: string[];
   title: string;
+  subtitle?: string | null;
   body?: string | null;
   data?: Record<string, unknown>;
 };
@@ -81,6 +85,7 @@ Deno.serve(async (req: Request) => {
       onlyStaffIds = [],
       onlyGuestIds = [],
       title,
+      subtitle,
       body: messageBody,
       data = {},
     } = body;
@@ -144,9 +149,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const titleTrim = title.trim();
+    const subtitleTrim = subtitle?.trim() ?? null;
     const bodyTrim = messageBody?.trim() ?? null;
     const displayBody = expoDisplayBody(bodyTrim);
-    const payload = { ...data, screen: "messages", notificationType: "message" };
+    const payload = {
+      ...data,
+      screen: typeof data.screen === 'string' && data.screen.trim() ? data.screen.trim() : "messages",
+      notificationType:
+        (typeof data.notificationType === "string" && data.notificationType.trim()) ||
+        (typeof data.notification_type === "string" && data.notification_type.trim()) ||
+        "chat_message",
+      ...(subtitleTrim ? { pushSubtitle: subtitleTrim } : {}),
+      ...(bodyTrim ? { messagePreview: bodyTrim, messageBody: bodyTrim } : {}),
+    };
 
     // Mesaj için sadece push; "Bildirimler" listesine (notifications tablosu) kayıt eklenmez — çift kayıt önlenir.
     // Simge sayacı: app_badge_total_* = okunmamış notifications + okunmamış mesajlar (yeni mesaj zaten tabloda).
@@ -207,17 +222,86 @@ Deno.serve(async (req: Request) => {
       return 1;
     }
 
-    const messages = [...byToken.values()].map((row) => {
-      const b = badgeForRow(row);
-      return buildExpoPushMessage({
-        to: row.token,
-        title: titleTrim,
-        body: displayBody,
-        badge: b,
-        channelId: ANDROID_CHANNEL_ID,
-        data: payload,
-      });
-    });
+    const threadId =
+      typeof data?.threadId === "string" && data.threadId.trim()
+        ? data.threadId.trim()
+        : conversationId;
+
+    // Bildirim ses sistemi: sohbet mesajları "new_message" özelliğine bağlanır; admin panelinden
+    // bu özelliğe atanan org sesi / Android kanalı / "varsayılanı kapat" ayarı push'a uygulanır.
+    const notificationType =
+      typeof payload.notificationType === "string" && payload.notificationType.trim()
+        ? payload.notificationType.trim()
+        : "chat_message";
+    const featureKey =
+      typeof data?.feature_key === "string" && data.feature_key.trim()
+        ? data.feature_key.trim()
+        : resolveNotificationFeatureKey(notificationType);
+    const payloadChannelId =
+      typeof data?.androidChannelId === "string" ? data.androidChannelId.trim() : "";
+    const payloadSound = typeof data?.sound === "string" ? data.sound.trim() : "";
+
+    const orgByStaff = new Map<string, string>();
+    const orgByGuest = new Map<string, string>();
+    const staffIdSet = new Set<string>();
+    const guestIdSet = new Set<string>();
+    for (const row of byToken.values()) {
+      if (row.staff_id) staffIdSet.add(row.staff_id);
+      if (row.guest_id) guestIdSet.add(row.guest_id);
+    }
+    if (staffIdSet.size > 0) {
+      const { data: staffRows } = await supabase
+        .from("staff")
+        .select("id, organization_id")
+        .in("id", [...staffIdSet]);
+      for (const row of staffRows ?? []) {
+        const typed = row as { id?: string; organization_id?: string | null };
+        if (typed.id && typed.organization_id) orgByStaff.set(typed.id, typed.organization_id);
+      }
+    }
+    if (guestIdSet.size > 0) {
+      const { data: guestRows } = await supabase
+        .from("guests")
+        .select("id, organization_id")
+        .in("id", [...guestIdSet]);
+      for (const row of guestRows ?? []) {
+        const typed = row as { id?: string; organization_id?: string | null };
+        if (typed.id && typed.organization_id) orgByGuest.set(typed.id, typed.organization_id);
+      }
+    }
+
+    const resolveOrgSound = createOrgPushSoundResolver(supabase, featureKey);
+
+    const messages = await Promise.all(
+      [...byToken.values()].map(async (row) => {
+        const b = badgeForRow(row);
+        const orgId = row.staff_id
+          ? orgByStaff.get(row.staff_id)
+          : row.guest_id
+            ? orgByGuest.get(row.guest_id)
+            : undefined;
+        const soundRes = await resolveOrgSound(orgId, {
+          payloadChannelId,
+          payloadSound,
+          fallbackChannelId: ANDROID_CHANNEL_ID,
+        });
+        return buildExpoPushMessage({
+          to: row.token,
+          title: titleTrim,
+          subtitle: subtitleTrim ?? undefined,
+          body: displayBody,
+          badge: b,
+          channelId: soundRes.channelId,
+          sound: soundRes.sound,
+          threadId,
+          data: {
+            ...payload,
+            feature_key: featureKey,
+            ...orgPushSoundDataExtras(soundRes, orgId),
+          },
+        });
+      })
+    );
 
     let sent = 0;
     let failed = 0;

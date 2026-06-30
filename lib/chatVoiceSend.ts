@@ -4,8 +4,10 @@
 import {
   staffSendMessage,
   guestSendMessage,
+  partnerSendMessage,
   uploadVoiceMessageForStaff,
   uploadVoiceMessageForGuest,
+  uploadVoiceMessageForPartner,
   resolveStaffConversationIdForSend,
   formatChatMessageSendError,
 } from '@/lib/messagingApi';
@@ -107,6 +109,58 @@ export async function sendGuestVoiceMessage(
       mentions: [],
     };
     return { message, error: null, conversationId: nextConvId ?? convId };
+  } catch (e) {
+    return {
+      message: null,
+      error: formatChatMessageSendError(e, 'Sesli mesaj gönderilemedi'),
+      conversationId: convId,
+    };
+  }
+}
+
+export async function sendPartnerVoiceMessage(
+  actor: Extract<ChatMediaActor, { kind: 'partner' }>,
+  localUri: string,
+  opts?: VoiceSendOptions
+): Promise<{ message: Message | null; error: string | null; conversationId: string }> {
+  const convId = actor.conversationId;
+  const content = encodeVoiceContent(opts?.durationSec ?? 1);
+  try {
+    const mediaUrl =
+      opts?.preUploadedMediaUrl?.trim() || (await uploadVoiceMessageForPartner(localUri));
+    const { messageId, error } = await partnerSendMessage(convId, content, 'voice', mediaUrl);
+    if (!messageId) {
+      return { message: null, error: error ?? 'voice_send_failed', conversationId: convId };
+    }
+    const now = new Date().toISOString();
+    const message: Message = {
+      id: messageId,
+      conversation_id: convId,
+      sender_id: actor.partnerUserId,
+      sender_type: 'partner',
+      sender_name: actor.partnerDisplayName,
+      sender_avatar: null,
+      message_type: 'voice',
+      content,
+      media_url: mediaUrl,
+      media_thumbnail: null,
+      file_name: null,
+      file_size: null,
+      mime_type: 'audio/m4a',
+      is_delivered: true,
+      delivered_at: now,
+      is_read: false,
+      read_at: null,
+      is_edited: false,
+      edited_at: null,
+      is_deleted: false,
+      deleted_at: null,
+      reply_to_id: null,
+      scheduled_at: null,
+      created_at: now,
+      mentions: [],
+    };
+    return { message, error: null, conversationId: convId };
   } catch (e) {
     return {
       message: null,

@@ -14,6 +14,7 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
+import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
 
 const VERSION = 2;
 const LANG_LABELS: Record<string, string> = {
@@ -100,6 +101,8 @@ export default function ContractLangEdit() {
           contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 24) + 32 }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator
+          nestedScrollEnabled={Platform.OS === 'android'}
         >
           <Text style={styles.pageTitle}>{langLabel} – Sözleşme</Text>
           <Text style={styles.label}>Başlık</Text>
@@ -111,14 +114,14 @@ export default function ContractLangEdit() {
             placeholderTextColor="#94a3b8"
           />
           <Text style={styles.label}>İçerik (düz metin)</Text>
-          <TextInput
+          <AutoGrowMultilineInput
             style={styles.contentInput}
             value={content}
             onChangeText={setContent}
+            minHeight={280}
+            lineHeight={20}
             placeholder="İçerik"
             placeholderTextColor="#94a3b8"
-            multiline
-            textAlignVertical="top"
           />
           <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={save} disabled={saving}>
             {saving ? (

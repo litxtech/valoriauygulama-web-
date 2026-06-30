@@ -24,6 +24,7 @@ import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { COUNTERPARTY_TYPE_META, resolveCounterpartyTypeMeta } from '@/lib/financeCounterpartyUi';
 import type { FinanceCounterpartyType } from '@/lib/financeLedger';
+import { findSimilarCounterparties, type CounterpartyMergeRow } from '@/lib/financeCounterpartyMerge';
 
 const TYPES = Object.keys(COUNTERPARTY_TYPE_META) as FinanceCounterpartyType[];
 
@@ -49,6 +50,7 @@ export default function CounterpartyNewScreen() {
   const [partyType, setPartyType] = useState<FinanceCounterpartyType>(initialType);
   const [customTypeLabel, setCustomTypeLabel] = useState('');
   const [saving, setSaving] = useState(false);
+  const [existingRows, setExistingRows] = useState<CounterpartyMergeRow[]>([]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -74,6 +76,24 @@ export default function CounterpartyNewScreen() {
     return me?.organization_id;
   }, [me, selectedOrganizationId]);
 
+  useEffect(() => {
+    if (!orgId || orgId === 'all') {
+      setExistingRows([]);
+      return;
+    }
+    void supabase
+      .from('finance_counterparties')
+      .select('id, name, organization_id')
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .then(({ data }) => setExistingRows((data as CounterpartyMergeRow[]) ?? []));
+  }, [orgId]);
+
+  const similarMatches = useMemo(() => {
+    if (!orgId || orgId === 'all' || name.trim().length < 2) return [];
+    return findSimilarCounterparties(name, existingRows, orgId);
+  }, [name, existingRows, orgId]);
+
   const typeMeta = resolveCounterpartyTypeMeta(partyType, customTypeLabel);
   const displayTypeLabel = typeMeta.label;
 
@@ -88,13 +108,33 @@ export default function CounterpartyNewScreen() {
     focusField('customType');
   };
 
-  const save = async () => {
+  const save = async (force = false) => {
     if (!me?.id || !orgId || orgId === 'all') {
       Alert.alert('İşletme', 'Önce işletme seçin.');
       return;
     }
     if (!name.trim()) {
       Alert.alert('Ad gerekli', 'Firma veya kişi adını yazın.');
+      return;
+    }
+    if (!force && similarMatches.length > 0) {
+      const labels = similarMatches.map((r) => r.name).join('\n· ');
+      Alert.alert(
+        'Benzer cari var',
+        `Bu isme yakın kayıtlar zaten listede:\n· ${labels}\n\nYine de yeni kayıt oluşturulsun mu?`,
+        [
+          { text: 'İptal', style: 'cancel' },
+          ...similarMatches.slice(0, 2).map((r) => ({
+            text: `Aç: ${r.name.length > 22 ? `${r.name.slice(0, 20)}…` : r.name}`,
+            onPress: () =>
+              router.replace({
+                pathname: '/admin/accounting/counterparties/[id]',
+                params: { id: r.id },
+              } as never),
+          })),
+          { text: 'Yine de oluştur', onPress: () => void save(true) },
+        ]
+      );
       return;
     }
     setSaving(true);
@@ -173,6 +213,31 @@ export default function CounterpartyNewScreen() {
           placeholderTextColor={adminTheme.colors.textMuted}
           autoFocus
         />
+        {similarMatches.length > 0 ? (
+          <View style={styles.similarBox}>
+            <Ionicons name="information-circle-outline" size={16} color="#b45309" />
+            <View style={styles.similarBody}>
+              <Text style={styles.similarTitle}>Benzer cari var</Text>
+              {similarMatches.slice(0, 3).map((r) => (
+                <TouchableOpacity
+                  key={r.id}
+                  style={styles.similarRow}
+                  onPress={() =>
+                    router.replace({
+                      pathname: '/admin/accounting/counterparties/[id]',
+                      params: { id: r.id },
+                    } as never)
+                  }
+                >
+                  <Text style={styles.similarName} numberOfLines={1}>
+                    {r.name}
+                  </Text>
+                  <Text style={styles.similarOpen}>Aç →</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         <Text style={styles.label}>Bu kim?</Text>
         <TouchableOpacity
@@ -385,6 +450,29 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
     marginBottom: 16,
   },
+  similarBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    marginTop: -8,
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  similarBody: { flex: 1, minWidth: 0 },
+  similarTitle: { fontSize: 12, fontWeight: '800', color: '#b45309', marginBottom: 6 },
+  similarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  similarName: { flex: 1, fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
+  similarOpen: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.primary },
   area: { minHeight: 96, textAlignVertical: 'top' },
   areaSm: { minHeight: 72, textAlignVertical: 'top' },
   typePicked: {

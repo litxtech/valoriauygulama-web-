@@ -1,5 +1,5 @@
 import { Alert, Linking } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickDocumentSafe } from '@/lib/documentPickerSafe';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
@@ -43,9 +43,9 @@ export async function openAgreementContract(url: string): Promise<void> {
 }
 
 export async function pickAgreementContractFromFiles(): Promise<string | null> {
-  const res = await DocumentPicker.getDocumentAsync({
+  const res = await pickDocumentSafe({
     multiple: false,
-    type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+    type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'application/xml', 'text/xml'],
     copyToCacheDirectory: true,
   });
   if (res.canceled || !res.assets?.[0]?.uri) return null;

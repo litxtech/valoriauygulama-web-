@@ -13,14 +13,13 @@ import {
 import { useFocusEffect, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { AdminNotesAccessGate } from '@/components/adminNotes/AdminNotesAccessGate';
 import { AdminNoteListCard } from '@/components/adminNotes/AdminNoteListCard';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewAllOrgQuickNotes } from '@/lib/staffPermissions';
 import { isStaffAuthoredQuickNote, listAdminQuickNotes, type AdminQuickNoteRow } from '@/lib/adminQuickNotes';
 import { PressableScale } from '@/components/premium/PressableScale';
-import { theme } from '@/constants/theme';
+import { notesTheme } from '@/constants/adminNotesTheme';
 
 type AdminFilter = 'all' | 'staff' | 'mine';
 
@@ -65,6 +64,8 @@ function AdminNotesIndexScreen() {
     );
   }, [allItems, search, isAdminViewer, adminFilter, staff?.id]);
 
+  const pinnedCount = useMemo(() => items.filter((n) => n.is_pinned).length, [items]);
+
   useFocusEffect(
     useCallback(() => {
       setLoading(true);
@@ -79,29 +80,48 @@ function AdminNotesIndexScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#EEF2FF', '#F8FAFC']} style={styles.headerGlow} pointerEvents="none" />
-
-      <View style={styles.searchRow}>
-        <Ionicons name="search" size={18} color="#94A3B8" />
-        <TextInput
-          style={styles.searchInput}
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Not no, başlık veya metin ara…"
-          placeholderTextColor="#94A3B8"
-          returnKeyType="search"
-        />
-        {search ? (
-          <Pressable onPress={() => setSearch('')}>
-            <Ionicons name="close-circle" size={18} color="#94A3B8" />
-          </Pressable>
-        ) : null}
+      <View style={styles.topBar}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={18} color={notesTheme.textSoft} />
+          <TextInput
+            style={styles.searchInput}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Ara…"
+            placeholderTextColor={notesTheme.textSoft}
+            returnKeyType="search"
+          />
+          {search ? (
+            <Pressable onPress={() => setSearch('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color={notesTheme.textSoft} />
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable
+          style={[styles.iconBtn, showArchived && styles.iconBtnOn]}
+          onPress={() => setShowArchived((v) => !v)}
+          accessibilityLabel={showArchived ? 'Aktif notlar' : 'Arşiv'}
+        >
+          <Ionicons
+            name={showArchived ? 'folder-open' : 'folder-outline'}
+            size={20}
+            color={showArchived ? notesTheme.accentDark : notesTheme.textSecondary}
+          />
+        </Pressable>
       </View>
 
-      <Pressable style={styles.archiveToggle} onPress={() => setShowArchived((v) => !v)}>
-        <Ionicons name={showArchived ? 'folder-open' : 'folder-outline'} size={16} color="#6366F1" />
-        <Text style={styles.archiveText}>{showArchived ? 'Aktif notlar' : 'Arşiv'}</Text>
-      </Pressable>
+      <View style={styles.statsRow}>
+        <View style={styles.stat}>
+          <Text style={styles.statVal}>{items.length}</Text>
+          <Text style={styles.statLbl}>{showArchived ? 'Arşiv' : 'Not'}</Text>
+        </View>
+        {pinnedCount > 0 ? (
+          <View style={styles.stat}>
+            <Text style={[styles.statVal, { color: notesTheme.pinned }]}>{pinnedCount}</Text>
+            <Text style={styles.statLbl}>Sabit</Text>
+          </View>
+        ) : null}
+      </View>
 
       {isAdminViewer ? (
         <View style={styles.filterRow}>
@@ -117,16 +137,18 @@ function AdminNotesIndexScreen() {
               style={[styles.filterChip, adminFilter === f.key && styles.filterChipOn]}
               onPress={() => setAdminFilter(f.key)}
             >
-              <Text style={[styles.filterText, adminFilter === f.key && styles.filterTextOn]}>{f.label}</Text>
+              <Text style={[styles.filterText, adminFilter === f.key && styles.filterTextOn]}>
+                {f.label}
+              </Text>
             </Pressable>
           ))}
         </View>
       ) : (
-        <Text style={styles.staffHint}>Yalnızca kendi notlarınızı görürsünüz. Yönetici notları size açılmaz.</Text>
+        <Text style={styles.staffHint}>Yalnızca kendi notlarınız listelenir.</Text>
       )}
 
       {loading && !items.length ? (
-        <ActivityIndicator style={styles.loader} color="#6366F1" />
+        <ActivityIndicator style={styles.loader} color={notesTheme.accent} />
       ) : (
         <FlatList
           data={items}
@@ -139,24 +161,30 @@ function AdminNotesIndexScreen() {
             />
           )}
           contentContainerStyle={items.length ? styles.list : styles.listEmpty}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366F1" />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={notesTheme.accent} />
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Ionicons name="document-text-outline" size={36} color="#C7D2FE" />
+              <View style={styles.emptyIcon}>
+                <Ionicons name="journal-outline" size={32} color={notesTheme.accent} />
+              </View>
               <Text style={styles.emptyTitle}>Henüz not yok</Text>
-              <Text style={styles.emptySub}>Sağ alttaki + ile anlık not alın. Numara otomatik verilir.</Text>
+              <Text style={styles.emptySub}>
+                Anlık not almak için aşağıdaki butona dokunun. Numara otomatik verilir.
+              </Text>
             </View>
           }
         />
       )}
 
       <PressableScale
-        style={[styles.fab, { bottom: 20 + insets.bottom }]}
+        style={[styles.fab, { bottom: 16 + insets.bottom }]}
         onPress={() => router.push(`${base}/new` as never)}
       >
-        <LinearGradient colors={['#6366F1', '#8B5CF6']} style={styles.fabGrad}>
-          <Ionicons name="add" size={28} color="#fff" />
-        </LinearGradient>
+        <View style={styles.fabInner}>
+          <Ionicons name="add" size={26} color="#fff" />
+        </View>
       </PressableScale>
     </View>
   );
@@ -171,75 +199,107 @@ export default function AdminNotesIndex() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  headerGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
-  searchRow: {
+  container: { flex: 1, backgroundColor: notesTheme.bg },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    margin: 14,
-    marginBottom: 8,
     paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 11 : 8,
-    backgroundColor: '#fff',
-    borderRadius: 14,
+    paddingVertical: Platform.OS === 'ios' ? 11 : 9,
+    backgroundColor: notesTheme.card,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: notesTheme.border,
   },
-  searchInput: { flex: 1, fontSize: 14, color: theme.colors.text, padding: 0 },
-  archiveToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    marginLeft: 14,
-    marginBottom: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#EEF2FF',
-  },
-  archiveText: { fontSize: 12, fontWeight: '700', color: '#4F46E5' },
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 8 },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  filterChipOn: { backgroundColor: '#EEF2FF', borderColor: '#A5B4FC' },
-  filterText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
-  filterTextOn: { color: '#4F46E5' },
-  staffHint: {
-    fontSize: 11,
-    color: '#64748B',
-    marginHorizontal: 14,
-    marginBottom: 8,
-    lineHeight: 16,
-  },
-  loader: { marginTop: 40 },
-  list: { paddingHorizontal: 14, paddingBottom: 100 },
-  listEmpty: { flexGrow: 1, paddingHorizontal: 14, paddingBottom: 100 },
-  empty: { alignItems: 'center', paddingTop: 60, gap: 8, paddingHorizontal: 24 },
-  emptyTitle: { fontSize: 16, fontWeight: '800', color: '#334155' },
-  emptySub: { fontSize: 13, color: '#94A3B8', textAlign: 'center', lineHeight: 19 },
-  fab: {
-    position: 'absolute',
-    right: 18,
-    borderRadius: 28,
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  fabGrad: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  searchInput: { flex: 1, fontSize: 15, color: notesTheme.text, padding: 0 },
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: notesTheme.card,
+    borderWidth: 1,
+    borderColor: notesTheme.border,
+  },
+  iconBtnOn: { backgroundColor: notesTheme.accentSoft, borderColor: notesTheme.borderFocus },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  stat: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: notesTheme.card,
+    borderWidth: 1,
+    borderColor: notesTheme.border,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  statVal: { fontSize: 16, fontWeight: '800', color: notesTheme.text },
+  statLbl: { fontSize: 12, color: notesTheme.textMuted, fontWeight: '600' },
+  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 10 },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: notesTheme.card,
+    borderWidth: 1,
+    borderColor: notesTheme.border,
+  },
+  filterChipOn: { backgroundColor: notesTheme.accentGhost, borderColor: notesTheme.accent },
+  filterText: { fontSize: 13, fontWeight: '600', color: notesTheme.textMuted },
+  filterTextOn: { color: notesTheme.accentDark, fontWeight: '700' },
+  staffHint: {
+    fontSize: 12,
+    color: notesTheme.textMuted,
+    marginHorizontal: 16,
+    marginBottom: 10,
+  },
+  loader: { marginTop: 48 },
+  list: { paddingHorizontal: 16, paddingBottom: 96 },
+  listEmpty: { flexGrow: 1, paddingHorizontal: 16, paddingBottom: 96 },
+  empty: { alignItems: 'center', paddingTop: 56, gap: 10, paddingHorizontal: 32 },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: notesTheme.accentGhost,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: notesTheme.text },
+  emptySub: { fontSize: 14, color: notesTheme.textMuted, textAlign: 'center', lineHeight: 21 },
+  fab: {
+    position: 'absolute',
+    right: 16,
+    borderRadius: 16,
+    shadowColor: notesTheme.accentDark,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  fabInner: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: notesTheme.accent,
   },
 });

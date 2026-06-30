@@ -1,8 +1,9 @@
 /**
  * Sohbet: çoklu resim / video seçimi ve gönderimi.
  */
+import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
+import { ensureCrossPlatformJpegUriForUpload } from '@/lib/crossPlatformImage';
 import { pickGalleryImages } from '@/lib/galleryPicker';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
@@ -11,12 +12,14 @@ import { chatVideoPickerOptions } from '@/lib/muxChatUpload';
 import {
   staffSendMessage,
   guestSendMessage,
+  partnerSendMessage,
   uploadImageMessageForStaff,
   uploadImageMessageForGuest,
+  uploadImageMessageForPartner,
   resolveStaffConversationIdForSend,
 } from '@/lib/messagingApi';
-import { uriToArrayBuffer, getMimeAndExt } from '@/lib/uploadMedia';
 import type { Message } from '@/lib/messaging';
+import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import { makeChatAlbumContent } from '@/lib/chatImageAlbum';
 
 export const CHAT_MEDIA_SELECTION_LIMIT = 10;
@@ -32,6 +35,12 @@ export type ChatMediaActor =
   | {
       kind: 'guest';
       appToken: string;
+      conversationId: string;
+    }
+  | {
+      kind: 'partner';
+      partnerUserId: string;
+      partnerDisplayName: string;
       conversationId: string;
     };
 
@@ -56,6 +65,12 @@ export async function pickChatImageFromCamera(): Promise<string | null> {
     mediaTypes: ['images'],
     quality: 0.8,
     allowsEditing: false,
+    ...(Platform.OS === 'ios'
+      ? {
+          preferredAssetRepresentationMode:
+            ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+        }
+      : {}),
   });
   if (result.canceled || !result.assets[0]) return null;
   const resolved = await resolveFeedPickedMediaUri(result.assets[0]);
@@ -93,49 +108,21 @@ export async function pickChatVideoFromCamera(): Promise<string | null> {
 }
 
 async function prepareGuestImageBuffer(uri: string): Promise<{ buffer: ArrayBuffer; mime: string }> {
-  let local = uri;
-  const maxWidth = 1280;
-  try {
-    const manipulated = await ImageManipulator.manipulateAsync(local, [{ resize: { width: maxWidth } }], {
-      compress: 0.78,
-      format: ImageManipulator.SaveFormat.JPEG,
-    });
-    if (manipulated?.uri) local = manipulated.uri;
-  } catch {
-    /* orijinal */
-  }
+  let local = await ensureCrossPlatformJpegUriForUpload(uri, { maxWidth: 1280, compress: 0.78 });
   let buffer = await uriToArrayBuffer(local);
   const MAX_BYTES = 1_000_000;
   if (buffer.byteLength > MAX_BYTES) {
-    try {
-      const w = buffer.byteLength > 800_000 ? 600 : 800;
-      const again = await ImageManipulator.manipulateAsync(local, [{ resize: { width: w } }], {
-        compress: 0.5,
-        format: ImageManipulator.SaveFormat.JPEG,
-      });
-      if (again?.uri) buffer = await uriToArrayBuffer(again.uri);
-    } catch {
-      /* */
-    }
+    const w = buffer.byteLength > 800_000 ? 600 : 800;
+    local = await ensureCrossPlatformJpegUriForUpload(uri, { maxWidth: w, compress: 0.5 });
+    buffer = await uriToArrayBuffer(local);
   }
-  const { mime } = getMimeAndExt(local, 'image');
-  return { buffer, mime };
+  return { buffer, mime: 'image/jpeg' };
 }
 
 async function prepareStaffImageBuffer(uri: string): Promise<{ buffer: ArrayBuffer; mime: string }> {
-  let local = uri;
-  try {
-    const manipulated = await ImageManipulator.manipulateAsync(local, [{ resize: { width: 1280 } }], {
-      compress: 0.78,
-      format: ImageManipulator.SaveFormat.JPEG,
-    });
-    if (manipulated?.uri) local = manipulated.uri;
-  } catch {
-    /* orijinal */
-  }
+  const local = await ensureCrossPlatformJpegUriForUpload(uri, { maxWidth: 1280, compress: 0.78 });
   const buffer = await uriToArrayBuffer(local);
-  const { mime } = getMimeAndExt(local, 'image');
-  return { buffer, mime };
+  return { buffer, mime: 'image/jpeg' };
 }
 
 export async function sendOneStaffImage(
@@ -167,6 +154,60 @@ export async function sendOneStaffImage(
   );
   onProgress?.(1);
   return { message: data, conversationId: conversationId ?? convId, error };
+}
+
+function buildPartnerImageMessage(
+  actor: Extract<ChatMediaActor, { kind: 'partner' }>,
+  messageId: string,
+  content: string,
+  mediaUrl: string
+): Message {
+  const now = new Date().toISOString();
+  return {
+    id: messageId,
+    conversation_id: actor.conversationId,
+    sender_id: actor.partnerUserId,
+    sender_type: 'partner',
+    sender_name: actor.partnerDisplayName,
+    sender_avatar: null,
+    message_type: 'image',
+    content,
+    media_url: mediaUrl,
+    media_thumbnail: mediaUrl,
+    file_name: null,
+    file_size: null,
+    mime_type: 'image/jpeg',
+    is_delivered: true,
+    delivered_at: now,
+    is_read: false,
+    read_at: null,
+    is_edited: false,
+    edited_at: null,
+    is_deleted: false,
+    deleted_at: null,
+    reply_to_id: null,
+    scheduled_at: null,
+    created_at: now,
+    mentions: [],
+  };
+}
+
+async function sendOnePartnerImage(
+  actor: Extract<ChatMediaActor, { kind: 'partner' }>,
+  uri: string,
+  content: string
+): Promise<{ message: Message | null; error: string | null }> {
+  const { buffer: arrayBuffer, mime } = await prepareStaffImageBuffer(uri);
+  const mediaUrl = await uploadImageMessageForPartner(arrayBuffer, mime);
+  const { messageId, error } = await partnerSendMessage(
+    actor.conversationId,
+    content,
+    'image',
+    mediaUrl,
+    mediaUrl
+  );
+  if (!messageId) return { message: null, error: error ?? 'Resim gönderilemedi.' };
+  return { message: buildPartnerImageMessage(actor, messageId, content, mediaUrl), error: null };
 }
 
 async function sendOneGuestImage(
@@ -209,6 +250,13 @@ export async function sendChatImageUris(
           undefined
         );
         conversationId = cid;
+        if (error || !message) {
+          failed += 1;
+          continue;
+        }
+        sentMessages.push(message);
+      } else if (actor.kind === 'partner') {
+        const { message, error } = await sendOnePartnerImage({ ...actor, conversationId }, uri, content);
         if (error || !message) {
           failed += 1;
           continue;

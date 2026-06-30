@@ -237,8 +237,8 @@ export default function GuestsList() {
         p_filter: filter === 'pending' ? 'pending' : 'all',
       });
       if (guestError) {
+        // Geçici hatada (özellikle sessiz realtime yeniden yüklemede) mevcut listeyi silme.
         setLoadError(guestError.message);
-        setGuests([]);
         return;
       }
       setLoadError(null);

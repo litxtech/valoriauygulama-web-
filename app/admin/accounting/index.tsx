@@ -80,6 +80,11 @@ const LINKS: { href: Href; icon: keyof typeof Ionicons.glyphMap; label: string }
     icon: 'people-outline',
     label: 'Kişi ödemeleri (usta, şahsi…)',
   },
+  {
+    href: '/admin/accounting/bank-import',
+    icon: 'cloud-upload-outline',
+    label: 'Banka ekstresi içe aktar (MT940/CSV)',
+  },
   { href: '/admin/accounting/categories', icon: 'pricetags-outline', label: 'Gider / gelir kategorileri' },
   { href: '/admin/debts', icon: 'swap-horizontal-outline', label: 'Borç / alacak listesi' },
   { href: '/admin/finance-checks', icon: 'document-text-outline', label: 'Çek takibi' },
@@ -312,6 +317,20 @@ export default function AccountingHub() {
             </TouchableOpacity>
 
             <TouchableOpacity
+              style={styles.bankImportBtn}
+              onPress={() => router.push('/admin/accounting/bank-import')}
+              activeOpacity={0.88}
+              disabled={needOrg}
+            >
+              <Ionicons name="cloud-upload-outline" size={24} color="#0f766e" />
+              <View style={styles.activityBtnBody}>
+                <Text style={styles.bankImportTitle}>Banka ekstresi yükle</Text>
+                <Text style={styles.bankImportSub}>MT940 / CSV dosyasından otomatik kişi ödemeleri</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color="#0f766e" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={styles.activityBtn}
               onPress={() => router.push('/admin/accounting/activity')}
               activeOpacity={0.88}
@@ -519,6 +538,20 @@ const styles = StyleSheet.create({
   },
   personPayTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
   personPaySub: { fontSize: 13, color: 'rgba(255,255,255,0.9)', marginTop: 4, lineHeight: 18 },
+  bankImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#99f6e4',
+  },
+  bankImportTitle: { fontSize: 16, fontWeight: '800', color: '#0f766e' },
+  bankImportSub: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 4, lineHeight: 17 },
   activityBtn: {
     flexDirection: 'row',
     alignItems: 'center',

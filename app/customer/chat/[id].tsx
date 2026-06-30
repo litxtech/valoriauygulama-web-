@@ -19,6 +19,7 @@ import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
 import { syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
+import { markGuestConversationListDirty } from '@/lib/guestConversationListCache';
 import {
   guestGetMessages,
   guestSendMessage,
@@ -27,6 +28,7 @@ import {
   guestListConversations,
   guestGetConversationHeader,
   guestDeleteMessage,
+  guestEditMessage,
   guestListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
@@ -90,9 +92,12 @@ import { formatChatMessageTime } from '@/lib/formatChatTime';
 import { useChatScreenshotContext } from '@/lib/chatScreenshot';
 import { ChatScreenshotNotice } from '@/components/ChatScreenshotNotice';
 import { ChatMentionComposer } from '@/components/ChatMentionComposer';
+import { ChatMessageEditBar } from '@/components/chat/ChatMessageEditBar';
+import { isChatMessageEditable } from '@/lib/chatMessageEdit';
 import { ChatMentionText } from '@/components/ChatMentionText';
 import {
   notifyChatMessageWithMentions,
+  notifyChatMediaPush,
   syncMentionsWithText,
   parseMessageMentions,
   type ChatMention,
@@ -245,16 +250,23 @@ function MessageBubble({
             [{msg.message_type}] {msg.content || msg.media_url || '—'}
           </Text>
         )}
-        <Text
-          style={[
-            styles.bubbleTime,
-            isMediaCard && styles.bubbleTimeVideo,
-            !isMediaCard && { color: textColor, opacity: 0.9 },
-          ]}
-        >
-          {formatChatMessageTime(msg.created_at)}
-          {isOwn && (msg.is_read ? ' ✓✓' : ' ✓')}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
+          {msg.is_edited ? (
+            <Text style={[styles.bubbleTime, { fontStyle: 'italic', fontSize: 10, opacity: 0.85 }]}>
+              {t('chatMessageEdited')}
+            </Text>
+          ) : null}
+          <Text
+            style={[
+              styles.bubbleTime,
+              isMediaCard && styles.bubbleTimeVideo,
+              !isMediaCard && { color: textColor, opacity: 0.9 },
+            ]}
+          >
+            {formatChatMessageTime(msg.created_at)}
+            {isOwn && (msg.is_read ? ' ✓✓' : ' ✓')}
+          </Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -287,6 +299,7 @@ export default function CustomerChatScreen() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [attachSheetVisible, setAttachSheetVisible] = useState(false);
+  const [editTarget, setEditTarget] = useState<Message | null>(null);
   const insets = useSafeAreaInsets();
   const [headerName, setHeaderName] = useState<string>(conversationName || t('chatConversationFallback'));
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
@@ -300,6 +313,9 @@ export default function CustomerChatScreen() {
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = messages;
+
+  useEffect(() => () => markGuestConversationListDirty(), []);
+
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
   const chatHasVideosEarly = useMemo(
@@ -311,8 +327,17 @@ export default function CustomerChatScreen() {
   });
 
   useEffect(() => {
-    setMessages([]);
-    setLoading(true);
+    setEditTarget(null);
+    // Sohbet değişince listeyi koşulsuz boşaltma; bellek cache'i varsa anında göster
+    // (boş ekran flaşını ve "veri kayboldu sonra geldi" hissini önler).
+    const memory = conversationId ? customerChatMemoryCache[conversationId] : undefined;
+    if (memory?.messages?.length) {
+      setMessages(memory.messages);
+      setLoading(false);
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
   }, [conversationId]);
 
   useEffect(() => {
@@ -628,9 +653,57 @@ export default function CustomerChatScreen() {
 
   useChatScreenshotContext(Boolean(appToken && conversationId && !loading), screenshotChatContext);
 
+  const beginMessageEdit = (msg: Message) => {
+    if (!isChatMessageEditable(msg, { ownSenderType: 'guest' })) return;
+    setEditTarget(msg);
+    setInput(msg.content ?? '');
+    setPendingMentions(parseMessageMentions(msg.mentions));
+  };
+
+  const cancelMessageEdit = () => {
+    setEditTarget(null);
+    setInput('');
+    setPendingMentions([]);
+  };
+
+  const saveMessageEdit = async (text: string) => {
+    const msg = editTarget;
+    if (!msg) return;
+    const token =
+      (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+    if (!token) return;
+    const mentions = syncMentionsWithText(text, pendingMentions);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      Alert.alert(t('error'), t('chatMessageEditEmpty'));
+      return;
+    }
+    const previous = msg;
+    setEditTarget(null);
+    setInput('');
+    setPendingMentions([]);
+    const optimistic: Message = {
+      ...msg,
+      content: trimmed,
+      mentions: mentions.length ? mentions : [],
+      is_edited: true,
+      edited_at: new Date().toISOString(),
+    };
+    setMessages((prev) => replaceChatMessage(prev, optimistic));
+    const { ok, error } = await guestEditMessage(token, msg.id, trimmed, mentions);
+    if (!ok) {
+      setMessages((prev) => replaceChatMessage(prev, previous));
+      Alert.alert(t('error'), error ?? t('chatMessageEditFailed'));
+    }
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || !conversationId || sendInFlightRef.current) return;
+    if (editTarget) {
+      await saveMessageEdit(text);
+      return;
+    }
     const token =
       (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
     if (!token) {
@@ -694,7 +767,6 @@ export default function CustomerChatScreen() {
       };
       setMessages((prev) => upsertIncomingChatMessage(prev, confirmed, { ownSenderType: 'guest' }));
       const { notifyAdmins } = await import('@/lib/notificationService');
-      const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
       notifyAdmins({
         title: t('chatNotifyAdminNewGuest'),
         body: text.slice(0, 60) + (text.length > 60 ? '…' : ''),
@@ -707,10 +779,9 @@ export default function CustomerChatScreen() {
         messageText: text,
         mentions,
         senderDisplayName: guestDisplayName,
+        isGroup,
         excludeAppToken: token,
         chatUrl: `/customer/chat/${convId}`,
-        mentionPushBody: t('chatMentionPushBody', { name: guestDisplayName, preview }),
-        defaultPushBody: preview,
       });
       if (nextConversationId && nextConversationId !== conversationId) {
         router.replace({ pathname: '/customer/chat/[id]', params: { id: nextConversationId, name: headerName } });
@@ -737,20 +808,22 @@ export default function CustomerChatScreen() {
   };
 
   const notifyGuestPhotos = async (token: string, convId: string) => {
-    const { notifyAdmins, notifyConversationRecipients } = await import('@/lib/notificationService');
+    const { notifyAdmins } = await import('@/lib/notificationService');
     notifyAdmins({
       title: t('chatNotifyAdminNewGuest'),
       body: t('staffChatPhotoSentBody'),
       data: { url: '/admin/messages' },
       conversationId: convId,
     }).catch(() => {});
-    notifyConversationRecipients({
+    void notifyChatMediaPush({
       conversationId: convId,
+      conversationTitle: headerName,
+      senderDisplayName: guestDisplayName,
+      isGroup,
+      kind: 'photo',
       excludeAppToken: token,
-      title: `💬 ${t('notifNewMessage')}`,
-      body: t('staffChatPhotoSentBody'),
-      data: { conversationId: convId, url: `/customer/chat/${convId}` },
-    }).catch(() => {});
+      chatUrl: `/customer/chat/${convId}`,
+    });
   };
 
   const sendImagesFromLibrary = async () => {
@@ -909,20 +982,22 @@ export default function CustomerChatScreen() {
           { ownSenderType: 'guest', replaceTempId: tempId }
         )
       );
-      void import('@/lib/notificationService').then(({ notifyAdmins, notifyConversationRecipients }) => {
+      void import('@/lib/notificationService').then(({ notifyAdmins }) => {
         notifyAdmins({
           title: t('chatNotifyAdminNewGuest'),
           body: t('staffChatVoiceSentBody'),
           data: { url: '/admin/messages' },
           conversationId: convId,
         }).catch(() => {});
-        notifyConversationRecipients({
+        void notifyChatMediaPush({
           conversationId: convId,
+          conversationTitle: headerName,
+          senderDisplayName: guestDisplayName,
+          isGroup,
+          kind: 'voice',
           excludeAppToken: token,
-          title: `💬 ${t('notifNewMessage')}`,
-          body: t('staffChatVoiceSentBody'),
-          data: { conversationId: convId, url: `/customer/chat/${convId}` },
-        }).catch(() => {});
+          chatUrl: `/customer/chat/${convId}`,
+        });
       });
       if (convId !== conversationId) {
         router.replace({ pathname: '/customer/chat/[id]', params: { id: convId, name: headerName } });
@@ -1020,7 +1095,11 @@ export default function CustomerChatScreen() {
       toggleSelectedMessage(msg);
       return;
     }
+    const editable = isChatMessageEditable(msg, { ownSenderType: 'guest' });
     Alert.alert(t('chatMessageActionTitle'), undefined, [
+      ...(editable
+        ? [{ text: t('chatMessageActionEdit'), onPress: () => beginMessageEdit(msg) }]
+        : []),
       {
         text: t('chatMultiSelect'),
         onPress: () => {
@@ -1160,6 +1239,9 @@ export default function CustomerChatScreen() {
             <Text style={styles.bulkDeleteBtnText}>{t('chatBulkDeleteBtn')}</Text>
           </TouchableOpacity>
         </View>
+      ) : null}
+      {editTarget && !selectionMode ? (
+        <ChatMessageEditBar message={editTarget} onClear={cancelMessageEdit} />
       ) : null}
       <AttachmentSheet
         visible={attachSheetVisible}
@@ -1349,10 +1431,7 @@ const styles = StyleSheet.create({
     maxHeight: 100,
     backgroundColor: '#f5f5f5',
     borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 16,
-    justifyContent: 'center',
+    overflow: 'hidden',
   },
   inputVoice: {
     maxHeight: 56,
@@ -1361,10 +1440,14 @@ const styles = StyleSheet.create({
   mentionInput: {
     flex: 1,
     fontSize: 16,
-    maxHeight: 100,
     color: MESSAGING_COLORS.text,
-    padding: 0,
-    margin: 0,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: 'transparent',
+    ...Platform.select({
+      android: { textAlignVertical: 'top', includeFontPadding: false },
+      default: {},
+    }),
   },
   mediaBtn: {
     width: 36,
@@ -1373,7 +1456,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 4,
+    marginRight: 8,
   },
   sendBtn: {
     width: 44,

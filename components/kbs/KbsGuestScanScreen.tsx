@@ -17,12 +17,12 @@ import { preloadOpsAppUserForSession } from '@/lib/resolveOpsHotelId';
 const SOUND_KEY = 'kbs_mrz_scan_sound_enabled';
 
 type Props = {
-  /** Yetkisiz kullanıcıda geri dönülecek rota (KBS layout kapalıyken /staff/mrz-scan için /staff). */
+  /** Yetkisiz kullanıcıda geri dönülecek rota (örn. /staff/kbs/guests için /staff). */
   deniedFallback?: string;
 };
 
 /**
- * Tam ekran MRZ tarayıcı — KBS stack’inden bağımsız `/staff/mrz-scan` veya hub üzerinden kullanılır.
+ * Tam ekran MRZ tarayıcı — `/staff/kbs/guests/scan` veya hub üzerinden kullanılır.
  */
 export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   const router = useRouter();

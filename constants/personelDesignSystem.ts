@@ -113,6 +113,18 @@ export function feedPostCardWidth(screenWidth: number, sideInsetPerEdge = pds.ou
   return screenWidth - sideInsetPerEdge * 2;
 }
 
+/**
+ * X (Twitter) tarzı feed kartında medya, avatar sütununun sağında (içerik sütununda) yer alır.
+ * Bu yüzden medya genişliği = ekran − dış boşluk − kart yatay padding − avatar − boşluk.
+ * Kart ile aynı sabitler: padding 16, avatar 44, avatar-içerik boşluğu 12.
+ */
+export function feedXMediaWidth(screenWidth: number, horizontalInset = 12) {
+  const CARD_PADDING_H = 16;
+  const AVATAR = 44;
+  const AVATAR_GAP = 12;
+  return screenWidth - horizontalInset * 2 - CARD_PADDING_H * 2 - AVATAR - AVATAR_GAP;
+}
+
 export function feedPostMediaHeight(cardWidth: number) {
   return Math.round(cardWidth * FEED_POST_MEDIA_HEIGHT_RATIO);
 }

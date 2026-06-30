@@ -7,6 +7,10 @@ import {
   paymentSuccessUrl,
   toStripeMinorUnits,
 } from "../_shared/stripeClient.ts";
+import {
+  resolveGuestForPayment,
+  stripeCustomerEmailFromGuest,
+} from "../_shared/resolveGuestForPayment.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -69,22 +73,7 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Sepet boş", error_code: "CART_EMPTY" }, 400);
   }
 
-  const { data: guestRows } = await admin
-    .from("guests")
-    .select("id, full_name, organization_id, room_id, rooms(room_number)")
-    .eq("auth_user_id", user.id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  const guest = guestRows?.[0] as {
-    id: string;
-    full_name: string | null;
-    organization_id: string | null;
-    room_id: string | null;
-    rooms?: { room_number?: string | number | null } | null;
-  } | undefined;
-
+  const guest = await resolveGuestForPayment(admin, userClient, user.id);
   if (!guest?.id) return json({ error: "Misafir kaydı bulunamadı", error_code: "GUEST_NOT_FOUND" }, 404);
   if (!guest.organization_id) {
     return json({ error: "Otel bilgisi eksik", error_code: "ORG_MISSING" }, 400);
@@ -235,8 +224,10 @@ Deno.serve(async (req: Request) => {
 
   try {
     const stripe = getStripe();
+    const customerEmail = stripeCustomerEmailFromGuest(guest);
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
       success_url: paymentSuccessUrl(paymentRow.id, paymentRow.public_token),
       cancel_url: paymentCancelUrl(paymentRow.id, paymentRow.public_token),
       line_items: [

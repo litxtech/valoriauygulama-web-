@@ -1,13 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, FlatList, TextInput, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  FlatList,
+  TextInput,
+  Alert,
+  ScrollView,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { staffCreateGroupConversation } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
-import { MESSAGING_COLORS } from '@/lib/messaging';
 import { sendNotification } from '@/lib/notificationService';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { useTranslation } from 'react-i18next';
+import { useChatTheme } from '@/hooks/useScreenTheme';
+import type { ChatThemePalette } from '@/hooks/useScreenTheme';
+import { chatLayout } from '@/constants/chatTheme';
 
 type StaffRow = {
   id: string;
@@ -19,6 +33,8 @@ type StaffRow = {
 export default function StaffNewGroupScreen() {
   const router = useRouter();
   const { t } = useTranslation();
+  const chat = useChatTheme();
+  const styles = useMemo(() => createStyles(chat), [chat]);
   const { staff } = useAuthStore();
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,8 +73,15 @@ export default function StaffNewGroupScreen() {
   const visibleStaff = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('tr-TR');
     if (!q) return staffList;
-    return staffList.filter((s) => `${s.full_name ?? ''} ${s.department ?? ''}`.toLocaleLowerCase('tr-TR').includes(q));
+    return staffList.filter((s) =>
+      `${s.full_name ?? ''} ${s.department ?? ''}`.toLocaleLowerCase('tr-TR').includes(q)
+    );
   }, [staffList, query]);
+
+  const selectedStaff = useMemo(
+    () => staffList.filter((s) => selectedStaffIds.includes(s.id)),
+    [staffList, selectedStaffIds]
+  );
 
   const toggleSelect = (id: string) => {
     setSelectedStaffIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -107,122 +130,357 @@ export default function StaffNewGroupScreen() {
     router.replace({ pathname: '/staff/chat/[id]', params: { id: conversationId } });
   };
 
+  const canCreate = Boolean(groupName.trim()) && selectedStaffIds.length > 0 && !creating;
+
   if (!staff) return null;
 
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color={MESSAGING_COLORS.primary} />
+        <ActivityIndicator size="large" color={chat.accent} />
+        <Text style={styles.loadingText}>{t('staffGroupLoadingMembers')}</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.groupBox}>
-        <Text style={styles.groupTitle}>Yeni grup oluştur</Text>
+      <View style={styles.formCard}>
+        <View style={styles.formHeader}>
+          <View style={styles.formIconWrap}>
+            <Ionicons name="people" size={22} color="#fff" />
+          </View>
+          <View style={styles.formHeaderBody}>
+            <Text style={styles.formTitle}>{t('staffGroupCreateTitle')}</Text>
+            <Text style={styles.formSub}>{t('staffGroupCreateSub')}</Text>
+          </View>
+        </View>
         <TextInput
           value={groupName}
           onChangeText={setGroupName}
-          placeholder="Grup adı"
-          placeholderTextColor={MESSAGING_COLORS.textSecondary}
-          style={styles.groupInput}
+          placeholder={t('staffGroupNamePlaceholder')}
+          placeholderTextColor={chat.textMuted}
+          style={styles.nameInput}
+          maxLength={64}
         />
+      </View>
+
+      {selectedStaff.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.selectedRow}
+        >
+          {selectedStaff.map((s) => (
+            <Pressable
+              key={s.id}
+              onPress={() => toggleSelect(s.id)}
+              style={styles.selectedChip}
+            >
+              <Text style={styles.selectedChipText} numberOfLines={1}>
+                {s.full_name || t('staffTab')}
+              </Text>
+              <Ionicons name="close-circle" size={16} color={chat.textMuted} />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search" size={18} color={chat.textMuted} />
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Personel ara"
-          placeholderTextColor={MESSAGING_COLORS.textSecondary}
-          style={styles.groupInput}
+          placeholder={t('staffGroupSearchPlaceholder')}
+          placeholderTextColor={chat.textMuted}
+          style={styles.searchInput}
+          autoCapitalize="none"
+          autoCorrect={false}
         />
-        <TouchableOpacity
-          style={[styles.groupBtn, (!groupName.trim() || selectedStaffIds.length === 0 || creating) && styles.groupBtnDisabled]}
-          onPress={createGroup}
-          disabled={!groupName.trim() || selectedStaffIds.length === 0 || creating}
-        >
-          {creating ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.groupBtnText}>Grup oluştur ({selectedStaffIds.length})</Text>}
-        </TouchableOpacity>
+        {query.length > 0 ? (
+          <Pressable onPress={() => setQuery('')} hitSlop={8}>
+            <Ionicons name="close-circle" size={18} color={chat.textMuted} />
+          </Pressable>
+        ) : null}
       </View>
 
       <FlatList
         data={visibleStaff}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Ionicons name="person-outline" size={40} color={chat.textMuted} />
+            <Text style={styles.emptyText}>{t('staffGroupNoMembersFound')}</Text>
+          </View>
+        }
         renderItem={({ item }) => {
           const selected = selectedStaffIds.includes(item.id);
           return (
-            <TouchableOpacity style={styles.row} onPress={() => toggleSelect(item.id)} activeOpacity={0.8}>
+            <Pressable
+              onPress={() => toggleSelect(item.id)}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            >
+              <View style={[styles.avatar, selected && styles.avatarSelected]}>
+                <Text style={styles.avatarText}>
+                  {(item.full_name || '?').charAt(0).toUpperCase()}
+                </Text>
+              </View>
               <View style={styles.rowBody}>
-                <Text style={styles.name}>{item.full_name || 'Personel'}</Text>
+                <Text style={styles.name}>{item.full_name || t('staffTab')}</Text>
                 <Text style={styles.sub}>{item.department || '—'}</Text>
               </View>
               <View style={[styles.check, selected && styles.checkActive]}>
-                {selected ? <Text style={styles.checkText}>✓</Text> : null}
+                {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
               </View>
-            </TouchableOpacity>
+            </Pressable>
           );
         }}
       />
+
+      <View style={styles.footer}>
+        <Pressable
+          onPress={createGroup}
+          disabled={!canCreate}
+          style={({ pressed }) => [
+            styles.createBtn,
+            !canCreate && styles.createBtnDisabled,
+            pressed && canCreate && styles.createBtnPressed,
+          ]}
+        >
+          {creating ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="people-outline" size={20} color="#fff" />
+              <Text style={styles.createBtnText}>
+                {t('staffGroupCreateButton', { count: selectedStaffIds.length })}
+              </Text>
+            </>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: MESSAGING_COLORS.background },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  groupBox: {
-    backgroundColor: '#fff7ed',
-    borderColor: '#fed7aa',
-    borderWidth: 1,
-    borderRadius: 10,
-    margin: 12,
-    padding: 12,
-  },
-  groupTitle: { fontSize: 15, fontWeight: '700', color: MESSAGING_COLORS.text },
-  groupInput: {
-    marginTop: 8,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: MESSAGING_COLORS.text,
-  },
-  groupBtn: {
-    marginTop: 10,
-    backgroundColor: MESSAGING_COLORS.primary,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  groupBtnDisabled: { opacity: 0.5 },
-  groupBtnText: { color: '#fff', fontWeight: '700' },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  rowBody: { flex: 1 },
-  name: { fontWeight: '600', fontSize: 16, color: MESSAGING_COLORS.text },
-  sub: { fontSize: 13, color: MESSAGING_COLORS.textSecondary, marginTop: 2 },
-  check: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  checkActive: {
-    backgroundColor: MESSAGING_COLORS.primary,
-    borderColor: MESSAGING_COLORS.primary,
-  },
-  checkText: { color: '#fff', fontWeight: '800' },
-});
+function createStyles(chat: ChatThemePalette) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: chat.background,
+    },
+    centered: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: chat.background,
+    },
+    loadingText: {
+      fontSize: 15,
+      color: chat.textMuted,
+    },
+    formCard: {
+      margin: 12,
+      padding: 14,
+      borderRadius: chatLayout.listCardRadius,
+      backgroundColor: chat.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: chat.border,
+      gap: 12,
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+        },
+        android: { elevation: 1 },
+        default: {},
+      }),
+    },
+    formHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    formIconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: chat.accentPurple,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    formHeaderBody: {
+      flex: 1,
+      gap: 2,
+    },
+    formTitle: {
+      fontSize: 17,
+      fontWeight: '700',
+      color: chat.text,
+    },
+    formSub: {
+      fontSize: 13,
+      color: chat.textSecondary,
+    },
+    nameInput: {
+      backgroundColor: chat.background,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: chat.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      color: chat.text,
+    },
+    selectedRow: {
+      paddingHorizontal: 12,
+      paddingBottom: 8,
+      gap: 8,
+    },
+    selectedChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      maxWidth: 140,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 20,
+      backgroundColor: chat.selected,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: chat.accentPurple,
+    },
+    selectedChipText: {
+      flexShrink: 1,
+      fontSize: 13,
+      fontWeight: '600',
+      color: chat.text,
+    },
+    searchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: 12,
+      marginBottom: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: chat.surface,
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: chat.border,
+      gap: 8,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 15,
+      color: chat.text,
+      padding: 0,
+    },
+    listContent: {
+      paddingBottom: 100,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: 12,
+      marginVertical: 3,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderRadius: chatLayout.listCardRadius,
+      backgroundColor: chat.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: chat.border,
+    },
+    rowPressed: {
+      backgroundColor: chat.selected,
+    },
+    avatar: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: chat.accent,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 12,
+    },
+    avatarSelected: {
+      backgroundColor: chat.accentPurple,
+    },
+    avatarText: {
+      color: '#fff',
+      fontWeight: '700',
+      fontSize: 16,
+    },
+    rowBody: {
+      flex: 1,
+      minWidth: 0,
+    },
+    name: {
+      fontWeight: '600',
+      fontSize: 16,
+      color: chat.text,
+    },
+    sub: {
+      fontSize: 13,
+      color: chat.textSecondary,
+      marginTop: 2,
+    },
+    check: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      borderWidth: 2,
+      borderColor: chat.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: chat.background,
+    },
+    checkActive: {
+      backgroundColor: chat.accentPurple,
+      borderColor: chat.accentPurple,
+    },
+    empty: {
+      alignItems: 'center',
+      paddingVertical: 40,
+      gap: 8,
+    },
+    emptyText: {
+      fontSize: 15,
+      color: chat.textMuted,
+    },
+    footer: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 24,
+      backgroundColor: chat.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: chat.border,
+    },
+    createBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: chat.accentPurple,
+      borderRadius: 14,
+      paddingVertical: 14,
+    },
+    createBtnDisabled: {
+      opacity: 0.45,
+    },
+    createBtnPressed: {
+      opacity: 0.9,
+    },
+    createBtnText: {
+      color: '#fff',
+      fontWeight: '700',
+      fontSize: 16,
+    },
+  });
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,11 +18,18 @@ import {
   clearGuestMessagingLocalState,
 } from '@/stores/guestMessagingStore';
 import { guestDeleteConversation, guestListConversations } from '@/lib/messagingApi';
-import type { ConversationWithMeta } from '@/lib/messaging';
+import type { ConversationWithMeta, Message } from '@/lib/messaging';
 import { MESSAGING_COLORS } from '@/lib/messaging';
 import { supabase } from '@/lib/supabase';
 import { formatRelative } from '@/lib/date';
-import { syncGuestMessagingAppToken } from '@/lib/getOrCreateGuestForCaller';
+import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
+import { syncGuestMessagingAppToken, getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { subscribeGuestInboxLive, subscribeGuestInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import {
+  clearGuestConversationListDirty,
+  isGuestConversationListDirty,
+  markGuestConversationListDirty,
+} from '@/lib/guestConversationListCache';
 import { CachedImage } from '@/components/CachedImage';
 import { SwipeToDelete } from '@/components/SwipeToDelete';
 import { useTranslation } from 'react-i18next';
@@ -31,6 +38,11 @@ import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { useChatTheme } from '@/hooks/useScreenTheme';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
+
+const LIST_CACHE_TTL_MS = 45_000;
+const MIN_LOAD_INTERVAL_MS = 2_500;
+let conversationListCache: ConversationWithMeta[] = [];
+let conversationListCacheUpdatedAt = 0;
 
 /** Sohbet adından avatar emoji tahmini: oda numarası → grup, aksi halde ilk harf */
 function chatAvatarChar(name: string | null | undefined, chatFallback: string): string {
@@ -47,13 +59,89 @@ export default function CustomerMessagesScreen() {
   const styles = useMemo(() => createCustomerMessagesStyles(palette, chat), [palette, chat]);
   const router = useRouter();
   const { appToken, setAppToken, loadStoredToken, setUnreadCount } = useGuestMessagingStore();
-  const [conversations, setConversations] = useState<ConversationWithMeta[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [conversations, setConversations] = useState<ConversationWithMeta[]>(() => conversationListCache);
+  const [loading, setLoading] = useState(() => conversationListCache.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState(false);
+  const loadingRef = useRef(false);
+  const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLoadAtRef = useRef(0);
+  const guestIdRef = useRef<string | null>(null);
 
   const sessionUserId = useAuthStore((s) => s.user?.id ?? null);
+
+  /** Yeni mesaj gelince listeyi ağ turu olmadan anında güncelle (önizleme/sıra/okunmamış). */
+  const applyIncomingInboxMessage = useCallback((msg: Message) => {
+    if (!msg?.conversation_id || msg.is_deleted) return;
+    const isOwn = msg.sender_type === 'guest' && msg.sender_id === guestIdRef.current;
+    const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+    setConversations((prev) => {
+      let found = false;
+      const mapped = prev.map((c) => {
+        if (c.id !== msg.conversation_id) return c;
+        found = true;
+        return {
+          ...c,
+          last_message_id: msg.id,
+          last_message_at: msg.created_at,
+          last_message_preview: preview,
+          unread_count: isOwn ? c.unread_count ?? 0 : (c.unread_count ?? 0) + 1,
+        };
+      });
+      if (!found) {
+        markGuestConversationListDirty();
+        return prev;
+      }
+      const next = mapped.sort((a, b) => {
+        const ta = new Date(a.last_message_at ?? 0).getTime();
+        const tb = new Date(b.last_message_at ?? 0).getTime();
+        return tb - ta;
+      });
+      conversationListCache = next;
+      conversationListCacheUpdatedAt = Date.now();
+      return next;
+    });
+  }, []);
+
+  const loadConversations = useCallback(
+    async (opts?: { showRefreshing?: boolean; force?: boolean }) => {
+      if (!appToken) return;
+      if (loadingRef.current) return;
+      const now = Date.now();
+      if (!opts?.force && now - lastLoadAtRef.current < MIN_LOAD_INTERVAL_MS) return;
+      loadingRef.current = true;
+      lastLoadAtRef.current = now;
+      if (opts?.showRefreshing) setRefreshing(true);
+      try {
+        const list = await guestListConversations(appToken);
+        const totalUnread = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+        setUnreadCount(totalUnread);
+        const sorted = [...list].sort((a, b) => {
+          const ta = new Date(a.last_message_at ?? 0).getTime();
+          const tb = new Date(b.last_message_at ?? 0).getTime();
+          return tb - ta;
+        });
+        conversationListCache = sorted;
+        conversationListCacheUpdatedAt = Date.now();
+        clearGuestConversationListDirty();
+        setConversations(sorted);
+        void AsyncStorage.setItem(
+          GUEST_CUSTOMER_MESSAGES_LIST_CACHE_KEY,
+          JSON.stringify({
+            conversations: sorted,
+            updatedAt: conversationListCacheUpdatedAt,
+            appToken: appToken ?? '',
+          })
+        ).catch(() => {});
+      } finally {
+        if (opts?.showRefreshing) setRefreshing(false);
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    },
+    [appToken, setUnreadCount]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +170,12 @@ export default function CustomerMessagesScreen() {
           if (raw) {
             const parsed = JSON.parse(raw) as { conversations?: ConversationWithMeta[]; appToken?: string };
             if (parsed.appToken === nextToken && Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
+              conversationListCache = parsed.conversations;
+              conversationListCacheUpdatedAt =
+                typeof (parsed as { updatedAt?: number }).updatedAt === 'number'
+                  ? (parsed as { updatedAt: number }).updatedAt
+                  : Date.now();
+              clearGuestConversationListDirty();
               setConversations(parsed.conversations);
             }
           }
@@ -100,34 +194,43 @@ export default function CustomerMessagesScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!appToken || !authChecked) {
-        if (authChecked) setConversations([]);
+        // Token bir an için yoksa (yenileme/sekme geçişi) önbellekteki sohbetleri SİLME;
+        // gerçek çıkış oturum efektinde zaten temizleniyor.
+        if (authChecked && conversationListCache.length === 0) setConversations([]);
         setLoading(false);
         return () => {};
       }
-      void loadConversations();
-      return () => {};
-    }, [appToken, authChecked])
+      const hasCache = conversationListCache.length > 0;
+      const isCacheFresh = Date.now() - conversationListCacheUpdatedAt < LIST_CACHE_TTL_MS;
+      if (!hasCache || isGuestConversationListDirty() || !isCacheFresh) {
+        void loadConversations();
+      }
+      let unsubGuest: (() => void) | null = null;
+      let unsubMsgs: (() => void) | null = null;
+      let cancelled = false;
+      void (async () => {
+        const row = await getOrCreateGuestForCurrentSession();
+        if (cancelled || !row?.guest_id) return;
+        guestIdRef.current = row.guest_id;
+        unsubGuest = subscribeGuestInboxLive(row.guest_id, () => {
+          markGuestConversationListDirty();
+          if (reloadDebounceRef.current) return;
+          reloadDebounceRef.current = setTimeout(() => {
+            reloadDebounceRef.current = null;
+            void loadConversations();
+          }, 650);
+        });
+        unsubMsgs = subscribeGuestInboxMessageInserts(row.guest_id, applyIncomingInboxMessage);
+      })();
+      return () => {
+        cancelled = true;
+        unsubGuest?.();
+        unsubMsgs?.();
+        if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+        reloadDebounceRef.current = null;
+      };
+    }, [appToken, authChecked, loadConversations, applyIncomingInboxMessage])
   );
-
-  const loadConversations = async () => {
-    if (!appToken) return;
-    setRefreshing(true);
-    const list = await guestListConversations(appToken);
-    const totalUnread = list.reduce((s, c) => s + (c.unread_count ?? 0), 0);
-    setUnreadCount(totalUnread);
-    const sorted = [...list].sort((a, b) => {
-      const ta = new Date(a.last_message_at ?? 0).getTime();
-      const tb = new Date(b.last_message_at ?? 0).getTime();
-      return tb - ta;
-    });
-    setConversations(sorted);
-    void AsyncStorage.setItem(
-      GUEST_CUSTOMER_MESSAGES_LIST_CACHE_KEY,
-      JSON.stringify({ conversations: sorted, updatedAt: Date.now(), appToken: appToken ?? '' })
-    ).catch(() => {});
-    setRefreshing(false);
-    setLoading(false);
-  };
 
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!appToken) return;
@@ -143,7 +246,12 @@ export default function CustomerMessagesScreen() {
             Alert.alert(t('error'), t('customerChatDeleteFailed'));
             return;
           }
-          setConversations((prev) => prev.filter((c) => c.id !== item.id));
+          setConversations((prev) => {
+            const next = prev.filter((c) => c.id !== item.id);
+            conversationListCache = next;
+            conversationListCacheUpdatedAt = Date.now();
+            return next;
+          });
         },
       },
     ]);
@@ -202,7 +310,7 @@ export default function CustomerMessagesScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={loadConversations}
+            onRefresh={() => void loadConversations({ showRefreshing: true, force: true })}
             colors={[MESSAGING_COLORS.primary]}
           />
         }

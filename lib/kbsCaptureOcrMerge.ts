@@ -1,11 +1,22 @@
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
-import { mrzNamesLookValid, stripSurnameFromGivenNames } from '@/lib/scanner/mrzPersonNames';
+import { isNationalityLikeText } from '@/lib/kbsNationalityMap';
+import { listCoreMissingIdFields } from '@/lib/kbsCaptureParsedFields';
+import { mrzNamesLookValid, parseChevronNamesFromMrz, stripSurnameFromGivenNames, trimMrzPersonNameTokens } from '@/lib/scanner/mrzPersonNames';
 import type { ParsedDocument } from '@/lib/scanner/types';
+
+export type KbsOcrPassMergeInput = {
+  parsed: ParsedDocument;
+  engine: string;
+};
 
 const PLACEHOLDER_FIRST = 'MISAFIR';
 
 const OCR_NOISE_NAME_RE =
-  /^(?:TÜRKİYE|TURKEY|REPUBLIC|CUMHURİYET|KİMLİK|KIMLIK|IDENTITY|CARD|DOCUMENT|NÜFUS|NUFUS|PASAPORT|PASSPORT|UYRUK|NATIONALITY|VATANDAŞ|VATANDAS|GEÇİCİ|GECICI|KORUMA|BELGESİ|BELGESI|VALID|SERİ|SERI|CİLT|CILT|MAHALLE|KAYIT|İLÇE|ILCE|CİNSİYET|CINSIYET|ERKEK|KADIN|MEDENİ|MEDENI|DOGUM|DOĞUM|MASA|TEZGAH|TABLE|DESK|HOTEL|OTEL|RESEPSİYON|RECEPTION|VALORIA|WIFI|MENÜ|MENU|KAHOVE|COFFEE|RESTORAN|INSTAGRAM|FACEBOOK|WHATSAPP)/i;
+  /^(?:TÜRKİYE|TURKEY|REPUBLIC|CUMHURİYET|CUMHURIYET|KİMLİK|KIMLIK|IDENTITY|CARD|DOCUMENT|NÜFUS|NUFUS|PASAPORT|PASSPORT|PASSEPORT|PASAPORTE|UYRUK|NATIONALITY|VATANDAŞ|VATANDAS|GEÇİCİ|GECICI|KORUMA|BELGESİ|BELGESI|VALID|SERİ|SERI|CİLT|CILT|MAHALLE|KAYIT|İLÇE|ILCE|CİNSİYET|CINSIYET|ERKEK|KADIN|MEDENİ|MEDENI|DOGUM|DOĞUM|MASA|TEZGAH|TABLE|DESK|HOTEL|OTEL|RESEPSİYON|RECEPTION|VALORIA|WIFI|MENÜ|MENU|KAHOVE|COFFEE|RESTORAN|INSTAGRAM|FACEBOOK|WHATSAPP|SPECIMEN|TYPE|REISE|REISEPASS)/i;
+
+/** OCR’da etiketin değer sanılması — "SURNAME", "GIVEN NAMES" vb. tamamı etiket kelimesi. */
+const OCR_LABEL_ONLY_NAME_RE =
+  /^(?:SURNAME|SURNAMES|GIVEN|GIVEN\s*NAMES?|FORENAMES?|FIRST\s*NAMES?|FAMILY\s*NAMES?|NAME|NAMES|SOYAD[İI]?|SOYADI|AD[İI]|ADI|NOM|PRENOMS?|APELLIDOS?)$/i;
 
 function normNameKey(v: string | null | undefined): string {
   return sanitizePersonName(v)?.replace(/\s+/g, ' ') ?? '';
@@ -40,6 +51,8 @@ function isLikelyOcrNoiseName(raw: string | null | undefined): boolean {
   const s = sanitizePersonName(raw);
   if (!s) return true;
   if (OCR_NOISE_NAME_RE.test(s)) return true;
+  if (OCR_LABEL_ONLY_NAME_RE.test(s.replace(/\s+/g, ' ').trim())) return true;
+  if (isNationalityLikeText(s)) return true;
   if (s.length > 48) return true;
   return false;
 }
@@ -100,6 +113,13 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
   if (p.birthDate && !isPlausibleBirthDate(p.birthDate)) p.birthDate = null;
   if (p.expiryDate && !isPlausibleExpiryDate(p.expiryDate)) p.expiryDate = null;
 
+  if (p.nationalityCode && p.firstName && p.firstName.toUpperCase() === p.nationalityCode.toUpperCase()) {
+    p.firstName = null;
+  }
+  if (p.nationalityCode && p.lastName && p.lastName.toUpperCase() === p.nationalityCode.toUpperCase()) {
+    p.lastName = null;
+  }
+
   if (isLikelyOcrNoiseName(p.motherName) || !isUsablePersonName(p.motherName)) p.motherName = null;
   if (isLikelyOcrNoiseName(p.fatherName) || !isUsablePersonName(p.fatherName)) p.fatherName = null;
 
@@ -135,7 +155,8 @@ function pickString(
  */
 export function mergeKbsOcrIntoExisting(
   existing: ParsedDocument,
-  incoming: ParsedDocument
+  incoming: ParsedDocument,
+  opts?: { correction?: boolean }
 ): ParsedDocument {
   const inc = sanitizeKbsOcrForApply(incoming);
   const ex = existing;
@@ -153,6 +174,18 @@ export function mergeKbsOcrIntoExisting(
   if (hasManualName(ex)) {
     firstName = ex.firstName;
     lastName = ex.lastName;
+  } else if (
+    opts?.correction &&
+    isUsablePersonName(inc.firstName) &&
+    isUsablePersonName(inc.lastName) &&
+    !isLikelyOcrNoiseName(inc.firstName) &&
+    !isLikelyOcrNoiseName(inc.lastName)
+  ) {
+    firstName = inc.firstName;
+    lastName = inc.lastName;
+  } else if (opts?.correction && incNamesTrusted) {
+    firstName = inc.firstName;
+    lastName = inc.lastName;
   } else if (incNamesTrusted && exNeedsName) {
     firstName = inc.firstName;
     lastName = inc.lastName;
@@ -181,6 +214,31 @@ export function mergeKbsOcrIntoExisting(
     }
   }
 
+  if (!hasManualName(ex) && incomingMrz && inc.rawMrz) {
+    const chevron = parseChevronNamesFromMrz(inc.rawMrz);
+    if (isUsablePersonName(chevron.surname)) {
+      const exLn = normNameKey(lastName);
+      const trimmedSurname =
+        trimMrzPersonNameTokens(chevron.surname, { role: 'surname' }) ?? chevron.surname;
+      const chLn = normNameKey(trimmedSurname);
+      if (exLn !== chLn) {
+        lastName = trimmedSurname;
+        const stripped = stripSurnameFromGivenNames(firstName, lastName);
+        firstName = stripped.firstName ?? firstName;
+      }
+    }
+  }
+
+  if (
+    !hasManualName(ex) &&
+    isKbsPlaceholderName({ ...ex, firstName, lastName } as ParsedDocument) &&
+    isUsablePersonName(inc.firstName) &&
+    isUsablePersonName(inc.lastName)
+  ) {
+    firstName = inc.firstName;
+    lastName = inc.lastName;
+  }
+
   const fullName =
     [firstName, lastName].filter(Boolean).join(' ').trim() ||
     pickString(ex.fullName, inc.fullName, incNamesTrusted);
@@ -207,14 +265,19 @@ export function mergeKbsOcrIntoExisting(
 
   const mergedWarnings = [
     ...(ex.warnings ?? []).filter(
-      (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
+      (w) =>
+        w !== 'ocr_pending' &&
+        w !== 'ocr_processing' &&
+        w !== 'ocr_failed' &&
+        !w.startsWith('kbs_side:')
     ),
     ...(inc.warnings ?? []).filter(
       (w) =>
         w !== 'ocr_pending' &&
         w !== 'ocr_processing' &&
         w !== 'ocr_failed' &&
-        w !== 'manual_capture'
+        w !== 'manual_capture' &&
+        !w.startsWith('kbs_side:')
     ),
   ];
   const warnings = [...new Set(mergedWarnings)];
@@ -243,5 +306,102 @@ export function mergeKbsOcrIntoExisting(
     confidence: Math.max(ex.confidence ?? 0, inc.confidence ?? 0) || inc.confidence || ex.confidence,
     checksumsValid: ex.checksumsValid ?? inc.checksumsValid,
     warnings,
+  };
+}
+
+function emptyKbsParsed(): ParsedDocument {
+  return {
+    documentType: 'other',
+    fullName: null,
+    firstName: null,
+    lastName: null,
+    middleName: null,
+    documentNumber: null,
+    nationalityCode: null,
+    issuingCountryCode: null,
+    birthDate: null,
+    expiryDate: null,
+    gender: null,
+    rawMrz: null,
+    confidence: null,
+    checksumsValid: null,
+    warnings: [],
+  };
+}
+
+function parsedPassRank(p: ParsedDocument): number {
+  let s = 0;
+  const tcDigits = (p.documentNumber ?? '').replace(/\D/g, '');
+  const isTurkishId = p.documentType === 'id_card' && /^[1-9]\d{10}$/.test(tcDigits);
+  if (p.checksumsValid === true) s += 120;
+  else if (p.checksumsValid === false) s -= 24;
+  if (p.rawMrz) s += isTurkishId && p.checksumsValid !== true ? 18 : 80;
+  if (isTurkishId) s += 55;
+  if (hasTrustedDocNumber(p)) s += 28;
+  if (hasTrustedName(p)) s += 22;
+  if (p.birthDate && isPlausibleBirthDate(p.birthDate)) s += 14;
+  if (p.expiryDate && isPlausibleExpiryDate(p.expiryDate)) s += 14;
+  if (p.nationalityCode) s += 8;
+  if (p.gender) s += 4;
+  s -= listCoreMissingIdFields(p).length * 10;
+  s += (p.confidence ?? 0) * 20;
+  return s;
+}
+
+/** Birden fazla OCR geçişinden tek en iyi birleşik sonuç — boş alanlar diğer geçişlerden dolar. */
+export function mergeKbsOcrPassResults(
+  results: KbsOcrPassMergeInput[]
+): { parsed: ParsedDocument; missingFields: string[]; engine: string } {
+  const usable = results.filter((r) => r && typeof r.parsed === 'object');
+  if (usable.length === 0) {
+    const empty = emptyKbsParsed();
+    return {
+      parsed: empty,
+      missingFields: listCoreMissingIdFields(empty),
+      engine: 'none',
+    };
+  }
+  if (usable.length === 1) {
+    const one = usable[0]!;
+    return {
+      parsed: sanitizeKbsOcrForApply(one.parsed),
+      missingFields: listCoreMissingIdFields(one.parsed),
+      engine: one.engine,
+    };
+  }
+
+  const ranked = [...usable].sort((a, b) => parsedPassRank(b.parsed) - parsedPassRank(a.parsed));
+  let merged = ranked[0]!.parsed;
+
+  for (let i = 1; i < ranked.length; i++) {
+    merged = mergeKbsOcrIntoExisting(merged, ranked[i]!.parsed);
+  }
+
+  const mrzTrusted =
+    ranked.find((r) => r.parsed.checksumsValid === true && r.parsed.rawMrz) ??
+    ranked.find((r) => r.parsed.rawMrz);
+  if (mrzTrusted) {
+    merged = mergeKbsOcrIntoExisting(merged, mrzTrusted.parsed);
+  }
+
+  const namesTrusted = ranked.find(
+    (r) =>
+      !!r.parsed.rawMrz &&
+      hasTrustedName(r.parsed) &&
+      mrzNamesLookValid(r.parsed.firstName, r.parsed.lastName)
+  );
+  if (namesTrusted && namesTrusted !== mrzTrusted) {
+    merged = mergeKbsOcrIntoExisting(merged, namesTrusted.parsed);
+  }
+
+  const engine =
+    ranked.find((r) => r.parsed.checksumsValid === true)?.engine ??
+    ranked.find((r) => r.parsed.rawMrz)?.engine ??
+    ranked[0]!.engine;
+
+  return {
+    parsed: sanitizeKbsOcrForApply(merged),
+    missingFields: listCoreMissingIdFields(merged),
+    engine,
   };
 }

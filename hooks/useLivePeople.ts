@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { getLiveOpsMapSession, runLiveOpsMapLoad } from '@/lib/liveOpsMapSession';
 import { useAdminOrganizationQueryScope } from '@/hooks/useAdminOrganizationQueryScope';
@@ -75,8 +76,30 @@ export function useLivePeople(refreshKey = 0): { people: LivePersonRow[]; loadin
       return;
     }
     void load(refreshKey !== 0);
-    const poll = setInterval(() => void load(false), ADMIN_HOME_LIVE_PEOPLE_POLL_MS);
-    return () => clearInterval(poll);
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const startPolling = () => {
+      if (poll) return;
+      poll = setInterval(() => void load(false), ADMIN_HOME_LIVE_PEOPLE_POLL_MS);
+    };
+    const stopPolling = () => {
+      if (poll) {
+        clearInterval(poll);
+        poll = null;
+      }
+    };
+    if (AppState.currentState === 'active') startPolling();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        void load(false);
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+    return () => {
+      stopPolling();
+      sub.remove();
+    };
   }, [canQuery, load, refreshKey]);
 
   return { people: Array.isArray(people) ? people : [], loading };

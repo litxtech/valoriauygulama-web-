@@ -7,8 +7,6 @@ import {
   ActivityIndicator,
   Pressable,
   Alert,
-  Modal,
-  TextInput,
 } from 'react-native';
 import { useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,26 +18,31 @@ import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import {
   staffDeleteConversation,
   staffListConversations,
-  subscribeToConversationList,
   staffSetConversationMuted,
   staffSetConversationArchived,
 } from '@/lib/messagingApi';
+import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
+import type { Message } from '@/lib/messaging';
 import { ChatListSwipeRow, type ChatListSwipeAction } from '@/components/chat/ChatListSwipeRow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import type { ConversationWithMeta } from '@/lib/messaging';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 import { useChatTheme } from '@/hooks/useScreenTheme';
 import { FlashList } from '@shopify/flash-list';
 import { ChatListItem } from '@/components/chat/ChatListItem';
 import { BulkSelectionHeader } from '@/components/chat/BulkSelectionHeader';
+import { MessagesListHeader, type MessagesFilter } from '@/components/chat/MessagesListHeader';
 import { useMessageSelection } from '@/hooks/chat/useMessageSelection';
+import { chatLayout } from '@/constants/chatTheme';
 
 const ALL_STAFF_GROUP_NAME_DB = 'Tüm Çalışanlar';
 let conversationListCache: ConversationWithMeta[] = [];
 let conversationListCacheUpdatedAt = 0;
 let conversationListDirty = false;
-const LIST_CACHE_TTL_MS = 45_000;
-const MIN_LOAD_INTERVAL_MS = 2_500;
+const LIST_CACHE_TTL_MS = 90_000;
+const MIN_LOAD_INTERVAL_MS = 5_000;
 const STAFF_MESSAGES_PERSIST_KEY = 'staff_messages_list_cache_v1';
 
 function formatTime(iso: string | null, lang: string): string {
@@ -54,10 +57,20 @@ function formatTime(iso: string | null, lang: string): string {
   return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' });
 }
 
+function sortConversations(list: ConversationWithMeta[]): ConversationWithMeta[] {
+  return [...list].sort((a, b) => {
+    const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+    const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+    if (tb !== ta) return tb - ta;
+    return (b.unread_count ?? 0) - (a.unread_count ?? 0);
+  });
+}
+
 export default function StaffMessagesTabScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const listBottomPad = getFloatingTabBarTotalHeight(insets) + 16;
   const chat = useChatTheme();
   const styles = useMemo(() => createStaffMessagesStyles(chat), [chat]);
   const { t, i18n } = useTranslation();
@@ -66,9 +79,8 @@ export default function StaffMessagesTabScreen() {
   const [conversations, setConversations] = useState<ConversationWithMeta[]>(() => conversationListCache);
   const [loading, setLoading] = useState(() => conversationListCache.length === 0);
   const [refreshing, setRefreshing] = useState(false);
-  const [adminMenuVisible, setAdminMenuVisible] = useState(false);
-  const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<MessagesFilter>('all');
   const loadingRef = useRef(false);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLoadAtRef = useRef(0);
@@ -147,6 +159,41 @@ export default function StaffMessagesTabScreen() {
     [staff, setUnreadCount]
   );
 
+  /** Yeni mesaj gelince listeyi ağ turu olmadan anında güncelle (önizleme/sıra/okunmamış). */
+  const applyIncomingInboxMessage = useCallback(
+    (msg: Message) => {
+      if (!msg?.conversation_id || msg.is_deleted) return;
+      const isOwn =
+        !!staff &&
+        msg.sender_id === staff.id &&
+        (msg.sender_type === 'staff' || msg.sender_type === 'admin');
+      const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+      setConversations((prev) => {
+        let found = false;
+        const next = prev.map((c) => {
+          if (c.id !== msg.conversation_id) return c;
+          found = true;
+          return {
+            ...c,
+            last_message_id: msg.id,
+            last_message_at: msg.created_at,
+            last_message_preview: preview,
+            unread_count: isOwn ? c.unread_count ?? 0 : (c.unread_count ?? 0) + 1,
+          };
+        });
+        if (!found) {
+          // Listede olmayan (yeni) sohbet → katılımcı dinleyicisi tam yenileme yapar.
+          conversationListDirty = true;
+          return prev;
+        }
+        conversationListCache = next;
+        conversationListCacheUpdatedAt = Date.now();
+        return next;
+      });
+    },
+    [staff]
+  );
+
   useFocusEffect(
     useCallback(() => {
       const hasCache = conversationListCache.length > 0;
@@ -155,31 +202,71 @@ export default function StaffMessagesTabScreen() {
         load();
       }
       if (!staff?.id) return () => {};
-      const sub = subscribeToConversationList(staff.id, () => {
+      const unsub = subscribeStaffInboxLive(staff.id, () => {
         conversationListDirty = true;
         if (reloadDebounceRef.current) return;
         reloadDebounceRef.current = setTimeout(() => {
           reloadDebounceRef.current = null;
           load();
-        }, 350);
+        }, 650);
       });
+      const unsubMsgs = subscribeStaffInboxMessageInserts(staff.id, applyIncomingInboxMessage);
       return () => {
-        sub.unsubscribe?.();
+        unsub();
+        unsubMsgs();
         if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
         reloadDebounceRef.current = null;
       };
-    }, [load, staff?.id])
+    }, [load, staff?.id, applyIncomingInboxMessage])
   );
 
-  const filteredConversations = useMemo(() => {
+  const unreadTotal = useMemo(
+    () => conversations.reduce((s, c) => s + (c.unread_count ?? 0), 0),
+    [conversations]
+  );
+
+  const allStaffConv = useMemo(
+    () => conversations.find((c) => c.type === 'group' && c.name === ALL_STAFF_GROUP_NAME_DB) ?? null,
+    [conversations]
+  );
+
+  const editableGroupConv = useMemo(
+    () => allStaffConv ?? conversations.find((c) => c.type === 'group') ?? null,
+    [allStaffConv, conversations]
+  );
+
+  const filteredBase = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) => {
-      const name = (c.name ?? '').toLowerCase();
-      const preview = (c.last_message_preview ?? '').toLowerCase();
-      return name.includes(q) || preview.includes(q);
-    });
-  }, [conversations, searchQuery]);
+    let list = conversations;
+
+    if (q) {
+      list = list.filter((c) => {
+        const name = (c.name ?? '').toLowerCase();
+        const preview = (c.last_message_preview ?? '').toLowerCase();
+        return name.includes(q) || preview.includes(q);
+      });
+    }
+
+    if (activeFilter === 'groups') {
+      list = list.filter((c) => c.type === 'group');
+    } else if (activeFilter === 'unread') {
+      list = list.filter((c) => (c.unread_count ?? 0) > 0);
+    }
+
+    return list;
+  }, [conversations, searchQuery, activeFilter]);
+
+  const frequentChats = useMemo(() => {
+    if (searchQuery.trim()) return [];
+    return sortConversations(filteredBase.filter((c) => Boolean(c.last_message_at))).slice(0, 12);
+  }, [filteredBase, searchQuery]);
+
+  const displayConversations = useMemo(() => sortConversations(filteredBase), [filteredBase]);
+
+  const formatTimeForItem = useCallback(
+    (item: ConversationWithMeta) => formatTime(item.last_message_at ?? null, i18n.language),
+    [i18n.language]
+  );
 
   const getDisplayName = useCallback(
     (item: ConversationWithMeta) => {
@@ -192,10 +279,10 @@ export default function StaffMessagesTabScreen() {
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!staff?.id) return;
     const name = getDisplayName(item);
-    Alert.alert('Bu sohbet silinsin mi?', name, [
+    Alert.alert(t('staffMessagesDeleteChatTitle'), name, [
       { text: t('cancel'), style: 'cancel' },
       {
-        text: 'Benden sil',
+        text: t('staffChatActionDeleteMe'),
         style: 'destructive',
         onPress: async () => {
           const { error } = await staffDeleteConversation(item.id, staff.id);
@@ -215,12 +302,12 @@ export default function StaffMessagesTabScreen() {
     if (!staff?.id || selectedIds.length === 0) return;
     const isAdmin = staff.role === 'admin';
     Alert.alert(
-      `Seçili ${selectedIds.length} sohbet silinsin mi?`,
+      t('staffMessagesBulkDeleteTitle', { count: selectedIds.length }),
       undefined,
       [
         { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Benden sil',
+          text: t('staffChatActionDeleteMe'),
           style: 'destructive',
           onPress: async () => {
             const results = await Promise.all(
@@ -233,25 +320,33 @@ export default function StaffMessagesTabScreen() {
               conversationListCache = conversationListCache.filter((c) => !okIds.includes(c.id));
             }
             exitSelection();
-            if (failed > 0) Alert.alert(t('error'), `${failed} sohbet silinemedi.`);
+            if (failed > 0) Alert.alert(t('error'), t('staffMessagesBulkDeleteFailed', { count: failed }));
           },
         },
         ...(isAdmin
           ? [
               {
-                text: 'Herkesten sil',
+                text: t('staffMessagesDeleteForEveryone'),
                 style: 'destructive' as const,
                 onPress: () => {
-                  Alert.alert(
-                    t('info'),
-                    t('staffChatDeleteGroupAdminHint')
-                  );
+                  Alert.alert(t('info'), t('staffChatDeleteGroupAdminHint'));
                 },
               },
             ]
           : []),
       ]
     );
+  };
+
+  const openGroupEdit = () => {
+    if (!editableGroupConv) {
+      Alert.alert(t('info'), t('messagesGroupEditNotFound'));
+      return;
+    }
+    router.push({
+      pathname: '/staff/chat/[id]',
+      params: { id: editableGroupConv.id, openGroupSettings: '1' },
+    });
   };
 
   useLayoutEffect(() => {
@@ -268,44 +363,16 @@ export default function StaffMessagesTabScreen() {
       headerShown: true,
       headerTitle: undefined,
       headerLeft: undefined,
-      headerRight: () => (
-        <View style={styles.headerActions}>
-          <Pressable onPress={() => setSearchVisible((v) => !v)} hitSlop={10} style={styles.headerIconBtn}>
-            <Ionicons name="search" size={22} color={chat.text} />
+      headerRight: () =>
+        staff?.role === 'admin' ? (
+          <Pressable onPress={openGroupEdit} hitSlop={10} style={styles.headerIconBtn}>
+            <Ionicons name="settings-outline" size={22} color={chat.text} />
           </Pressable>
-          {staff?.role === 'admin' ? (
-            <Pressable onPress={() => setAdminMenuVisible(true)} hitSlop={10} style={styles.headerIconBtn}>
-              <Ionicons name="ellipsis-horizontal" size={22} color={chat.text} />
-            </Pressable>
-          ) : null}
-        </View>
-      ),
+        ) : null,
     });
-  }, [navigation, selectionMode, staff?.role]);
+  }, [navigation, selectionMode, staff?.role, editableGroupConv?.id]);
 
   if (!staff) return null;
-
-  const allStaffConv = conversations.find((c) => c.type === 'group' && c.name === ALL_STAFF_GROUP_NAME_DB);
-  const editableGroupConv = allStaffConv ?? conversations.find((c) => c.type === 'group') ?? null;
-
-  const openAllStaffChat = () => {
-    if (!allStaffConv) {
-      Alert.alert(t('info'), t('messagesTeamChatNotCreated'));
-      return;
-    }
-    router.push({ pathname: '/staff/chat/[id]', params: { id: allStaffConv.id } });
-  };
-
-  const openGroupEdit = () => {
-    if (!editableGroupConv) {
-      Alert.alert(t('info'), t('messagesGroupEditNotFound'));
-      return;
-    }
-    router.push({
-      pathname: '/staff/chat/[id]',
-      params: { id: editableGroupConv.id, openGroupSettings: '1' },
-    });
-  };
 
   const handleSwipeAction = (item: ConversationWithMeta, action: ChatListSwipeAction) => {
     if (!staff?.id) return;
@@ -358,6 +425,33 @@ export default function StaffMessagesTabScreen() {
     </ChatListSwipeRow>
   );
 
+  const openChat = useCallback(
+    (item: ConversationWithMeta) => {
+      router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } });
+    },
+    [router]
+  );
+
+  const listHeader = selectionMode ? null : (
+    <MessagesListHeader
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      activeFilter={activeFilter}
+      onFilterChange={setActiveFilter}
+      frequentChats={frequentChats}
+      getDisplayName={getDisplayName}
+      formatTime={formatTimeForItem}
+      onFrequentPress={openChat}
+      onNewChat={() => router.push('/staff/new-chat')}
+      onNewGroup={staff.role === 'admin' ? () => router.push('/staff/new-group') : undefined}
+      isAdmin={staff.role === 'admin'}
+      unreadTotal={unreadTotal}
+      showAllChatsLabel
+    />
+  );
+
+  const showEmpty = !loading && displayConversations.length === 0;
+
   return (
     <View style={[styles.container, { backgroundColor: chat.background }]}>
       {selectionMode ? (
@@ -366,22 +460,7 @@ export default function StaffMessagesTabScreen() {
             count={selectedCount}
             onClose={exitSelection}
             onDelete={confirmBulkDelete}
-            onSelectAll={() => selectAll(filteredConversations)}
-          />
-        </View>
-      ) : null}
-
-      {searchVisible && !selectionMode ? (
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={18} color={chat.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Personel veya mesaj ara"
-            placeholderTextColor={chat.textMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoFocus
-            clearButtonMode="while-editing"
+            onSelectAll={() => selectAll(displayConversations)}
           />
         </View>
       ) : null}
@@ -391,19 +470,31 @@ export default function StaffMessagesTabScreen() {
           <ActivityIndicator size="large" color={chat.accent} />
           <Text style={styles.loadingText}>{t('messagesLoading')}</Text>
         </View>
-      ) : filteredConversations.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons name="chatbubbles-outline" size={48} color={chat.textMuted} />
-          <Text style={styles.emptyTitle}>{t('messagesEmptyTitle')}</Text>
-          <Text style={styles.emptyText}>{t('messagesEmptyBody')}</Text>
+      ) : showEmpty ? (
+        <View style={styles.emptyWrap}>
+          {listHeader}
+          <View style={styles.empty}>
+            <Ionicons name="chatbubbles-outline" size={48} color={chat.textMuted} />
+            <Text style={styles.emptyTitle}>
+              {activeFilter === 'unread'
+                ? t('staffMessagesEmptyUnread')
+                : activeFilter === 'groups'
+                  ? t('staffMessagesEmptyGroups')
+                  : t('messagesEmptyTitle')}
+            </Text>
+            <Text style={styles.emptyText}>
+              {activeFilter === 'all' ? t('messagesEmptyBody') : t('staffMessagesEmptyFilterHint')}
+            </Text>
+          </View>
         </View>
       ) : (
         <FlashList
           style={styles.list}
-          data={filteredConversations}
-          estimatedItemSize={76}
+          data={displayConversations}
+          estimatedItemSize={chatLayout.listRowHeight}
           keyExtractor={(item) => item.id}
           renderItem={renderRow}
+          ListHeaderComponent={listHeader}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -412,185 +503,96 @@ export default function StaffMessagesTabScreen() {
               tintColor={chat.accent}
             />
           }
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={{ paddingBottom: listBottomPad }}
           showsVerticalScrollIndicator={false}
         />
       )}
 
       {!selectionMode ? (
         <Pressable
-          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+          style={({ pressed }) => [styles.fab, { bottom: listBottomPad }, pressed && styles.fabPressed]}
           onPress={() => router.push('/staff/new-chat')}
         >
           <Ionicons name="create" size={26} color="#fff" />
         </Pressable>
       ) : null}
-
-      <Modal visible={adminMenuVisible} transparent animationType="fade" onRequestClose={() => setAdminMenuVisible(false)}>
-        <Pressable style={styles.menuOverlay} onPress={() => setAdminMenuVisible(false)}>
-          <Pressable style={styles.menuCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.menuTitle}>{t('messagesGroupActionsTitle')}</Text>
-            <Pressable
-              onPress={() => {
-                setAdminMenuVisible(false);
-                openAllStaffChat();
-              }}
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-            >
-              <Ionicons name="people-outline" size={18} color={chat.accent} />
-              <Text style={styles.menuItemText}>{t('teamChat')}</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                setAdminMenuVisible(false);
-                router.push('/staff/new-group');
-              }}
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-            >
-              <Ionicons name="add-circle-outline" size={18} color={chat.accent} />
-              <Text style={styles.menuItemText}>{t('screenNewGroup')}</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                setAdminMenuVisible(false);
-                openGroupEdit();
-              }}
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-            >
-              <Ionicons name="create-outline" size={18} color={chat.accent} />
-              <Text style={styles.menuItemText}>{t('messagesGroupEdit')}</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
 
 function createStaffMessagesStyles(chat: ChatThemePalette) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: chat.background,
-  },
-  list: {
-    flex: 1,
-  },
-  selectionBar: {
-    backgroundColor: chat.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: chat.border,
-    zIndex: 20,
-    elevation: 8,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 8,
-    gap: 4,
-  },
-  headerIconBtn: {
-    padding: 8,
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 12,
-    marginVertical: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: chat.surface,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: chat.border,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: chat.text,
-    padding: 0,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    fontSize: 15,
-    color: chat.textMuted,
-  },
-  listContent: {
-    paddingBottom: 88,
-  },
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    gap: 12,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: chat.text,
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 15,
-    color: chat.textSecondary,
-    textAlign: 'center',
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: chat.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  fabPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.96 }],
-  },
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
-    padding: 16,
-  },
-  menuCard: {
-    backgroundColor: chat.surface,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: chat.border,
-  },
-  menuTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: chat.text,
-    marginBottom: 6,
-    paddingHorizontal: 6,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-  },
-  menuItemPressed: { backgroundColor: chat.background },
-  menuItemText: { fontSize: 14, fontWeight: '600', color: chat.text },
+    container: {
+      flex: 1,
+      backgroundColor: chat.background,
+    },
+    list: {
+      flex: 1,
+    },
+    selectionBar: {
+      backgroundColor: chat.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: chat.border,
+      zIndex: 20,
+      elevation: 8,
+    },
+    headerIconBtn: {
+      padding: 8,
+      marginRight: 8,
+    },
+    centered: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      fontSize: 15,
+      color: chat.textMuted,
+    },
+    listContent: {
+      paddingBottom: 88,
+    },
+    emptyWrap: {
+      flex: 1,
+    },
+    empty: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 32,
+      gap: 12,
+    },
+    emptyTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: chat.text,
+      textAlign: 'center',
+    },
+    emptyText: {
+      fontSize: 15,
+      color: chat.textSecondary,
+      textAlign: 'center',
+    },
+    fab: {
+      position: 'absolute',
+      right: 20,
+      bottom: 24,
+      width: chatLayout.composeFabSize,
+      height: chatLayout.composeFabSize,
+      borderRadius: chatLayout.composeFabSize / 2,
+      backgroundColor: chat.accent,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 6,
+    },
+    fabPressed: {
+      opacity: 0.9,
+      transform: [{ scale: 0.96 }],
+    },
   });
 }

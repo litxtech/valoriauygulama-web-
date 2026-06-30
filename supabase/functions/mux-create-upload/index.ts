@@ -91,6 +91,27 @@ Deno.serve(async (req: Request) => {
           .maybeSingle();
         actorOk = Boolean(part);
       }
+
+      if (!actorOk) {
+        const { data: partnerRow } = await admin
+          .from("breakfast_partner_users")
+          .select("id")
+          .eq("auth_id", authId)
+          .maybeSingle();
+        const partnerOwns =
+          msg.sender_type === "partner" && partnerRow?.id === msg.sender_id;
+        if (partnerOwns) {
+          const { data: part } = await admin
+            .from("conversation_participants")
+            .select("id")
+            .eq("conversation_id", conversationId)
+            .eq("participant_id", msg.sender_id)
+            .eq("participant_type", "partner")
+            .is("left_at", null)
+            .maybeSingle();
+          actorOk = Boolean(part);
+        }
+      }
     }
   }
 

@@ -1,19 +1,34 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const LAST_SEEN_KEY = 'kbs_capture_history_last_seen_at';
+const LEGACY_LAST_SEEN_KEY = 'kbs_capture_history_last_seen_at';
 
-/** Son liste ziyareti — bundan sonra kaydedilenler "Yeni" sayılır. */
-export async function getKbsCaptureHistoryLastSeenAt(): Promise<string | null> {
+function lastSeenStorageKey(staffId: string) {
+  return `kbs_capture_history_last_seen_at_v2_${staffId}`;
+}
+
+/** Son liste ziyareti — bundan sonra kaydedilenler "Yeni" sayılır (personel bazlı). */
+export async function getKbsCaptureHistoryLastSeenAt(staffId: string): Promise<string | null> {
+  if (!staffId) return null;
   try {
-    return await AsyncStorage.getItem(LAST_SEEN_KEY);
+    const scoped = await AsyncStorage.getItem(lastSeenStorageKey(staffId));
+    if (scoped) return scoped;
+    // Eski cihaz anahtarı — bir kez taşı
+    const legacy = await AsyncStorage.getItem(LEGACY_LAST_SEEN_KEY);
+    if (legacy) {
+      await AsyncStorage.setItem(lastSeenStorageKey(staffId), legacy);
+      await AsyncStorage.removeItem(LEGACY_LAST_SEEN_KEY);
+      return legacy;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-export async function setKbsCaptureHistoryLastSeenAt(iso: string): Promise<void> {
+export async function setKbsCaptureHistoryLastSeenAt(staffId: string, iso: string): Promise<void> {
+  if (!staffId) return;
   try {
-    await AsyncStorage.setItem(LAST_SEEN_KEY, iso);
+    await AsyncStorage.setItem(lastSeenStorageKey(staffId), iso);
   } catch {
     /* yerel önbellek isteğe bağlı */
   }

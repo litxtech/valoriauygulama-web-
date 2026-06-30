@@ -20,6 +20,7 @@ const CORS = {
 type PushBody = {
   guestIds?: string[];
   staffIds?: string[];
+  partnerUserIds?: string[];
   title: string;
   body?: string | null;
   data?: Record<string, unknown>;
@@ -48,42 +49,77 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = (await req.json()) as PushBody;
-    const { guestIds = [], staffIds = [], title, body: messageBody, data = {} } = body;
-    if (!title || (guestIds.length === 0 && staffIds.length === 0)) {
+    const { guestIds = [], staffIds = [], partnerUserIds = [], title, body: messageBody, data = {} } = body;
+    if (!title || (guestIds.length === 0 && staffIds.length === 0 && partnerUserIds.length === 0)) {
       return new Response(
-        JSON.stringify({ error: "title ve (guestIds veya staffIds) gerekli" }),
+        JSON.stringify({ error: "title ve (guestIds, staffIds veya partnerUserIds) gerekli" }),
         { status: 400, headers: { ...CORS, "Content-Type": "application/json" } }
       );
     }
 
-    type TokenRow = { token: string; staff_id: string | null; guest_id: string | null };
+    type TokenRow = { token: string; staff_id: string | null; guest_id: string | null; breakfast_partner_user_id: string | null };
     const byToken = new Map<string, TokenRow>();
 
     if (guestIds.length > 0) {
       const { data: rows } = await supabase
         .from("push_tokens")
-        .select("token, staff_id, guest_id")
+        .select("token, staff_id, guest_id, breakfast_partner_user_id")
         .in("guest_id", guestIds)
         .not("token", "is", null);
       for (const r of rows ?? []) {
         const row = r as TokenRow;
         const t = row.token?.trim();
         if (t && t.startsWith("ExponentPushToken")) {
-          if (!byToken.has(t)) byToken.set(t, { token: t, staff_id: row.staff_id, guest_id: row.guest_id });
+          if (!byToken.has(t)) {
+            byToken.set(t, {
+              token: t,
+              staff_id: row.staff_id,
+              guest_id: row.guest_id,
+              breakfast_partner_user_id: row.breakfast_partner_user_id,
+            });
+          }
         }
       }
     }
     if (staffIds.length > 0) {
       const { data: rows } = await supabase
         .from("push_tokens")
-        .select("token, staff_id, guest_id")
+        .select("token, staff_id, guest_id, breakfast_partner_user_id")
         .in("staff_id", staffIds)
         .not("token", "is", null);
       for (const r of rows ?? []) {
         const row = r as TokenRow;
         const t = row.token?.trim();
         if (t && t.startsWith("ExponentPushToken")) {
-          if (!byToken.has(t)) byToken.set(t, { token: t, staff_id: row.staff_id, guest_id: row.guest_id });
+          if (!byToken.has(t)) {
+            byToken.set(t, {
+              token: t,
+              staff_id: row.staff_id,
+              guest_id: row.guest_id,
+              breakfast_partner_user_id: row.breakfast_partner_user_id,
+            });
+          }
+        }
+      }
+    }
+    if (partnerUserIds.length > 0) {
+      const { data: rows } = await supabase
+        .from("push_tokens")
+        .select("token, staff_id, guest_id, breakfast_partner_user_id")
+        .in("breakfast_partner_user_id", partnerUserIds)
+        .not("token", "is", null);
+      for (const r of rows ?? []) {
+        const row = r as TokenRow;
+        const t = row.token?.trim();
+        if (t && t.startsWith("ExponentPushToken")) {
+          if (!byToken.has(t)) {
+            byToken.set(t, {
+              token: t,
+              staff_id: row.staff_id,
+              guest_id: row.guest_id,
+              breakfast_partner_user_id: row.breakfast_partner_user_id,
+            });
+          }
         }
       }
     }

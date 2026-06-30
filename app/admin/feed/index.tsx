@@ -36,12 +36,13 @@ export default function AdminFeedScreen() {
 
   const load = async () => {
     setRefreshing(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('feed_posts')
       .select('id, title, media_type, media_url, thumbnail_url, created_at, staff:staff_id(full_name, department)')
       .order('created_at', { ascending: false })
       .limit(50);
-    setFeedPosts((data ?? []) as FeedPostRow[]);
+    // Geçici hatada mevcut listeyi silme (boş ekran flaşını önler).
+    if (!error) setFeedPosts((data ?? []) as FeedPostRow[]);
     setRefreshing(false);
     setLoading(false);
   };

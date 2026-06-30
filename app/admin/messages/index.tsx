@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,20 +7,23 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Image,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import {
   staffDeleteConversation,
   staffListConversations,
-  subscribeToConversationList,
 } from '@/lib/messagingApi';
-import type { ConversationWithMeta } from '@/lib/messaging';
+import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
+import type { ConversationWithMeta, Message } from '@/lib/messaging';
 import { MESSAGING_COLORS } from '@/lib/messaging';
 import { CachedImage } from '@/components/CachedImage';
 import { SwipeToDelete } from '@/components/SwipeToDelete';
+
+const MIN_LOAD_INTERVAL_MS = 5_000;
+const INBOX_RELOAD_DEBOUNCE_MS = 1_400;
 
 function formatTime(iso: string | null): string {
   if (!iso) return '';
@@ -37,27 +40,95 @@ export default function AdminMessagesScreen() {
   const [conversations, setConversations] = useState<ConversationWithMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const loadingRef = useRef(false);
+  const lastLoadAtRef = useRef(0);
+  const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inboxDirtyRef = useRef(false);
 
-  const load = async () => {
-    if (!staff) return;
-    setRefreshing(true);
-    const list = await staffListConversations(staff.id);
-    setConversations(list);
-    setRefreshing(false);
-    setLoading(false);
-  };
+  const load = useCallback(
+    async (opts?: { showRefreshing?: boolean; force?: boolean }) => {
+      if (!staff) return;
+      if (loadingRef.current) return;
+      const now = Date.now();
+      if (!opts?.force && now - lastLoadAtRef.current < MIN_LOAD_INTERVAL_MS) return;
+      loadingRef.current = true;
+      lastLoadAtRef.current = now;
+      inboxDirtyRef.current = false;
+      if (opts?.showRefreshing) setRefreshing(true);
+      try {
+        const list = await staffListConversations(staff.id);
+        setConversations(list);
+      } finally {
+        if (opts?.showRefreshing) setRefreshing(false);
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    },
+    [staff]
+  );
+
+  const applyIncomingInboxMessage = useCallback(
+    (msg: Message) => {
+      if (!msg?.conversation_id || msg.is_deleted) return;
+      const isOwn =
+        !!staff &&
+        msg.sender_id === staff.id &&
+        (msg.sender_type === 'staff' || msg.sender_type === 'admin');
+      const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+      setConversations((prev) => {
+        let found = false;
+        const mapped = prev.map((c) => {
+          if (c.id !== msg.conversation_id) return c;
+          found = true;
+          return {
+            ...c,
+            last_message_id: msg.id,
+            last_message_at: msg.created_at,
+            last_message_preview: preview,
+            unread_count: isOwn ? c.unread_count ?? 0 : (c.unread_count ?? 0) + 1,
+          };
+        });
+        if (!found) {
+          inboxDirtyRef.current = true;
+          return prev;
+        }
+        return mapped.sort((a, b) => {
+          const ta = new Date(a.last_message_at ?? 0).getTime();
+          const tb = new Date(b.last_message_at ?? 0).getTime();
+          return tb - ta;
+        });
+      });
+    },
+    [staff]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!staff?.id) return () => {};
+      if (inboxDirtyRef.current || conversations.length === 0) {
+        void load();
+      }
+      const unsub = subscribeStaffInboxLive(staff.id, () => {
+        inboxDirtyRef.current = true;
+        if (reloadDebounceRef.current) return;
+        reloadDebounceRef.current = setTimeout(() => {
+          reloadDebounceRef.current = null;
+          void load();
+        }, INBOX_RELOAD_DEBOUNCE_MS);
+      });
+      const unsubMsgs = subscribeStaffInboxMessageInserts(staff.id, applyIncomingInboxMessage);
+      return () => {
+        unsub();
+        unsubMsgs();
+        if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+        reloadDebounceRef.current = null;
+      };
+    }, [conversations.length, load, staff?.id, applyIncomingInboxMessage])
+  );
 
   useEffect(() => {
-    load();
-  }, [staff?.id]);
-
-  useEffect(() => {
-    if (!staff?.id) return;
-    const sub = subscribeToConversationList(staff.id, load);
-    return () => {
-      sub.unsubscribe?.();
-    };
-  }, [staff?.id]);
+    if (staff?.id) void load();
+  }, [staff?.id, load]);
 
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!staff?.id) return;
@@ -102,7 +173,13 @@ export default function AdminMessagesScreen() {
       <FlatList
         data={conversations}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} colors={[MESSAGING_COLORS.primary]} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => load({ showRefreshing: true, force: true })}
+            colors={[MESSAGING_COLORS.primary]}
+          />
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>Henüz sohbet yok.</Text>
@@ -118,18 +195,28 @@ export default function AdminMessagesScreen() {
             >
               <View style={styles.avatar}>
                 {(item.type === 'direct' ? item.other_avatar : item.avatar) ? (
-                  <CachedImage uri={(item.type === 'direct' ? item.other_avatar : item.avatar) as string} style={styles.avatarImg} contentFit="cover" />
+                  <CachedImage
+                    uri={(item.type === 'direct' ? item.other_avatar : item.avatar) as string}
+                    style={styles.avatarImg}
+                    contentFit="cover"
+                  />
                 ) : (
                   <Text style={styles.avatarText}>{(item.name || 'Sohbet').charAt(0)}</Text>
                 )}
               </View>
               <View style={styles.rowBody}>
-                <Text style={styles.rowTitle} numberOfLines={1}>{item.name || 'Sohbet'}</Text>
-                <Text style={styles.rowPreview} numberOfLines={1}>{item.last_message_preview || '—'}</Text>
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {item.name || 'Sohbet'}
+                </Text>
+                <Text style={styles.rowPreview} numberOfLines={1}>
+                  {item.last_message_preview || '—'}
+                </Text>
               </View>
               <Text style={styles.rowTime}>{formatTime(item.last_message_at ?? null)}</Text>
               {(item.unread_count ?? 0) > 0 && (
-                <View style={styles.badge}><Text style={styles.badgeText}>{item.unread_count}</Text></View>
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{item.unread_count}</Text>
+                </View>
               )}
             </TouchableOpacity>
           </SwipeToDelete>

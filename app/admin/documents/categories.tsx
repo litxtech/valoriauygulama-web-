@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, TextInput, Modal, Pressable, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { adminTheme } from '@/constants/adminTheme';
 import { listDocumentCategories, upsertDocumentCategory, type DocumentCategoryRow } from '@/lib/documentManagement';
 import { useAuthStore } from '@/stores/authStore';
+import { DocumentScreenIntro } from '@/components/documents/DocumentScreenIntro';
+import { docTheme } from '@/constants/documentManagementTheme';
 
 export default function AdminDocumentsCategories() {
   const staff = useAuthStore((s) => s.staff);
@@ -59,6 +60,7 @@ export default function AdminDocumentsCategories() {
         data={rows}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.content}
+        ListHeaderComponent={<DocumentScreenIntro screenKey="categories" />}
         ListEmptyComponent={<Text style={styles.sub}>{loading ? 'Yükleniyor…' : 'Kategori yok'}</Text>}
         renderItem={({ item }) => (
           <View style={styles.row}>
@@ -81,18 +83,18 @@ export default function AdminDocumentsCategories() {
         <Pressable style={styles.modalOverlay} onPress={() => setModalOpen(false)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>Yeni kategori</Text>
-            <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Kategori adı" placeholderTextColor={adminTheme.colors.textMuted} />
+            <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Kategori adı" placeholderTextColor={docTheme.textMuted} />
             <TextInput
               style={[styles.input, styles.textArea]}
               value={description}
               onChangeText={setDescription}
               placeholder="Açıklama (opsiyonel)"
-              placeholderTextColor={adminTheme.colors.textMuted}
+              placeholderTextColor={docTheme.textMuted}
               multiline
             />
             <View style={styles.switchRow}>
               <Text style={styles.switchLabel}>Onay gerekli</Text>
-              <Switch value={requiresApproval} onValueChange={setRequiresApproval} trackColor={{ false: '#cbd5e0', true: adminTheme.colors.accent }} thumbColor="#fff" />
+              <Switch value={requiresApproval} onValueChange={setRequiresApproval} trackColor={{ false: '#cbd5e0', true: docTheme.accent }} thumbColor="#fff" />
             </View>
             <TouchableOpacity style={styles.primaryBtn} onPress={createCategory} activeOpacity={0.9}>
               <Text style={styles.primaryBtnText}>Kaydet</Text>
@@ -105,23 +107,23 @@ export default function AdminDocumentsCategories() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 20, paddingBottom: 96 },
-  sub: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted, lineHeight: 18 },
+  container: { flex: 1, backgroundColor: docTheme.bg },
+  content: { padding: 16, paddingBottom: 96 },
+  sub: { fontSize: 14, fontWeight: '600', color: docTheme.textMuted, textAlign: 'center', paddingVertical: 24 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: adminTheme.colors.surface,
-    borderRadius: adminTheme.radius.lg,
+    backgroundColor: docTheme.card,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: docTheme.border,
     marginBottom: 10,
   },
-  rowTitle: { fontSize: 15, fontWeight: '800', color: adminTheme.colors.text },
-  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  rowTitle: { fontSize: 15, fontWeight: '800', color: docTheme.text },
+  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: docTheme.textMuted },
   fab: {
     position: 'absolute',
     right: 18,
@@ -129,17 +131,17 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: adminTheme.colors.accent,
+    backgroundColor: docTheme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 18 },
-  modalCard: { backgroundColor: adminTheme.colors.surface, borderRadius: adminTheme.radius.lg, padding: 14, borderWidth: 1, borderColor: adminTheme.colors.border },
-  modalTitle: { fontSize: 16, fontWeight: '900', color: adminTheme.colors.text, marginBottom: 10 },
-  input: { backgroundColor: adminTheme.colors.surfaceSecondary, borderRadius: adminTheme.radius.lg, padding: 12, borderWidth: 1, borderColor: adminTheme.colors.border, color: adminTheme.colors.text, marginBottom: 10 },
+  modalCard: { backgroundColor: docTheme.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: docTheme.border },
+  modalTitle: { fontSize: 16, fontWeight: '900', color: docTheme.text, marginBottom: 10 },
+  input: { backgroundColor: docTheme.cardMuted, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: docTheme.border, color: docTheme.text, marginBottom: 10 },
   textArea: { minHeight: 80, textAlignVertical: 'top' as any },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  switchLabel: { fontSize: 14, fontWeight: '700', color: adminTheme.colors.text },
-  primaryBtn: { backgroundColor: adminTheme.colors.accent, borderRadius: adminTheme.radius.lg, paddingVertical: 12, alignItems: 'center' },
+  switchLabel: { fontSize: 14, fontWeight: '700', color: docTheme.text },
+  primaryBtn: { backgroundColor: docTheme.accent, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '900' },
 });

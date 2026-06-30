@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -15,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import { displayCapturedName, capturedAtTs } from '@/lib/kbsCaptureHistory';
-import { buildKbsCopyFields } from '@/lib/kbsCaptureParsedFields';
+import { buildKbsCopyFields, enrichKbsParsedFromSources, isKbsOcrInProgress, kbsCaptureCardStatus } from '@/lib/kbsCaptureParsedFields';
 import { buildKbsCaptureSingleReportHtml } from '@/lib/kbsCaptureReportHtml';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { hapticImpactLight } from '@/lib/hapticsSafe';
@@ -23,30 +24,42 @@ import { hapticImpactLight } from '@/lib/hapticsSafe';
 type Props = {
   row: KbsCapturedDocumentRow;
   canSeeImage: boolean;
+  isNew?: boolean;
   onImagePress?: () => void;
+  onCorrect?: () => void;
+  correctBusy?: boolean;
 };
 
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
-  const p = row.parsed_payload;
-  if (!p || typeof p !== 'object') return null;
-  return p as ParsedDocument;
+  return enrichKbsParsedFromSources(row.parsed_payload);
 }
 
-function statusUi(isManualCapture: boolean) {
-  if (isManualCapture) {
-    return { label: 'Kaydedildi', bg: '#ecfdf5', fg: '#059669', icon: 'checkmark-circle-outline' as const };
-  }
-  return { label: 'Eksik', bg: '#fef2f2', fg: '#dc2626', icon: 'alert-circle-outline' as const };
+function statusUi(parsed: ParsedDocument | null) {
+  const card = kbsCaptureCardStatus(parsed);
+  if (!card || card.tone !== 'ok') return null;
+  return {
+    label: card.label,
+    bg: '#ecfdf5',
+    fg: '#059669',
+    icon: 'checkmark-circle-outline' as const,
+  };
 }
 
-export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) {
+export function KbsCaptureDetailView({
+  row,
+  canSeeImage,
+  isNew = false,
+  onImagePress,
+  onCorrect,
+  correctBusy = false,
+}: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const parsed = asParsed(row);
   const fields = useMemo(() => buildKbsCopyFields(parsed), [parsed]);
-  const isManualCapture = Array.isArray(parsed?.warnings) && parsed.warnings.includes('manual_capture');
-  const badge = statusUi(isManualCapture);
+  const ocrInProgress = isKbsOcrInProgress(parsed);
+  const badge = statusUi(parsed);
 
-  const reportHtml = useCallback(
+  const buildReportHtml = useCallback(
     () => buildKbsCaptureSingleReportHtml(row, canSeeImage),
     [row, canSeeImage]
   );
@@ -55,8 +68,8 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
     if (exportBusy) return;
     setExportBusy(true);
     try {
-      const html = reportHtml();
-      const { uri } = await Print.printToFileAsync({ html });
+      const html = await buildReportHtml();
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Kimlik PDF' });
       } else {
@@ -67,19 +80,20 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
     } finally {
       setExportBusy(false);
     }
-  }, [exportBusy, reportHtml]);
+  }, [exportBusy, buildReportHtml]);
 
   const printDocument = useCallback(async () => {
     if (exportBusy) return;
     setExportBusy(true);
     try {
-      await Print.printAsync({ html: reportHtml() });
+      const html = await buildReportHtml();
+      await Print.printAsync({ html });
     } catch (e) {
       Alert.alert('Yazdır', e instanceof Error ? e.message : 'Yazdırılamadı');
     } finally {
       setExportBusy(false);
     }
-  }, [exportBusy, reportHtml]);
+  }, [exportBusy, buildReportHtml]);
 
   const copyValue = useCallback(async (label: string, value: string) => {
     await Clipboard.setStringAsync(value);
@@ -97,6 +111,8 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
     hapticImpactLight();
     Alert.alert('Kopyalandı', `${fields.length} alan panoya kopyalandı.`);
   }, [fields]);
+
+  const showExportActions = fields.length > 0 || (canSeeImage && !!row.front_image_url);
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -116,21 +132,92 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
 
       <View style={styles.headRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{displayCapturedName(row)}</Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.name}>{displayCapturedName(row)}</Text>
+            {isNew ? (
+              <View style={styles.newBadge}>
+                <Text style={styles.newBadgeText}>Yeni</Text>
+              </View>
+            ) : null}
+          </View>
           <Text style={styles.meta}>Oda {row.room_number ?? '—'}</Text>
           <Text style={styles.meta}>{new Date(capturedAtTs(row)).toLocaleString('tr-TR')}</Text>
         </View>
-        <View style={[styles.badge, { backgroundColor: badge.bg }]}>
-          <Ionicons name={badge.icon} size={16} color={badge.fg} />
-          <Text style={[styles.badgeText, { color: badge.fg }]}>{badge.label}</Text>
-        </View>
+        {badge ? (
+          <View style={[styles.badge, { backgroundColor: badge.bg }]}>
+            <Ionicons name={badge.icon} size={16} color={badge.fg} />
+            <Text style={[styles.badgeText, { color: badge.fg }]}>{badge.label}</Text>
+          </View>
+        ) : null}
       </View>
 
       <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
-      <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
+      {canSeeImage && row.front_image_url && onCorrect ? (
+        <Pressable
+          style={[styles.correctBtn, correctBusy && styles.correctBtnDisabled]}
+          onPress={onCorrect}
+          disabled={correctBusy || ocrInProgress}
+        >
+          {correctBusy || ocrInProgress ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="scan-outline" size={18} color="#fff" />
+          )}
+          <Text style={styles.correctBtnText}>
+            {correctBusy ? 'Belge taranıyor…' : ocrInProgress ? 'Okunuyor…' : 'Düzelt — yeniden tara'}
+          </Text>
+        </Pressable>
+      ) : null}
+      {fields.length > 0 ? (
+        <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
+      ) : null}
+
+      {ocrInProgress ? (
+        <View style={styles.ocrProgressBox}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+          <Text style={styles.ocrProgressText}>Kimlik okunuyor…</Text>
+        </View>
+      ) : null}
+
+      {fields.length === 0 && !ocrInProgress ? (
+        <View style={styles.emptyBox}>
+          <Text style={styles.emptyText}>Belge henüz okunmadı veya okunabilir alan çıkarılamadı.</Text>
+        </View>
+      ) : fields.length > 0 ? (
+        <View style={styles.fieldList}>
+          {fields.map((f) => (
+            <Pressable
+              key={f.key}
+              style={({ pressed }) => [styles.fieldRow, pressed && styles.fieldRowPressed]}
+              onPress={() => void copyValue(f.label, f.value)}
+            >
+              <View style={styles.fieldTextCol}>
+                <Text style={styles.fieldLabel}>{f.label}</Text>
+                <Text style={styles.fieldValue} selectable>
+                  {f.value}
+                </Text>
+              </View>
+              <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {fields.length > 0 ? (
+        <Pressable style={styles.copyAllBtn} onPress={() => void copyAll()}>
+          <Ionicons name="clipboard-outline" size={20} color="#fff" />
+          <Text style={styles.copyAllText}>Tümünü kopyala</Text>
+        </Pressable>
+      ) : null}
+
+      {showExportActions ? (
         <View style={styles.exportRow}>
+          {exportBusy ? (
+            <View style={styles.exportBusyRow}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text style={styles.exportBusyText}>PDF hazırlanıyor…</Text>
+            </View>
+          ) : null}
           <Pressable
             style={[styles.exportBtn, exportBusy && styles.exportBtnDisabled]}
             onPress={() => void exportPdf()}
@@ -149,48 +236,13 @@ export function KbsCaptureDetailView({ row, canSeeImage, onImagePress }: Props) 
           </Pressable>
           <Pressable
             style={[styles.exportBtn, exportBusy && styles.exportBtnDisabled]}
-            onPress={() => void printDocument()}
+            onPress={() => void exportPdf()}
             disabled={exportBusy}
           >
-            <Ionicons name="share-outline" size={18} color={theme.colors.primary} />
-            <Text style={styles.exportBtnText}>Yazıcıya gönder</Text>
+            <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
+            <Text style={[styles.exportBtnText, { color: '#25D366' }]}>WhatsApp</Text>
           </Pressable>
         </View>
-      ) : null}
-
-      {fields.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Text style={styles.emptyText}>
-            {isManualCapture
-              ? 'Kimlik görseli kaydedildi. İsteğe bağlı ad / soyad çekim ekranında girilebilir.'
-              : 'Bu kayıt için okunabilir kimlik alanı yok.'}
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.fieldList}>
-          {fields.map((f) => (
-            <Pressable
-              key={f.key}
-              style={({ pressed }) => [styles.fieldRow, pressed && styles.fieldRowPressed]}
-              onPress={() => void copyValue(f.label, f.value)}
-            >
-              <View style={styles.fieldTextCol}>
-                <Text style={styles.fieldLabel}>{f.label}</Text>
-                <Text style={styles.fieldValue} selectable>
-                  {f.value}
-                </Text>
-              </View>
-              <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
-            </Pressable>
-          ))}
-        </View>
-      )}
-
-      {fields.length > 0 ? (
-        <Pressable style={styles.copyAllBtn} onPress={() => void copyAll()}>
-          <Ionicons name="clipboard-outline" size={20} color="#fff" />
-          <Text style={styles.copyAllText}>Tümünü kopyala</Text>
-        </Pressable>
       ) : null}
     </ScrollView>
   );
@@ -231,7 +283,15 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.borderLight,
   },
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   name: { fontSize: 20, fontWeight: '800', color: theme.colors.text },
+  newBadge: {
+    backgroundColor: '#ccfbf1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  newBadgeText: { fontSize: 11, fontWeight: '800', color: '#0d9488' },
   meta: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
   badge: {
     flexDirection: 'row',
@@ -242,9 +302,42 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   badgeText: { fontSize: 12, fontWeight: '800' },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, marginBottom: 4 },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, marginBottom: 4, marginTop: 4 },
+  correctBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#0f766e',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+  },
+  correctBtnDisabled: { opacity: 0.72 },
+  correctBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
   hint: { fontSize: 13, color: theme.colors.textMuted, marginBottom: 10 },
-  exportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  ocrProgressBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  ocrProgressText: { fontSize: 14, fontWeight: '600', color: theme.colors.textSecondary },
+  exportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  exportBusyRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  exportBusyText: { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
   exportBtn: {
     flexDirection: 'row',
     alignItems: 'center',

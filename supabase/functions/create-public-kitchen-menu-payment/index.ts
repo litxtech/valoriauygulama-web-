@@ -5,6 +5,10 @@ import {
   getStripe,
   toStripeMinorUnits,
 } from "../_shared/stripeClient.ts";
+import {
+  resolveGuestForPayment,
+  stripeCustomerEmailFromGuest,
+} from "../_shared/resolveGuestForPayment.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -17,7 +21,7 @@ type Body = {
   org_slug: string;
   items: CartLine[];
   customer_name: string;
-  customer_email: string;
+  customer_email?: string | null;
   room_number?: string | null;
   table_number?: string | null;
   lang?: string | null;
@@ -63,7 +67,24 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const admin = createClient(supabaseUrl, serviceKey);
+
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  let authGuest: Awaited<ReturnType<typeof resolveGuestForPayment>> = null;
+  if (token) {
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: { user } } = await userClient.auth.getUser();
+    if (user?.id) {
+      const { data: staffCaller } = await admin.from("staff").select("id").eq("auth_id", user.id).maybeSingle();
+      if (!staffCaller?.id) {
+        authGuest = await resolveGuestForPayment(admin, userClient, user.id);
+      }
+    }
+  }
 
   let body: Body;
   try {
@@ -77,8 +98,11 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Invalid organization", error_code: "INVALID_SLUG" }, 400);
   }
 
-  const customerName = (body.customer_name ?? "").trim().slice(0, 120);
-  const customerEmail = (body.customer_email ?? "").trim().toLowerCase().slice(0, 254);
+  const customerName = ((body.customer_name ?? "").trim() || authGuest?.full_name?.trim() || "Misafir").slice(0, 120);
+  let customerEmail = (body.customer_email ?? "").trim().toLowerCase().slice(0, 254);
+  if (!isValidEmail(customerEmail) && authGuest) {
+    customerEmail = stripeCustomerEmailFromGuest(authGuest) ?? "";
+  }
   if (customerName.length < 2) {
     return json({ error: "Name required", error_code: "NAME_REQUIRED" }, 400);
   }
@@ -108,7 +132,10 @@ Deno.serve(async (req: Request) => {
 
   const orgId = orgRow.id as string;
   const orgName = ((orgRow.name as string) ?? "Hotel").trim();
-  const roomNumber = (body.room_number ?? "").trim().slice(0, 32) || null;
+  const roomNumber =
+    (body.room_number ?? "").trim().slice(0, 32) ||
+    (authGuest?.rooms?.room_number != null ? String(authGuest.rooms.room_number) : "") ||
+    null;
   const tableNumber = (body.table_number ?? "").trim().slice(0, 32) || null;
 
   const menuIds = [...new Set(cart.map((c) => (c.menu_item_id ?? "").trim()).filter(Boolean))];
@@ -182,7 +209,7 @@ Deno.serve(async (req: Request) => {
     .insert({
       organization_id: orgId,
       org_slug: orgSlug,
-      guest_id: null,
+      guest_id: authGuest?.id ?? null,
       customer_name: customerName,
       customer_email: customerEmail,
       room_number: roomNumber,
@@ -227,7 +254,7 @@ Deno.serve(async (req: Request) => {
       service_kind: "food",
       reference_type: "kitchen_menu_order",
       reference_id: orderId,
-      guest_id: null,
+      guest_id: authGuest?.id ?? null,
       created_by_staff_id: null,
       metadata: {
         customer_name: customerName,

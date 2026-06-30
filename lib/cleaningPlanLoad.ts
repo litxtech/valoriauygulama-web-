@@ -38,6 +38,8 @@ export type CleaningPlanBundle = {
   plansById: Record<string, CleaningPlanRow>;
   planRoomsByPlanId: Record<string, CleaningPlanRoomRow[]>;
   roomMetaByRoomId: Record<string, CleaningRoomMeta>;
+  /** Plana atanan TÜM temizlikçilerin adları (kendisi dahil) — "bu odaları kimler temizleyecek". */
+  staffNamesByPlanId: Record<string, string[]>;
 };
 
 type PlanRoomDbRow = CleaningPlanRoomRow & {
@@ -80,8 +82,11 @@ export async function fetchStaffCleaningPlanBundle(staffId: string): Promise<Cle
       plansById: {},
       planRoomsByPlanId: {},
       roomMetaByRoomId: {},
+      staffNamesByPlanId: {},
     };
   }
+
+  const staffNamesByPlanId = await fetchAssigneeNamesByPlanId(planIds);
 
   const plansRes = await supabase
     .from('room_cleaning_plans')
@@ -147,7 +152,44 @@ export async function fetchStaffCleaningPlanBundle(staffId: string): Promise<Cle
     plansById: Object.fromEntries(plans.map((p) => [p.id, p])),
     planRoomsByPlanId: grouped,
     roomMetaByRoomId,
+    staffNamesByPlanId,
   };
+}
+
+/** Her plan için atanan tüm temizlikçi adlarını döner (UI'da "kimler temizleyecek"). */
+async function fetchAssigneeNamesByPlanId(planIds: string[]): Promise<Record<string, string[]>> {
+  const result: Record<string, string[]> = {};
+  const { data: assigns, error } = await supabase
+    .from('room_cleaning_plan_assignments')
+    .select('plan_id, staff_id')
+    .in('plan_id', planIds);
+  if (error || !assigns) return result;
+
+  const rows = assigns as { plan_id: string; staff_id: string }[];
+  const staffIds = [...new Set(rows.map((r) => r.staff_id).filter(Boolean))];
+  if (staffIds.length === 0) return result;
+
+  const { data: staffRows } = await supabase
+    .from('staff')
+    .select('id, full_name')
+    .in('id', staffIds);
+  const nameById = new Map(
+    ((staffRows as { id: string; full_name: string | null }[] | null) ?? []).map((s) => [
+      s.id,
+      (s.full_name || '').trim() || 'İsimsiz',
+    ])
+  );
+
+  for (const r of rows) {
+    const name = nameById.get(r.staff_id);
+    if (!name) continue;
+    if (!result[r.plan_id]) result[r.plan_id] = [];
+    if (!result[r.plan_id].includes(name)) result[r.plan_id].push(name);
+  }
+  for (const id of Object.keys(result)) {
+    result[id].sort((a, b) => a.localeCompare(b, 'tr'));
+  }
+  return result;
 }
 
 export function sortCleaningRoomsForDisplay(

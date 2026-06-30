@@ -30,6 +30,28 @@ export function scrollChatListToLatest(
   });
 }
 
+/**
+ * Inverted OLMAYAN liste (ör. FlashList v2 — kronolojik data, en yeni en altta):
+ * en alta kaydırır ki açılışta son mesaj input'un hemen üstünde görünsün.
+ */
+export function scrollChatListToEnd(
+  listRef: RefObject<ChatListRef | null>,
+  animated = true
+): void {
+  const scroll = () => {
+    const list = listRef.current;
+    if (!list) return;
+    if ('scrollToEnd' in list && typeof list.scrollToEnd === 'function') {
+      list.scrollToEnd({ animated });
+    }
+  };
+  scroll();
+  requestAnimationFrame(() => {
+    scroll();
+    requestAnimationFrame(scroll);
+  });
+}
+
 /** Kronolojik (eski→yeni) liste öğelerini inverted FlatList için ters çevir. */
 export function useInvertedChatListItems<T>(items: T[]): T[] {
   return useMemo(() => [...items].reverse(), [items]);

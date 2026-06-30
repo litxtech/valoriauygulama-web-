@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   Alert,
   Modal,
   Pressable,
+  TextInput,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,11 +49,13 @@ import {
 import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
 import { CounterpartyAgreementsSection } from '@/components/admin/CounterpartyAgreementsSection';
 import { CounterpartyQuickPaySheet } from '@/components/admin/CounterpartyQuickPaySheet';
+import { CounterpartyInvoiceScanSheet } from '@/components/admin/CounterpartyInvoiceScanSheet';
 import { CounterpartyQuickCollectSheet } from '@/components/admin/CounterpartyQuickCollectSheet';
 import {
   fetchCounterpartyAgreements,
   defaultAgreementMovementKind,
   agreementKindLabels,
+  sumOpenAgreementRemaining,
   type CounterpartyAgreementRow,
 } from '@/lib/financeCounterpartyAgreements';
 import {
@@ -61,6 +65,11 @@ import {
   shareFinanceMovementReceiptPdf,
   shareFinanceMovementReceiptWhatsApp,
 } from '@/lib/financeMovementReceiptPdf';
+import {
+  findCounterpartyMergeSuggestions,
+  mergeFinanceCounterparties,
+  type CounterpartyMergeSuggestion,
+} from '@/lib/financeCounterpartyMerge';
 
 type CpRow = {
   id: string;
@@ -86,6 +95,22 @@ type MovRow = {
 };
 
 type ScopeFilter = 'all' | FinanceLedgerScope;
+
+const SCOPE_FILTERS: { key: ScopeFilter; label: string }[] = [
+  { key: 'all', label: 'Tümü' },
+  { key: 'hotel', label: LEDGER_SCOPE_LABELS.hotel },
+  { key: 'personal', label: LEDGER_SCOPE_LABELS.personal },
+];
+
+function openPhoneCall(phone: string) {
+  void Linking.openURL(`tel:${phone.trim()}`).catch(() => Alert.alert('Hata', 'Arama açılamadı.'));
+}
+
+function openPhoneWhatsApp(phone: string) {
+  const digits = phone.trim().replace(/\D/g, '');
+  if (!digits) return;
+  void Linking.openURL(`https://wa.me/${digits}`).catch(() => Alert.alert('Hata', 'WhatsApp açılamadı.'));
+}
 
 export default function CounterpartyDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -113,9 +138,16 @@ export default function CounterpartyDetailScreen() {
   const [payAgreementId, setPayAgreementId] = useState<string | null>(null);
   const [collectSheetOpen, setCollectSheetOpen] = useState(false);
   const [collectAgreementId, setCollectAgreementId] = useState<string | null>(null);
+  const [invoiceScanOpen, setInvoiceScanOpen] = useState(false);
   const [newDebtTick, setNewDebtTick] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [linkedStaffName, setLinkedStaffName] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [orgCounterparties, setOrgCounterparties] = useState<{ id: string; name: string; organization_id: string }[]>([]);
+  const [dismissedMergeId, setDismissedMergeId] = useState<string | null>(null);
+  const [merging, setMerging] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -166,6 +198,13 @@ export default function CounterpartyDetailScreen() {
     setExpense(b?.expense ?? 0);
     setAgreements(agreementRows);
     setLoading(false);
+
+    const { data: orgCps } = await supabase
+      .from('finance_counterparties')
+      .select('id, name, organization_id')
+      .eq('organization_id', row.organization_id)
+      .eq('is_active', true);
+    setOrgCounterparties((orgCps as { id: string; name: string; organization_id: string }[]) ?? []);
   }, [id, scopeFilter]);
 
   useFocusEffect(
@@ -178,6 +217,12 @@ export default function CounterpartyDetailScreen() {
     setRefreshing(true);
     load().finally(() => setRefreshing(false));
   }, [load]);
+
+  const mergeSuggestion = useMemo((): CounterpartyMergeSuggestion | null => {
+    if (!cp || dismissedMergeId) return null;
+    const suggestions = findCounterpartyMergeSuggestions(orgCounterparties);
+    return suggestions.find((s) => s.counterpartyIds.includes(cp.id) && s.id !== dismissedMergeId) ?? null;
+  }, [cp, orgCounterparties, dismissedMergeId]);
 
   if (loading && !refreshing) {
     return (
@@ -343,9 +388,76 @@ export default function CounterpartyDetailScreen() {
     openQuickCollect();
   };
 
-  const openDebtsTotal = agreements
-    .filter((a) => a.status === 'open' || a.status === 'partial')
-    .reduce((s, a) => s + a.amount_remaining, 0);
+  const openDebtsTotal = sumOpenAgreementRemaining(agreements);
+
+  const startNameEdit = () => {
+    if (!cp) return;
+    setNameDraft(cp.name);
+    setEditingName(true);
+  };
+
+  const cancelNameEdit = () => {
+    setEditingName(false);
+    setNameDraft('');
+  };
+
+  const saveNameEdit = async () => {
+    if (!cp) return;
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      Alert.alert('Ad gerekli', 'Kişi adını yazın.');
+      return;
+    }
+    if (trimmed === cp.name) {
+      cancelNameEdit();
+      return;
+    }
+    setSavingName(true);
+    const { error } = await supabase.from('finance_counterparties').update({ name: trimmed }).eq('id', cp.id);
+    setSavingName(false);
+    if (error) {
+      Alert.alert('Kaydedilemedi', error.message);
+      return;
+    }
+    setCp((p) => (p ? { ...p, name: trimmed } : null));
+    cancelNameEdit();
+  };
+
+  const applyDetailMerge = (suggestion: CounterpartyMergeSuggestion) => {
+    const mergeIds = suggestion.counterpartyIds.filter((mid) => mid !== suggestion.keepId);
+    Alert.alert(
+      'Carileri birleştir',
+      `${suggestion.names.join(' · ')}\n\nTek cari: ${suggestion.canonicalName}\n${mergeIds.length} kayıt birleştirilecek.`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Birleştir',
+          onPress: async () => {
+            setMerging(true);
+            const err = await mergeFinanceCounterparties({
+              keepId: suggestion.keepId,
+              mergeIds: suggestion.counterpartyIds,
+              canonicalName: suggestion.canonicalName,
+              organizationId: suggestion.organizationId,
+            });
+            setMerging(false);
+            if (err) {
+              Alert.alert('Hata', err);
+              return;
+            }
+            if (suggestion.keepId !== cp.id) {
+              router.replace({
+                pathname: '/admin/accounting/counterparties/[id]',
+                params: { id: suggestion.keepId },
+              } as never);
+            } else {
+              load();
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <>
@@ -383,21 +495,71 @@ export default function CounterpartyDetailScreen() {
 
             <View style={styles.heroInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.heroName} numberOfLines={2}>
-                  {cp.name}
-                </Text>
-                <TouchableOpacity style={styles.moreBtn} onPress={openPersonMenu} hitSlop={12}>
-                  <Ionicons name="ellipsis-vertical" size={22} color={adminTheme.colors.textMuted} />
-                </TouchableOpacity>
+                {editingName ? (
+                  <View style={styles.nameEditWrap}>
+                    <TextInput
+                      style={styles.nameInput}
+                      value={nameDraft}
+                      onChangeText={setNameDraft}
+                      autoFocus
+                      placeholder="Kişi adı"
+                      placeholderTextColor={adminTheme.colors.textMuted}
+                    />
+                    <View style={styles.nameEditActions}>
+                      <TouchableOpacity
+                        style={styles.nameSaveBtn}
+                        onPress={() => void saveNameEdit()}
+                        disabled={savingName}
+                      >
+                        {savingName ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={styles.nameSaveText}>Kaydet</Text>
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.nameCancelBtn} onPress={cancelNameEdit} disabled={savingName}>
+                        <Text style={styles.nameCancelText}>İptal</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <TouchableOpacity style={styles.nameTap} onPress={startNameEdit} activeOpacity={0.75}>
+                      <Text style={styles.heroName} numberOfLines={2}>
+                        {cp.name}
+                      </Text>
+                      <Ionicons name="pencil-outline" size={14} color={adminTheme.colors.textMuted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.moreBtn} onPress={openPersonMenu} hitSlop={12}>
+                      <Ionicons name="ellipsis-vertical" size={22} color={adminTheme.colors.textMuted} />
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
               <View style={[styles.badge, { backgroundColor: meta.bg }]}>
                 <Ionicons name={meta.icon} size={13} color={meta.color} />
                 <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
               </View>
               {cp.phone ? (
-                <Text style={styles.phone}>
-                  <Ionicons name="call-outline" size={13} color={adminTheme.colors.textMuted} /> {cp.phone}
-                </Text>
+                <View style={styles.phoneRow}>
+                  <Text style={styles.phone}>
+                    <Ionicons name="call-outline" size={13} color={adminTheme.colors.textMuted} /> {cp.phone}
+                  </Text>
+                  <TouchableOpacity style={styles.phoneAction} onPress={() => openPhoneCall(cp.phone!)}>
+                    <Ionicons name="call" size={14} color="#2563eb" />
+                    <Text style={styles.phoneActionText}>Ara</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.phoneAction, styles.phoneActionWa]} onPress={() => openPhoneWhatsApp(cp.phone!)}>
+                    <Ionicons name="logo-whatsapp" size={14} color="#25D366" />
+                    <Text style={[styles.phoneActionText, styles.phoneActionWaText]}>WhatsApp</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              {cp.notes?.trim() ? (
+                <View style={styles.notesBox}>
+                  <Ionicons name="document-text-outline" size={13} color={adminTheme.colors.textMuted} />
+                  <Text style={styles.notesText}>{cp.notes.trim()}</Text>
+                </View>
               ) : null}
               {linkedStaffName ? (
                 <Text style={styles.linkedStaff}>
@@ -428,10 +590,16 @@ export default function CounterpartyDetailScreen() {
               </View>
             )}
             <View style={styles.balanceSide}>
-              <Text style={styles.balanceSideLbl}>Ödenen</Text>
-              <Text style={[styles.balanceSideVal, styles.out]}>{fmtMoneyTry(expense)}</Text>
-              <Text style={[styles.balanceSideLbl, { marginTop: 6 }]}>Alınan</Text>
-              <Text style={[styles.balanceSideVal, styles.in]}>{fmtMoneyTry(income)}</Text>
+              <TouchableOpacity onPress={() => openQuickPay()} activeOpacity={0.85}>
+                <Text style={styles.balanceSideLbl}>Ödenen</Text>
+                <Text style={[styles.balanceSideVal, styles.out]}>{fmtMoneyTry(expense)}</Text>
+                <Text style={[styles.balanceSideAction, { color: '#dc2626' }]}>Ödeme ekle →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={openIncome} activeOpacity={0.85} style={{ marginTop: 6 }}>
+                <Text style={styles.balanceSideLbl}>Alınan</Text>
+                <Text style={[styles.balanceSideVal, styles.in]}>{fmtMoneyTry(income)}</Text>
+                <Text style={styles.balanceSideAction}>Tahsilat ekle →</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -439,16 +607,25 @@ export default function CounterpartyDetailScreen() {
         <Text style={styles.hubTitle}>Ne yapmak istiyorsunuz?</Text>
         <View style={styles.hubRow}>
           <TouchableOpacity
+            style={[styles.hubCard, styles.hubInvoice]}
+            onPress={() => setInvoiceScanOpen(true)}
+            activeOpacity={0.88}
+          >
+            <Ionicons name="scan-outline" size={22} color="#7c3aed" />
+            <Text style={styles.hubCardTitle}>Faturadan borç</Text>
+            <Text style={styles.hubCardSub}>Foto / PDF oku</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[styles.hubCard, styles.hubDebt]}
             onPress={() => setNewDebtTick((t) => t + 1)}
             activeOpacity={0.88}
           >
             <Ionicons name="document-text-outline" size={22} color="#7c3aed" />
             <Text style={styles.hubCardTitle}>{debtLabels.debtOpen}</Text>
-            <Text style={styles.hubCardSub}>
-              {cp.party_type === 'customer' ? 'Günü birlik vb.' : 'Yeni iş / kayıt'}
-            </Text>
+            <Text style={styles.hubCardSub}>Elle gir</Text>
           </TouchableOpacity>
+        </View>
+        <View style={styles.hubRow}>
           <TouchableOpacity
             style={[styles.hubCard, styles.hubPay]}
             onPress={() => openQuickPay()}
@@ -490,8 +667,56 @@ export default function CounterpartyDetailScreen() {
           openNewDebtRequest={newDebtTick}
           onPayDebt={(row) => openQuickPay(row)}
           onCollectDebt={(row) => openQuickCollect(row)}
+          onOpenInvoiceScan={() => setInvoiceScanOpen(true)}
           hideHeader
         />
+
+        {mergeSuggestion ? (
+          <View style={styles.mergeCard}>
+            <View style={styles.mergeHead}>
+              <Ionicons name="git-merge-outline" size={16} color="#1d4ed8" />
+              <Text style={styles.mergeTitle}>Benzer cari bulundu</Text>
+            </View>
+            <Text style={styles.mergeHint} numberOfLines={2}>
+              {mergeSuggestion.names.filter((n) => n !== cp.name).join(' · ')}
+            </Text>
+            <Text style={styles.mergeMeta}>
+              {mergeSuggestion.counterpartyIds.length} cari → {mergeSuggestion.canonicalName}
+            </Text>
+            <View style={styles.mergeActions}>
+              <TouchableOpacity
+                style={styles.mergeBtn}
+                onPress={() => applyDetailMerge(mergeSuggestion)}
+                disabled={merging}
+              >
+                {merging ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.mergeBtnText}>Birleştir</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.mergeDismiss}
+                onPress={() => setDismissedMergeId(mergeSuggestion.id)}
+                hitSlop={8}
+              >
+                <Text style={styles.mergeDismissText}>Yoksay</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scopeFilters}>
+          {SCOPE_FILTERS.map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.scopeChip, scopeFilter === f.key && styles.scopeChipOn]}
+              onPress={() => setScopeFilter(f.key)}
+            >
+              <Text style={[styles.scopeChipText, scopeFilter === f.key && styles.scopeChipTextOn]}>{f.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
         <TouchableOpacity style={styles.historyHead} onPress={() => setHistoryOpen((v) => !v)} activeOpacity={0.85}>
           <Text style={styles.historyTitle}>İşlem geçmişi ({movements.length})</Text>
@@ -574,6 +799,7 @@ export default function CounterpartyDetailScreen() {
                     expense,
                     movements: allMovements,
                     footer: reportFooter,
+                    currentDebt: openDebtsTotal,
                   },
                   kind
                 );
@@ -593,6 +819,16 @@ export default function CounterpartyDetailScreen() {
           setCollectSheetOpen(false);
           setCollectAgreementId(null);
         }}
+        onSaved={load}
+      />
+
+      <CounterpartyInvoiceScanSheet
+        visible={invoiceScanOpen}
+        person={cp}
+        organizationName={selectedOrg?.name ?? null}
+        createdByStaffId={me?.id ?? null}
+        createdByStaffName={me?.full_name ?? null}
+        onClose={() => setInvoiceScanOpen(false)}
         onSaved={load}
       />
 
@@ -788,6 +1024,31 @@ const styles = StyleSheet.create({
   },
   heroInfo: { flex: 1, minWidth: 0 },
   nameRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  nameTap: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingRight: 4 },
+  nameEditWrap: { flex: 1, marginRight: 4 },
+  nameInput: {
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 17,
+    fontWeight: '700',
+    color: adminTheme.colors.text,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  nameEditActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  nameSaveBtn: {
+    backgroundColor: adminTheme.colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  nameSaveText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  nameCancelBtn: { paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center' },
+  nameCancelText: { color: adminTheme.colors.textMuted, fontWeight: '600', fontSize: 13 },
   heroName: { flex: 1, fontSize: 19, fontWeight: '800', color: adminTheme.colors.text },
   moreBtn: { padding: 2, marginLeft: 4 },
   badge: {
@@ -801,7 +1062,32 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   badgeText: { fontSize: 11, fontWeight: '600' },
-  phone: { fontSize: 13, color: adminTheme.colors.textMuted, marginTop: 8 },
+  phoneRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  phone: { fontSize: 13, color: adminTheme.colors.textMuted },
+  phoneAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: '#eff6ff',
+  },
+  phoneActionWa: { backgroundColor: '#ecfdf5' },
+  phoneActionText: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
+  phoneActionWaText: { color: '#25D366' },
+  notesBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  notesText: { flex: 1, fontSize: 13, color: adminTheme.colors.textSecondary, lineHeight: 18 },
   linkedStaff: { fontSize: 12, color: '#7c3aed', marginTop: 6, fontWeight: '600' },
   balanceStrip: {
     flexDirection: 'row',
@@ -823,6 +1109,7 @@ const styles = StyleSheet.create({
   },
   balanceSideLbl: { fontSize: 10, fontWeight: '600', color: adminTheme.colors.textMuted },
   balanceSideVal: { fontSize: 13, fontWeight: '800' },
+  balanceSideAction: { fontSize: 10, fontWeight: '700', color: '#16a34a', marginTop: 2 },
   hubTitle: {
     fontSize: 13,
     fontWeight: '700',
@@ -830,7 +1117,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 4,
   },
-  hubRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  hubRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   hubCard: {
     flex: 1,
     alignItems: 'center',
@@ -841,6 +1128,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   hubDebt: { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' },
+  hubInvoice: { backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' },
   hubPay: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   hubIncome: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
   hubCardTitle: { fontSize: 12, fontWeight: '800', color: adminTheme.colors.text, textAlign: 'center' },
@@ -851,6 +1139,43 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.text,
     marginBottom: 8,
   },
+  mergeCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  mergeHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  mergeTitle: { fontSize: 14, fontWeight: '800', color: '#1d4ed8' },
+  mergeHint: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.text, marginTop: 2 },
+  mergeMeta: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4 },
+  mergeActions: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+  mergeBtn: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minWidth: 88,
+    alignItems: 'center',
+  },
+  mergeBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  mergeDismiss: { padding: 6 },
+  mergeDismissText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  scopeFilters: { marginBottom: 8, maxHeight: 40 },
+  scopeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    marginRight: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  scopeChipOn: { backgroundColor: '#ede9fe', borderColor: '#7c3aed' },
+  scopeChipText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  scopeChipTextOn: { color: '#5b21b6' },
   historyHead: {
     flexDirection: 'row',
     alignItems: 'center',

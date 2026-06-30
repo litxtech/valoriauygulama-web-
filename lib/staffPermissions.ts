@@ -60,6 +60,23 @@ export function canViewAllOrgQuickNotes(staff: StaffPermissionSlice): boolean {
   return staff?.role === 'admin';
 }
 
+/** Not düzenleme — admin tüm notları, personel yalnızca kendi notunu. */
+export function canEditQuickNote(staff: StaffPermissionSlice, note: { created_by_staff_id: string }): boolean {
+  if (!canAccessQuickNotes(staff) || !staff?.id) return false;
+  if (staff.role === 'admin') return true;
+  return note.created_by_staff_id === staff.id;
+}
+
+/** Güvenlik kara listesi — yalnızca admin rolü (ekleme/düzenleme). */
+export function canAccessSecurityBlacklist(staff: StaffPermissionSlice): boolean {
+  return staff?.role === 'admin';
+}
+
+/** Kara listeyi görüntüleme — org içindeki tüm aktif personel. */
+export function canViewSecurityBlacklist(staff: StaffPermissionSlice): boolean {
+  return Boolean(staff);
+}
+
 /** Görev oluşturma (insert) — admin veya gorev_ata. */
 export function canStaffCreateAssignments(staff: StaffPermissionSlice): boolean {
   return canAccessAdminShell(staff);

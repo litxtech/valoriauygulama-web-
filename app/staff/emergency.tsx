@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useAuthStore } from '@/stores/authStore';
 import {
   buildStaffEmergencyConfirmBody,
@@ -56,6 +58,7 @@ function createEmergencyStyles(p: PersonelDesignPalette) {
 
 export default function StaffEmergencyScreen() {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const palette = usePersonelDesign();
   const styles = useMemo(() => createEmergencyStyles(palette), [palette]);
   const { staff } = useAuthStore();
@@ -134,7 +137,10 @@ export default function StaffEmergencyScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingBottom: getFloatingTabBarTotalHeight(insets) + 24 }]}
+    >
       <Text style={styles.title}>{t('screenEmergencyButton')}</Text>
       <Text style={styles.sub}>{t('staffEmergencySubtitle')}</Text>
 

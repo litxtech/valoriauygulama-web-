@@ -447,6 +447,8 @@ export async function createGuestStaffTipStripePayment(params: {
   currency?: string;
   note?: string;
 }): Promise<GuestStaffTipStripeResult> {
+  await getOrCreateGuestForCurrentSession();
+
   const { data, error } = await invokeEdgeWithAuth('create-guest-tip-payment', {
     staff_id: params.staffId,
     amount: params.amount,

@@ -13,7 +13,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
@@ -48,6 +50,8 @@ type MovementRow = {
 
 export default function StaffStockListScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const listBottomPad = getFloatingTabBarTotalHeight(insets) + 24;
   const palette = usePersonelDesign();
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
@@ -130,7 +134,7 @@ export default function StaffStockListScreen() {
     <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomPad }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

@@ -97,6 +97,7 @@ const SECTION_TINTS: Record<string, { bg: string; icon: string }> = {
   'Konaklama & Odalar': { bg: '#ecfeff', icon: '#0e7490' },
   İletişim: { bg: '#fff7ed', icon: '#c2410c' },
   'Stok & Onaylar': { bg: '#f5f3ff', icon: '#6d28d9' },
+  'Kahvaltı partnerleri': { bg: '#fffbeb', icon: '#b45309' },
   'Erişim & Güvenlik': { bg: '#eff6ff', icon: '#1d4ed8' },
   'Kurumsal & Ayarlar': { bg: '#f0fdf4', icon: '#166534' },
 };
@@ -108,7 +109,7 @@ const SECTIONS: Section[] = [
     icon: 'business-outline',
     items: [
       { href: '/admin/rooms', icon: 'bed-outline', label: 'Oda yönetimi' },
-      { href: '/admin/rooms/cleaning-plan', icon: 'checkbox-outline', label: 'Yarın temizlenecek odalar' },
+      { href: '/admin/rooms/cleaning-plan', icon: 'sparkles-outline', label: 'Oda temizlik planı (personele bildir)' },
       { href: '/admin/rooms/new', icon: 'add-circle-outline', label: 'Yeni oda' },
       { href: '/admin/checkin', icon: 'calendar-outline', label: 'Check-in / Check-out' },
       { href: '/admin/housekeeping', icon: 'leaf-outline', label: 'Housekeeping' },
@@ -153,11 +154,21 @@ const SECTIONS: Section[] = [
       { href: '/admin/accounting', icon: 'calculator-outline', label: 'Muhasebe (gelir / gider)', badge: 0 },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
       { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
-      { href: '/admin/breakfast-confirm', icon: 'cafe-outline', label: 'Kahvaltı Teyit Kayıtları' },
+      { href: '/admin/trade-partners', icon: 'storefront-outline', label: 'Partner Ticaret' },
       { href: '/admin/transfer-tour', icon: 'car-sport-outline', label: 'Transfer & Tur' },
       { href: '/admin/salary', icon: 'cash-outline', label: 'Maaş yönetimi' },
       { href: '/admin/finance-checks', icon: 'document-text-outline', label: 'Çek takibi' },
       { href: '/admin/debts', icon: 'swap-horizontal-outline', label: 'Borç / alacak' },
+    ],
+  },
+  {
+    title: 'Kahvaltı partnerleri',
+    subtitle: 'Partner otelleri, teyit ve kamera kayıt talepleri',
+    icon: 'restaurant-outline',
+    items: [
+      { href: '/admin/breakfast-partners', icon: 'business-outline', label: 'Kahvaltı partner otelleri' },
+      { href: '/admin/breakfast-confirm', icon: 'cafe-outline', label: 'Kahvaltı teyit kayıtları' },
+      { href: '/admin/camera-requests', icon: 'videocam-outline', label: 'Kahvaltı kamera kayıt talepleri' },
     ],
   },
   {

@@ -365,6 +365,8 @@ const translation = {
       chatMentionPickerHint: 'Select someone to mention',
       chatMentionNoResults: 'No matches',
       chatMentionPushBody: '{{name}} mentioned you: {{preview}}',
+      chatPushPreviewFallback: 'New message',
+      chatPushToastKicker: 'Valoria Message',
       staffChatVideoSentBody: 'Video sent.',
       chatAttachTitle: 'Attach',
       chatSendVideo: 'Choose video',

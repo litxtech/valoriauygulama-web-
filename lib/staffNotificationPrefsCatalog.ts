@@ -81,7 +81,7 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('breakfast_briefing', 'staffNotifBreakfastBriefingTitle', 'staffNotifBreakfastBriefingHint', {
     soundFeatureKey: 'kitchen_request',
-    matchExact: ['breakfast_morning_briefing'],
+    matchExact: ['breakfast_morning_briefing', 'breakfast_partner_entry', 'breakfast_partner_remind', 'breakfast_partner_payment_staff'],
   }),
   entry('staff_meal_menu_daily', 'staffNotifMealMenuDailyTitle', 'staffNotifMealMenuDailyHint', {
     soundFeatureKey: 'kitchen_request',

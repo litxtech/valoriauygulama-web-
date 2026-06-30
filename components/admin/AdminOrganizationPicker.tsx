@@ -13,6 +13,8 @@ type Props = {
   onChange?: (id: string | 'all') => void;
   /** Bekleyen kaydı olan işletmeler — chip üzerinde sayı rozeti */
   pendingCounts?: Record<string, number>;
+  /** Kart/etiket olmadan yalnızca chip satırı — dar başlıklar için */
+  compact?: boolean;
 };
 
 export function AdminOrganizationPicker({
@@ -21,6 +23,7 @@ export function AdminOrganizationPicker({
   value,
   onChange,
   pendingCounts,
+  compact = false,
 }: Props) {
   const {
     organizations,
@@ -88,23 +91,27 @@ export function AdminOrganizationPicker({
   };
 
   if (options.length === 0 && !canUseAll) return null;
+  // Dar görünümde tek işletme varsa picker'ı tamamen gizle (yer kazandırır).
+  if (compact && !canUseAll && options.length <= 1) return null;
 
   return (
-    <View style={styles.wrap}>
-      <View style={styles.headRow}>
-        <View style={styles.headIconWrap}>
-          <Ionicons name="business-outline" size={15} color={adminTheme.colors.accent} />
+    <View style={compact ? styles.wrapCompact : styles.wrap}>
+      {compact ? null : (
+        <View style={styles.headRow}>
+          <View style={styles.headIconWrap}>
+            <Ionicons name="business-outline" size={15} color={adminTheme.colors.accent} />
+          </View>
+          <Text style={styles.label}>İşletme</Text>
         </View>
-        <Text style={styles.label}>İşletme</Text>
-      </View>
+      )}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
         {canUseAll ? (
           <TouchableOpacity
-            style={[styles.chip, selectedOrganizationId === 'all' && styles.chipActive]}
+            style={[compact ? styles.chipCompact : styles.chip, selectedOrganizationId === 'all' && styles.chipActive]}
             onPress={() => pickOrg('all')}
             activeOpacity={0.85}
           >
-            <Text style={[styles.chipText, selectedOrganizationId === 'all' && styles.chipTextActive]}>
+            <Text style={[compact ? styles.chipTextCompact : styles.chipText, selectedOrganizationId === 'all' && styles.chipTextActive]}>
               Tümü{totalPending > 0 ? ` · ${totalPending}` : ''}
             </Text>
           </TouchableOpacity>
@@ -115,11 +122,11 @@ export function AdminOrganizationPicker({
           return (
             <TouchableOpacity
               key={o.id}
-              style={[styles.chip, active && styles.chipActive]}
+              style={[compact ? styles.chipCompact : styles.chip, active && styles.chipActive]}
               onPress={() => pickOrg(o.id)}
               activeOpacity={0.85}
             >
-              <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
+              <Text style={[compact ? styles.chipTextCompact : styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
                 {chipLabel(o.name, o.kind)}
                 {pending > 0 ? ` · ${pending}` : ''}
               </Text>
@@ -141,6 +148,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: adminTheme.colors.borderLight,
     ...(Platform.OS === 'ios' ? adminTheme.shadow.sm : { elevation: 2 }),
+  },
+  wrapCompact: {
+    marginBottom: 0,
   },
   headRow: {
     flexDirection: 'row',
@@ -176,6 +186,15 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
     maxWidth: 220,
   },
+  chipCompact: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    maxWidth: 200,
+  },
   chipActive: {
     backgroundColor: adminTheme.colors.primary,
     borderColor: adminTheme.colors.primary,
@@ -183,6 +202,11 @@ const styles = StyleSheet.create({
   chipText: {
     color: adminTheme.colors.textSecondary,
     fontSize: 12,
+    fontWeight: '700',
+  },
+  chipTextCompact: {
+    color: adminTheme.colors.textSecondary,
+    fontSize: 11,
     fontWeight: '700',
   },
   chipTextActive: {

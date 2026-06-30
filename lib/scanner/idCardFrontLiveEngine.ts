@@ -10,7 +10,7 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 const TC_RE = /\b([1-9]\d{10})\b/;
 const YKN_RE = /\b(99\d{9})\b/;
 const ID_LABEL_RE =
-  /(?:soyad|surname|family\s*name|given\s*name|ad[ıi]|kimlik|identity|t\.?\s*c\.?|nüfus|nufus|republic|cumhuriyet|türkiye|turkey|nufus|cumhuriyeti)/i;
+  /(?:soyad|surname|family\s*name|given\s*name|ad[ıi]|kimlik|identity|t\.?\s*c\.?|nüfus|nufus|republic|cumhuriyet|türkiye|turkey|nufus|cumhuriyeti|t\.?\s*c\.?\s*kimlik)/i;
 
 export type IdCardFrontLivePhase = 'watch' | 'signal' | 'capture';
 

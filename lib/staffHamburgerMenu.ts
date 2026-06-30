@@ -5,8 +5,9 @@ import {
   canManageBreakfastBriefing,
   canViewBreakfastBriefing,
 } from '@/lib/breakfastMorningBriefing';
-import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
+import { canViewPartnerBreakfastBoard } from '@/lib/breakfastPartner';
 import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
+import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import {
   canAccessDocumentManagement,
   canAccessIncidentReports,
@@ -31,6 +32,7 @@ import {
   hasStaffAppPermission,
   canAccessAdminShell,
   canAccessQuickNotes,
+  canViewSecurityBlacklist,
   type StaffPermissionSlice,
 } from '@/lib/staffPermissions';
 import { canAccessAdminRoute, isGorevAtaOnlyUser } from '@/lib/adminRoutePermissions';
@@ -116,6 +118,7 @@ const ACCENTS: Record<string, string> = {
   warnings: '#dc2626',
   finance: '#0369a1',
   audits: '#7c3aed',
+  blacklist: '#b91c1c',
   staff_month_best: '#d97706',
   payments: '#635bff',
 };
@@ -180,6 +183,22 @@ function pushBreakfastBriefingMenuItem(
     href,
     icon: 'cafe-outline',
     accent: '#b45309',
+  });
+}
+
+function pushPartnerBreakfastBoardMenuItem(
+  push: MenuBuilder['push'],
+  staff: StaffHamburgerStaff,
+  isAdmin: boolean
+) {
+  if (!canViewPartnerBreakfastBoard(staff)) return;
+  const section: StaffHamburgerMenuSectionId = isKitchenStaffMember(staff) ? 'kitchen' : isAdmin ? 'admin' : 'hotel';
+  push(section, {
+    id: 'breakfast_partner_board',
+    label: 'Partner kahvaltı panosu',
+    href: '/staff/breakfast-partners',
+    icon: 'business-outline',
+    accent: '#f59e0b',
   });
 }
 
@@ -382,12 +401,22 @@ export function buildStaffHamburgerMenuSections(
     icon: 'wallet-outline',
     accent: ACCENTS.salary_history,
   });
-  if (hasStaffAppPermission(staff, 'yarin_oda_temizlik_listesi')) {
+  // Kişisel temizlik ekranı: yalnızca personelin KENDİSİNE atanan işleri gösterir.
+  // Atanan temizlikçilerde yönetici izni olmadığından menüye herkes için eklenir
+  // (atama yoksa boş görünür); yönetici menü düzenleyicisinden gizlenebilir.
+  push('staff', {
+    id: 'cleaning',
+    label: t('staffCleaningNavTitle'),
+    href: '/staff/cleaning-plan',
+    icon: 'checkbox-outline',
+    accent: ACCENTS.cleaning,
+  });
+  if (canAccessAdminRoute(staff, '/admin/rooms/cleaning-plan')) {
     push('staff', {
-      id: 'cleaning',
-      label: t('staffCleaningNavTitle'),
-      href: '/staff/cleaning-plan',
-      icon: 'checkbox-outline',
+      id: 'cleaning_plan_admin',
+      label: 'Oda temizlik planı (bildir)',
+      href: '/admin/rooms/cleaning-plan',
+      icon: 'sparkles-outline',
       accent: ACCENTS.cleaning,
     });
   }
@@ -545,6 +574,15 @@ export function buildStaffHamburgerMenuSections(
       href: isAdmin ? '/admin/complaints' : '/staff/guest-complaints',
       icon: 'chatbox-ellipses-outline',
       accent: ACCENTS.guest_complaints,
+    });
+  }
+  if (canViewSecurityBlacklist(staff)) {
+    push('hotel', {
+      id: 'blacklist_view',
+      label: 'Kara Liste',
+      href: '/staff/blacklist',
+      icon: 'shield-outline',
+      accent: ACCENTS.blacklist,
     });
   }
   if (hasStaffAppPermission(staff, 'misafir_talepleri')) {
@@ -900,6 +938,15 @@ export function buildStaffHamburgerMenuSections(
       icon: 'swap-horizontal-outline',
       accent: ACCENTS.debts,
     });
+    if (isAdmin) {
+      push('admin', {
+        id: 'blacklist',
+        label: 'Kara Liste',
+        href: '/admin/blacklist',
+        icon: 'ban-outline',
+        accent: ACCENTS.blacklist,
+      });
+    }
   }
 
   if (isKbsUiEnabled() && (isAdmin || staff.kbs_access_enabled !== false)) {
@@ -916,6 +963,7 @@ export function buildStaffHamburgerMenuSections(
   }
 
   pushBreakfastBriefingMenuItem(push, staff, isAdmin);
+  pushPartnerBreakfastBoardMenuItem(push, staff, isAdmin);
 
   const sectionTitles: Record<StaffHamburgerMenuSectionId, string> = {
     fnb: t('fnbHubMenuSection'),

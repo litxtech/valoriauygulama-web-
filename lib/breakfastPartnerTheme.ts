@@ -1,0 +1,33 @@
+export const partnerTheme = {
+  bg: '#070b14',
+  bgSoft: '#0c1222',
+  card: '#121a2e',
+  cardElevated: '#182038',
+  cardBorder: 'rgba(148, 163, 184, 0.14)',
+  cardBorderFocus: 'rgba(245, 158, 11, 0.45)',
+  text: '#f8fafc',
+  muted: '#94a3b8',
+  mutedSoft: '#64748b',
+  accent: '#f59e0b',
+  accentDark: '#d97706',
+  accentSoft: 'rgba(245, 158, 11, 0.16)',
+  accentGlow: 'rgba(245, 158, 11, 0.28)',
+  success: '#34d399',
+  successSoft: 'rgba(52, 211, 153, 0.14)',
+  danger: '#f87171',
+  dangerSoft: 'rgba(248, 113, 113, 0.14)',
+  info: '#60a5fa',
+  infoSoft: 'rgba(96, 165, 250, 0.14)',
+  heroGradient: ['#1a2744', '#0b1220', '#070b14'] as const,
+  accentGradient: ['#fbbf24', '#f59e0b', '#ea580c'] as const,
+  surfaceInput: '#0a101c',
+  shadow: 'rgba(0, 0, 0, 0.35)',
+};
+
+export const partnerRadii = {
+  sm: 12,
+  md: 16,
+  lg: 22,
+  xl: 28,
+  pill: 999,
+};

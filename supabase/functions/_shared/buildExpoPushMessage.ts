@@ -11,6 +11,8 @@ export type ExpoPushMessageInput = {
   channelId?: string;
   sound?: string | null;
   interruptionLevel?: "active" | "time-sensitive" | "passive";
+  subtitle?: string;
+  threadId?: string;
 };
 
 export function buildExpoPushMessage(input: ExpoPushMessageInput): Record<string, unknown> {
@@ -21,12 +23,18 @@ export function buildExpoPushMessage(input: ExpoPushMessageInput): Record<string
     body: input.body,
     badge: input.badge,
     priority: "high",
-    channelId: input.channelId ?? "valoria_urgent",
+    channelId: input.channelId ?? "valoria_messages_v1",
     sound: input.sound === undefined ? "default" : input.sound,
     data,
     // iOS: arka planda kısa JS uyanışı (rozet + task) — alert ile birlikte gönderilebilir.
     _contentAvailable: true,
   };
+  if (input.subtitle?.trim()) {
+    msg.subtitle = input.subtitle.trim();
+  }
+  if (input.threadId?.trim()) {
+    msg.threadId = input.threadId.trim();
+  }
   if (input.interruptionLevel) {
     msg.interruptionLevel = input.interruptionLevel;
   }

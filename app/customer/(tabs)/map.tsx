@@ -33,6 +33,7 @@ import {
 } from '@/lib/map/guestLocationSharing';
 import { pauseStaffLiveLocationWatch, tryAutoEnableStaffLiveLocation } from '@/lib/map/staffLocationSharing';
 import { setLiveMapScreenActive, subscribeLiveMapLocation } from '@/lib/map/liveLocationConfig';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import {
   getOrCreateGuestForCaller,
   getOrCreateGuestForCurrentSession,
@@ -329,9 +330,12 @@ export default function CustomerMapScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadFeedPostsWithLocation();
-      void loadDiningMapMarkers();
-      void loadTransferTourMapMarkers();
+      const task = runAfterUiReady(() => {
+        void loadFeedPostsWithLocation();
+        void loadDiningMapMarkers();
+        void loadTransferTourMapMarkers();
+      }, { androidOnly: false });
+      return () => task.cancel();
     }, [loadFeedPostsWithLocation, loadDiningMapMarkers, loadTransferTourMapMarkers])
   );
 

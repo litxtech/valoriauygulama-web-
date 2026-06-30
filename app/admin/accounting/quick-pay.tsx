@@ -30,6 +30,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { CounterpartyListCard } from '@/components/admin/CounterpartyListCard';
+import { BankStatementImportButton } from '@/components/admin/BankStatementImportButton';
 import {
   fetchCounterpartyBalanceMap,
   invalidateCounterpartyBalanceCache,
@@ -51,8 +52,8 @@ import {
   resolveAccountingOrgScope,
 } from '@/lib/accountingOrgScope';
 import {
-  confirmDeactivateCounterparty,
-  deactivateFinanceCounterparty,
+  confirmBulkDeactivateCounterparties,
+  bulkDeactivateFinanceCounterparties,
 } from '@/lib/financeCounterpartyActions';
 import {
   counterpartyInitials,
@@ -61,6 +62,7 @@ import {
 } from '@/lib/financeCounterpartyUi';
 import {
   fetchOpenCounterpartyAgreements,
+  fetchOpenDebtTotalsByCounterparty,
   type CounterpartyAgreementRow,
 } from '@/lib/financeCounterpartyAgreements';
 
@@ -90,6 +92,7 @@ export default function AccountingQuickPayScreen() {
   const [balances, setBalances] = useState<Map<string, { income: number; expense: number; net: number }>>(
     new Map()
   );
+  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
@@ -108,6 +111,9 @@ export default function AccountingQuickPayScreen() {
   const [openAgreements, setOpenAgreements] = useState<CounterpartyAgreementRow[]>([]);
   const [selectedAgreementId, setSelectedAgreementId] = useState<string | null>(null);
   const [loadingAgreements, setLoadingAgreements] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkActing, setBulkActing] = useState(false);
   const listRef = useRef<FlatList<Row>>(null);
   const paySheetScrollRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
@@ -123,6 +129,7 @@ export default function AccountingQuickPayScreen() {
     if (!orgScope) {
       setRows([]);
       setBalances(new Map());
+      setOpenDebtTotals(new Map());
       setLoading(false);
       return;
     }
@@ -137,6 +144,10 @@ export default function AccountingQuickPayScreen() {
     const list = (data as Row[]) ?? [];
     setRows(list);
     const scope = scopeFilter === 'all' ? null : scopeFilter;
+    const debtOrgScope = orgScope === 'all' ? 'all' : orgScope;
+    void fetchOpenDebtTotalsByCounterparty(debtOrgScope, list.map((r) => r.id))
+      .then(setOpenDebtTotals)
+      .catch(() => setOpenDebtTotals(new Map()));
     if (orgScope === 'all') {
       setBalances(
         await mergeCounterpartyBalancesForOrgs(
@@ -277,9 +288,10 @@ export default function AccountingQuickPayScreen() {
         income: b?.income ?? 0,
         expense: b?.expense ?? 0,
         net: b?.net ?? 0,
+        currentDebt: openDebtTotals.get(r.id) ?? 0,
       };
     });
-  }, [filtered, balances]);
+  }, [filtered, balances, openDebtTotals]);
 
   const listReportTotals = useMemo(() => {
     let grandIncome = 0;
@@ -315,25 +327,56 @@ export default function AccountingQuickPayScreen() {
 
   const needOrg = !orgScope;
 
-  const removeFromList = useCallback(
-    (row: Row) => {
-      confirmDeactivateCounterparty(row.name, async () => {
-        const err = await deactivateFinanceCounterparty(row.id, row.organization_id);
-        if (err) {
-          Alert.alert(t('quickPaySaveError'), err);
-          return;
-        }
-        if (selected?.id === row.id) closePay();
-        setRows((prev) => prev.filter((r) => r.id !== row.id));
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(new Set(filtered.map((r) => r.id)));
+  }, [filtered]);
+
+  const enterSelectionWith = useCallback((id: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  const bulkRemoveSelected = useCallback(() => {
+    if (selectedIds.size === 0 || bulkActing) return;
+    const targets = filtered.filter((r) => selectedIds.has(r.id));
+    confirmBulkDeactivateCounterparties(targets.length, async () => {
+      setBulkActing(true);
+      const res = await bulkDeactivateFinanceCounterparties(targets);
+      setBulkActing(false);
+      if (res.ok > 0) {
+        const removed = new Set(targets.map((r) => r.id));
+        if (selected && removed.has(selected.id)) closePay();
+        setRows((prev) => prev.filter((r) => !removed.has(r.id)));
         setBalances((prev) => {
           const next = new Map(prev);
-          next.delete(row.id);
+          for (const id of removed) next.delete(id);
           return next;
         });
-      });
-    },
-    [selected, t]
-  );
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      exitSelectionMode();
+      if (res.failed > 0) {
+        Alert.alert(
+          t('quickPaySaveError'),
+          t('quickPayBulkRemoveFailed', { count: res.failed, error: res.lastError ?? '' })
+        );
+      }
+    });
+  }, [bulkActing, exitSelectionMode, filtered, selected, selectedIds.size, t]);
 
   const renderItem = ({ item }: { item: Row }) => {
     const bal = balances.get(item.id);
@@ -353,8 +396,20 @@ export default function AccountingQuickPayScreen() {
         income={bal?.income ?? 0}
         expense={bal?.expense ?? 0}
         net={bal?.net ?? 0}
-        onPress={() => openPay(item)}
-        onLongPress={() => removeFromList(item)}
+        openDebt={openDebtTotals.get(item.id) ?? 0}
+        selectionMode={selectionMode}
+        selected={selectedIds.has(item.id)}
+        onPress={() => {
+          if (selectionMode) {
+            toggleSelect(item.id);
+            return;
+          }
+          openPay(item);
+        }}
+        onLongPress={() => {
+          if (selectionMode) toggleSelect(item.id);
+          else enterSelectionWith(item.id);
+        }}
         dense
       />
     );
@@ -378,6 +433,24 @@ export default function AccountingQuickPayScreen() {
           </Text>
         </View>
         <View style={styles.topActions}>
+          <BankStatementImportButton variant="hero" />
+          {!selectionMode ? (
+            <TouchableOpacity
+              style={styles.heroIconBtn}
+              onPress={() => setSelectionMode(true)}
+              accessibilityLabel={t('quickPayBulkRemoveMode')}
+            >
+              <Ionicons name="checkbox-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.heroIconBtn}
+              onPress={exitSelectionMode}
+              accessibilityLabel={t('cancel')}
+            >
+              <Ionicons name="close" size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.heroIconBtn}
             onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
@@ -450,9 +523,19 @@ export default function AccountingQuickPayScreen() {
                 loading={loading && !refreshing}
                 listStats={listStats}
                 searchActive={search.trim().length > 0}
+                selectionMode={selectionMode}
+                selectedCount={selectedIds.size}
+                visibleCount={filtered.length}
+                onSelectAll={selectAllVisible}
+                onClearSelection={() => setSelectedIds(new Set())}
+                onBulkRemove={bulkRemoveSelected}
+                bulkActing={bulkActing}
               />
             }
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+              styles.listContent,
+              selectionMode && { paddingBottom: 120 + Math.max(insets.bottom, 10) },
+            ]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             automaticallyAdjustKeyboardInsets
@@ -488,7 +571,7 @@ export default function AccountingQuickPayScreen() {
         </KeyboardAvoidingView>
       )}
 
-      {!needOrg ? (
+      {!needOrg && !selectionMode ? (
         <View style={[styles.fabWrap, { paddingBottom: Math.max(insets.bottom, 10) }]} pointerEvents="box-none">
           <TouchableOpacity
             onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
@@ -498,6 +581,31 @@ export default function AccountingQuickPayScreen() {
             <LinearGradient colors={[...FAB_GRAD]} style={styles.fab}>
               <Ionicons name="add" size={26} color="#fff" />
             </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {selectionMode && !needOrg ? (
+        <View style={[styles.bulkFooter, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+          <TouchableOpacity
+            style={[
+              styles.bulkRemoveBtn,
+              (selectedIds.size === 0 || bulkActing) && styles.bulkRemoveBtnDisabled,
+            ]}
+            onPress={bulkRemoveSelected}
+            disabled={selectedIds.size === 0 || bulkActing}
+            activeOpacity={0.9}
+          >
+            {bulkActing ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="trash-outline" size={18} color="#fff" />
+                <Text style={styles.bulkRemoveBtnText}>
+                  {t('quickPayBulkRemoveSelected', { count: selectedIds.size })}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       ) : null}
@@ -929,6 +1037,58 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     lineHeight: 16,
   },
+  bulkToolRow: {
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    gap: 8,
+  },
+  bulkToolMeta: { fontSize: 12, fontWeight: '700', color: '#991b1b' },
+  bulkToolActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  bulkToolChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  bulkToolChipText: { fontSize: 12, fontWeight: '700', color: '#991b1b' },
+  bulkToolChipDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#dc2626',
+    borderColor: '#dc2626',
+  },
+  bulkToolChipDangerText: { fontSize: 12, fontWeight: '800', color: '#fff' },
+  bulkToolChipDisabled: { opacity: 0.45 },
+  bulkFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: adminTheme.colors.border,
+  },
+  bulkRemoveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#dc2626',
+    borderRadius: 14,
+    paddingVertical: 14,
+    minHeight: 48,
+  },
+  bulkRemoveBtnDisabled: { opacity: 0.45 },
+  bulkRemoveBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
   reportSection: { marginBottom: 6 },
   reportToggle: {
     flexDirection: 'row',
@@ -1283,12 +1443,20 @@ type QuickPayListHeaderProps = {
     income: number;
     expense: number;
     net: number;
+    currentDebt?: number;
   }[];
   listReportTotals: { grandIncome: number; grandExpense: number };
   reportFooter: FinanceReportFooter;
   loading: boolean;
   listStats: { totalPeople: number; totalExpense: number };
   searchActive: boolean;
+  selectionMode?: boolean;
+  selectedCount?: number;
+  visibleCount?: number;
+  onSelectAll?: () => void;
+  onClearSelection?: () => void;
+  onBulkRemove?: () => void;
+  bulkActing?: boolean;
 };
 
 function QuickPayListHeader({
@@ -1305,6 +1473,13 @@ function QuickPayListHeader({
   loading,
   listStats,
   searchActive,
+  selectionMode = false,
+  selectedCount = 0,
+  visibleCount = 0,
+  onSelectAll,
+  onClearSelection,
+  onBulkRemove,
+  bulkActing = false,
 }: QuickPayListHeaderProps) {
   const { t } = useTranslation();
   const [reportOpen, setReportOpen] = useState(false);
@@ -1356,9 +1531,45 @@ function QuickPayListHeader({
         ))}
       </View>
 
-      <Text style={styles.listHint}>Dokun → ödeme · Uzun bas → listeden kaldır</Text>
+      <Text style={styles.listHint}>
+        {selectionMode
+          ? t('quickPayBulkSelectHint')
+          : t('quickPayListHint')}
+      </Text>
 
-      {showExport ? (
+      {selectionMode && visibleCount > 0 ? (
+        <View style={styles.bulkToolRow}>
+          <Text style={styles.bulkToolMeta}>
+            {t('quickPayBulkSelectedMeta', { count: selectedCount, total: visibleCount })}
+          </Text>
+          <View style={styles.bulkToolActions}>
+            <TouchableOpacity style={styles.bulkToolChip} onPress={onSelectAll} disabled={bulkActing}>
+              <Text style={styles.bulkToolChipText}>{t('quickPaySelectAll')}</Text>
+            </TouchableOpacity>
+            {selectedCount > 0 ? (
+              <TouchableOpacity
+                style={styles.bulkToolChip}
+                onPress={onClearSelection}
+                disabled={bulkActing}
+              >
+                <Text style={styles.bulkToolChipText}>{t('quickPayClearSelection')}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.bulkToolChip, styles.bulkToolChipDanger, !selectedCount && styles.bulkToolChipDisabled]}
+              onPress={onBulkRemove}
+              disabled={!selectedCount || bulkActing}
+            >
+              <Ionicons name="trash-outline" size={14} color="#fff" />
+              <Text style={styles.bulkToolChipDangerText}>
+                {t('quickPayBulkRemoveSelected', { count: selectedCount })}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {showExport && !selectionMode ? (
         <View style={styles.reportSection}>
           <TouchableOpacity
             style={styles.reportToggle}

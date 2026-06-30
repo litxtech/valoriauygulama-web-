@@ -1,3 +1,4 @@
+import { InteractionManager } from 'react-native';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
 import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
@@ -9,6 +10,8 @@ import {
   type KbsCapturePrewarmReady,
 } from '@/lib/kbsCapturePrewarm';
 import { type KbsCaptureSide } from '@/lib/kbsCaptureOcr';
+import { kbsCaptureSideWarning } from '@/lib/kbsCaptureSideMeta';
+import { enqueueKbsCaptureOcrBatch, type KbsCaptureOcrJob } from '@/lib/kbsCaptureOcrQueue';
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
 
 export type KbsCaptureSaveItem = {
@@ -27,7 +30,11 @@ export type KbsCaptureSaveItem = {
 function buildFallbackParsed(
   _index: number,
   _roomNumber: string,
-  optional?: { firstName?: string | null; lastName?: string | null }
+  optional?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    captureSide?: KbsCaptureSide;
+  }
 ): ParsedDocument {
   const fnTrim = optional?.firstName?.trim() ?? '';
   const lnTrim = optional?.lastName?.trim() ?? '';
@@ -35,7 +42,8 @@ function buildFallbackParsed(
   const firstName = fnTrim || null;
   const lastName = lnTrim || null;
   const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
-  const warnings: string[] = ['manual_capture'];
+  const side = optional?.captureSide ?? 'front';
+  const warnings: string[] = ['manual_capture', 'ocr_pending', kbsCaptureSideWarning(side)];
   if (hasManual) warnings.push('manual_name');
 
   return {
@@ -160,6 +168,7 @@ export async function saveKbsCaptureItemsParallel(
       const fallback = buildFallbackParsed(item.index, String(room.room_number), {
         firstName: item.firstName,
         lastName: item.lastName,
+        captureSide: item.captureSide ?? 'front',
       });
       const parsed = applyManualNames(fallback, {
         firstName: item.firstName,
@@ -197,6 +206,18 @@ export async function saveKbsCaptureItemsParallel(
     guestDocumentIds: upserted.map((r) => r.guestDocumentId),
   });
   if (!assignRes.ok) throw new Error(assignRes.error.message);
+
+  const ocrJobs: KbsCaptureOcrJob[] = upserted.map((row) => ({
+    docId: row.guestDocumentId,
+    guestId: row.guestId,
+    imageUrl: row.frontImageUrl,
+    localUri: row.localUri,
+    captureSide: row.item.captureSide ?? 'front',
+    captureSource: row.item.captureSource,
+  }));
+  InteractionManager.runAfterInteractions(() => {
+    enqueueKbsCaptureOcrBatch(ocrJobs);
+  });
 
   return upserted.map((row) => ({
     guestDocumentId: row.guestDocumentId,

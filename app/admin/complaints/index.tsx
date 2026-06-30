@@ -63,8 +63,8 @@ export default function AdminComplaintsIndex() {
       orgScoped,
     });
     if (error) {
+      // Geçici hatada mevcut listeyi silme (boş ekran flaşını / "veri kayboldu" hissini önle).
       Alert.alert(complaintsText('error'), error);
-      setList([]);
       return;
     }
     const typed = rows as ComplaintRow[];

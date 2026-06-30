@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import {
   type StaffProfileFeedPreview,
   type StaffProfileFeedFilter,
 } from '@/lib/staffProfileFeedThumbnails';
+import { loadFeedPostEngagementCounts } from '@/lib/feedPostEngagementCounts';
 import { formatStatCompact } from '@/lib/modernProfileTenure';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
@@ -60,6 +61,7 @@ export function StaffProfileFeedGrid({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [gridW, setGridW] = useState(0);
+  const loadSeqRef = useRef(0);
 
   const numColumns = 3;
   const w = edgeToEdge ? winW : (gridW > 0 ? gridW : Math.max(0, winW - 32));
@@ -71,21 +73,38 @@ export function StaffProfileFeedGrid({
 
   const load = useCallback(async () => {
     if (!staffId) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setErr(null);
     const lim = maxPreview != null ? Math.max(maxPreview, 30) : 30;
-    const { items: row, error } = await loadStaffProfileFeedPreviews(staffId, lim, feedFilter);
+    const { items: row, error } = await loadStaffProfileFeedPreviews(staffId, lim, feedFilter, false);
+    if (seq !== loadSeqRef.current) return;
     if (error) {
       setErr(error.message);
       setItems([]);
       onPreviewCount?.(0);
-    } else {
-      const slice = maxPreview != null ? row.slice(0, maxPreview) : row;
-      setItems(slice);
-      onPreviewCount?.(slice.length);
+      setLoading(false);
+      return;
     }
+    const slice = maxPreview != null ? row.slice(0, maxPreview) : row;
+    setItems(slice);
+    onPreviewCount?.(slice.length);
     setLoading(false);
-  }, [staffId, maxPreview, onPreviewCount, feedFilter]);
+
+    if (showEngagementOverlay && slice.length > 0) {
+      const ids = slice.map((it) => it.id);
+      const counts = await loadFeedPostEngagementCounts(ids);
+      if (seq !== loadSeqRef.current) return;
+      setItems((prev) =>
+        prev.map((it) => {
+          const c = counts.get(it.id);
+          return c
+            ? { ...it, likesCount: c.likes, commentsCount: c.comments, viewsCount: c.views }
+            : it;
+        })
+      );
+    }
+  }, [staffId, maxPreview, onPreviewCount, feedFilter, showEngagementOverlay]);
 
   useEffect(() => {
     load();

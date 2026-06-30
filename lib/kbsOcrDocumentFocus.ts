@@ -7,7 +7,7 @@ const SURFACE_NOISE_RE =
 
 const MRZ_CHARS_RE = /^[A-Z0-9<][A-Z0-9<\s]{18,}$/i;
 const LABEL_RE =
-  /(?:soyad|surname|family|given\s*name|ad[ıi]|do[gğ]um|birth|uyruk|nationality|kimlik|pasaport|passport|valid|geçerl|seri|anne|baba|mother|father|cinsiyet|sex|gender|medeni|<<<|IDTUR|IDTUR)/i;
+  /(?:soyad|surname|family|given\s*name|ad[ıi]|do[gğ]um|birth|uyruk|nationality|kimlik|pasaport|passport|valid|geçerl|seri|anne|baba|mother|father|cinsiyet|sex|gender|medeni|<<<|IDTUR|IDTUR|t\.?\s*c\.?\s*kimlik)/i;
 const TC_RE = /\b[1-9]\d{10}\b/;
 const YKN_RE = /\b99\d{9}\b/;
 const DATE_RE = /\b\d{2}[./]\d{2}[./]\d{4}\b/;
@@ -87,6 +87,84 @@ export async function cropMrzBandForKbsOcr(uri: string): Promise<string> {
   } catch {
     return uri;
   }
+}
+
+export type KbsOcrRegionId =
+  | 'full'
+  | 'document_crop'
+  | 'mrz_band'
+  | 'top_half'
+  | 'bottom_half'
+  | 'center';
+
+async function cropRect(
+  uri: string,
+  originX: number,
+  originY: number,
+  cropW: number,
+  cropH: number
+): Promise<string> {
+  try {
+    const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+    });
+    const safeW = Math.min(Math.round(cropW), width - originX);
+    const safeH = Math.min(Math.round(cropH), height - originY);
+    if (safeW < 80 || safeH < 40) return uri;
+    const out = await manipulateAsync(
+      uri,
+      [{ crop: { originX: Math.max(0, originX), originY: Math.max(0, originY), width: safeW, height: safeH } }],
+      { compress: 0.98, format: SaveFormat.JPEG }
+    );
+    return out.uri;
+  } catch {
+    return uri;
+  }
+}
+
+/** Galeri derin tarama — belgenin üst yarısı. */
+export async function cropTopHalfForKbsOcr(uri: string): Promise<string> {
+  const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+  });
+  return cropRect(uri, Math.round(width * 0.02), Math.round(height * 0.02), width * 0.96, height * 0.48);
+}
+
+/** Galeri derin tarama — belgenin alt yarısı (MRZ + alt alanlar). */
+export async function cropBottomHalfForKbsOcr(uri: string): Promise<string> {
+  const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+  });
+  const cropH = height * 0.5;
+  const originY = Math.max(0, height - cropH - Math.round(height * 0.02));
+  return cropRect(uri, Math.round(width * 0.02), originY, width * 0.96, cropH);
+}
+
+/** Galeri derin tarama — merkez bölge (ad / soyad alanı). */
+export async function cropCenterForKbsOcr(uri: string): Promise<string> {
+  const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+  });
+  return cropRect(uri, Math.round(width * 0.06), Math.round(height * 0.18), width * 0.88, height * 0.58);
+}
+
+/** Galeri OCR — tüm belge bölgeleri. */
+export async function buildGalleryOcrRegions(uri: string): Promise<{ region: KbsOcrRegionId; uri: string }[]> {
+  const [documentCrop, mrzBand, topHalf, bottomHalf, center] = await Promise.all([
+    cropImageForKbsOcr(uri),
+    cropMrzBandForKbsOcr(uri),
+    cropTopHalfForKbsOcr(uri),
+    cropBottomHalfForKbsOcr(uri),
+    cropCenterForKbsOcr(uri),
+  ]);
+  return [
+    { region: 'full', uri },
+    { region: 'document_crop', uri: documentCrop },
+    { region: 'mrz_band', uri: mrzBand },
+    { region: 'top_half', uri: topHalf },
+    { region: 'bottom_half', uri: bottomHalf },
+    { region: 'center', uri: center },
+  ];
 }
 
 /** Ön yüz / tam kart — alt MRZ şeridi kesilmesin (pasaport biyometrik sayfa). */

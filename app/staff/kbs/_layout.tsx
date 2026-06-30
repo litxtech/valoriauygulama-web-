@@ -6,6 +6,7 @@ import { canStaffUseIdCapture, canStaffUseMrzScan, canStaffViewKbsCaptureHistory
 import { refreshStaffKbsAccess } from '@/lib/refreshStaffKbsAccess';
 import { useTranslation } from 'react-i18next';
 import { StaffStackBackButton, STAFF_TABS_FALLBACK, buildStaffNestedStackOptions } from '@/lib/staffStackBack';
+import { KbsCaptureWatermarkHost } from '@/components/kbs/KbsCaptureWatermarkHost';
 
 function isIdCaptureWriteRoute(pathname: string | null | undefined): boolean {
   const p = pathname ?? '';
@@ -52,6 +53,8 @@ export default function KbsLayout() {
   }
 
   return (
+    <>
+    <KbsCaptureWatermarkHost />
     <Stack screenOptions={buildStaffNestedStackOptions(t)}>
       <Stack.Screen
         name="index"
@@ -91,5 +94,6 @@ export default function KbsLayout() {
       <Stack.Screen name="guests" options={{ headerShown: false }} />
       <Stack.Screen name="lodgers" options={{ headerShown: false }} />
     </Stack>
+    </>
   );
 }

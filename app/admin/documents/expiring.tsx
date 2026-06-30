@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
-import { adminTheme } from '@/constants/adminTheme';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { DocumentScreenIntro } from '@/components/documents/DocumentScreenIntro';
+import { documentDetailHref, useDocumentsBasePath } from '@/lib/documentManagementRoutes';
+import { docTheme } from '@/constants/documentManagementTheme';
 
 export default function AdminDocumentsExpiring() {
   const router = useRouter();
+  const base = useDocumentsBasePath();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,7 +29,7 @@ export default function AdminDocumentsExpiring() {
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   return (
@@ -35,13 +38,18 @@ export default function AdminDocumentsExpiring() {
         data={rows}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.content}
-        ListEmptyComponent={<Text style={styles.sub}>{loading ? 'Yükleniyor…' : 'Kayıt yok'}</Text>}
+        ListHeaderComponent={<DocumentScreenIntro screenKey="expiring" />}
+        ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Yükleniyor…' : 'Yaklaşan süre yok'}</Text>}
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.row} activeOpacity={0.75} onPress={() => router.push(`/admin/documents/${item.id}` as never)}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.rowTitle} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.rowMeta}>Son geçerlilik: {item.expiry_date}</Text>
-            </View>
+          <TouchableOpacity
+            style={styles.row}
+            activeOpacity={0.75}
+            onPress={() => router.push(documentDetailHref(base, item.id) as never)}
+          >
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {item.title}
+            </Text>
+            <Text style={styles.rowMeta}>Son geçerlilik: {item.expiry_date}</Text>
           </TouchableOpacity>
         )}
       />
@@ -50,11 +58,17 @@ export default function AdminDocumentsExpiring() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 20, paddingBottom: 24 },
-  sub: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted, lineHeight: 18 },
-  row: { backgroundColor: adminTheme.colors.surface, borderRadius: adminTheme.radius.lg, borderWidth: 1, borderColor: adminTheme.colors.border, padding: 14, marginBottom: 10 },
-  rowTitle: { fontSize: 15, fontWeight: '800', color: adminTheme.colors.text },
-  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  container: { flex: 1, backgroundColor: docTheme.bg },
+  content: { padding: 16, paddingBottom: 24 },
+  empty: { fontSize: 14, fontWeight: '600', color: docTheme.textMuted, textAlign: 'center', paddingVertical: 24 },
+  row: {
+    backgroundColor: docTheme.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: docTheme.border,
+    padding: 14,
+    marginBottom: 10,
+  },
+  rowTitle: { fontSize: 15, fontWeight: '700', color: docTheme.text },
+  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: docTheme.rose },
 });
-

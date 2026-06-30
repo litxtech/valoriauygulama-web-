@@ -26,6 +26,7 @@ import {
   type PartyFormState,
 } from '@/components/contracts/PartyFormFields';
 import { ContractAiAssistant } from '@/components/contracts/ContractAiAssistant';
+import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
 import type { ManagedContractType } from '@/lib/managedContracts/constants';
 
 export default function ManagedContractNewScreen() {
@@ -177,7 +178,14 @@ export default function ManagedContractNewScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator
+        nestedScrollEnabled={Platform.OS === 'android'}
+      >
         <Text style={styles.heading}>Yeni sözleşme</Text>
         <Text style={styles.sub}>
           Otel adı, taraflar, tarihler ve metnin tamamı serbestçe düzenlenir. Şablon yalnızca başlangıç önerisidir.
@@ -279,23 +287,23 @@ export default function ManagedContractNewScreen() {
         </View>
 
         <Text style={styles.label}>Sözleşme metni</Text>
-        <TextInput
+        <AutoGrowMultilineInput
           style={[styles.input, styles.textArea]}
           value={bodyText}
           onChangeText={setBodyText}
-          multiline
-          textAlignVertical="top"
+          minHeight={180}
+          lineHeight={21}
           placeholder="Tüm maddeleri buraya yazın veya düzenleyin…"
           placeholderTextColor={adminTheme.colors.textMuted}
         />
 
         <Text style={styles.label}>Özel maddeler</Text>
-        <TextInput
+        <AutoGrowMultilineInput
           style={[styles.input, styles.textAreaSm]}
           value={specialClauses}
           onChangeText={setSpecialClauses}
-          multiline
-          textAlignVertical="top"
+          minHeight={90}
+          lineHeight={20}
           placeholder="Ek maddeler…"
           placeholderTextColor={adminTheme.colors.textMuted}
         />

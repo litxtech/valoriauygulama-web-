@@ -49,6 +49,36 @@ function metaGuestName(row: AdminPaymentRequestRow): string {
   return row.guest_detail?.full_name?.trim() || (typeof row.metadata?.guest_name === 'string' ? row.metadata.guest_name : '') || '';
 }
 
+function paymentRowSearchHaystack(row: AdminPaymentRequestRow): string {
+  return [
+    guestSearchHaystack(row.guest_detail, [
+      metaStaffName(row),
+      metaGuestName(row),
+      row.title,
+      row.description ?? '',
+      row.creator_staff?.full_name ?? '',
+    ]),
+    row.service_kind,
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function applyAdminPaymentFilters(
+  rows: AdminPaymentRequestRow[],
+  opts: { search: string; laneFilter: AdminPaymentLane | 'all'; statusFilter: StatusFilter }
+): AdminPaymentRequestRow[] {
+  const q = opts.search.trim().toLowerCase();
+  return rows.filter((row) => {
+    const lane = adminPaymentLaneForRow(row);
+    if (opts.laneFilter !== 'all' && lane !== opts.laneFilter) return false;
+    if (opts.statusFilter === 'paid' && row.status !== 'paid') return false;
+    if (opts.statusFilter === 'pending' && row.status !== 'pending') return false;
+    if (!q) return true;
+    return paymentRowSearchHaystack(row).includes(q);
+  });
+}
+
 export default function AdminPaymentsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ lane?: string }>();
@@ -65,20 +95,37 @@ export default function AdminPaymentsScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [actingId, setActingId] = useState<string | null>(null);
   const [linkedPaymentIds, setLinkedPaymentIds] = useState<Set<string>>(() => new Set());
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
-      const [payments, qrStands, linked] = await Promise.all([
+      const [paymentsResult, qrStandsResult, linked] = await Promise.allSettled([
         fetchAdminPaymentRequests(500),
         fetchPaymentQrStands(null, 30),
         fetchLinkedPaymentRequestIds(),
       ]);
-      setRows(payments);
-      setStands(qrStands);
-      setLinkedPaymentIds(linked);
-    } catch {
+
+      const errors: string[] = [];
+      if (paymentsResult.status === 'fulfilled') {
+        setRows(paymentsResult.value);
+      } else {
+        setRows([]);
+        errors.push((paymentsResult.reason as Error)?.message ?? 'Ödemeler yüklenemedi');
+      }
+
+      if (qrStandsResult.status === 'fulfilled') {
+        setStands(qrStandsResult.value);
+      } else {
+        setStands([]);
+      }
+
+      setLinkedPaymentIds(linked.status === 'fulfilled' ? linked.value : new Set());
+      if (errors.length > 0) setLoadError(errors[0]);
+    } catch (e) {
       setRows([]);
       setStands([]);
+      setLoadError((e as Error).message || 'Yüklenemedi');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -102,31 +149,19 @@ export default function AdminPaymentsScreen() {
 
   const visibleRows = useMemo(() => rows.filter(isPaymentActiveForList), [rows]);
 
-  const laneSummaries = useMemo(() => summarizeAdminPaymentsByLane(visibleRows), [visibleRows]);
+  const rowsForStats = useMemo(
+    () => applyAdminPaymentFilters(visibleRows, { search, laneFilter: 'all', statusFilter }),
+    [visibleRows, search, statusFilter]
+  );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return visibleRows.filter((row) => {
-      const lane = adminPaymentLaneForRow(row);
-      if (laneFilter !== 'all' && lane !== laneFilter) return false;
-      if (statusFilter === 'paid' && row.status !== 'paid') return false;
-      if (statusFilter === 'pending' && row.status !== 'pending') return false;
-      if (!q) return true;
-      const haystack = [
-        guestSearchHaystack(row.guest_detail, [
-          metaStaffName(row),
-          metaGuestName(row),
-          row.title,
-          row.description ?? '',
-          row.creator_staff?.full_name ?? '',
-        ]),
-        row.service_kind,
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [visibleRows, search, laneFilter, statusFilter]);
+  const laneSummaries = useMemo(() => summarizeAdminPaymentsByLane(rowsForStats), [rowsForStats]);
+
+  const filtered = useMemo(
+    () => applyAdminPaymentFilters(visibleRows, { search, laneFilter, statusFilter }),
+    [visibleRows, search, laneFilter, statusFilter]
+  );
+
+  const hasActiveFilters = laneFilter !== 'all' || statusFilter !== 'all' || Boolean(search.trim());
 
   const handleCancel = useCallback(
     (item: AdminPaymentRequestRow) => {
@@ -168,8 +203,10 @@ export default function AdminPaymentsScreen() {
   );
 
   const sections = useMemo(() => {
+    if (filtered.length === 0) return [];
+
     const lanesToShow = laneFilter === 'all' ? ADMIN_PAYMENT_LANES : [laneFilter];
-    return lanesToShow
+    const built = lanesToShow
       .map((lane) => {
         const data = filtered.filter((r) => adminPaymentLaneForRow(r) === lane);
         if (data.length === 0) return null;
@@ -196,14 +233,30 @@ export default function AdminPaymentsScreen() {
       pendingCount: number;
       currency: string;
     }[];
-  }, [filtered, laneFilter, laneSummaries]);
+
+    if (built.length > 0) return built;
+
+    const fallbackLane = adminPaymentLaneForRow(filtered[0]);
+    return [
+      {
+        key: fallbackLane,
+        title: 'Ödemeler',
+        subtitle: 'Filtrelenmiş kayıtlar',
+        data: filtered,
+        paidTotal: rowsForStats.filter((r) => r.status === 'paid').reduce((s, r) => s + Number(r.amount), 0),
+        paidCount: rowsForStats.filter((r) => r.status === 'paid').length,
+        pendingCount: rowsForStats.filter((r) => r.status === 'pending').length,
+        currency: filtered[0]?.currency ?? 'try',
+      },
+    ];
+  }, [filtered, laneFilter, laneSummaries, rowsForStats]);
 
   const totalPaidToday = useMemo(() => {
     const today = new Date().toDateString();
-    return visibleRows
+    return rowsForStats
       .filter((r) => r.status === 'paid' && r.paid_at && new Date(r.paid_at).toDateString() === today)
       .reduce((s, r) => s + Number(r.amount), 0);
-  }, [visibleRows]);
+  }, [rowsForStats]);
 
   const handleAccept = (item: AdminPaymentRequestRow) => {
     Alert.alert('Ödeme kabul et', 'Stripe ödemesi doğrulanacak. Devam?', [
@@ -301,14 +354,16 @@ export default function AdminPaymentsScreen() {
                 <Text style={styles.heroStatLbl}>Bugün tahsil</Text>
               </View>
               <View style={styles.heroStat}>
-                <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'paid').length}</Text>
+                <Text style={styles.heroStatVal}>{rowsForStats.filter((r) => r.status === 'paid').length}</Text>
                 <Text style={styles.heroStatLbl}>Toplam ödenen</Text>
               </View>
               <View style={styles.heroStat}>
-                <Text style={styles.heroStatVal}>{visibleRows.filter((r) => r.status === 'pending').length}</Text>
+                <Text style={styles.heroStatVal}>{rowsForStats.filter((r) => r.status === 'pending').length}</Text>
                 <Text style={styles.heroStatLbl}>Bekleyen</Text>
               </View>
             </View>
+
+            {loadError ? <Text style={styles.loadError}>{loadError}</Text> : null}
 
             <View style={styles.laneSummaryRow}>
               {ADMIN_PAYMENT_LANES.map((lane) => {
@@ -394,9 +449,11 @@ export default function AdminPaymentsScreen() {
         }
         ListEmptyComponent={
           <Text style={styles.empty}>
-            {search || laneFilter !== 'all' || statusFilter !== 'all'
-              ? 'Sonuç bulunamadı'
-              : 'Henüz ödeme kaydı yok'}
+            {loadError
+              ? loadError
+              : hasActiveFilters
+                ? `Filtreye uygun kayıt yok (${visibleRows.length} güncel ödeme listede)`
+                : 'Henüz ödeme kaydı yok'}
           </Text>
         }
         renderSectionHeader={({ section }) => (
@@ -519,4 +576,12 @@ const styles = StyleSheet.create({
   sectionSub: { fontSize: 12, color: theme.colors.textMuted, marginTop: 2 },
   sectionMeta: { fontSize: 11, fontWeight: '700', color: '#635bff', marginTop: 6 },
   empty: { textAlign: 'center', color: theme.colors.textMuted, paddingVertical: 40 },
+  loadError: {
+    textAlign: 'center',
+    color: '#b91c1c',
+    fontSize: 13,
+    marginBottom: 10,
+    paddingHorizontal: 8,
+    lineHeight: 18,
+  },
 });

@@ -27,6 +27,7 @@ import {
   complaintCategoryLabel,
   complaintsLocaleTag,
 } from '@/lib/complaintsI18n';
+import { runAfterUiReady } from '@/lib/runAfterUiReady';
 
 type ComplaintRow = {
   id: string;
@@ -124,7 +125,8 @@ export default function CustomerComplaintsTab() {
     const session = await getSessionOrRefreshOnce();
     const guest = await getOrCreateGuestForCurrentSession();
     if (!guest?.guest_id) {
-      setList([]);
+      // Misafir kimliği bir an için çözülemediyse (yavaş RPC / odak yenilemesi) mevcut
+      // listeyi SİLME; aksi halde liste kaybolur sonra geri gelir.
       return;
     }
     const guestIds = new Set<string>([guest.guest_id]);
@@ -144,8 +146,8 @@ export default function CustomerComplaintsTab() {
       .order('created_at', { ascending: false })
       .limit(30);
     if (error) {
+      // Geçici sorgu hatasında mevcut listeyi koru (boş ekran flaşını önle).
       setLoadError(error.message);
-      setList([]);
       return;
     }
     setList((data as ComplaintRow[]) ?? []);
@@ -159,7 +161,8 @@ export default function CustomerComplaintsTab() {
   useFocusEffect(
     useCallback(() => {
       if (!staffCheckComplete) return;
-      void load();
+      const task = runAfterUiReady(() => void load(), { androidOnly: false });
+      return () => task.cancel();
     }, [load, staffCheckComplete])
   );
 

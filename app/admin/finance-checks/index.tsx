@@ -7,22 +7,24 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
+import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { FinanceCheckCard, FinanceCheckSummaryStrip } from '@/components/financeChecks/FinanceCheckCard';
+import { CHECK_DIR_META } from '@/lib/financeCheckTheme';
 import {
-  fmtMoneyTry,
   CHECK_DIRECTION_LABELS,
   CHECK_STATUS_LABELS,
   type FinanceCheckDirection,
   type FinanceCheckStatus,
 } from '@/lib/finance';
-import { formatDateShort } from '@/lib/date';
+import { daysUntilDue } from '@/lib/financeCheckTheme';
 
 type Row = {
   id: string;
@@ -35,6 +37,8 @@ type Row = {
   created_at: string;
 };
 
+type DirFilter = 'all' | FinanceCheckDirection;
+
 export default function AdminFinanceChecksIndex() {
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
@@ -42,8 +46,9 @@ export default function AdminFinanceChecksIndex() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [dirFilter, setDirFilter] = useState<'all' | FinanceCheckDirection>('all');
+  const [dirFilter, setDirFilter] = useState<DirFilter>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | FinanceCheckStatus>('all');
+  const [statusSavingId, setStatusSavingId] = useState<string | null>(null);
 
   const orgFilter = useMemo(() => {
     if (me?.app_permissions?.super_admin === true || me?.role === 'admin') {
@@ -60,17 +65,13 @@ export default function AdminFinanceChecksIndex() {
       .order('due_date', { ascending: true, nullsFirst: false });
     if (orgFilter && orgFilter !== 'all') q = q.eq('organization_id', orgFilter);
     const { data, error } = await q;
-    if (error) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
-    setRows((data as Row[]) ?? []);
+    if (error) setRows([]);
+    else setRows((data as Row[]) ?? []);
     setLoading(false);
   }, [orgFilter]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const onRefresh = useCallback(() => {
@@ -78,24 +79,59 @@ export default function AdminFinanceChecksIndex() {
     load().finally(() => setRefreshing(false));
   }, [load]);
 
+  const setCheckStatus = useCallback(
+    async (checkId: string, next: FinanceCheckStatus) => {
+      if (!me?.id) return;
+      setStatusSavingId(checkId);
+      const { error } = await supabase
+        .from('finance_checks')
+        .update({ status: next, updated_by_staff_id: me.id })
+        .eq('id', checkId);
+      setStatusSavingId(null);
+      if (error) {
+        Alert.alert('Durum', error.message);
+        return;
+      }
+      setRows((prev) => prev.map((r) => (r.id === checkId ? { ...r, status: next } : r)));
+    },
+    [me?.id],
+  );
+
+  const openRows = useMemo(
+    () => rows.filter((r) => r.status !== 'paid' && r.status !== 'cancelled'),
+    [rows]
+  );
+
+  const summary = useMemo(() => {
+    let givenTotal = 0;
+    let givenCount = 0;
+    let receivedTotal = 0;
+    let receivedCount = 0;
+    let upcomingCount = 0;
+    let overdueCount = 0;
+    for (const r of openRows) {
+      const amt = Number(r.amount);
+      if (r.direction === 'given') {
+        givenTotal += amt;
+        givenCount += 1;
+      } else {
+        receivedTotal += amt;
+        receivedCount += 1;
+      }
+      const days = daysUntilDue(r.due_date);
+      if (days === null) continue;
+      if (days < 0) overdueCount += 1;
+      else if (days <= 7) upcomingCount += 1;
+    }
+    return { givenTotal, givenCount, receivedTotal, receivedCount, upcomingCount, overdueCount };
+  }, [openRows]);
+
   const filtered = useMemo(() => {
     let list = rows;
     if (dirFilter !== 'all') list = list.filter((r) => r.direction === dirFilter);
     if (statusFilter !== 'all') list = list.filter((r) => r.status === statusFilter);
     return list;
   }, [rows, dirFilter, statusFilter]);
-
-  const upcoming = useMemo(() => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    const in7 = new Date(t);
-    in7.setDate(in7.getDate() + 7);
-    return filtered.filter((r) => {
-      if (!r.due_date) return false;
-      const d = new Date(r.due_date);
-      return d >= t && d <= in7 && r.status !== 'paid' && r.status !== 'cancelled';
-    });
-  }, [filtered]);
 
   if (loading && !refreshing) {
     return (
@@ -115,30 +151,69 @@ export default function AdminFinanceChecksIndex() {
           canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
           ownOrganizationId={me?.organization_id}
         />
-        <TouchableOpacity
-          style={styles.newBtn}
-          onPress={() => router.push('/admin/finance-checks/new')}
-          activeOpacity={0.9}
-        >
-          <Ionicons name="add-circle-outline" size={22} color="#fff" />
-          <Text style={styles.newBtnText}>Yeni çek kaydı</Text>
-        </TouchableOpacity>
 
-        <View style={styles.chips}>
-          {(['all', 'given', 'received'] as const).map((k) => (
-            <TouchableOpacity
-              key={k}
-              onPress={() => setDirFilter(k === 'all' ? 'all' : k)}
-              style={[styles.chip, (k === 'all' ? dirFilter === 'all' : dirFilter === k) && styles.chipOn]}
-            >
-              <Text style={[styles.chipText, (k === 'all' ? dirFilter === 'all' : dirFilter === k) && styles.chipTextOn]}>
-                {k === 'all' ? 'Tümü' : CHECK_DIRECTION_LABELS[k]}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <FinanceCheckSummaryStrip {...summary} />
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={styles.newBtn}
+            onPress={() => router.push('/admin/finance-checks/new')}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="add" size={20} color="#fff" />
+            <Text style={styles.newBtnText}>Yeni çek</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.notifyBtn}
+            onPress={() => router.push('/admin/finance-checks/settings')}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="notifications-outline" size={20} color={adminTheme.colors.accent} />
+            <Text style={styles.notifyBtnText}>Bildirim</Text>
+          </TouchableOpacity>
         </View>
 
-        <Text style={styles.filterLabel}>Duruma göre</Text>
+        <View style={styles.dirTabs}>
+          {(
+            [
+              { key: 'all' as const, label: 'Tümü', icon: 'layers-outline' as const },
+              { key: 'received' as const, label: CHECK_DIRECTION_LABELS.received, icon: CHECK_DIR_META.received.icon },
+              { key: 'given' as const, label: CHECK_DIRECTION_LABELS.given, icon: CHECK_DIR_META.given.icon },
+            ] as const
+          ).map((tab) => {
+            const active = dirFilter === tab.key;
+            const meta = tab.key === 'all' ? null : CHECK_DIR_META[tab.key];
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                onPress={() => setDirFilter(tab.key)}
+                style={[
+                  styles.dirTab,
+                  active && styles.dirTabOn,
+                  active && meta ? { borderColor: meta.color, backgroundColor: meta.bg } : null,
+                ]}
+              >
+                <Ionicons
+                  name={tab.icon}
+                  size={16}
+                  color={active ? (meta?.color ?? adminTheme.colors.primary) : adminTheme.colors.textMuted}
+                />
+                <Text
+                  style={[
+                    styles.dirTabText,
+                    active && styles.dirTabTextOn,
+                    active && meta ? { color: meta.color } : null,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <Text style={styles.filterLabel}>Durum</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusChips}>
           <TouchableOpacity
             onPress={() => setStatusFilter('all')}
@@ -157,45 +232,39 @@ export default function AdminFinanceChecksIndex() {
                   {CHECK_STATUS_LABELS[st]}
                 </Text>
               </TouchableOpacity>
-            ),
+            )
           )}
         </ScrollView>
 
-        {upcoming.length > 0 ? (
-          <AdminCard style={styles.hintCard}>
-            <Text style={styles.hintTitle}>7 gün içinde vade</Text>
-            {upcoming.map((r) => (
-              <Text key={r.id} style={styles.hintLine} numberOfLines={1}>
-                {CHECK_DIRECTION_LABELS[r.direction]} · {r.counterparty_name} · {formatDateShort(r.due_date!)} ·{' '}
-                {fmtMoneyTry(Number(r.amount))}
-              </Text>
-            ))}
-          </AdminCard>
-        ) : null}
+        <Text style={styles.listTitle}>
+          {filtered.length} kayıt
+          {dirFilter !== 'all' ? ` · ${CHECK_DIRECTION_LABELS[dirFilter]}` : ''}
+        </Text>
 
         {filtered.length === 0 ? (
-          <Text style={styles.empty}>Kayıt yok. Yeni çek ekleyin.</Text>
+          <View style={styles.emptyBox}>
+            <Ionicons name="document-text-outline" size={40} color={adminTheme.colors.textMuted} />
+            <Text style={styles.empty}>Henüz çek kaydı yok.</Text>
+            <TouchableOpacity onPress={() => router.push('/admin/finance-checks/new')}>
+              <Text style={styles.emptyLink}>İlk çeki ekle →</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           filtered.map((r) => (
-            <TouchableOpacity
+            <FinanceCheckCard
               key={r.id}
-              onPress={() => router.push({ pathname: '/admin/finance-checks/[id]', params: { id: r.id } } as never)}
-              activeOpacity={0.85}
-            >
-              <AdminCard style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{CHECK_DIRECTION_LABELS[r.direction]}</Text>
-                  </View>
-                  <Text style={styles.amount}>{fmtMoneyTry(Number(r.amount))}</Text>
-                </View>
-                <Text style={styles.cp}>{r.counterparty_name}</Text>
-                <View style={styles.meta}>
-                  <Text style={styles.metaText}>{CHECK_STATUS_LABELS[r.status]}</Text>
-                  {r.due_date ? <Text style={styles.metaText}>Vade: {formatDateShort(r.due_date)}</Text> : null}
-                </View>
-              </AdminCard>
-            </TouchableOpacity>
+              id={r.id}
+              direction={r.direction}
+              counterpartyName={r.counterparty_name}
+              amount={Number(r.amount)}
+              status={r.status}
+              dueDate={r.due_date}
+              onPress={() =>
+                router.push({ pathname: '/admin/finance-checks/[id]', params: { id: r.id } } as never)
+              }
+              onStatusChange={(next) => void setCheckStatus(r.id, next)}
+              statusSaving={statusSavingId === r.id}
+            />
           ))
         )}
       </ScrollView>
@@ -203,62 +272,69 @@ export default function AdminFinanceChecksIndex() {
   );
 }
 
+const T = adminTheme;
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  container: { flex: 1, backgroundColor: T.colors.surfaceSecondary },
   content: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   newBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: adminTheme.colors.primary,
-    paddingVertical: 14,
+    gap: 6,
+    backgroundColor: T.colors.primary,
+    paddingVertical: 13,
     borderRadius: 12,
-    marginBottom: 12,
   },
-  newBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
+  newBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  notifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: T.colors.surface,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
   },
-  chipOn: { backgroundColor: adminTheme.colors.infoLight, borderColor: adminTheme.colors.info },
-  chipText: { fontSize: 13, color: adminTheme.colors.textSecondary },
-  chipTextOn: { color: adminTheme.colors.info, fontWeight: '600' },
-  filterLabel: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textSecondary, marginBottom: 8 },
-  statusChips: { flexDirection: 'row', gap: 8, paddingBottom: 4, marginBottom: 8 },
+  notifyBtnText: { color: T.colors.accent, fontSize: 14, fontWeight: '700' },
+  dirTabs: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  dirTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 12,
+    backgroundColor: T.colors.surface,
+    borderWidth: 1,
+    borderColor: T.colors.border,
+  },
+  dirTabOn: { borderColor: T.colors.primary, backgroundColor: T.colors.surfaceTertiary },
+  dirTabText: { fontSize: 11, fontWeight: '600', color: T.colors.textMuted, flexShrink: 1 },
+  dirTabTextOn: { color: T.colors.primary, fontWeight: '800' },
+  filterLabel: { fontSize: 12, fontWeight: '700', color: T.colors.textSecondary, marginBottom: 8 },
+  statusChips: { flexDirection: 'row', gap: 8, paddingBottom: 4, marginBottom: 10 },
   stChip: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: adminTheme.colors.surface,
+    backgroundColor: T.colors.surface,
     borderWidth: 1,
-    borderColor: adminTheme.colors.border,
+    borderColor: T.colors.border,
     maxWidth: 160,
   },
-  stChipOn: { backgroundColor: adminTheme.colors.primary, borderColor: adminTheme.colors.primary },
-  stChipText: { fontSize: 12, color: adminTheme.colors.textSecondary, fontWeight: '600' },
+  stChipOn: { backgroundColor: T.colors.primary, borderColor: T.colors.primary },
+  stChipText: { fontSize: 12, color: T.colors.textSecondary, fontWeight: '600' },
   stChipTextOn: { color: '#fff' },
-  hintCard: { marginBottom: 12, backgroundColor: adminTheme.colors.warningLight },
-  hintTitle: { fontWeight: '700', marginBottom: 6, color: adminTheme.colors.text },
-  hintLine: { fontSize: 13, color: adminTheme.colors.textSecondary, marginBottom: 4 },
-  empty: { textAlign: 'center', color: adminTheme.colors.textMuted, marginTop: 24 },
-  card: { marginBottom: 10 },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  badge: {
-    backgroundColor: adminTheme.colors.surfaceTertiary,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  badgeText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textSecondary },
-  amount: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
-  cp: { fontSize: 15, fontWeight: '600', color: adminTheme.colors.text, marginTop: 6 },
-  meta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  metaText: { fontSize: 12, color: adminTheme.colors.textMuted },
+  listTitle: { fontSize: 13, fontWeight: '700', color: T.colors.textMuted, marginBottom: 10 },
+  emptyBox: { alignItems: 'center', paddingVertical: 40, gap: 8 },
+  empty: { textAlign: 'center', color: T.colors.textMuted, fontSize: 15 },
+  emptyLink: { color: T.colors.info, fontWeight: '700', fontSize: 14 },
 });

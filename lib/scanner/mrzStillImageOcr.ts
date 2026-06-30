@@ -26,9 +26,13 @@ function blocksFromMlKitResult(result: MlKitResult, imageHeight: number): MrzOcr
   return out;
 }
 
-/** MRZ canlı tarama ile aynı ML Kit motoru — tek kare (galeri / kimlik çekim). */
+/** MRZ canlı tarama ile aynı ML Kit motoru. */
+const MLKIT_SCALE_FACTORS = [1.5, 2.0, 2.5] as const;
+const MLKIT_SCALE_FAST = 2.0;
+
 export async function ocrLinesFromMrzStillImage(
-  uri: string
+  uri: string,
+  opts?: { fast?: boolean }
 ): Promise<{ lines: string[]; engine: typeof MRZ_OCR_ENGINE_VISION_MLKIT } | null> {
   if (!isMrzVisionScannerAvailable()) return null;
   try {
@@ -42,14 +46,32 @@ export async function ocrLinesFromMrzStillImage(
       Image.getSize(uri, (width, h) => resolve({ width, height: h }), reject);
     });
 
-    const result = await processImageTextRecognition(uri, {
-      language: 'LATIN',
-      scaleFactor: 1.5,
-    });
-    const blocks = blocksFromMlKitResult(result, height);
-    const lines = linesFromMlKitOcr(result.text ?? '', blocks);
-    if (lines.length === 0) return null;
-    return { lines, engine: MRZ_OCR_ENGINE_VISION_MLKIT };
+    const scales = opts?.fast !== false ? [MLKIT_SCALE_FAST] : [...MLKIT_SCALE_FACTORS];
+    const lineSets: string[][] = [];
+    for (const scaleFactor of scales) {
+      try {
+        const result = await processImageTextRecognition(uri, {
+          language: 'LATIN',
+          scaleFactor,
+        });
+        const blocks = blocksFromMlKitResult(result, height);
+        const lines = linesFromMlKitOcr(result.text ?? '', blocks);
+        if (lines.length >= 2) lineSets.push(lines);
+      } catch {
+        /* sonraki ölçek */
+      }
+    }
+
+    if (lineSets.length === 0) {
+      const result = await processImageTextRecognition(uri, { language: 'LATIN', scaleFactor: 2 });
+      const blocks = blocksFromMlKitResult(result, height);
+      const lines = linesFromMlKitOcr(result.text ?? '', blocks);
+      if (lines.length === 0) return null;
+      return { lines, engine: MRZ_OCR_ENGINE_VISION_MLKIT };
+    }
+
+    const merged = [...new Set(lineSets.flatMap((s) => s.map((l) => l.trim()).filter(Boolean)))];
+    return { lines: merged, engine: MRZ_OCR_ENGINE_VISION_MLKIT };
   } catch {
     return null;
   }

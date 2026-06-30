@@ -16,7 +16,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getChatInputBottomPadding, getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 import { useAuthStore } from '@/stores/authStore';
@@ -30,9 +30,12 @@ import {
   staffMarkConversationRead,
   staffGetConversationHeader,
   staffDeleteMessage,
+  staffEditMessage,
   staffListMentionParticipants,
   subscribeToMessages,
   subscribeToTypingPresence,
+  staffVerifyGroupAccess,
+  subscribeToGroupAccess,
   uploadVoiceMessageForStaff,
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
@@ -91,6 +94,7 @@ import { ChatMentionComposer } from '@/components/ChatMentionComposer';
 import { ChatMentionText } from '@/components/ChatMentionText';
 import {
   notifyChatMessageWithMentions,
+  notifyChatMediaPush,
   syncMentionsWithText,
   parseMessageMentions,
   type ChatMention,
@@ -104,6 +108,13 @@ import { useChatVoiceQueueSync } from '@/hooks/chat/useChatVoiceQueueSync';
 import { sendStaffVoiceMessage } from '@/lib/chatVoiceSend';
 import { createOptimisticVoiceMessage } from '@/lib/chatOptimisticMessage';
 import { ChatGroupExportHeaderButtons } from '@/components/chat/ChatGroupExportHeaderButtons';
+import { ChatGroupInfoBar } from '@/components/chat/ChatGroupInfoBar';
+import { ChatGroupClosedBanner } from '@/components/chat/ChatGroupClosedBanner';
+import { chatSenderProfileHref } from '@/lib/chatSenderProfileHref';
+import { ChatMessageEditBar } from '@/components/chat/ChatMessageEditBar';
+import { isChatMessageEditable } from '@/lib/chatMessageEdit';
+
+const ALL_STAFF_GROUP_NAME = 'Tüm Çalışanlar';
 
 function MessageBubble({
   msg,
@@ -135,6 +146,8 @@ function MessageBubble({
   mediaPreloadReady?: boolean;
 }) {
   const { t } = useTranslation();
+  const router = useRouter();
+  const pathname = usePathname();
   const voiceUri = msg.message_type === 'voice' ? resolveVoiceMediaUrl(msg.media_url, msg.content) : null;
   const isVoice = msg.message_type === 'voice' && !!voiceUri;
   const isVideo = msg.message_type === 'video';
@@ -147,6 +160,14 @@ function MessageBubble({
   const initial = displayName.charAt(0).toUpperCase();
   const timeStr = isGroup ? formatChatMessageDateTime(msg.created_at) : formatChatMessageTime(msg.created_at);
   const textColor = getContrastTextColor(bubbleColor);
+  const senderProfileHref =
+    !isOwn && msg.sender_id
+      ? chatSenderProfileHref({
+          senderId: msg.sender_id,
+          senderType: msg.sender_type,
+          pathname,
+        })
+      : null;
   return (
     <Pressable
       style={[styles.bubbleWrap, isOwn ? styles.bubbleWrapOwn : styles.bubbleWrapOther]}
@@ -155,13 +176,20 @@ function MessageBubble({
     >
       {!isOwn && (
         <View style={styles.otherMeta}>
-          <View style={styles.avatarWrap}>
+          <Pressable
+            style={styles.avatarWrap}
+            onPress={senderProfileHref ? () => router.push(senderProfileHref as Href) : undefined}
+            disabled={!senderProfileHref}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={displayName}
+          >
             {msg.sender_avatar ? (
               <CachedImage uri={msg.sender_avatar} style={styles.avatarImg} contentFit="cover" />
             ) : (
               <View style={styles.avatarPlaceholder}><Text style={styles.avatarInitial}>{initial}</Text></View>
             )}
-          </View>
+          </Pressable>
           <View style={styles.otherContent}>
             {displayName ? <Text style={styles.senderName}>{displayName}</Text> : null}
             <View
@@ -216,15 +244,22 @@ function MessageBubble({
                   [{msg.message_type}] {msg.content || msg.media_url || '—'}
                 </Text>
               )}
-              <Text
-                style={[
-                  styles.bubbleTime,
-                  isMediaCard && styles.bubbleTimeVideo,
-                  !isMediaCard && { color: textColor, opacity: 0.9 },
-                ]}
-              >
-                {timeStr}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
+                {msg.is_edited ? (
+                  <Text style={[styles.bubbleTime, { fontStyle: 'italic', fontSize: 10 }]}>
+                    {t('chatMessageEdited')}
+                  </Text>
+                ) : null}
+                <Text
+                  style={[
+                    styles.bubbleTime,
+                    isMediaCard && styles.bubbleTimeVideo,
+                    !isMediaCard && { color: textColor, opacity: 0.9 },
+                  ]}
+                >
+                  {timeStr}
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -284,31 +319,45 @@ function MessageBubble({
               [{msg.message_type}] {msg.content || msg.media_url || '—'}
             </Text>
           )}
-          <Text
-            style={[
-              styles.bubbleTime,
-              isMediaCard && styles.bubbleTimeVideo,
-              !isMediaCard && { color: textColor, opacity: 0.9 },
-            ]}
-          >
-            {timeStr}
-            {msg.is_read ? ' ✓✓' : ' ✓'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, gap: 4 }}>
+            {msg.is_edited ? (
+              <Text style={[styles.bubbleTime, { fontStyle: 'italic', fontSize: 10, opacity: 0.9 }]}>
+                {t('chatMessageEdited')}
+              </Text>
+            ) : null}
+            <Text
+              style={[
+                styles.bubbleTime,
+                isMediaCard && styles.bubbleTimeVideo,
+                !isMediaCard && { color: textColor, opacity: 0.9 },
+              ]}
+            >
+              {timeStr}
+              {msg.is_read ? ' ✓✓' : ' ✓'}
+            </Text>
+          </View>
         </View>
       )}
     </Pressable>
   );
 }
 
+/** Oturum içi bellek cache'i: aynı sohbete tekrar girince boş ekran flaşını önler. */
+const adminChatMemoryCache: Record<string, Message[]> = {};
+
 export default function AdminChatScreen() {
   const { t } = useTranslation();
   const { id: conversationId } = useLocalSearchParams<{ id: string }>();
   const { staff } = useAuthStore();
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const seed = typeof conversationId === 'string' ? adminChatMemoryCache[conversationId] : undefined;
+    return seed?.length ? seed : [];
+  });
   const [conversationType, setConversationType] = useState<string>('direct');
   const [conversationName, setConversationName] = useState<string>('');
   const [conversationAvatar, setConversationAvatar] = useState<string | null>(null);
+  const [isGroupClosed, setIsGroupClosed] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -324,11 +373,13 @@ export default function AdminChatScreen() {
   const [showBubbleColorModal, setShowBubbleColorModal] = useState(false);
   const listRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
+  const groupAccessSubRef = useRef<ReturnType<typeof subscribeToGroupAccess> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const [pendingMentions, setPendingMentions] = useState<ChatMention[]>([]);
   const [mentionParticipants, setMentionParticipants] = useState<ChatMentionParticipant[]>([]);
+  const [editTarget, setEditTarget] = useState<Message | null>(null);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { myBubbleColor, setMyBubbleColor, loadStored: loadBubbleStore } = useMessagingBubbleStore();
   const chatHasVideosEarly = useMemo(
@@ -345,12 +396,28 @@ export default function AdminChatScreen() {
     Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + inputRowExtra + bottomInset : 0;
 
   useEffect(() => {
-    setMessages([]);
-    setLoading(true);
+    setEditTarget(null);
+    // Aynı sohbete tekrar girişte cache'ten anında doldur; yoksa boşalt + yükleniyor.
+    const cached = conversationId ? adminChatMemoryCache[conversationId] : undefined;
+    if (cached?.length) {
+      setMessages(cached);
+      setLoading(false);
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
   }, [conversationId]);
+
+  // Mesaj listesi değiştikçe bellek cache'ini güncelle (kalıcı değil, oturum içi).
+  useEffect(() => {
+    if (conversationId && messages.length > 0) {
+      adminChatMemoryCache[conversationId] = capChatMessageList(messages);
+    }
+  }, [conversationId, messages]);
 
   const isAdmin = staff?.role === 'admin';
   const isGroup = conversationType === 'group';
+  const isAllStaffGroup = (conversationName || '').trim() === ALL_STAFF_GROUP_NAME;
   const chatListItems = useMemo(() => buildChatListDisplayItems(messages), [messages]);
   const invertedChatListItems = useInvertedChatListItems(chatListItems);
   useChatVoiceQueueSync(messages, invertedChatListItems, listRef);
@@ -405,6 +472,19 @@ export default function AdminChatScreen() {
 
   useChatScreenshotContext(Boolean(staff?.id && conversationId && !loading), screenshotChatContext);
 
+  const openGroupMembers = useCallback(() => {
+    if (!conversationId || !isGroup) return;
+    router.push({
+      pathname: '/admin/messages/group-members',
+      params: {
+        conversationId,
+        groupName: conversationName,
+        groupAvatar: conversationAvatar ?? '',
+        isAllStaff: isAllStaffGroup ? '1' : '0',
+      },
+    });
+  }, [conversationId, isGroup, conversationName, conversationAvatar, isAllStaffGroup, router]);
+
   const navigation = useNavigation();
   useEffect(() => {
     loadBubbleStore();
@@ -413,12 +493,13 @@ export default function AdminChatScreen() {
     if (!conversationId) return;
     supabase
       .from('conversations')
-      .select('type, name, avatar')
+      .select('type, name, avatar, closed_at')
       .eq('id', conversationId)
       .single()
       .then(async ({ data }) => {
-        const row = data as { type: string; name: string | null; avatar: string | null } | null;
+        const row = data as { type: string; name: string | null; avatar: string | null; closed_at?: string | null } | null;
         setConversationType(row?.type ?? 'direct');
+        setIsGroupClosed(Boolean(row?.closed_at));
         if (staff?.id) {
           const header = await staffGetConversationHeader(conversationId, staff.id);
           setConversationName(header.name);
@@ -428,13 +509,48 @@ export default function AdminChatScreen() {
           setConversationAvatar(row?.avatar ?? null);
         }
       });
-  }, [conversationId, staff?.id]);
+  }, [conversationId, staff?.id, t]);
+
+  const handleGroupAccessRevoked = useCallback(() => {
+    Alert.alert(t('groupAccessRevokedTitle'), t('groupAccessRevokedMessage'), [
+      { text: t('ok'), onPress: () => router.back() },
+    ]);
+  }, [router, t]);
+
+  useEffect(() => {
+    if (!staff?.id || !conversationId || conversationType !== 'group') return;
+    void staffVerifyGroupAccess(conversationId, staff.id).then(({ ok }) => {
+      if (!ok) handleGroupAccessRevoked();
+    });
+  }, [staff?.id, conversationId, conversationType, handleGroupAccessRevoked]);
+
+  useEffect(() => {
+    if (!staff?.id || !conversationId || conversationType !== 'group') {
+      groupAccessSubRef.current?.unsubscribe?.();
+      groupAccessSubRef.current = null;
+      return;
+    }
+    groupAccessSubRef.current = subscribeToGroupAccess(
+      conversationId,
+      staff.id,
+      handleGroupAccessRevoked,
+      staff.role === 'admin' ? { onGroupClosed: () => setIsGroupClosed(true) } : undefined
+    );
+    return () => {
+      groupAccessSubRef.current?.unsubscribe?.();
+      groupAccessSubRef.current = null;
+    };
+  }, [staff?.id, staff?.role, conversationId, conversationType, handleGroupAccessRevoked]);
 
   useEffect(() => {
     const headerTitleMaxWidth = Math.max(120, Math.min(280, winWidth - 120));
     navigation.setOptions({
       headerTitle: () => (
-        <View style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}>
+        <Pressable
+          onPress={isGroup ? openGroupMembers : undefined}
+          disabled={!isGroup}
+          style={[styles.headerTitleRow, { maxWidth: headerTitleMaxWidth }]}
+        >
           {conversationAvatar ? (
             <CachedImage uri={conversationAvatar} style={styles.headerAvatar} contentFit="cover" />
           ) : (
@@ -443,10 +559,22 @@ export default function AdminChatScreen() {
             </View>
           )}
           <Text style={styles.headerTitleText} numberOfLines={1}>{conversationName || t('screenChat')}</Text>
-        </View>
+          {isGroup ? (
+            <Ionicons name="chevron-forward" size={16} color={MESSAGING_COLORS.textSecondary} style={{ marginLeft: 2 }} />
+          ) : null}
+        </Pressable>
       ),
       headerRight: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {isGroup ? (
+            <TouchableOpacity
+              onPress={openGroupMembers}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{ marginRight: 10 }}
+            >
+              <Ionicons name="people-outline" size={22} color={MESSAGING_COLORS.primary} />
+            </TouchableOpacity>
+          ) : null}
           {canEditGroup && staff?.id && conversationId ? (
             <ChatGroupExportHeaderButtons
               conversationId={conversationId}
@@ -461,7 +589,7 @@ export default function AdminChatScreen() {
         </View>
       ),
     });
-  }, [navigation, conversationName, conversationAvatar, t, winWidth, canEditGroup, staff?.id, conversationId]);
+  }, [navigation, conversationName, conversationAvatar, t, winWidth, canEditGroup, staff?.id, conversationId, isGroup, openGroupMembers]);
 
   const openGroupSettings = () => {
     setEditGroupName(conversationName);
@@ -531,9 +659,54 @@ export default function AdminChatScreen() {
     };
   }, []);
 
+  const beginMessageEdit = (msg: Message) => {
+    if (!staff || !isChatMessageEditable(msg, { ownSenderId: staff.id })) return;
+    setEditTarget(msg);
+    setInput(msg.content ?? '');
+    setPendingMentions(parseMessageMentions(msg.mentions));
+  };
+
+  const cancelMessageEdit = () => {
+    setEditTarget(null);
+    setInput('');
+    setPendingMentions([]);
+  };
+
+  const saveMessageEdit = async (text: string) => {
+    const msg = editTarget;
+    if (!msg || !staff || !conversationId) return;
+    const mentions = syncMentionsWithText(text, pendingMentions);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      Alert.alert(t('error'), t('chatMessageEditEmpty'));
+      return;
+    }
+    const previous = msg;
+    setEditTarget(null);
+    setInput('');
+    setPendingMentions([]);
+    const optimistic: Message = {
+      ...msg,
+      content: trimmed,
+      mentions: mentions.length ? mentions : [],
+      is_edited: true,
+      edited_at: new Date().toISOString(),
+    };
+    setMessages((prev) => replaceChatMessage(prev, optimistic));
+    const { ok, error } = await staffEditMessage(conversationId, msg.id, trimmed, mentions);
+    if (!ok) {
+      setMessages((prev) => replaceChatMessage(prev, previous));
+      Alert.alert(t('error'), error ?? t('chatMessageEditFailed'));
+    }
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || !staff || !conversationId || sending) return;
+    if (editTarget) {
+      await saveMessageEdit(text);
+      return;
+    }
     const mentions = syncMentionsWithText(text, pendingMentions);
     setSending(true);
     setInput('');
@@ -592,17 +765,15 @@ export default function AdminChatScreen() {
       if (sent) {
         setMessages((prev) => upsertIncomingChatMessage(prev, sent, { ownSenderId: staff.id }));
         const convId = nextConversationId ?? conversationId;
-        const preview = text.slice(0, 80) + (text.length > 80 ? '…' : '');
         void notifyChatMessageWithMentions({
           conversationId: convId,
           conversationTitle: conversationName || t('notifNewMessage'),
           messageText: text,
           mentions,
           senderDisplayName: staff.full_name || staff.email || '',
+          isGroup,
           excludeStaffId: staff.id,
           chatUrl: `/admin/messages/chat/${convId}`,
-          mentionPushBody: t('chatMentionPushBody', { name: staff.full_name || staff.email, preview }),
-          defaultPushBody: preview,
         });
         if (nextConversationId !== conversationId) {
           router.replace({ pathname: '/admin/messages/chat/[id]', params: { id: nextConversationId } });
@@ -640,14 +811,15 @@ export default function AdminChatScreen() {
       };
       const { conversationId: convId, sentMessages, failed } = await sendChatImageUris(actor, uris, t('photo'));
       if (sentMessages.length) {
-        const { notifyConversationRecipients } = await import('@/lib/notificationService');
-        notifyConversationRecipients({
+        void notifyChatMediaPush({
           conversationId: convId,
+          conversationTitle: conversationName,
+          senderDisplayName: staff.full_name || staff.email || '',
+          isGroup,
+          kind: 'photo',
           excludeStaffId: staff.id,
-          title: conversationName || t('notifNewMessage'),
-          body: t('staffChatPhotoSentBody'),
-          data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
-        }).catch(() => {});
+          chatUrl: `/admin/messages/chat/${convId}`,
+        });
         const list = await staffGetMessages(convId, 50, undefined, staff.id);
         setMessages(list);
         scrollChatListToLatest(listRef, true);
@@ -681,14 +853,15 @@ export default function AdminChatScreen() {
       };
       const { sentMessages, failed, conversationId: convId } = await sendChatImageUris(actor, [uri], t('photo'));
       if (sentMessages.length) {
-        const { notifyConversationRecipients } = await import('@/lib/notificationService');
-        notifyConversationRecipients({
+        void notifyChatMediaPush({
           conversationId: convId,
+          conversationTitle: conversationName,
+          senderDisplayName: staff.full_name || staff.email || '',
+          isGroup,
+          kind: 'photo',
           excludeStaffId: staff.id,
-          title: conversationName || t('notifNewMessage'),
-          body: t('staffChatPhotoSentBody'),
-          data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
-        }).catch(() => {});
+          chatUrl: `/admin/messages/chat/${convId}`,
+        });
         const list = await staffGetMessages(convId, 50, undefined, staff.id);
         setMessages(list);
         scrollChatListToLatest(listRef, true);
@@ -742,15 +915,15 @@ export default function AdminChatScreen() {
     const handlers = createSessionChatVideoHandlers(conversationId, actor, {
       setMessages,
       onBatchReady: ({ conversationId: convId }) => {
-        void import('@/lib/notificationService').then(({ notifyConversationRecipients }) =>
-          notifyConversationRecipients({
-            conversationId: convId,
-            excludeStaffId: staff.id,
-            title: conversationName || t('notifNewMessage'),
-            body: t('staffChatVideoSentBody'),
-            data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
-          })
-        );
+        void notifyChatMediaPush({
+          conversationId: convId,
+          conversationTitle: conversationName,
+          senderDisplayName: staff.full_name || staff.email || '',
+          isGroup,
+          kind: 'video',
+          excludeStaffId: staff.id,
+          chatUrl: `/admin/messages/chat/${convId}`,
+        });
         scrollChatListToLatest(listRef, true);
       },
       onBatchComplete: ({ failed, lastError }) => {
@@ -833,18 +1006,18 @@ export default function AdminChatScreen() {
         )
       );
       const convId = cid ?? conversationId;
-      void import('@/lib/notificationService').then(({ notifyConversationRecipients }) =>
-        notifyConversationRecipients({
-          conversationId: convId,
-          excludeStaffId: staff.id,
-          title: conversationName || t('notifNewMessage'),
-          body: t('staffChatVoiceSentBody'),
-          data: { conversationId: convId, url: `/admin/messages/chat/${convId}` },
-        })
-      );
+      void notifyChatMediaPush({
+        conversationId: convId,
+        conversationTitle: conversationName,
+        senderDisplayName: staff.full_name || staff.email || '',
+        isGroup,
+        kind: 'voice',
+        excludeStaffId: staff.id,
+        chatUrl: `/admin/messages/chat/${convId}`,
+      });
       scrollChatListToLatest(listRef, true);
     },
-    [staff, conversationId, sending, t, conversationName]
+    [staff, conversationId, sending, t, conversationName, isGroup]
   );
 
   const preUploadVoice = useCallback((uri: string) => uploadVoiceMessageForStaff(uri), []);
@@ -871,22 +1044,29 @@ export default function AdminChatScreen() {
     );
   };
 
-  const handleDeleteMessage = (msg: Message) => {
+  const deleteOwnMessage = async (msg: Message) => {
     if (!conversationId) return;
-    Alert.alert(t('deleteMessageTitle'), t('deleteMessageConfirm'), [
-      { text: t('cancel'), style: 'cancel' },
+    const { error } = await staffDeleteMessage(conversationId, msg.id);
+    if (error) {
+      Alert.alert(t('error'), typeof error === 'string' ? error : String(error));
+      return;
+    }
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+  };
+
+  const handleDeleteMessage = (msg: Message) => {
+    if (!staff || msg.sender_id !== staff.id) return;
+    const editable = isChatMessageEditable(msg, { ownSenderId: staff.id });
+    Alert.alert(t('chatMessageActionTitle'), undefined, [
+      ...(editable
+        ? [{ text: t('staffChatActionEdit'), onPress: () => beginMessageEdit(msg) }]
+        : []),
       {
         text: t('delete'),
         style: 'destructive',
-        onPress: async () => {
-          const { error } = await staffDeleteMessage(conversationId, msg.id);
-          if (error) {
-            Alert.alert(t('error'), typeof error === 'string' ? error : String(error));
-            return;
-          }
-          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
-        },
+        onPress: () => void deleteOwnMessage(msg),
       },
+      { text: t('cancel'), style: 'cancel' },
     ]);
   };
 
@@ -972,6 +1152,17 @@ export default function AdminChatScreen() {
         keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
         contentContainerStyle={[CHAT_LIST_INVERTED_CONTENT_STYLE, styles.listContent]}
         {...CHAT_FLAT_LIST_PROPS}
+        ListFooterComponent={
+          isGroup ? (
+            <>
+              {isGroupClosed && isAdmin ? <ChatGroupClosedBanner /> : null}
+              <ChatGroupInfoBar
+                memberCount={mentionParticipants.length}
+                onPress={openGroupMembers}
+              />
+            </>
+          ) : null
+        }
         ListHeaderComponent={
           canEditGroup ? (
             <TouchableOpacity
@@ -1049,6 +1240,7 @@ export default function AdminChatScreen() {
         </View>
       ) : null}
       <ChatVideoBatchBar states={videoUploads} />
+      {editTarget ? <ChatMessageEditBar message={editTarget} onClear={cancelMessageEdit} /> : null}
       <View style={[styles.inputRow, { paddingBottom: chatInputBottomPad }]}>
         <TouchableOpacity
           style={styles.mediaBtn}
@@ -1142,6 +1334,21 @@ export default function AdminChatScreen() {
               placeholder={t('groupNameExamplePlaceholder')}
               placeholderTextColor={MESSAGING_COLORS.textSecondary}
             />
+            {conversationName !== ALL_STAFF_GROUP_NAME ? (
+              <Pressable
+                style={styles.manageMembersBtn}
+                onPress={() => {
+                  setShowGroupSettings(false);
+                  openGroupMembers();
+                }}
+              >
+                <Ionicons name="people-outline" size={20} color={MESSAGING_COLORS.primary} />
+                <Text style={styles.manageMembersText}>{t('groupMembersManage')}</Text>
+                <Ionicons name="chevron-forward" size={18} color={MESSAGING_COLORS.textSecondary} />
+              </Pressable>
+            ) : (
+              <Text style={styles.allStaffMembersHint}>{t('group_members_all_staff_locked')}</Text>
+            )}
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowGroupSettings(false)}>
                 <Text style={styles.modalCancelText}>{t('cancel')}</Text>
@@ -1287,16 +1494,14 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    minHeight: 40,
+    maxHeight: 100,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    maxHeight: 100,
     marginRight: 8,
-    color: '#1F2937',
-    justifyContent: 'center',
+    backgroundColor: '#f9fafb',
+    overflow: 'hidden',
   },
   inputVoice: {
     maxHeight: 56,
@@ -1305,10 +1510,14 @@ const styles = StyleSheet.create({
   mentionInput: {
     flex: 1,
     fontSize: 15,
-    maxHeight: 100,
     color: '#1F2937',
-    padding: 0,
-    margin: 0,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: 'transparent',
+    ...Platform.select({
+      android: { textAlignVertical: 'top', includeFontPadding: false },
+      default: {},
+    }),
   },
   sendBtn: {
     backgroundColor: MESSAGING_COLORS.primary,
@@ -1379,6 +1588,25 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     marginBottom: 20,
+  },
+  manageMembersBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  manageMembersText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: MESSAGING_COLORS.primary,
+  },
+  allStaffMembersHint: {
+    fontSize: 13,
+    color: MESSAGING_COLORS.textSecondary,
+    marginBottom: 12,
+    lineHeight: 18,
   },
   modalActions: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },
   modalCancelBtn: { paddingVertical: 10, paddingHorizontal: 16 },

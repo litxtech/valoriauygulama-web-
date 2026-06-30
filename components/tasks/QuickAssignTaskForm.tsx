@@ -46,7 +46,7 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
   const [loading, setLoading] = useState(() => !getCachedAssignStaff(true)?.length);
   const [saving, setSaving] = useState(false);
   const [staffSearch, setStaffSearch] = useState('');
-  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string | null>(null);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
   const [taskText, setTaskText] = useState('');
   const [roomNumber, setRoomNumber] = useState('');
   const [showMedia, setShowMedia] = useState(false);
@@ -120,7 +120,7 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
 
   const submit = useCallback(async () => {
     if (!staff?.id) return;
-    if (!selectedAssigneeId) {
+    if (!selectedAssigneeIds.length) {
       Alert.alert(t('error'), t('staffAssignPickStaff'));
       return;
     }
@@ -131,7 +131,7 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
     setSaving(true);
     try {
       const count = await submitQuickAssignTask({
-        assigneeStaffIds: [selectedAssigneeId],
+        assigneeStaffIds: selectedAssigneeIds,
         createdByStaffId: staff.id,
         taskText,
         roomNumber,
@@ -140,7 +140,7 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
       });
       setTaskText('');
       setRoomNumber('');
-      setSelectedAssigneeId(null);
+      setSelectedAssigneeIds([]);
       setPendingAttachments([]);
       setShowMedia(false);
       onSuccess?.(count);
@@ -151,7 +151,7 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
     }
   }, [
     staff?.id,
-    selectedAssigneeId,
+    selectedAssigneeIds,
     taskText,
     roomNumber,
     rooms,
@@ -178,7 +178,14 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
     >
       <Text style={styles.hint}>{t('quickAssign_hint')}</Text>
 
-      <Text style={styles.label}>{t('quickAssign_assigneeLabel')}</Text>
+      <View style={styles.labelRow}>
+        <Text style={styles.label}>{t('quickAssign_assigneeLabel')}</Text>
+        {selectedAssigneeIds.length > 0 ? (
+          <View style={styles.selectedBadge}>
+            <Text style={styles.selectedBadgeText}>{selectedAssigneeIds.length}</Text>
+          </View>
+        ) : null}
+      </View>
       <TextInput
         style={styles.search}
         value={staffSearch}
@@ -189,19 +196,30 @@ export function QuickAssignTaskForm({ onSuccess, onCancel, showCancel = false }:
       />
       <View style={styles.staffList}>
         {filteredStaff.slice(0, 24).map((s) => {
-          const selected = selectedAssigneeId === s.id;
+          const selected = selectedAssigneeIds.includes(s.id);
           return (
             <Pressable
               key={s.id}
               style={[styles.staffChip, selected && styles.staffChipSelected]}
-              onPress={() => setSelectedAssigneeId(s.id)}
+              onPress={() =>
+                setSelectedAssigneeIds((prev) =>
+                  prev.includes(s.id) ? prev.filter((id) => id !== s.id) : [...prev, s.id],
+                )
+              }
             >
-              <Text style={[styles.staffChipName, selected && styles.staffChipNameSelected]} numberOfLines={1}>
-                {s.full_name || '—'}
-              </Text>
-              <Text style={[styles.staffChipSub, selected && styles.staffChipSubSelected]} numberOfLines={1}>
-                {[staffRoleLabel(s.role), s.department].filter(Boolean).join(' · ') || '—'}
-              </Text>
+              <View style={styles.staffChipTextWrap}>
+                <Text style={[styles.staffChipName, selected && styles.staffChipNameSelected]} numberOfLines={1}>
+                  {s.full_name || '—'}
+                </Text>
+                <Text style={[styles.staffChipSub, selected && styles.staffChipSubSelected]} numberOfLines={1}>
+                  {[staffRoleLabel(s.role), s.department].filter(Boolean).join(' · ') || '—'}
+                </Text>
+              </View>
+              <Ionicons
+                name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                size={20}
+                color={selected ? theme.colors.primary : theme.colors.borderLight}
+              />
             </Pressable>
           );
         })}
@@ -307,6 +325,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  selectedBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  selectedBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   search: {
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
@@ -322,6 +353,9 @@ const styles = StyleSheet.create({
   staffChip: {
     minWidth: '47%',
     flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -329,6 +363,7 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.borderLight,
     backgroundColor: theme.colors.surface,
   },
+  staffChipTextWrap: { flex: 1 },
   staffChipSelected: {
     borderColor: theme.colors.primary,
     backgroundColor: theme.colors.primary + '14',

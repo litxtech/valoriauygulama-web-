@@ -137,6 +137,7 @@ export default function AccountingMovementsIndex() {
   const [periodPreset, setPeriodPreset] = useState<PeriodPresetId>('this_month');
   const [dateStart, setDateStart] = useState(defaults.start);
   const [dateEnd, setDateEnd] = useState(defaults.end);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const orgFilter = useMemo(() => {
     if (me?.app_permissions?.super_admin === true || me?.role === 'admin') {
@@ -156,12 +157,13 @@ export default function AccountingMovementsIndex() {
   );
 
   const load = useCallback(async () => {
-    if (!orgFilter || orgFilter === 'all') {
+    if (!orgFilter) {
       setRows([]);
       setLoading(false);
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await fetchPaymentsLedger({
         organizationId: orgFilter,
@@ -170,8 +172,9 @@ export default function AccountingMovementsIndex() {
         limit: 500,
       });
       setRows(data);
-    } catch {
+    } catch (e) {
       setRows([]);
+      setLoadError((e as Error).message || 'Kayıtlar yüklenemedi');
     }
     setLoading(false);
   }, [orgFilter, dateStart, dateEnd, periodPreset]);
@@ -213,6 +216,9 @@ export default function AccountingMovementsIndex() {
   }, [rows, kindFilter, scopeFilter, search]);
 
   const stats = useMemo(() => summarizePaymentsLedger(filtered), [filtered]);
+
+  const hasActiveFilters =
+    kindFilter !== 'all' || scopeFilter !== 'all' || Boolean(search.trim()) || periodPreset !== 'all_time';
 
   const grouped = useMemo(() => {
     const map = new Map<string, PaymentLedgerRow[]>();
@@ -282,7 +288,7 @@ export default function AccountingMovementsIndex() {
 
         <Text style={styles.periodLabel}>{periodLabel}</Text>
 
-        {orgFilter && orgFilter !== 'all' ? (
+        {orgFilter ? (
           <View style={styles.statsGrid}>
             <StatTile label="Kayıt" value={String(stats.count)} icon="layers-outline" />
             <StatTile
@@ -306,7 +312,7 @@ export default function AccountingMovementsIndex() {
           </View>
         ) : null}
 
-        {filtered.length > 0 && orgFilter && orgFilter !== 'all' ? (
+        {filtered.length > 0 && orgFilter ? (
           <AdminCard style={styles.exportCard}>
             <Text style={styles.exportTitle}>Rapor dışa aktar</Text>
             <Text style={styles.exportHint}>
@@ -413,12 +419,24 @@ export default function AccountingMovementsIndex() {
           <Ionicons name="chevron-forward" size={16} color={adminTheme.colors.textMuted} />
         </TouchableOpacity>
 
-        {(!orgFilter || orgFilter === 'all') && (
-          <Text style={styles.empty}>Liste ve rapor için tek işletme seçin.</Text>
+        {orgFilter === 'all' ? (
+          <Text style={styles.emptyHint}>
+            Tüm işletmeler seçili — kayıtlar birleştirilmiş listede gösterilir.
+          </Text>
+        ) : null}
+
+        {loadError ? <Text style={styles.loadError}>{loadError}</Text> : null}
+
+        {!orgFilter && (
+          <Text style={styles.empty}>Liste için işletme seçin.</Text>
         )}
 
-        {orgFilter && orgFilter !== 'all' && filtered.length === 0 && (
-          <Text style={styles.empty}>Bu dönemde kayıt yok. Gider, gelir veya hızlı ödeme ekleyin.</Text>
+        {orgFilter && filtered.length === 0 && !loadError && (
+          <Text style={styles.empty}>
+            {hasActiveFilters
+              ? `Filtreye uygun kayıt yok${rows.length > 0 ? ` (${rows.length} kayıt bu dönemde)` : ''}`
+              : 'Bu dönemde kayıt yok. Gider, gelir veya hızlı ödeme ekleyin.'}
+          </Text>
         )}
 
         {grouped.map(([dateKey, dayRows]) => (
@@ -614,6 +632,21 @@ const styles = StyleSheet.create({
   },
   otherLinkText: { flex: 1, fontSize: 12, color: adminTheme.colors.text, lineHeight: 17 },
   empty: { textAlign: 'center', color: adminTheme.colors.textMuted, marginTop: 24, marginBottom: 12 },
+  emptyHint: {
+    textAlign: 'center',
+    color: adminTheme.colors.textMuted,
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 17,
+  },
+  loadError: {
+    textAlign: 'center',
+    color: '#b91c1c',
+    fontSize: 13,
+    marginBottom: 12,
+    paddingHorizontal: 8,
+    lineHeight: 18,
+  },
   dayGroup: { marginBottom: 8 },
   dayHeader: {
     flexDirection: 'row',

@@ -23,7 +23,7 @@ export default function PoliciesConsentScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ next?: string; roomId?: string; roomNumber?: string }>();
-  const next = params.next === 'guest_contract' ? 'guest_contract' : params.next === 'guest_sign_one' ? 'guest_sign_one' : params.next === 'guest' ? 'guest' : params.next === 'staff' ? 'staff' : 'customer';
+  const next = params.next === 'guest_contract' ? 'guest_contract' : params.next === 'guest_sign_one' ? 'guest_sign_one' : params.next === 'guest' ? 'guest' : params.next === 'staff' ? 'staff' : params.next === 'partner' ? 'partner' : 'customer';
   const roomId = params.roomId as string | undefined;
   const roomNumber = params.roomNumber as string | undefined;
   const setPendingRoom = useCustomerRoomStore((s) => s.setPendingRoom);
@@ -63,6 +63,8 @@ export default function PoliciesConsentScreen() {
         }
       } else if (next === 'staff') {
         router.replace('/staff');
+      } else if (next === 'partner') {
+        router.replace('/partner');
       } else {
         if (roomId && roomNumber) {
           setPendingRoom(roomId, roomNumber);

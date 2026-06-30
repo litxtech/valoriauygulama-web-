@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { AdminOrganizationPicker } from '@/components/admin';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { CounterpartyListCard } from '@/components/admin/CounterpartyListCard';
+import { BankStatementImportButton } from '@/components/admin/BankStatementImportButton';
 import { fetchCounterpartyBalanceMap } from '@/lib/financeCounterpartyBalances';
 import type { FinanceCounterpartyType, FinanceLedgerScope } from '@/lib/financeLedger';
 import { LEDGER_SCOPE_LABELS } from '@/lib/financeLedger';
@@ -26,8 +27,11 @@ import {
   buildCounterpartyListReportHtml,
   counterpartyPartyTypeLabel,
   resolveFinanceReportFooter,
+  type FinanceReportKindFilter,
+  FINANCE_REPORT_KIND_LABELS,
 } from '@/lib/financeCounterpartyReport';
 import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
+import { fetchOpenDebtTotalsByCounterparty } from '@/lib/financeCounterpartyAgreements';
 import {
   accountingCanUseAllOrg,
   mergeCounterpartyBalancesForOrgs,
@@ -38,6 +42,11 @@ import {
   confirmDeactivateCounterparty,
   deactivateFinanceCounterparty,
 } from '@/lib/financeCounterpartyActions';
+import {
+  findCounterpartyMergeSuggestions,
+  mergeFinanceCounterparties,
+  type CounterpartyMergeSuggestion,
+} from '@/lib/financeCounterpartyMerge';
 
 type Row = {
   id: string;
@@ -81,12 +90,19 @@ export default function AccountingCounterpartiesIndex() {
   const [balances, setBalances] = useState<
     Map<string, { income: number; expense: number; net: number }>
   >(new Map());
-  const [loading, setLoading] = useState(true);
+  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, number>>(new Map());
+  const [rowsLoading, setRowsLoading] = useState(true);
+  const [balancesLoading, setBalancesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | FinanceCounterpartyType>('all');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [sortMode, setSortMode] = useState<SortMode>('name');
+  const [flowFilter, setFlowFilter] = useState<FinanceReportKindFilter>('all');
+  const [showTools, setShowTools] = useState(false);
+  const [dismissedMergeIds, setDismissedMergeIds] = useState<Set<string>>(new Set());
+  const [mergingId, setMergingId] = useState<string | null>(null);
+  const [mergingAll, setMergingAll] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [savingProj, setSavingProj] = useState(false);
 
@@ -96,64 +112,153 @@ export default function AccountingCounterpartiesIndex() {
     [me, selectedOrganizationId]
   );
   const pickerOrgId = orgScope && orgScope !== 'all' ? orgScope : me?.organization_id;
+  const balancesLoadGen = useRef(0);
 
-  const load = useCallback(async () => {
+  const loadRows = useCallback(async (): Promise<Row[]> => {
     if (!orgScope) {
       setRows([]);
       setProjects([]);
-      setBalances(new Map());
-      setLoading(false);
-      return;
+      setRowsLoading(false);
+      return [];
     }
-    setLoading(true);
+    setRowsLoading(true);
     let cpQ = supabase
       .from('finance_counterparties')
       .select('id, organization_id, name, party_type, party_type_label, phone, profile_image')
       .eq('is_active', true)
       .order('name');
-    let prQ = supabase.from('finance_projects').select('id, name').eq('is_active', true).order('name');
     if (orgScope !== 'all') {
       cpQ = cpQ.eq('organization_id', orgScope);
-      prQ = prQ.eq('organization_id', orgScope);
     }
-    const [cpRes, prRes] = await Promise.all([cpQ, prQ]);
+    const cpRes = await cpQ;
     const list = cpRes.error ? [] : ((cpRes.data as Row[]) ?? []);
     setRows(list);
-    setProjects(prRes.error ? [] : ((prRes.data as ProjRow[]) ?? []));
-    setLoading(false);
+    setRowsLoading(false);
+    return list;
+  }, [orgScope]);
 
-    const scope = scopeFilter === 'all' ? null : scopeFilter;
-    if (orgScope === 'all') {
-      mergeCounterpartyBalancesForOrgs(
-        list.map((r) => r.organization_id),
-        (oid) => fetchCounterpartyBalanceMap(oid, scope)
-      ).then(setBalances);
-    } else {
-      fetchCounterpartyBalanceMap(orgScope, scope).then(setBalances);
+  const loadProjects = useCallback(async () => {
+    if (!orgScope || orgScope === 'all') {
+      setProjects([]);
+      return;
     }
-  }, [orgScope, scopeFilter]);
+    const { data } = await supabase
+      .from('finance_projects')
+      .select('id, name')
+      .eq('organization_id', orgScope)
+      .eq('is_active', true)
+      .order('name');
+    setProjects((data as ProjRow[]) ?? []);
+  }, [orgScope]);
+
+  const loadBalances = useCallback(async (rowList?: Row[]) => {
+    if (!orgScope) {
+      setBalances(new Map());
+      return;
+    }
+    const source = rowList ?? rows;
+    const gen = ++balancesLoadGen.current;
+    setBalancesLoading(true);
+    const scope = scopeFilter === 'all' ? null : scopeFilter;
+    try {
+      let next: Map<string, { income: number; expense: number; net: number }>;
+      if (orgScope === 'all') {
+        const orgIds = [...new Set(source.map((r) => r.organization_id))];
+        if (!orgIds.length) {
+          next = new Map();
+        } else {
+          next = await mergeCounterpartyBalancesForOrgs(orgIds, (oid) =>
+            fetchCounterpartyBalanceMap(oid, scope)
+          );
+        }
+      } else {
+        next = await fetchCounterpartyBalanceMap(orgScope, scope);
+      }
+      if (gen !== balancesLoadGen.current) return;
+      setBalances(next);
+    } finally {
+      if (gen === balancesLoadGen.current) setBalancesLoading(false);
+    }
+  }, [orgScope, scopeFilter, rows]);
+
+  const loadDebtTotals = useCallback(async () => {
+    if (!orgScope) {
+      setOpenDebtTotals(new Map());
+      return;
+    }
+    const debtOrgScope = orgScope === 'all' ? 'all' : orgScope;
+    try {
+      setOpenDebtTotals(await fetchOpenDebtTotalsByCounterparty(debtOrgScope));
+    } catch {
+      setOpenDebtTotals(new Map());
+    }
+  }, [orgScope]);
+
+  const refreshAll = useCallback(async () => {
+    const list = await loadRows();
+    await Promise.all([
+      list.length ? loadBalances(list) : Promise.resolve(),
+      loadDebtTotals(),
+    ]);
+  }, [loadRows, loadBalances, loadDebtTotals]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    void loadRows();
+  }, [loadRows]);
+
+  useEffect(() => {
+    if (tab === 'projects') void loadProjects();
+  }, [tab, loadProjects]);
+
+  useEffect(() => {
+    if (!rows.length) {
+      setBalances(new Map());
+      return;
+    }
+    void loadBalances();
+  }, [loadBalances, rows.length]);
+
+  useEffect(() => {
+    if (!rows.length) return;
+    const timer = setTimeout(() => {
+      void loadDebtTotals();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [loadDebtTotals, rows.length]);
 
   const filtered = useMemo(() => {
     let list = rows;
     if (typeFilter !== 'all') list = list.filter((r) => r.party_type === typeFilter);
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((r) => r.name.toLowerCase().includes(q) || r.phone?.includes(q));
-    if (sortMode === 'paid_most') {
+    if (flowFilter === 'paid') {
+      list = list.filter((r) => (balances.get(r.id)?.expense ?? 0) >= 0.01);
+    } else if (flowFilter === 'received') {
+      list = list.filter((r) => (balances.get(r.id)?.income ?? 0) >= 0.01);
+    }
+    if (sortMode === 'paid_most' || flowFilter === 'paid') {
       list = [...list].sort((a, b) => {
         const ea = balances.get(a.id)?.expense ?? 0;
         const eb = balances.get(b.id)?.expense ?? 0;
         if (eb !== ea) return eb - ea;
         return a.name.localeCompare(b.name, 'tr');
       });
+    } else if (flowFilter === 'received') {
+      list = [...list].sort((a, b) => {
+        const ia = balances.get(a.id)?.income ?? 0;
+        const ib = balances.get(b.id)?.income ?? 0;
+        if (ib !== ia) return ib - ia;
+        return a.name.localeCompare(b.name, 'tr');
+      });
     } else {
       list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
     }
     return list;
-  }, [rows, typeFilter, search, sortMode, balances]);
+  }, [rows, typeFilter, search, sortMode, balances, flowFilter]);
+
+  const mergeSuggestions = useMemo(() => {
+    return findCounterpartyMergeSuggestions(rows, balances).filter((s) => !dismissedMergeIds.has(s.id));
+  }, [rows, balances, dismissedMergeIds]);
 
   const listReportRows = useMemo(() => {
     return filtered.map((r) => {
@@ -165,9 +270,10 @@ export default function AccountingCounterpartiesIndex() {
         income: b?.income ?? 0,
         expense: b?.expense ?? 0,
         net: b?.net ?? 0,
+        currentDebt: openDebtTotals.get(r.id) ?? 0,
       };
     });
-  }, [filtered, balances]);
+  }, [filtered, balances, openDebtTotals]);
 
   const listReportTotals = useMemo(() => {
     let grandIncome = 0;
@@ -204,7 +310,7 @@ export default function AccountingCounterpartiesIndex() {
     setSavingProj(false);
     if (!error) {
       setProjectName('');
-      load();
+      void loadProjects();
     }
   };
 
@@ -224,7 +330,79 @@ export default function AccountingCounterpartiesIndex() {
     });
   }, []);
 
-  if (loading && !refreshing) {
+  const executeMergeSuggestion = async (suggestion: CounterpartyMergeSuggestion): Promise<string | null> => {
+    const err = await mergeFinanceCounterparties({
+      keepId: suggestion.keepId,
+      mergeIds: suggestion.counterpartyIds,
+      canonicalName: suggestion.canonicalName,
+      organizationId: suggestion.organizationId,
+    });
+    if (!err) {
+      setDismissedMergeIds((prev) => new Set([...prev, suggestion.id]));
+    }
+    return err;
+  };
+
+  const applyMergeSuggestion = (suggestion: CounterpartyMergeSuggestion) => {
+    const mergeIds = suggestion.counterpartyIds.filter((id) => id !== suggestion.keepId);
+    Alert.alert(
+      'Carileri birleştir',
+      `${suggestion.names.join(' · ')}\n\nTek cari: ${suggestion.canonicalName}\n${mergeIds.length} kayıt birleştirilecek; hareketler korunur.`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Birleştir',
+          onPress: async () => {
+            setMergingId(suggestion.id);
+            const err = await executeMergeSuggestion(suggestion);
+            setMergingId(null);
+            if (err) {
+              Alert.alert('Hata', err);
+              return;
+            }
+            await refreshAll();
+          },
+        },
+      ]
+    );
+  };
+
+  const applyAllMergeSuggestions = () => {
+    if (!mergeSuggestions.length || mergingAll || mergingId) return;
+    const pending = [...mergeSuggestions];
+    Alert.alert(
+      'Tümünü birleştir',
+      `${pending.length} öneri uygulanacak, ${pending.reduce((n, s) => n + s.counterpartyIds.length - 1, 0)} cari kaydı birleştirilecek. Hareketler korunur.`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Tümünü birleştir',
+          onPress: async () => {
+            setMergingAll(true);
+            let lastErr: string | null = null;
+            for (const suggestion of pending) {
+              setMergingId(suggestion.id);
+              const err = await executeMergeSuggestion(suggestion);
+              if (err) {
+                lastErr = err;
+                break;
+              }
+            }
+            setMergingId(null);
+            setMergingAll(false);
+            await refreshAll();
+            if (lastErr) Alert.alert('Hata', lastErr);
+          },
+        },
+      ]
+    );
+  };
+
+  const dismissMergeSuggestion = (id: string) => {
+    setDismissedMergeIds((prev) => new Set([...prev, id]));
+  };
+
+  if (rowsLoading && rows.length === 0 && !refreshing) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={adminTheme.colors.accent} />
@@ -240,24 +418,49 @@ export default function AccountingCounterpartiesIndex() {
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().finally(() => setRefreshing(false)); }} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              refreshAll().finally(() => setRefreshing(false));
+            }}
+          />
         }
         keyboardShouldPersistTaps="handled"
       >
         <TouchableOpacity style={styles.backHub} onPress={() => router.push('/admin/accounting')} activeOpacity={0.8}>
-          <Ionicons name="calculator-outline" size={18} color={adminTheme.colors.primary} />
+          <Ionicons name="chevron-back" size={18} color={adminTheme.colors.primary} />
           <Text style={styles.backHubText}>Muhasebe</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>Kişi ödemeleri</Text>
-        <Text style={styles.subtitle}>
-          Usta, tedarikçi veya şahsi kişiler — kime ne ödediğiniz, kimden ne aldığınız. İsme dokunun, tüm hareketleri görün.
-        </Text>
+        <View style={styles.heroCard}>
+          <View style={styles.heroTop}>
+            <View style={styles.heroTitleBlock}>
+              <Text style={styles.title}>Kişi ödemeleri</Text>
+            </View>
+            <View style={styles.heroActions}>
+              <BankStatementImportButton variant="icon" />
+              <TouchableOpacity
+                style={styles.heroActionBtn}
+                onPress={() =>
+                  router.push({
+                    pathname: '/admin/accounting/counterparties/new',
+                    params: scopeFilter !== 'all' ? { scope: scopeFilter } : {},
+                  } as never)
+                }
+                hitSlop={8}
+              >
+                <Ionicons name="person-add" size={20} color="#0f766e" />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-        <AdminOrganizationPicker
-          canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
-          ownOrganizationId={me?.organization_id}
-        />
+          <AdminOrganizationPicker
+            compact
+            canUseAll={me?.app_permissions?.super_admin === true || me?.role === 'admin'}
+            ownOrganizationId={me?.organization_id}
+          />
+        </View>
 
         {needOrg ? (
           <View style={styles.hintBox}>
@@ -286,130 +489,251 @@ export default function AccountingCounterpartiesIndex() {
 
             {tab === 'contacts' ? (
               <>
-                {rows.length > 0 ? (
-                  <View style={styles.statsRow}>
-                    <View style={styles.statBox}>
-                      <Text style={styles.statNum}>{rows.length}</Text>
-                      <Text style={styles.statLbl}>Toplam cari</Text>
-                    </View>
-                    <View style={[styles.statBox, styles.statBoxPos]}>
-                      <Text style={[styles.statNum, styles.statNumPos]}>{listStats.withPositive}</Text>
-                      <Text style={styles.statLbl}>Size fazla gelen</Text>
-                    </View>
-                    <View style={[styles.statBox, styles.statBoxNeg]}>
-                      <Text style={[styles.statNum, styles.statNumNeg]}>{listStats.withNegative}</Text>
-                      <Text style={styles.statLbl}>Size fazla giden</Text>
-                    </View>
+                <View style={styles.searchRow}>
+                  <View style={styles.searchWrap}>
+                    <Ionicons name="search-outline" size={18} color={adminTheme.colors.textMuted} />
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="İsim veya telefon ara…"
+                      placeholderTextColor={adminTheme.colors.textMuted}
+                      value={search}
+                      onChangeText={setSearch}
+                    />
+                    {search ? (
+                      <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                        <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-                ) : null}
-
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scopeFilters}>
-                  {SCOPE_FILTERS.map((f) => (
-                    <TouchableOpacity
-                      key={f.key}
-                      style={[styles.scopeChip, scopeFilter === f.key && styles.scopeChipOn]}
-                      onPress={() => setScopeFilter(f.key)}
-                    >
-                      <Text style={[styles.scopeChipText, scopeFilter === f.key && styles.scopeChipTextOn]}>
-                        {f.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-
-                <View style={styles.legend}>
-                  <Text style={styles.legendText}>
-                    ↑ aldığınız · ↓ ödediğiniz · Dokunun → detay · Uzun basın → listeden kaldır
-                  </Text>
-                </View>
-
-                {filtered.length > 0 ? (
-                  <FinanceReportExportButtons
-                    fileName="kisi-odemeleri-liste"
-                    mailSubject={`Kişi ödemeleri özeti — ${scopeLabelForReport}`}
-                    shareDialogTitle="Kişi ödemeleri özeti"
-                    getHtml={(kind) =>
-                      buildCounterpartyListReportHtml(
-                        {
-                          scopeLabel: scopeLabelForReport,
-                          rows: listReportRows,
-                          grandIncome: listReportTotals.grandIncome,
-                          grandExpense: listReportTotals.grandExpense,
-                          footer: resolveFinanceReportFooter(
-                            footerOptsFromOrganization(organizations.find((o) => o.id === pickerOrgId))
-                          ),
-                        },
-                        kind
-                      )
-                    }
-                  />
-                ) : null}
-
-                <View style={styles.sortRow}>
                   <TouchableOpacity
-                    style={[styles.sortBtn, sortMode === 'name' && styles.sortBtnOn]}
-                    onPress={() => setSortMode('name')}
+                    style={[styles.toolsToggle, showTools && styles.toolsToggleOn]}
+                    onPress={() => setShowTools((v) => !v)}
+                    activeOpacity={0.85}
                   >
-                    <Text style={[styles.sortBtnText, sortMode === 'name' && styles.sortBtnTextOn]}>A-Z</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sortBtn, sortMode === 'paid_most' && styles.sortBtnOn]}
-                    onPress={() => setSortMode('paid_most')}
-                  >
-                    <Text style={[styles.sortBtnText, sortMode === 'paid_most' && styles.sortBtnTextOn]}>
-                      En çok ödenen
-                    </Text>
+                    <Ionicons name="options-outline" size={18} color={showTools ? '#fff' : '#0f766e'} />
                   </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity
-                  style={styles.addMain}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/admin/accounting/counterparties/new',
-                      params: scopeFilter !== 'all' ? { scope: scopeFilter } : {},
-                    } as never)
-                  }
-                  activeOpacity={0.9}
-                >
-                  <Ionicons name="person-add-outline" size={24} color="#fff" />
-                  <Text style={styles.addMainText}>Yeni kişi ekle (usta, tedarikçi…)</Text>
-                </TouchableOpacity>
-
-                <View style={styles.searchWrap}>
-                  <Ionicons name="search-outline" size={20} color={adminTheme.colors.textMuted} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="İsim veya telefon ara…"
-                    placeholderTextColor={adminTheme.colors.textMuted}
-                    value={search}
-                    onChangeText={setSearch}
-                  />
-                </View>
-
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeFilters}>
                   {TYPE_FILTERS.map((f) => (
                     <TouchableOpacity
                       key={f.key}
-                      style={[styles.filterChip, typeFilter === f.key && styles.filterChipOn]}
+                      style={[styles.typeChip, typeFilter === f.key && styles.typeChipOn]}
                       onPress={() => setTypeFilter(f.key)}
                     >
-                      <Text style={[styles.filterText, typeFilter === f.key && styles.filterTextOn]}>
+                      <Text style={[styles.typeChipText, typeFilter === f.key && styles.typeChipTextOn]}>
                         {f.label}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
+
+                {showTools ? (
+                  <>
+                    {rows.length > 0 ? (
+                      <View style={styles.statsRow}>
+                        <View style={styles.statPill}>
+                          <Text style={styles.statNum}>{rows.length}</Text>
+                          <Text style={styles.statLbl}>Cari</Text>
+                        </View>
+                        <View style={[styles.statPill, styles.statPillPos]}>
+                          <Text style={[styles.statNum, styles.statNumPos]}>{listStats.withPositive}</Text>
+                          <Text style={styles.statLbl}>Alacak</Text>
+                        </View>
+                        <View style={[styles.statPill, styles.statPillNeg]}>
+                          <Text style={[styles.statNum, styles.statNumNeg]}>{listStats.withNegative}</Text>
+                          <Text style={styles.statLbl}>Borç</Text>
+                        </View>
+                        <View style={styles.statPill}>
+                          <Text style={styles.statNum}>{filtered.length}</Text>
+                          <Text style={styles.statLbl}>Listede</Text>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.toolbar}>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                        {SCOPE_FILTERS.map((f) => (
+                          <TouchableOpacity
+                            key={f.key}
+                            style={[styles.toolChip, scopeFilter === f.key && styles.toolChipScopeOn]}
+                            onPress={() => setScopeFilter(f.key)}
+                          >
+                            <Text
+                              style={[
+                                styles.toolChipText,
+                                scopeFilter === f.key && styles.toolChipScopeTextOn,
+                              ]}
+                            >
+                              {f.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.chipRow}
+                      >
+                        {(['all', 'paid', 'received'] as const).map((k) => (
+                          <TouchableOpacity
+                            key={k}
+                            style={[styles.toolChip, flowFilter === k && styles.toolChipFlowOn]}
+                            onPress={() => setFlowFilter(k)}
+                          >
+                            <Text
+                              style={[
+                                styles.toolChipText,
+                                flowFilter === k && styles.toolChipFlowTextOn,
+                              ]}
+                            >
+                              {FINANCE_REPORT_KIND_LABELS[k]}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                        <View style={styles.chipDivider} />
+                        <TouchableOpacity
+                          style={[styles.toolChip, sortMode === 'name' && styles.toolChipSortOn]}
+                          onPress={() => setSortMode('name')}
+                        >
+                          <Text style={[styles.toolChipText, sortMode === 'name' && styles.toolChipSortTextOn]}>A-Z</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.toolChip, sortMode === 'paid_most' && styles.toolChipSortOn]}
+                          onPress={() => setSortMode('paid_most')}
+                        >
+                          <Text style={[styles.toolChipText, sortMode === 'paid_most' && styles.toolChipSortTextOn]}>
+                            En çok ödenen
+                          </Text>
+                        </TouchableOpacity>
+                      </ScrollView>
+                    </View>
+
+                    {filtered.length > 0 ? (
+                      <View style={styles.exportSection}>
+                        <View style={styles.exportSectionHead}>
+                          <Ionicons name="document-text-outline" size={16} color={adminTheme.colors.primary} />
+                          <Text style={styles.exportSectionTitle}>Rapor dışa aktar</Text>
+                          <Text style={styles.exportSectionHint}>PDF · yazıcı · mail · WhatsApp</Text>
+                        </View>
+                        <FinanceReportExportButtons
+                          compact
+                          embedded
+                          hideKindChips
+                          fileName="kisi-odemeleri-liste"
+                          mailSubject={`Kişi ödemeleri özeti — ${scopeLabelForReport}`}
+                          shareDialogTitle="Kişi ödemeleri özeti"
+                          kindFilter={flowFilter}
+                          onKindFilterChange={setFlowFilter}
+                          getHtml={(kind) =>
+                            buildCounterpartyListReportHtml(
+                              {
+                                scopeLabel: scopeLabelForReport,
+                                rows: listReportRows,
+                                grandIncome: listReportTotals.grandIncome,
+                                grandExpense: listReportTotals.grandExpense,
+                                footer: resolveFinanceReportFooter(
+                                  footerOptsFromOrganization(organizations.find((o) => o.id === pickerOrgId))
+                                ),
+                              },
+                              kind
+                            )
+                          }
+                        />
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {mergeSuggestions.length > 0 ? (
+                  <View style={styles.mergeCard}>
+                    <View style={styles.mergeHead}>
+                      <View style={styles.mergeHeadLeft}>
+                        <Ionicons name="git-merge-outline" size={16} color="#1d4ed8" />
+                        <Text style={styles.mergeTitle}>
+                          Birleştirme önerileri ({mergeSuggestions.length})
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.mergeAllBtn}
+                        onPress={applyAllMergeSuggestions}
+                        disabled={mergingAll || !!mergingId}
+                        activeOpacity={0.85}
+                      >
+                        {mergingAll ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <>
+                            <Ionicons name="layers-outline" size={14} color="#fff" />
+                            <Text style={styles.mergeAllBtnText}>Tümünü birleştir</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                    {mergeSuggestions.slice(0, 3).map((s) => (
+                      <View key={s.id} style={styles.mergeRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.mergeNames} numberOfLines={1}>
+                            {s.names.join(' · ')}
+                          </Text>
+                          <Text style={styles.mergeMeta}>
+                            {s.counterpartyIds.length} cari → {s.canonicalName}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.mergeBtn}
+                          onPress={() => applyMergeSuggestion(s)}
+                          disabled={mergingId === s.id || mergingAll}
+                        >
+                          {mergingId === s.id ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Text style={styles.mergeBtnText}>Birleştir</Text>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.mergeDismiss}
+                          onPress={() => dismissMergeSuggestion(s.id)}
+                          hitSlop={8}
+                          disabled={mergingAll}
+                        >
+                          <Ionicons name="close" size={16} color={adminTheme.colors.textMuted} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {mergeSuggestions.length > 3 ? (
+                      <Text style={styles.mergeMoreHint}>
+                        +{mergeSuggestions.length - 3} öneri daha · “Tümünü birleştir” hepsini uygular
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {filtered.length > 0 ? (
+                  <Text style={styles.listHead}>
+                    {filtered.length} kişi · uzun basarak listeden kaldırın
+                  </Text>
+                ) : null}
 
                 {filtered.length === 0 ? (
                   <View style={styles.emptyBox}>
                     <Ionicons name="people-outline" size={40} color={adminTheme.colors.border} />
-                    <Text style={styles.emptyTitle}>Henüz kişi yok</Text>
-                    <Text style={styles.emptySub}>Önce kişiyi ekleyin, sonra ödeme veya tahsilat kaydedin.</Text>
+                    <Text style={styles.emptyTitle}>
+                      {rows.length > 0 && flowFilter !== 'all'
+                        ? `${FINANCE_REPORT_KIND_LABELS[flowFilter]} kaydı yok`
+                        : 'Henüz kişi yok'}
+                    </Text>
+                    <Text style={styles.emptySub}>
+                      {rows.length > 0 && flowFilter !== 'all'
+                        ? 'Farklı bir filtre seçin veya yeni işlem ekleyin.'
+                        : 'Önce kişiyi ekleyin, sonra ödeme veya tahsilat kaydedin.'}
+                    </Text>
                   </View>
                 ) : (
                   filtered.map((r) => {
                     const bal = balances.get(r.id);
+                    const amountsPending = balancesLoading && !balances.has(r.id);
                     return (
                       <CounterpartyListCard
                         key={r.id}
@@ -422,6 +746,8 @@ export default function AccountingCounterpartiesIndex() {
                         income={bal?.income ?? 0}
                         expense={bal?.expense ?? 0}
                         net={bal?.net ?? 0}
+                        amountsPending={amountsPending}
+                        openDebt={openDebtTotals.get(r.id) ?? 0}
                         organizationName={
                           showOrgBadge
                             ? organizationNameById(r.organization_id, organizations)
@@ -482,13 +808,35 @@ export default function AccountingCounterpartiesIndex() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 16, paddingBottom: 40 },
+  container: { flex: 1, backgroundColor: '#f1f5f9' },
+  content: { padding: 14, paddingBottom: 32 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  backHub: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-  backHubText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.primary },
-  title: { fontSize: 22, fontWeight: '800', color: adminTheme.colors.text },
-  subtitle: { fontSize: 14, color: adminTheme.colors.textMuted, marginBottom: 16, lineHeight: 20 },
+  backHub: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 },
+  backHubText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.primary },
+  heroCard: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    gap: 8,
+  },
+  heroTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  heroTitleBlock: { flex: 1, minWidth: 0 },
+  heroActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  heroActionBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#99f6e4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
+  subtitle: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2, lineHeight: 17 },
   hintBox: {
     backgroundColor: adminTheme.colors.surface,
     padding: 16,
@@ -501,105 +849,185 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: adminTheme.colors.surface,
     borderRadius: 12,
-    padding: 4,
-    marginBottom: 16,
+    padding: 3,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
-  tabOn: { backgroundColor: adminTheme.colors.primary },
-  tabText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
+  tab: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
+  tabOn: { backgroundColor: '#0f766e' },
+  tabText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted },
   tabTextOn: { color: '#fff' },
-  addMain: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: adminTheme.colors.primary,
-    paddingVertical: 16,
-    borderRadius: 14,
-    marginBottom: 16,
-  },
-  addMainText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: adminTheme.colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-    marginBottom: 12,
-  },
-  searchInput: { flex: 1, fontSize: 16, color: adminTheme.colors.text, paddingVertical: 10 },
-  scopeFilters: { marginBottom: 12 },
-  scopeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-    backgroundColor: adminTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  scopeChipOn: { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
-  scopeChipText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted },
-  scopeChipTextOn: { color: '#fff' },
-  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  sortBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: adminTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  sortBtnOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
-  sortBtnText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
-  sortBtnTextOn: { color: '#fff' },
-  filters: { marginBottom: 14 },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-    backgroundColor: adminTheme.colors.surface,
-    borderWidth: 1,
-    borderColor: adminTheme.colors.border,
-  },
-  filterChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
-  filterText: { fontSize: 13, color: adminTheme.colors.text },
-  filterTextOn: { color: '#fff', fontWeight: '600' },
-  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  statBox: {
+  statsRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  statPill: {
     flex: 1,
     backgroundColor: adminTheme.colors.surface,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  statBoxPos: { borderColor: '#bbf7d0' },
-  statBoxNeg: { borderColor: '#fecaca' },
-  statNum: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.text },
+  statPillPos: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  statPillNeg: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  statNum: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text },
   statNumPos: { color: '#16a34a' },
   statNumNeg: { color: '#dc2626' },
-  statLbl: { fontSize: 10, color: adminTheme.colors.textMuted, marginTop: 4, textAlign: 'center' },
-  legend: {
-    backgroundColor: '#f8fafc',
+  statLbl: { fontSize: 9, fontWeight: '700', color: adminTheme.colors.textMuted, marginTop: 2 },
+  toolbar: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    gap: 8,
+  },
+  toolbarBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  exportSection: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 14,
     padding: 12,
-    borderRadius: 10,
-    marginBottom: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    gap: 10,
+  },
+  exportSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  exportSectionTitle: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text },
+  exportSectionHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: adminTheme.colors.textMuted,
+    marginLeft: 'auto' as const,
+  },
+  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 4 },
+  chipDivider: { width: 1, height: 20, backgroundColor: adminTheme.colors.border, marginHorizontal: 2 },
+  toolChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  legendText: { fontSize: 12, color: adminTheme.colors.textMuted, lineHeight: 17 },
-  emptyBox: { alignItems: 'center', paddingVertical: 40, gap: 8 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
-  emptySub: { fontSize: 14, color: adminTheme.colors.textMuted, textAlign: 'center' },
+  toolChipScopeOn: { backgroundColor: '#ede9fe', borderColor: '#a78bfa' },
+  toolChipFlowOn: { backgroundColor: '#ecfdf5', borderColor: '#0f766e' },
+  toolChipSortOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  toolChipText: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.textMuted },
+  toolChipScopeTextOn: { color: '#6d28d9' },
+  toolChipFlowTextOn: { color: '#0f766e' },
+  toolChipSortTextOn: { color: '#fff' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  searchWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: adminTheme.colors.text, paddingVertical: 9 },
+  toolsToggle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#99f6e4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolsToggleOn: { backgroundColor: '#0f766e', borderColor: '#0f766e' },
+  typeFilters: { marginBottom: 8 },
+  typeChip: {
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 6,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  typeChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  typeChipText: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
+  typeChipTextOn: { color: '#fff' },
+  listHead: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: adminTheme.colors.textMuted,
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  mergeCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  mergeHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 6,
+  },
+  mergeHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 },
+  mergeTitle: { fontSize: 12, fontWeight: '800', color: '#1d4ed8', flexShrink: 1 },
+  mergeAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#1d4ed8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  mergeAllBtnText: { fontSize: 11, fontWeight: '800', color: '#fff' },
+  mergeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#dbeafe',
+  },
+  mergeNames: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.text },
+  mergeMeta: { fontSize: 10, color: adminTheme.colors.textMuted, marginTop: 1 },
+  mergeBtn: {
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  mergeBtnText: { fontSize: 11, fontWeight: '800', color: '#fff' },
+  mergeDismiss: { padding: 2 },
+  mergeMoreHint: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#3b82f6',
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#dbeafe',
+  },
+  emptyBox: { alignItems: 'center', paddingVertical: 36, gap: 8 },
+  emptyTitle: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
+  emptySub: { fontSize: 13, color: adminTheme.colors.textMuted, textAlign: 'center', paddingHorizontal: 20 },
   projHint: { fontSize: 13, color: adminTheme.colors.textMuted, marginBottom: 12, lineHeight: 18 },
   projAddRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   projInput: {

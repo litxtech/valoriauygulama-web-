@@ -1,4 +1,5 @@
 import { invokeEdgeWithAuth } from '@/lib/invokeEdgeWithAuth';
+import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import { supabase } from '@/lib/supabase';
 
 export type HotelExtraCategory = 'amenity' | 'beverage' | 'minibar' | 'laundry' | 'other';
@@ -85,6 +86,8 @@ export async function fetchMyGuestExtraOrders(limit = 40): Promise<GuestExtraOrd
 export async function createGuestExtraStripePayment(
   items: GuestExtraCartLine[]
 ): Promise<GuestExtraPaymentResult> {
+  await getOrCreateGuestForCurrentSession();
+
   const { data, error } = await invokeEdgeWithAuth('create-guest-extra-payment', {
     items: items.map((i) => ({ catalog_id: i.catalogId, quantity: i.quantity })),
     lang: 'tr',

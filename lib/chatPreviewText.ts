@@ -50,16 +50,16 @@ export function inferMessageTypeFromPreview(preview: string | null | undefined):
 
 /** Yanıt önizlemesi (girdi çubuğu / alıntı şeridi). */
 export function formatReplyMessagePreview(messageType: string, content?: string | null): string {
-  if (messageType === 'text') return (content ?? '').trim().slice(0, 120);
+  if (messageType === 'text') return (content ?? '').trim();
   if (messageType === 'image') return i18n.t('staffReplyPhoto');
   if (messageType === 'video') return i18n.t('staffChatPreviewVideo');
   if (messageType === 'voice') return i18n.t('staffChatPreviewVoice');
   return i18n.t('staffChatPreviewMessage');
 }
 
-/** Alıntı şeridi — daha kısa ses etiketi. */
+/** Alıntı şeridi — balon içi; satır sınırı UI'da numberOfLines ile. */
 export function formatQuotedReplyPreview(messageType: string, content?: string | null): string {
-  if (messageType === 'text') return (content ?? '').trim().slice(0, 80);
+  if (messageType === 'text') return (content ?? '').trim();
   if (messageType === 'image') return i18n.t('staffReplyPhoto');
   if (messageType === 'video') return i18n.t('staffChatPreviewVideo');
   if (messageType === 'voice') return i18n.t('staffChatPreviewVoiceShort');

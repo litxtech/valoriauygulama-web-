@@ -6,6 +6,7 @@ import {
   FlatList,
   TouchableOpacity,
   StyleSheet,
+  Platform,
   type TextInputProps,
   type NativeSyntheticEvent,
   type TextInputSelectionChangeEventData,
@@ -133,6 +134,11 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     minWidth: 0,
+    backgroundColor: 'transparent',
+    ...Platform.select({
+      android: { textAlignVertical: 'top', includeFontPadding: false },
+      default: {},
+    }),
   },
   picker: {
     position: 'absolute',

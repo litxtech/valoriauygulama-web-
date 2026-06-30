@@ -25,6 +25,14 @@ const workletsCoreEntry = path.join(
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 
+// npm geçici @expo/.cli-* klasörleri silinince Metro ENOENT ile çökebiliyor (Windows).
+const expoCliTempBlock = /[\\/]node_modules[\\/]@expo[\\/]\.cli-[^\\/]+([\\/]|$)/;
+
+config.resolver.blockList = [
+  ...(Array.isArray(config.resolver.blockList) ? config.resolver.blockList : []),
+  expoCliTempBlock,
+];
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === '@react-native-google-signin/google-signin') {
     return { filePath: googleSigninModulePath, type: 'sourceFile' };

@@ -78,3 +78,26 @@ export function canLockMrzLiveScan(args: {
 export function isMrzPayload(rawMrz: string | null | undefined): boolean {
   return Boolean(rawMrz && String(rawMrz).trim().length > 0);
 }
+
+/**
+ * Kimlik çekim arka plan OCR — checksum doğrulanamasa bile anlamlı MRZ alanları varsa kabul.
+ */
+export function canUseKbsCaptureMrz(args: {
+  rawMrz: string | null;
+  parsed: ParsedDocument;
+}): boolean {
+  const { rawMrz, parsed } = args;
+  const raw = rawMrz?.trim() ?? '';
+  if (!raw) return false;
+  if (
+    parsed.warnings?.some((w) => w === 'MRZ parse failed' || w.includes('parse failed'))
+  ) {
+    return false;
+  }
+  const ratio = mrzCharsetRatio(raw);
+  if (ratio < 0.76) return false;
+  if (!parsed.documentNumber?.trim()) return false;
+  const hasDate = !!(parsed.birthDate || parsed.expiryDate);
+  const hasName = !!(parsed.firstName?.trim() || parsed.lastName?.trim());
+  return parsed.checksumsValid === true || hasDate || hasName;
+}

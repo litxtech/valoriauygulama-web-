@@ -16,12 +16,27 @@ export async function saveKbsCaptureNotifyStaffIds(
   staffIds: string[]
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const unique = [...new Set(staffIds.filter(Boolean))];
-  const { error } = await supabase
+
+  const { data: existing, error: readErr } = await supabase
     .from('kbs_capture_settings')
-    .upsert(
-      { organization_id: organizationId, notify_staff_ids: unique },
-      { onConflict: 'organization_id' }
-    );
+    .select('organization_id')
+    .eq('organization_id', organizationId)
+    .maybeSingle();
+  if (readErr) return { ok: false, message: readErr.message };
+
+  if (existing) {
+    const { error } = await supabase
+      .from('kbs_capture_settings')
+      .update({ notify_staff_ids: unique })
+      .eq('organization_id', organizationId);
+    if (error) return { ok: false, message: error.message };
+    return { ok: true };
+  }
+
+  const { error } = await supabase.from('kbs_capture_settings').insert({
+    organization_id: organizationId,
+    notify_staff_ids: unique,
+  });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
 }

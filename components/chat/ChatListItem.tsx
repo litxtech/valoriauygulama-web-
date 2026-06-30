@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { CachedImage } from '@/components/CachedImage';
+import { useTranslation } from 'react-i18next';
 import { chatLayout } from '@/constants/chatTheme';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 import { useChatTheme } from '@/hooks/useScreenTheme';
 import { formatChatListPreview } from '@/lib/chatPreviewText';
 import type { ConversationWithMeta } from '@/lib/messaging';
+import { ChatLiveAvatar, resolveGroupAvatarColor } from '@/components/chat/ChatLiveAvatar';
 
 const ALL_STAFF_GROUP_NAME_DB = 'Tüm Çalışanlar';
 
@@ -18,7 +19,6 @@ export type ChatListItemProps = {
   onLongPress?: () => void;
   timeLabel: string;
   displayName: string;
-  staffId?: string;
   lastMessageByMe?: boolean;
   isRead?: boolean;
   isDelivered?: boolean;
@@ -35,6 +35,7 @@ export function ChatListItem({
   lastMessageByMe,
   isRead,
 }: ChatListItemProps) {
+  const { t } = useTranslation();
   const chat = useChatTheme();
   const styles = useMemo(() => createStyles(chat), [chat]);
 
@@ -42,6 +43,8 @@ export function ChatListItem({
   const isGroup = item.type === 'group';
   const isAllStaff = isGroup && item.name === ALL_STAFF_GROUP_NAME_DB;
   const avatarUri = (item.type === 'direct' ? item.other_avatar : item.avatar) as string | null | undefined;
+  const groupColor = isGroup ? resolveGroupAvatarColor(item.group_theme_color, isAllStaff) : undefined;
+  const isOnline = !isGroup && Boolean(item.other_participant?.is_online);
 
   const preview = formatChatListPreview(item.last_message_preview, null, {
     unreadCount: unread,
@@ -65,46 +68,57 @@ export function ChatListItem({
           <Ionicons
             name={selected ? 'checkmark-circle' : 'ellipse-outline'}
             size={24}
-            color={selected ? chat.accentPurple : chat.textMuted}
+            color={selected ? chat.accent : chat.textMuted}
           />
         </View>
       ) : null}
-      <View style={[styles.avatarWrap, isAllStaff && styles.avatarGroup]}>
-        {isAllStaff ? (
-          <Ionicons name="people" size={22} color="#fff" />
-        ) : avatarUri ? (
-          <CachedImage uri={avatarUri} style={styles.avatarImg} contentFit="cover" />
-        ) : (
-          <Text style={styles.avatarLetter}>{displayName.charAt(0).toUpperCase()}</Text>
-        )}
-      </View>
+
+      <ChatLiveAvatar
+        displayName={displayName}
+        avatarUri={avatarUri}
+        isGroup={isGroup}
+        isAllStaff={isAllStaff}
+        groupColor={groupColor}
+        unread={unread}
+        isOnline={isOnline}
+        size={chatLayout.avatarSize}
+        accentColor={chat.accent}
+        surfaceColor={chat.surface}
+        showBadge={false}
+      />
+
       <View style={styles.body}>
         <View style={styles.topRow}>
           <Text style={[styles.name, unread > 0 && styles.nameUnread]} numberOfLines={1}>
             {displayName}
           </Text>
-          <View style={styles.timeRow}>
+          <View style={styles.metaRight}>
+            {item.is_muted ? (
+              <Ionicons name="volume-mute" size={14} color={chat.textMuted} style={styles.mutedIcon} />
+            ) : null}
             {showStatus ? (
               <Ionicons
                 name={isRead ? 'checkmark-done' : 'checkmark'}
-                size={14}
+                size={15}
                 color={isRead ? chat.readCheck : chat.deliveredCheck}
-                style={styles.statusIcon}
               />
             ) : null}
             <Text style={[styles.time, unread > 0 && styles.timeUnread]}>{timeLabel}</Text>
           </View>
         </View>
+
         <View style={styles.previewRow}>
-          <Text
-            style={[styles.preview, unread > 0 ? styles.previewUnread : null]}
-            numberOfLines={1}
-          >
-            {preview || '—'}
+          <Text style={styles.previewLine} numberOfLines={1}>
+            {isGroup ? (
+              <Text style={styles.groupHint}>{t('staffMessagesGroupBadge')} · </Text>
+            ) : null}
+            <Text style={[styles.preview, unread > 0 && styles.previewUnread]}>
+              {preview || '—'}
+            </Text>
           </Text>
           {unread > 0 ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
+            <View style={styles.unreadPill}>
+              <Text style={styles.unreadPillText}>{unread > 99 ? '99+' : unread}</Text>
             </View>
           ) : null}
         </View>
@@ -119,8 +133,8 @@ function createStyles(chat: ChatThemePalette) {
       flexDirection: 'row',
       alignItems: 'center',
       minHeight: chatLayout.listRowHeight,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
       backgroundColor: chat.surface,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: chat.border,
@@ -129,36 +143,15 @@ function createStyles(chat: ChatThemePalette) {
       backgroundColor: chat.selected,
     },
     rowPressed: {
-      backgroundColor: chat.selected,
+      backgroundColor: chat.rowPressed,
     },
     checkWrap: {
-      marginRight: 10,
-    },
-    avatarWrap: {
-      width: chatLayout.avatarSize,
-      height: chatLayout.avatarSize,
-      borderRadius: chatLayout.avatarSize / 2,
-      backgroundColor: chat.accent,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginRight: 12,
-      overflow: 'hidden',
-    },
-    avatarGroup: {
-      backgroundColor: '#8B6914',
-    },
-    avatarImg: {
-      width: chatLayout.avatarSize,
-      height: chatLayout.avatarSize,
-    },
-    avatarLetter: {
-      color: '#fff',
-      fontSize: 18,
-      fontWeight: '700',
+      marginRight: 8,
     },
     body: {
       flex: 1,
       minWidth: 0,
+      marginLeft: 12,
       justifyContent: 'center',
       gap: 3,
     },
@@ -170,22 +163,23 @@ function createStyles(chat: ChatThemePalette) {
     name: {
       flex: 1,
       fontSize: 16,
-      fontWeight: '600',
+      fontWeight: '500',
       color: chat.text,
     },
     nameUnread: {
       fontWeight: '700',
     },
-    timeRow: {
+    metaRight: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 2,
+      gap: 4,
+      flexShrink: 0,
     },
-    statusIcon: {
+    mutedIcon: {
       marginRight: 2,
     },
     time: {
-      fontSize: 12,
+      fontSize: 13,
       color: chat.textMuted,
     },
     timeUnread: {
@@ -195,29 +189,38 @@ function createStyles(chat: ChatThemePalette) {
     previewRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 4,
+      minHeight: 20,
+    },
+    previewLine: {
+      flex: 1,
+      fontSize: 15,
+    },
+    groupHint: {
+      color: chat.textMuted,
+      fontSize: 14,
+      fontWeight: '500',
     },
     preview: {
-      flex: 1,
-      fontSize: 14,
       color: chat.textSecondary,
     },
     previewUnread: {
       color: chat.text,
       fontWeight: '500',
     },
-    badge: {
-      minWidth: 20,
-      height: 20,
-      borderRadius: 10,
-      backgroundColor: chat.unreadBadge,
+    unreadPill: {
+      minWidth: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: chat.accent,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingHorizontal: 5,
+      paddingHorizontal: 6,
+      marginLeft: 4,
     },
-    badgeText: {
+    unreadPillText: {
       color: '#fff',
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: '700',
     },
   });

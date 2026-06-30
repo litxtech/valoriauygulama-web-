@@ -21,6 +21,8 @@ import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
 import { cartTotal, clearPublicMenuCart } from '@/lib/publicKitchenMenuCart';
 import { checkoutPublicKitchenMenu } from '@/lib/publicKitchenMenuCheckout';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
+import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { supabase } from '@/lib/supabase';
 
 type Props = {
   visible: boolean;
@@ -51,12 +53,37 @@ export function PublicKitchenMenuCartSheet({
   const [table, setTable] = useState('');
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionGuestEmail, setSessionGuestEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setError(null);
       setPaying(false);
+      return;
     }
+    let cancelled = false;
+    void (async () => {
+      const guest = await getOrCreateGuestForCurrentSession();
+      if (cancelled || !guest?.guest_id) return;
+      const { data: row } = await supabase
+        .from('guests')
+        .select('full_name, email, rooms(room_number)')
+        .eq('id', guest.guest_id)
+        .maybeSingle();
+      if (cancelled || !row) return;
+      const fullName = (row as { full_name?: string | null }).full_name?.trim();
+      const guestEmail = (row as { email?: string | null }).email?.trim() ?? '';
+      const roomNum = (row as { rooms?: { room_number?: string | null } | null }).rooms?.room_number;
+      if (fullName) setName((prev) => prev.trim() || fullName);
+      if (guestEmail) {
+        setSessionGuestEmail(guestEmail);
+        setEmail((prev) => prev.trim() || guestEmail);
+      }
+      if (roomNum) setRoom((prev) => prev.trim() || String(roomNum));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [visible]);
 
   const total = cartTotal(lines);
@@ -64,12 +91,12 @@ export function PublicKitchenMenuCartSheet({
   const handlePay = async () => {
     if (lines.length === 0) return;
     const customerName = name.trim();
-    const customerEmail = email.trim();
+    const customerEmail = (email.trim() || sessionGuestEmail?.trim() || '').trim();
     if (customerName.length < 2) {
       setError(t('publicKitchenMenuNameRequired'));
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+    if (!sessionGuestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
       setError(t('publicKitchenMenuEmailRequired'));
       return;
     }
@@ -80,7 +107,7 @@ export function PublicKitchenMenuCartSheet({
         orgSlug,
         items: lines.map((l) => ({ menu_item_id: l.itemId, quantity: l.quantity })),
         customerName,
-        customerEmail,
+        customerEmail: customerEmail || undefined,
         roomNumber: room.trim() || undefined,
         tableNumber: table.trim() || undefined,
         lang,
@@ -165,7 +192,10 @@ export function PublicKitchenMenuCartSheet({
                   placeholderTextColor={menuUi.webMuted}
                   autoComplete="name"
                 />
-                <Text style={styles.fieldLabel}>{t('publicKitchenMenuYourEmail')} *</Text>
+                <Text style={styles.fieldLabel}>
+                  {t('publicKitchenMenuYourEmail')}
+                  {sessionGuestEmail ? '' : ' *'}
+                </Text>
                 <TextInput
                   style={styles.input}
                   value={email}
@@ -175,6 +205,7 @@ export function PublicKitchenMenuCartSheet({
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
+                  editable={!sessionGuestEmail}
                 />
                 <View style={styles.formRow}>
                   <View style={styles.formHalf}>

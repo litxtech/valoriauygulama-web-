@@ -1,5 +1,5 @@
-import { memo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { memo, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
@@ -7,6 +7,32 @@ import { feedSharedText } from '@/lib/feedSharedI18n';
 import { pds } from '@/constants/personelDesignSystem';
 
 const ACCENT = '#b8860b';
+const LIVE_GREEN = '#22c55e';
+
+function LiveDot() {
+  const pulse = useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.35, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <Animated.View
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: LIVE_GREEN,
+        opacity: pulse,
+      }}
+    />
+  );
+}
 
 type Props = {
   postCount: number;
@@ -30,7 +56,10 @@ export const CustomerFeedSectionHeader = memo(function CustomerFeedSectionHeader
           <Ionicons name="sparkles" size={16} color="#fff" />
         </LinearGradient>
         <View style={styles.titles}>
-          <Text style={[styles.title, { color: text }]}>{feedSharedText('guestHomeFeed')}</Text>
+          <View style={styles.titleRow}>
+            <LiveDot />
+            <Text style={[styles.title, { color: text }]}>{feedSharedText('guestHomeFeed')}</Text>
+          </View>
           <Text style={[styles.subtitle, { color: sub }]}>
             {postCount > 0
               ? `${postCount} paylaşım`
@@ -75,6 +104,7 @@ const styles = StyleSheet.create({
     }),
   },
   titles: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { fontSize: 18, fontWeight: '900', letterSpacing: -0.3 },
   subtitle: { fontSize: 12, fontWeight: '600', marginTop: 2 },
   createBtn: {

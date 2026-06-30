@@ -29,7 +29,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
+import { pds, feedXMediaWidth } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
@@ -103,14 +104,17 @@ import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
 import { MentionableText } from '@/components/MentionableText';
+import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
+import { FEED_FLASH_LIST_PROPS } from '@/lib/feedFlashListPerf';
+import { shouldRunOptionalSupabaseWork } from '@/lib/supabaseHealthGate';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const STAFF_FEED_CACHE_KEY = 'staff_feed_cache_v1';
-const FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 30;
-const FEED_FETCH_LIMIT = Platform.OS === 'android' ? 28 : 50;
-const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 2200 : 800;
-const FEED_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 20 : 64;
+const FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 12;
+const FEED_FETCH_LIMIT = Platform.OS === 'android' ? 28 : 36;
+const FEED_REALTIME_DEBOUNCE_MS = Platform.OS === 'android' ? 2_200 : 1_800;
+const FEED_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 12 : 20;
 
 function firstName(fullName: string | null | undefined): string {
   const s = (fullName ?? '').trim();
@@ -193,6 +197,7 @@ export default function StaffHomeScreen() {
   const { isNight, colors: premiumColors } = usePremiumTheme();
   const palette = usePersonelDesign();
   const insets = useSafeAreaInsets();
+  const feedListBottomPad = getFloatingTabBarTotalHeight(insets) + 16;
   const [posts, setPosts] = useState<FeedPostRow[]>([]);
   const [staffList, setStaffList] = useState<StaffAvatarRow[]>([]);
   const staffAvatarById = useMemo(() => buildStaffAvatarLookup(staffList), [staffList]);
@@ -276,7 +281,7 @@ export default function StaffHomeScreen() {
   const storyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const storyProgressAnim = useRef(new Animated.Value(0)).current;
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlashList<FeedPostRow>>(null);
   const postYRef = useRef<Record<string, number>>({});
   const [pendingScrollPostId, setPendingScrollPostId] = useState<string | null>(null);
 
@@ -468,12 +473,17 @@ export default function StaffHomeScreen() {
     if (!staff) return;
     const hidden = await getHiddenUsersForStaff(staff.id);
     const staffListRows = await loadStaffList(hidden.hiddenStaffIds);
-    const { data: postsData } = await supabase
+    const { data: postsData, error: postsError } = await supabase
       .from('feed_posts')
       .select('id, visibility, media_type, media_url, thumbnail_url, title, created_at, staff_id, post_tag, staff:staff_id(full_name, department, profile_image, verification_badge, deleted_at, profile_hidden_by_admin, organization:organization_id(name, kind)), guest_id, guest:guest_id(full_name, photo_url, deleted_at)')
       .or('visibility.eq.all_staff,visibility.eq.my_team,visibility.eq.customers')
       .order('created_at', { ascending: false })
       .limit(FEED_FETCH_LIMIT);
+    // Geçici sorgu hatasında mevcut feed'i SİLME (boş ekran flaşı / "veri kayboldu" hissini önler).
+    if (postsError) {
+      if (mountedRef.current) setLoading(false);
+      return;
+    }
     const list = ((postsData ?? []) as FeedPostRow[]).filter(
       (p) =>
         !(p.staff_id && hidden.hiddenStaffIds.has(p.staff_id)) &&
@@ -583,22 +593,27 @@ export default function StaffHomeScreen() {
     ).catch(() => {});
     setLoading(false);
     const avatarLookup = buildStaffAvatarLookup(staffListRows);
-    prefetchImageUrls(
-      [
-        ...collectFeedPostPrefetchUrls(list),
-        ...list.map((p) =>
-          resolveFeedAuthorAvatarUrl({
-            staff: p.staff,
-            guest: p.guest,
-            staffId: p.staff_id,
-            staffAvatarById: avatarLookup,
-          })
-        ),
-        ...staffListRows.map((s) => s.profile_image),
-      ],
-      Platform.OS === 'android' ? 40 : 64
-    );
-    void recordStaffFeedPostViews(ids, staff.id);
+    InteractionManager.runAfterInteractions(() => {
+      if (!mountedRef.current) return;
+      prefetchImageUrls(
+        [
+          ...collectFeedPostPrefetchUrls(list),
+          ...list.map((p) =>
+            resolveFeedAuthorAvatarUrl({
+              staff: p.staff,
+              guest: p.guest,
+              staffId: p.staff_id,
+              staffAvatarById: avatarLookup,
+            })
+          ),
+          ...staffListRows.map((s) => s.profile_image),
+        ],
+        FEED_IMAGE_PREFETCH_CAP
+      );
+      if (shouldRunOptionalSupabaseWork()) {
+        void recordStaffFeedPostViews(ids, staff.id);
+      }
+    });
   }, [staff?.id, loadStaffList]);
 
   const refreshCommentsSheet = useCallback(async () => {
@@ -657,13 +672,8 @@ export default function StaffHomeScreen() {
   }, [staff?.id]);
 
   useEffect(() => {
-    loadFeed();
-    if (Platform.OS === 'android') {
-      const task = InteractionManager.runAfterInteractions(() => {
-        void loadStories();
-      });
-      return () => task.cancel();
-    }
+    // Cache zaten ekrana basıldı; etkileşimleri beklemeden taze veriyi HEMEN arka planda çek.
+    void loadFeed();
     void loadStories();
   }, [loadFeed, loadStories]);
 
@@ -692,14 +702,20 @@ export default function StaffHomeScreen() {
 
   const loadFeedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadStoriesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFeedNetworkLoadAtRef = useRef(0);
+  const FEED_MIN_RELOAD_MS = 8_000;
   const scheduleLoadFeedFromRealtime = useCallback(() => {
+    if (!shouldRunOptionalSupabaseWork()) return;
+    if (Date.now() - lastFeedNetworkLoadAtRef.current < FEED_MIN_RELOAD_MS) return;
     if (loadFeedDebounceRef.current) clearTimeout(loadFeedDebounceRef.current);
     loadFeedDebounceRef.current = setTimeout(() => {
       loadFeedDebounceRef.current = null;
+      lastFeedNetworkLoadAtRef.current = Date.now();
       void loadFeed();
     }, FEED_REALTIME_DEBOUNCE_MS);
   }, [loadFeed]);
   const scheduleLoadStoriesFromRealtime = useCallback(() => {
+    if (!shouldRunOptionalSupabaseWork()) return;
     if (loadStoriesDebounceRef.current) clearTimeout(loadStoriesDebounceRef.current);
     loadStoriesDebounceRef.current = setTimeout(() => {
       loadStoriesDebounceRef.current = null;
@@ -801,9 +817,17 @@ export default function StaffHomeScreen() {
     const attempt = () => {
       setPendingScrollPostId((cur) => {
         if (cur !== id) return cur;
+        const idx = visiblePosts.findIndex((p) => p.id === id);
+        if (idx >= 0 && scrollRef.current) {
+          try {
+            scrollRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0.08 });
+          } catch {
+            /* liste henüz ölçülmedi */
+          }
+          return null;
+        }
         const y = postYRef.current[id];
-        if (y != null && scrollRef.current) {
-          scrollRef.current.scrollTo({ y: Math.max(0, y - 20), animated: true });
+        if (y != null) {
           return null;
         }
         return cur;
@@ -1718,7 +1742,7 @@ export default function StaffHomeScreen() {
   useEffect(() => {
     const parent = navigation.getParent();
     const unsub = parent?.addListener?.('tabPress', () => {
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
     });
     return () => (typeof unsub === 'function' ? unsub() : undefined);
   }, [navigation]);
@@ -1795,25 +1819,14 @@ export default function StaffHomeScreen() {
     [staffOnlineById]
   );
 
-  return (
-    <KeyboardAvoidingView
-      style={[styles.container, isNight && { backgroundColor: premiumColors.pageBg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews={Platform.OS === 'android'}
-        nestedScrollEnabled={Platform.OS === 'android'}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.white} />
-        }
-        keyboardShouldPersistTaps="handled"
-      >
+  const menuPost = useMemo(
+    () => (menuPostId ? posts.find((p) => p.id === menuPostId) ?? null : null),
+    [menuPostId, posts]
+  );
+
+  const feedListHeader = useMemo(
+    () => (
+      <>
         <StaffFeedDashboardStrip refreshKey={refreshing ? Date.now() : 0} />
         <View
           style={[
@@ -1832,35 +1845,97 @@ export default function StaffHomeScreen() {
           </ScrollView>
         </View>
 
-        {(() => {
-          if (loading && posts.length === 0) {
-            return (
-              <View style={{ marginTop: 12, gap: 14, paddingHorizontal: 16 }}>
-                {(Platform.OS === 'android' ? [1, 2] : [1, 2, 3]).map((i) => (
-                  <SkeletonCard key={`staff-feed-sk-${i}`} />
-                ))}
-              </View>
-            );
-          }
-          if (posts.length === 0) {
-            return (
-              <View style={styles.empty}>
-                <Ionicons name="images-outline" size={64} color={isNight ? palette.subtext : theme.colors.textMuted} />
-                <Text style={[styles.emptyText, isNight && { color: palette.text }]}>Henüz paylaşım yok</Text>
-                <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push('/staff/feed/new')} activeOpacity={0.8}>
-                  <Text style={styles.emptyBtnText}>İlk paylaşımı yap</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          }
-          const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
-          return visiblePosts.map((p) => {
+        {loading && posts.length === 0 ? (
+          <View style={{ marginTop: 12, gap: 14, paddingHorizontal: 16 }}>
+            {(Platform.OS === 'android' ? [1, 2] : [1, 2, 3]).map((i) => (
+              <SkeletonCard key={`staff-feed-sk-${i}`} />
+            ))}
+          </View>
+        ) : null}
+        {!loading && posts.length === 0 ? (
+          <View style={styles.empty}>
+            <Ionicons name="images-outline" size={64} color={isNight ? palette.subtext : theme.colors.textMuted} />
+            <Text style={[styles.emptyText, isNight && { color: palette.text }]}>Henüz paylaşım yok</Text>
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push('/staff/feed/new')} activeOpacity={0.8}>
+              <Text style={styles.emptyBtnText}>İlk paylaşımı yap</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </>
+    ),
+    [
+      refreshing,
+      isNight,
+      palette.cardBorder,
+      palette.subtext,
+      palette.text,
+      orderedStaffList,
+      renderStaffAvatarCard,
+      loading,
+      posts.length,
+      router,
+    ]
+  );
+
+  const feedListFooter = useMemo(
+    () => (
+      <>
+        {posts.length > visibleFeedCount ? (
+          <TouchableOpacity
+            style={styles.showMoreBtn}
+            onPress={() => setVisibleFeedCount((c) => c + FEED_PAGE_SIZE)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.showMoreBtnText}>Daha fazla göster</Text>
+          </TouchableOpacity>
+        ) : null}
+        <View style={styles.bottomSpacer} />
+      </>
+    ),
+    [posts.length, visibleFeedCount]
+  );
+
+  return (
+    <KeyboardAvoidingView
+      style={[styles.container, isNight && { backgroundColor: premiumColors.pageBg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <FlashList
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: feedListBottomPad }}
+        data={posts.length > 0 ? visiblePosts : []}
+        keyExtractor={(p) => p.id}
+        estimatedItemSize={FEED_FLASH_LIST_PROPS.estimatedItemSize}
+        drawDistance={FEED_FLASH_LIST_PROPS.drawDistance}
+        removeClippedSubviews={FEED_FLASH_LIST_PROPS.removeClippedSubviews}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={!commentsSheetPostId}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.white} />
+        }
+        keyboardShouldPersistTaps="handled"
+        extraData={{
+          likeCounts,
+          commentCounts,
+          viewCounts,
+          myLikes,
+          notificationPrefs,
+          commentsByPost,
+          menuPostId,
+          deletingPostId,
+          commentsSheetPostId,
+          repostingPostId,
+        }}
+        ListHeaderComponent={feedListHeader}
+        renderItem={({ item: p }) => {
+          const feedCardWidth = feedXMediaWidth(SCREEN_WIDTH, 12);
             const maySeeHiddenFull = staff?.role === 'admin';
             const likeCount = likeCounts[p.id] ?? 0;
             const commentCount = commentCounts[p.id] ?? 0;
             const viewCount = viewCounts[p.id] ?? 0;
             const liked = myLikes.has(p.id);
-            const notifOn = notificationPrefs.has(p.id);
             const comments = commentsByPost[p.id] ?? [];
             const commentPreview = comments
               .slice(-2)
@@ -1943,7 +2018,9 @@ export default function StaffHomeScreen() {
 
             const isOwnStaffPost = !!(staff?.id && p.staff_id === staff.id);
             const canOpenViewersList = !!(staff?.id && (isOwnStaffPost || isGuestPost));
-            if (canOpenViewersList && viewCount > 0) prefetchFeedPostViewers(p.id);
+            if (canOpenViewersList && viewCount > 0 && shouldRunOptionalSupabaseWork()) {
+              prefetchFeedPostViewers(p.id);
+            }
             return (
               <View
                 key={p.id}
@@ -1998,97 +2075,87 @@ export default function StaffHomeScreen() {
                   reposting={repostingPostId === p.id}
                   onMenu={() => setMenuPostId(menuPostId === p.id ? null : p.id)}
                 />
-                {/* Menü modal: Sil / Bildir */}
-                <Modal
-                  visible={menuPostId === p.id}
-                  transparent
-                  animationType="fade"
-                  onRequestClose={() => setMenuPostId(null)}
-                >
-                  <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
-                    <View style={styles.menuModalBox}>
-                      <TouchableOpacity
-                        style={styles.menuModalItem}
-                        onPress={() => {
-                          void toggleNotificationPref(p.id);
-                          setMenuPostId(null);
-                        }}
-                        activeOpacity={0.7}
-                        disabled={togglingNotif === p.id}
-                      >
-                        {togglingNotif === p.id ? (
-                          <ActivityIndicator size="small" color={theme.colors.primary} />
-                        ) : (
-                          <Ionicons
-                            name={notifOn ? 'notifications' : 'notifications-outline'}
-                            size={22}
-                            color={theme.colors.primary}
-                          />
-                        )}
-                        <Text style={styles.menuModalItemText}>
-                          {notifOn ? t('staffFeedMuteOn') : t('staffFeedMuteOff')}
-                        </Text>
-                      </TouchableOpacity>
-                      {canDeletePost(p) && (
-                        <>
-                        {p.visibility === 'all_staff' ? (
-                          <TouchableOpacity
-                            style={styles.menuModalItem}
-                            onPress={() => promotePostToCustomers(p)}
-                            activeOpacity={0.7}
-                            disabled={promotingPostId === p.id}
-                          >
-                            {promotingPostId === p.id ? (
-                              <ActivityIndicator size="small" color={theme.colors.primary} />
-                            ) : (
-                              <Ionicons name="people-circle-outline" size={22} color={theme.colors.primary} />
-                            )}
-                            <Text style={styles.menuModalItemText}>Misafirlere de goster</Text>
-                          </TouchableOpacity>
-                        ) : null}
-                        <TouchableOpacity
-                          style={styles.menuModalItem}
-                          onPress={() => handleDeletePost(p)}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
-                          <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>Sil</Text>
-                        </TouchableOpacity>
-                        </>
-                      )}
-                      <TouchableOpacity
-                        style={styles.menuModalItem}
-                        onPress={() => handleBlockPostAuthor(p)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="ban-outline" size={22} color={theme.colors.error} />
-                        <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>Engelle</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.menuModalItem}
-                        onPress={() => openReportModal(p)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="flag-outline" size={22} color={theme.colors.text} />
-                        <Text style={styles.menuModalItemText}>Bildir</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </Pressable>
-                </Modal>
               </View>
             );
-          }).concat(
-            posts.length > visibleFeedCount
-              ? (
-                <TouchableOpacity key="staff-feed-more" style={styles.showMoreBtn} onPress={() => setVisibleFeedCount((c) => c + FEED_PAGE_SIZE)} activeOpacity={0.85}>
-                  <Text style={styles.showMoreBtnText}>Daha fazla göster</Text>
+        }}
+        ListFooterComponent={feedListFooter}
+      />
+
+      <Modal visible={!!menuPost} transparent animationType="fade" onRequestClose={() => setMenuPostId(null)}>
+        <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
+          <View style={styles.menuModalBox}>
+            {menuPost ? (
+              <>
+                <TouchableOpacity
+                  style={styles.menuModalItem}
+                  onPress={() => {
+                    void toggleNotificationPref(menuPost.id);
+                    setMenuPostId(null);
+                  }}
+                  activeOpacity={0.7}
+                  disabled={togglingNotif === menuPost.id}
+                >
+                  {togglingNotif === menuPost.id ? (
+                    <ActivityIndicator size="small" color={theme.colors.primary} />
+                  ) : (
+                    <Ionicons
+                      name={notificationPrefs.has(menuPost.id) ? 'notifications' : 'notifications-outline'}
+                      size={22}
+                      color={theme.colors.primary}
+                    />
+                  )}
+                  <Text style={styles.menuModalItemText}>
+                    {notificationPrefs.has(menuPost.id) ? t('staffFeedMuteOn') : t('staffFeedMuteOff')}
+                  </Text>
                 </TouchableOpacity>
-              )
-              : []
-          );
-        })()}
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
+                {canDeletePost(menuPost) ? (
+                  <>
+                    {menuPost.visibility === 'all_staff' ? (
+                      <TouchableOpacity
+                        style={styles.menuModalItem}
+                        onPress={() => promotePostToCustomers(menuPost)}
+                        activeOpacity={0.7}
+                        disabled={promotingPostId === menuPost.id}
+                      >
+                        {promotingPostId === menuPost.id ? (
+                          <ActivityIndicator size="small" color={theme.colors.primary} />
+                        ) : (
+                          <Ionicons name="people-circle-outline" size={22} color={theme.colors.primary} />
+                        )}
+                        <Text style={styles.menuModalItemText}>Misafirlere de goster</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      style={styles.menuModalItem}
+                      onPress={() => handleDeletePost(menuPost)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
+                      <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>Sil</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.menuModalItem}
+                  onPress={() => handleBlockPostAuthor(menuPost)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="ban-outline" size={22} color={theme.colors.error} />
+                  <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>Engelle</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuModalItem}
+                  onPress={() => openReportModal(menuPost)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="flag-outline" size={22} color={theme.colors.text} />
+                  <Text style={styles.menuModalItemText}>Bildir</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Bildir modal: sebep seçenekleri + açıklama */}
       <Modal

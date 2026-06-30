@@ -24,8 +24,17 @@ type Props = {
   shareDialogTitle: string;
   disabled?: boolean;
   defaultKindFilter?: FinanceReportKindFilter;
+  /** Dışarıdan kontrol — liste filtresi ile senkron */
+  kindFilter?: FinanceReportKindFilter;
+  onKindFilterChange?: (kind: FinanceReportKindFilter) => void;
+  /** Liste zaten tür filtresi gösteriyorsa rapor chip’lerini gizle */
+  hideKindChips?: boolean;
   /** Tek satır ikon düzeni — hızlı ödeme vb. */
   compact?: boolean;
+  /** İkon şeridi — kart/padding yok */
+  minimal?: boolean;
+  /** Üst kart içinde — kenarlık/padding yok */
+  embedded?: boolean;
 };
 
 export function FinanceReportExportButtons({
@@ -35,9 +44,23 @@ export function FinanceReportExportButtons({
   shareDialogTitle,
   disabled,
   defaultKindFilter = 'paid',
+  kindFilter: kindFilterProp,
+  onKindFilterChange,
+  hideKindChips = false,
   compact = false,
+  minimal = false,
+  embedded = false,
 }: Props) {
-  const [kindFilter, setKindFilter] = useState<FinanceReportKindFilter>(defaultKindFilter);
+  const [kindFilterInternal, setKindFilterInternal] = useState<FinanceReportKindFilter>(defaultKindFilter);
+  const kindFilter = kindFilterProp ?? kindFilterInternal;
+  const setKindFilter = (k: FinanceReportKindFilter) => {
+    if (onKindFilterChange) onKindFilterChange(k);
+    else setKindFilterInternal(k);
+  };
+
+  useEffect(() => {
+    if (kindFilterProp == null) setKindFilterInternal(defaultKindFilter);
+  }, [defaultKindFilter, kindFilterProp]);
   const [busy, setBusy] = useState<'share' | 'print' | 'mail' | 'whatsapp' | null>(null);
   const awaitingNativeUi = useRef(false);
 
@@ -100,12 +123,16 @@ export function FinanceReportExportButtons({
     </TouchableOpacity>
   );
 
-  const kindRow = (
-    <View style={[styles.kindRow, compact && styles.kindRowCompact]}>
+  const kindRow = hideKindChips ? null : (
+    <View style={[styles.kindRow, (compact || minimal) && styles.kindRowCompact]}>
       {KIND_ORDER.map((k) => (
         <TouchableOpacity
           key={k}
-          style={[styles.kindChip, compact && styles.kindChipCompact, kindFilter === k && styles.kindChipOn]}
+          style={[
+            styles.kindChip,
+            (compact || minimal) && styles.kindChipCompact,
+            kindFilter === k && styles.kindChipOn,
+          ]}
           onPress={() => setKindFilter(k)}
           disabled={!!busy}
           activeOpacity={0.85}
@@ -113,7 +140,7 @@ export function FinanceReportExportButtons({
           <Text
             style={[
               styles.kindChipText,
-              compact && styles.kindChipTextCompact,
+              (compact || minimal) && styles.kindChipTextCompact,
               kindFilter === k && styles.kindChipTextOn,
             ]}
           >
@@ -124,36 +151,49 @@ export function FinanceReportExportButtons({
     </View>
   );
 
-  if (compact) {
-    const iconBtn = (
-      action: 'share' | 'print' | 'mail' | 'whatsapp',
-      icon: keyof typeof Ionicons.glyphMap,
-      label: string,
-      iconColor?: string
-    ) => (
-      <TouchableOpacity
-        key={action}
-        style={[styles.iconBtn, (disabled || busy) && styles.btnDisabled]}
-        onPress={() => run(action)}
-        disabled={!!disabled || !!busy}
-        accessibilityLabel={label}
-        activeOpacity={0.85}
-      >
-        {busy === action ? (
-          <ActivityIndicator size="small" color={iconColor ?? adminTheme.colors.primary} />
-        ) : (
-          <Ionicons name={icon} size={20} color={iconColor ?? adminTheme.colors.primary} />
-        )}
-      </TouchableOpacity>
-    );
+  const iconBtn = (
+    action: 'share' | 'print' | 'mail' | 'whatsapp',
+    icon: keyof typeof Ionicons.glyphMap,
+    label: string,
+    iconColor?: string
+  ) => (
+    <TouchableOpacity
+      key={action}
+      style={[
+        embedded ? styles.iconBtnEmbedded : minimal ? styles.iconBtnMinimal : styles.iconBtn,
+        (disabled || busy) && styles.btnDisabled,
+      ]}
+      onPress={() => run(action)}
+      disabled={!!disabled || !!busy}
+      accessibilityLabel={label}
+      activeOpacity={0.85}
+    >
+      {busy === action ? (
+        <ActivityIndicator size="small" color={iconColor ?? adminTheme.colors.primary} />
+      ) : (
+        <Ionicons
+          name={icon}
+          size={embedded || minimal ? 18 : 20}
+          color={iconColor ?? adminTheme.colors.primary}
+        />
+      )}
+      {embedded ? <Text style={styles.iconBtnEmbeddedLabel}>{label}</Text> : null}
+    </TouchableOpacity>
+  );
 
+  if (compact || minimal) {
     return (
-      <View style={styles.wrapCompact}>
+      <View
+        style={[
+          embedded ? styles.wrapEmbedded : minimal ? styles.wrapMinimal : styles.wrapCompact,
+          hideKindChips && !embedded && styles.wrapExportOnly,
+        ]}
+      >
         {kindRow}
-        <View style={styles.iconRow}>
+        <View style={[styles.iconRow, (minimal || embedded) && styles.iconRowMinimal]}>
           {iconBtn('share', 'document-text-outline', 'PDF')}
           {iconBtn('print', 'print-outline', 'Yazdır')}
-          {iconBtn('mail', 'mail-outline', 'Yazıcı mail')}
+          {iconBtn('mail', 'mail-outline', 'Mail')}
           {iconBtn('whatsapp', 'logo-whatsapp', 'WhatsApp', '#25D366')}
         </View>
       </View>
@@ -180,17 +220,33 @@ const styles = StyleSheet.create({
   wrap: { gap: 8, marginBottom: 16 },
   wrapCompact: {
     gap: 6,
-    marginBottom: 8,
-    padding: 10,
-    borderRadius: 12,
+    marginBottom: 0,
+    padding: 8,
+    borderRadius: 10,
     backgroundColor: adminTheme.colors.surface,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
+  wrapMinimal: {
+    gap: 0,
+    marginBottom: 0,
+    padding: 0,
+  },
+  wrapExportOnly: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    padding: 0,
+  },
+  wrapEmbedded: {
+    gap: 0,
+    marginBottom: 0,
+    padding: 0,
+  },
   kindRowCompact: { gap: 6 },
   kindChipCompact: { paddingVertical: 6, borderRadius: 8 },
   kindChipTextCompact: { fontSize: 11 },
-  iconRow: { flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
+  iconRow: { flexDirection: 'row', gap: 6, justifyContent: 'flex-end' },
+  iconRowMinimal: { gap: 4 },
   iconBtn: {
     flex: 1,
     alignItems: 'center',
@@ -200,6 +256,34 @@ const styles = StyleSheet.create({
     backgroundColor: adminTheme.colors.surfaceSecondary,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
+  },
+  iconBtnMinimal: {
+    width: 40,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  iconBtnEmbedded: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  iconBtnEmbeddedLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: adminTheme.colors.textMuted,
+    textAlign: 'center',
   },
   kindLbl: {
     fontSize: 11,

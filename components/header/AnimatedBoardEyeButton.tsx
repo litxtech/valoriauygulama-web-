@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import {
   Animated,
+  AppState,
   Easing,
   Platform,
   StyleSheet,
@@ -74,35 +75,51 @@ export function AnimatedBoardEyeButton({
       return;
     }
     const legMs = active ? 520 : 760;
-    loopRef.current?.stop();
-    eyeX.setValue(0);
+    const buildLoop = () =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(eyeX, {
+            toValue: -TRAVEL,
+            duration: legMs,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(eyeX, {
+            toValue: TRAVEL,
+            duration: legMs * 2,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(eyeX, {
+            toValue: 0,
+            duration: legMs,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      );
 
-    loopRef.current = Animated.loop(
-      Animated.sequence([
-        Animated.timing(eyeX, {
-          toValue: -TRAVEL,
-          duration: legMs,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(eyeX, {
-          toValue: TRAVEL,
-          duration: legMs * 2,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(eyeX, {
-          toValue: 0,
-          duration: legMs,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loopRef.current.start();
+    const start = () => {
+      loopRef.current?.stop();
+      eyeX.setValue(0);
+      loopRef.current = buildLoop();
+      loopRef.current.start();
+    };
+    const stop = () => {
+      loopRef.current?.stop();
+      eyeX.setValue(0);
+    };
+
+    // Uygulama arka plandayken animasyonu durdur — boşuna GPU/pil tüketimini önle
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') start();
+      else stop();
+    });
+    if (AppState.currentState === 'active') start();
 
     return () => {
-      loopRef.current?.stop();
+      stop();
+      sub.remove();
     };
   }, [active, eyeX]);
 

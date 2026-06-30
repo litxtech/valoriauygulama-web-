@@ -23,6 +23,7 @@ import {
   partyFormToInput,
   type PartyFormState,
 } from '@/components/contracts/PartyFormFields';
+import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
 
 export default function ManagedContractEditScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -121,7 +122,14 @@ export default function ManagedContractEditScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator
+        nestedScrollEnabled={Platform.OS === 'android'}
+      >
         <Text style={styles.heading}>Sözleşmeyi düzenle</Text>
         <Text style={styles.sub}>Taraflar, tarihler ve metin tamamen değiştirilebilir. Kayıt yeni sürüm oluşturur.</Text>
 
@@ -169,22 +177,22 @@ export default function ManagedContractEditScreen() {
         </View>
 
         <Text style={styles.label}>Sözleşme metni</Text>
-        <TextInput
+        <AutoGrowMultilineInput
           style={[styles.input, styles.textArea]}
           value={bodyText}
           onChangeText={setBodyText}
-          multiline
-          textAlignVertical="top"
+          minHeight={180}
+          lineHeight={21}
           placeholderTextColor={adminTheme.colors.textMuted}
         />
 
         <Text style={styles.label}>Özel maddeler</Text>
-        <TextInput
+        <AutoGrowMultilineInput
           style={[styles.input, styles.textAreaSm]}
           value={specialClauses}
           onChangeText={setSpecialClauses}
-          multiline
-          textAlignVertical="top"
+          minHeight={90}
+          lineHeight={20}
           placeholderTextColor={adminTheme.colors.textMuted}
         />
 

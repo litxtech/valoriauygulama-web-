@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { compressFeedVideoForUpload, type FeedVideoCompressProgress } from '@/lib/feedVideoCompress';
 import { copyAndroidContentUriToCacheForPreview } from '@/lib/uploadMedia';
+import { ensureCrossPlatformJpegUriForUpload } from '@/lib/crossPlatformImage';
 
 const basePickerOptions: ImagePicker.ImagePickerOptions = {
   mediaTypes: ImagePicker.MediaTypeOptions.All,
@@ -16,8 +17,9 @@ const basePickerOptions: ImagePicker.ImagePickerOptions = {
 };
 
 /**
- * Galeride video önizlemesini geciktiren iOS transcode/export adımını kapatır.
- * Bu sayede seçilen videonun URI'si daha hızlı döner ve önizleme hemen açılır.
+ * Video: Passthrough export preset ile iOS transcode adımını atlayıp önizlemeyi hızlı açar.
+ * Resim: `Compatible` representation modu HEIC/HEIF'i seçim anında JPEG'e indirir; böylece
+ * native ImageManipulator çalışmasa bile paylaşılan görsel Android'de görüntülenebilir.
  */
 export const feedPostMediaPickerGalleryOptions: ImagePicker.ImagePickerOptions = {
   ...basePickerOptions,
@@ -25,7 +27,7 @@ export const feedPostMediaPickerGalleryOptions: ImagePicker.ImagePickerOptions =
     ? {
         videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
         preferredAssetRepresentationMode:
-          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
       }
     : {}),
 };
@@ -105,5 +107,6 @@ export async function ensureLocalFeedUploadUri(
   if (mediaType === 'video') {
     return compressFeedVideoForUpload(local, options?.onVideoCompressProgress);
   }
-  return local;
+  // Resim: iOS HEIC/HEIF → Android uyumlu JPEG (yükleme başarısızsa hata).
+  return ensureCrossPlatformJpegUriForUpload(local, { maxWidth: 1600, compress: 0.82 });
 }

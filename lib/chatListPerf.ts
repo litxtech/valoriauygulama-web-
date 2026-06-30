@@ -18,14 +18,23 @@ export const CHAT_FLAT_LIST_PROPS: Partial<FlatListProps<unknown>> = Platform.se
     windowSize: 10,
     removeClippedSubviews: false,
   },
-  default: {},
+  default: {
+    inverted: true,
+    removeClippedSubviews: false,
+  },
 }) ?? {};
 
-/** FlashList (inverted) — daha akıcı uzun geçmiş. */
+/**
+ * FlashList v2 — `inverted` kaldırıldı. Sohbet için kronolojik data + en alttan
+ * render: odaya girince son mesaj input'un hemen üstünde başlar, kullanıcı
+ * aşağı kaydırmak zorunda kalmaz.
+ */
 export const CHAT_FLASH_LIST_PROPS = {
-  inverted: true as const,
-  estimatedItemSize: 76,
   drawDistance: 420,
+  maintainVisibleContentPosition: {
+    startRenderingFromBottom: true,
+    autoscrollToBottomThreshold: 0.2,
+  },
 } as const;
 
 export const CHAT_MESSAGES_PAGE_SIZE = 30;

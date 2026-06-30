@@ -160,6 +160,57 @@ export async function updateAdminQuickNote(
   return { error: error?.message ?? null };
 }
 
+export async function deleteAdminQuickNoteMedia(mediaIds: string[]): Promise<{ error: string | null }> {
+  if (!mediaIds.length) return { error: null };
+  const { error } = await supabase.from('admin_quick_note_media').delete().in('id', mediaIds);
+  return { error: error?.message ?? null };
+}
+
+export async function saveAdminQuickNoteEdit(params: {
+  noteId: string;
+  bodyText: string;
+  title?: string | null;
+  tag?: AdminNoteTag;
+  roomLabel?: string | null;
+  removedMediaIds?: string[];
+  newMedia?: Array<{
+    storagePath: string;
+    publicUrl: string;
+    mediaType: 'image' | 'video';
+    thumbnailUrl?: string | null;
+    sortOrder: number;
+  }>;
+}): Promise<{ data: AdminQuickNoteRow | null; error: string | null }> {
+  const { error } = await updateAdminQuickNote(params.noteId, {
+    bodyText: params.bodyText,
+    title: params.title,
+    tag: params.tag,
+    roomLabel: params.roomLabel,
+  });
+  if (error) return { data: null, error };
+
+  if (params.removedMediaIds?.length) {
+    const { error: delErr } = await deleteAdminQuickNoteMedia(params.removedMediaIds);
+    if (delErr) return { data: null, error: delErr };
+  }
+
+  if (params.newMedia?.length) {
+    const { error: mediaErr } = await supabase.from('admin_quick_note_media').insert(
+      params.newMedia.map((m) => ({
+        note_id: params.noteId,
+        media_type: m.mediaType,
+        storage_path: m.storagePath,
+        public_url: m.publicUrl,
+        thumbnail_url: m.thumbnailUrl ?? null,
+        sort_order: m.sortOrder,
+      }))
+    );
+    if (mediaErr) return { data: null, error: mediaErr.message };
+  }
+
+  return getAdminQuickNote(params.noteId);
+}
+
 export async function deleteAdminQuickNote(id: string): Promise<{ error: string | null }> {
   const { error } = await supabase.from('admin_quick_notes').delete().eq('id', id);
   return { error: error?.message ?? null };

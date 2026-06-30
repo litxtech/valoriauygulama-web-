@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import {
   type GuestFeedVisibility,
   type GuestProfileFeedPreview,
 } from '@/lib/guestProfileFeedThumbnails';
+import { loadFeedPostEngagementCounts } from '@/lib/feedPostEngagementCounts';
 import { formatStatCompact } from '@/lib/modernProfileTenure';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
@@ -55,6 +56,7 @@ export function GuestProfileFeedGrid({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [gridW, setGridW] = useState(0);
+  const loadSeqRef = useRef(0);
 
   const numColumns = 3;
   const w = edgeToEdge ? winW : gridW > 0 ? gridW : Math.max(0, winW - 32);
@@ -66,17 +68,34 @@ export function GuestProfileFeedGrid({
 
   const load = useCallback(async () => {
     if (!guestId) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setErr(null);
-    const { items: row, error } = await loadGuestProfileFeedPreviews(guestId, 30, feedFilter, visibility);
+    const { items: row, error } = await loadGuestProfileFeedPreviews(guestId, 30, feedFilter, visibility, false);
+    if (seq !== loadSeqRef.current) return;
     if (error) {
       setErr(error.message);
       setItems([]);
-    } else {
-      setItems(row);
+      setLoading(false);
+      return;
     }
+    setItems(row);
     setLoading(false);
-  }, [guestId, feedFilter, visibility]);
+
+    if (showEngagementOverlay && row.length > 0) {
+      const ids = row.map((it) => it.id);
+      const counts = await loadFeedPostEngagementCounts(ids);
+      if (seq !== loadSeqRef.current) return;
+      setItems((prev) =>
+        prev.map((it) => {
+          const c = counts.get(it.id);
+          return c
+            ? { ...it, likesCount: c.likes, commentsCount: c.comments, viewsCount: c.views }
+            : it;
+        })
+      );
+    }
+  }, [guestId, feedFilter, visibility, showEngagementOverlay]);
 
   useEffect(() => {
     load();

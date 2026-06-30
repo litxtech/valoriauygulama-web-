@@ -8,6 +8,7 @@ import { getDeviceLanguageCode } from '@/lib/deviceLocale';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { saveLastRoute } from '@/lib/lastRoutePersistence';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
+import { startRealtimeForegroundRecovery } from '@/lib/realtimeForegroundRecovery';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -30,20 +31,27 @@ import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
 import { initAuthListener } from '@/stores/authStore';
-import { hasPolicyConsent, setPendingGuest } from '@/lib/policyConsent';
 import { useAuthStore } from '@/stores/authStore';
+import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
+import { usePartnerAppSurfaceStore } from '@/stores/partnerAppSurfaceStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
-import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
+import { hasPolicyConsent, setPendingGuest } from '@/lib/policyConsent';
 import {
   getLastNotificationResponseAsync,
   addNotificationResponseListener,
   addNotificationReceivedListener,
   savePushTokenForStaff,
+  savePushTokenForPartner,
   registerIOSPushTokenListener,
   initPushNotificationsPresentation,
   setOsAppIconBadgeCount,
   applyBadgeFromExpoNotificationPayload,
   isExpoGo,
+  claimNotificationResponseForHandling,
+  markNotificationResponseHandled,
+  notificationResponseAlreadyHandledThisSession,
+  shouldNavigateFromColdStartNotification,
+  type NotificationResponsePayload,
 } from '@/lib/notificationsPush';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
 import { useGuestNotificationStore } from '@/stores/guestNotificationStore';
@@ -54,7 +62,11 @@ import {
   isMessagePushPayload,
   scheduleGuestMessagingUnreadRefresh,
   scheduleStaffMessagingUnreadRefresh,
+  showMessagePushToastFromNotification,
+  subscribeLiveMessagePushToasts,
 } from '@/lib/messagingUnreadSync';
+import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { ValoriaMessagePushToast } from '@/components/notifications/ValoriaMessagePushToast';
 import { useStaffBoardStore } from '@/stores/staffBoardStore';
 import {
   playForegroundNotificationSound,
@@ -84,7 +96,7 @@ if (Platform.OS !== 'web') {
   SplashScreen.preventAutoHideAsync();
 }
 if (__DEV__) log.info('RootLayout', 'app başlatılıyor');
-if (Platform.OS === 'android') {
+if (Platform.OS !== 'web') {
   enableFreeze(true);
 }
 
@@ -203,14 +215,16 @@ function AppIconBadgeSync() {
 function RootLayoutInner() {
   const { t } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const setQR = useGuestFlowStore((s) => s.setQR);
-  const loading = useAuthStore((s) => s.loading);
-  const user = useAuthStore((s) => s.user);
   const staff = useAuthStore((s) => s.staff);
   const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
-  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
-  const authBootPending =
-    loading || (!!user && !staffCheckComplete && !staffCheckUnavailable);
+  const partner = usePartnerAuthStore((s) => s.partner);
+  const partnerCheckComplete = usePartnerAuthStore((s) => s.partnerCheckComplete);
+  const partnerSurface = usePartnerAppSurfaceStore((s) => s.surface);
+  const partnerSurfaceHydrated = usePartnerAppSurfaceStore((s) => s.hydrated);
 
   const [showSplashLogo, setShowSplashLogo] = useState(Platform.OS !== 'web');
   const openingOverlayOpacity = useRef(new Animated.Value(0)).current;
@@ -223,7 +237,7 @@ function RootLayoutInner() {
     loopAnimRef.current?.stop();
     loopAnimRef.current = null;
     dotPhase.stopAnimation?.();
-    const fadeOutMs = Platform.OS === 'android' ? 32 : 40;
+    const fadeOutMs = Platform.OS === 'android' ? 16 : 20;
     Animated.timing(openingOverlayOpacity, { toValue: 0, duration: fadeOutMs, useNativeDriver: true }).start(
       () => setShowSplashLogo(false)
     );
@@ -238,7 +252,7 @@ function RootLayoutInner() {
     if (Platform.OS === 'web') return;
     const isAndroid = Platform.OS === 'android';
     const dotHalfMs = 80;
-    const fadeInMs = isAndroid ? 16 : 24;
+    const fadeInMs = isAndroid ? 8 : 12;
 
     openingOverlayOpacity.setValue(0);
     dotPhase.setValue(0);
@@ -257,26 +271,14 @@ function RootLayoutInner() {
     };
   }, [openingOverlayOpacity, dotPhase]);
 
+  // Açılış animasyonu yalnızca kısa bir an gösterilir; oturum/personel kontrolü (authBootPending)
+  // arka planda sürerken animasyon takılı kalmasın. Altta aynı renkte BootScreen görünür.
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    if (authBootPending) {
-      setShowSplashLogo(true);
-      openingOverlayOpacity.setValue(1);
-      loopAnimRef.current?.stop();
-      const dotHalfMs = 80;
-      loopAnimRef.current = Animated.loop(
-        Animated.sequence([
-          Animated.timing(dotPhase, { toValue: 1, duration: dotHalfMs, useNativeDriver: true }),
-          Animated.timing(dotPhase, { toValue: 0, duration: dotHalfMs, useNativeDriver: true }),
-        ])
-      );
-      loopAnimRef.current.start();
-      return;
-    }
-    const quickMs = user ? 0 : 120;
-    const timer = setTimeout(() => fadeOutOverlay(), quickMs);
+    const SPLASH_VISIBLE_MS = 60;
+    const timer = setTimeout(() => fadeOutOverlay(), SPLASH_VISIBLE_MS);
     return () => clearTimeout(timer);
-  }, [authBootPending, user, fadeOutOverlay, openingOverlayOpacity, dotPhase]);
+  }, [fadeOutOverlay]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -347,6 +349,12 @@ function RootLayoutInner() {
     };
   }, []);
 
+  // Ön plana dönüşte askıya alınmış realtime soketini kurtar (feed/mesaj "bir an boş kalıp sonra geliyor" düzeltmesi).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    return startRealtimeForegroundRecovery();
+  }, []);
+
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const run = () => initChatVideoUploadSession();
@@ -364,12 +372,39 @@ function RootLayoutInner() {
     return cleanup;
   }, []);
 
-  // Staff push token — oturum kontrolü bitince (Supabase 522 dalgasında açılışı yormasın)
+  // Staff push token — oturum kontrolü bitince; ön plana her dönüşte değil (522 dalgasında yormasın)
   useEffect(() => {
     if (!staff || !staffCheckComplete) return;
-    const run = () => {
+    let lastPushSaveAt = 0;
+    const PUSH_SAVE_MIN_GAP_MS = 10 * 60_000;
+    const run = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastPushSaveAt < PUSH_SAVE_MIN_GAP_MS) return;
+      lastPushSaveAt = now;
       savePushTokenForStaff(staff.id).catch((e) => log.warn('RootLayout', 'push token kayıt', e));
       scheduleStaffNotificationSoundSync();
+    };
+    const bootDelay = setTimeout(() => run(true), 2_500);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') run(false);
+    });
+    return () => {
+      clearTimeout(bootDelay);
+      sub.remove();
+    };
+  }, [staff?.id, staffCheckComplete]);
+
+  useEffect(() => {
+    void usePartnerAppSurfaceStore.getState().hydrate();
+  }, []);
+
+  useEffect(() => {
+    if (!partner?.partnerUserId || !partnerCheckComplete || !partnerSurfaceHydrated) return;
+    if (partnerSurface !== 'portal') return;
+    const run = () => {
+      savePushTokenForPartner(partner.partnerUserId).catch((e) =>
+        log.warn('RootLayout', 'partner push token kayıt', e)
+      );
     };
     const bootDelay = setTimeout(run, 1500);
     const sub = AppState.addEventListener('change', (state) => {
@@ -379,9 +414,9 @@ function RootLayoutInner() {
       clearTimeout(bootDelay);
       sub.remove();
     };
-  }, [staff?.id, staffCheckComplete]);
+  }, [partner?.partnerUserId, partnerCheckComplete, partnerSurface, partnerSurfaceHydrated]);
 
-  // iOS: arka planda gelen push rozeti, uygulama açılınca store 0 ile ezilmesin diye son bildirimden tekrar uygula
+  // iOS: arka planda gelen push rozeti
   useEffect(() => {
     if (Platform.OS !== 'ios' || isExpoGo) return;
     const sub = AppState.addEventListener('change', (state) => {
@@ -394,11 +429,18 @@ function RootLayoutInner() {
     return () => sub.remove();
   }, []);
 
-  const handleNotificationResponse = (data: Record<string, unknown> | undefined) => {
+  const handleNotificationResponse = (
+    response: NotificationResponsePayload | null | undefined,
+    data: Record<string, unknown> | undefined
+  ) => {
     if (!data || typeof data !== 'object') return;
+    if (!claimNotificationResponseForHandling(response)) return;
     void markNotificationEventOpenedFromPayload(data);
     stashPendingNotificationData(data);
-    void navigateFromNotificationPush(router, data).finally(() => clearPendingNotificationData());
+    void navigateFromNotificationPush(router, data).finally(() => {
+      clearPendingNotificationData();
+      void markNotificationResponseHandled(response);
+    });
   };
 
   // Uygulama bildirime tıklanarak açıldıysa (kapalıyken tıklandı) ilgili sayfaya git
@@ -408,15 +450,18 @@ function RootLayoutInner() {
     if (coldStartHandled.current) return;
     coldStartHandled.current = true;
     const run = () => {
-      void getLastNotificationResponseAsync().then((response) => {
+      void (async () => {
+        const response = await getLastNotificationResponseAsync();
         if (response?.notification) {
           void applyBadgeFromExpoNotificationPayload(
             response.notification as import('expo-notifications').Notification
           );
         }
+        const shouldNavigate = await shouldNavigateFromColdStartNotification(response);
+        if (!shouldNavigate) return;
         const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
-        handleNotificationResponse(data);
-      });
+        handleNotificationResponse(response, data);
+      })();
     };
     if (Platform.OS === 'android') {
       const task = runAfterUiReady(run, { delayMs: 700 });
@@ -428,12 +473,69 @@ function RootLayoutInner() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const remove = addNotificationResponseListener((response) => {
+      if (notificationResponseAlreadyHandledThisSession(response)) return;
       void applyBadgeFromExpoNotificationPayload(response.notification as import('expo-notifications').Notification);
       const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-      handleNotificationResponse(data);
+      handleNotificationResponse(response, data);
     });
     return remove;
   }, [router]);
+
+  // Canlı mesaj toast — Supabase realtime (ön plan); push ile aynı mesaj dedup edilir.
+  useEffect(() => {
+    if (Platform.OS === 'web' || isExpoGo) return;
+    const getPathname = () => pathnameRef.current;
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+
+    const startStaff = (staffId: string) => {
+      if (cancelled) return;
+      unsub = subscribeLiveMessagePushToasts(
+        {
+          kind: 'staff',
+          staffId,
+          buildChatUrl: (id) => `/staff/chat/${id}`,
+        },
+        { getPathname }
+      );
+    };
+
+    const startGuest = async () => {
+      const row = await getOrCreateGuestForCurrentSession();
+      if (cancelled || !row?.guest_id) return;
+      unsub = subscribeLiveMessagePushToasts(
+        {
+          kind: 'guest',
+          guestId: row.guest_id,
+          buildChatUrl: (id) => `/customer/chat/${id}`,
+        },
+        { getPathname }
+      );
+    };
+
+    const run = () => {
+      const { staff: s } = useAuthStore.getState();
+      if (s?.id) {
+        startStaff(s.id);
+        return;
+      }
+      void startGuest();
+    };
+
+    if (Platform.OS === 'android') {
+      const task = runAfterUiReady(run, { delayMs: 900 });
+      return () => {
+        cancelled = true;
+        task.cancel();
+        unsub?.();
+      };
+    }
+    run();
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [staff?.id, staffCheckComplete]);
 
   // Uygulama öndeyken bildirim gelince badge güncellensin (mesaj push'u yalnızca sohbet sayacını artırır).
   useEffect(() => {
@@ -444,6 +546,9 @@ function RootLayoutInner() {
         notification.request.content.data && typeof notification.request.content.data === 'object'
           ? (notification.request.content.data as Record<string, unknown>)
           : undefined;
+      if (isMessagePushPayload(payload)) {
+        showMessagePushToastFromNotification(notification);
+      }
       const { staff } = useAuthStore.getState();
       if (staff?.organization_id) {
         void playForegroundNotificationSound(payload, staff.organization_id);
@@ -757,9 +862,12 @@ function RootLayoutInner() {
           }}
         />
         <Stack.Screen name="staff" options={{ headerShown: false }} />
+        <Stack.Screen name="partner" options={{ headerShown: false }} />
+        <Stack.Screen name="trade-partner" options={{ headerShown: false }} />
         <Stack.Screen name="join" options={{ headerShown: true, title: t('staffApplication') }} />
         <Stack.Screen name="go-to-notifications" options={{ headerShown: false }} />
       </Stack>
+      <ValoriaMessagePushToast />
     </React.Fragment>
   );
 }

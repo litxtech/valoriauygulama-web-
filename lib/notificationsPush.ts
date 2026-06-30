@@ -4,7 +4,7 @@
  * Expo Go'da push desteklenmediği için (SDK 53+) bu modül Expo Go'da no-op çalışır.
  */
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { supabase } from '@/lib/supabase';
@@ -56,13 +56,126 @@ function getNotifications(): typeof ExpoNotifications | null {
 
 /** Uygulama açıkken gelen bildirim: üst banner + liste + ses (Expo SDK 54+). Android'de ses kapalıysa heads-up da gelmez. */
 const VALORIA_CHANNEL_ID = 'valoria_urgent';
+const VALORIA_MESSAGES_CHANNEL_ID = 'valoria_messages_v1';
 // Android notification channels are immutable on many devices; version the silent channel ID
 // so users with older sound-enabled channel config reliably get a truly silent channel.
 const SILENT_CHANNEL_ID = 'valoria_silent_v2';
 const EMERGENCY_CHANNEL_ID = 'valoria_emergency_alert';
 const EMERGENCY_SOUND_NAME = 'emergency_alert.wav';
 
+/**
+ * Özellik bazlı varsayılan ses kanalları (herkeste oluşur — personel + misafir).
+ * Gömülü ses dosyaları: app.config.js → expo-notifications.sounds.
+ * Org özel ses yüklenirse RPC bunun yerine valoria_ns_<feature>_v<n> kanalını döndürür.
+ * Kanallar değişmez (immutable); ses değişince id versiyonu artırılmalı.
+ */
+const FEATURE_SOUND_CHANNELS: { id: string; name: string; sound: string; description: string }[] = [
+  { id: 'valoria_task_v1', name: 'Görevler', sound: 'task_ping.wav', description: 'Atanan ve acil görev bildirimleri' },
+  { id: 'valoria_meal_v1', name: 'Yemek listesi', sound: 'meal_chime.wav', description: 'Günlük yemek menüsü ve mutfak talepleri' },
+  { id: 'valoria_salary_v1', name: 'Maaş', sound: 'salary_cash.wav', description: 'Maaş ve ödeme bildirimleri' },
+  { id: 'valoria_warning_v1', name: 'Resmi uyarılar', sound: 'warning_alert.wav', description: 'Personel resmi uyarı ve çağrı bildirimleri' },
+  { id: 'valoria_kbs_v1', name: 'Kimlik / pasaport (KBS)', sound: 'kbs_scan.wav', description: 'KBS belge ve kimlik bildirimleri' },
+  { id: 'valoria_messages_v2', name: 'Valoria Mesajlar', sound: 'message_pop.wav', description: 'Sohbet mesajları — gönderen ve içerik' },
+];
+
+function isChatMessageNotificationType(notificationType: string): boolean {
+  return (
+    notificationType === 'message' ||
+    notificationType === 'chat_message' ||
+    notificationType === 'chat_mention'
+  );
+}
+
+function isAppForeground(): boolean {
+  return AppState.currentState === 'active';
+}
+
 let pushPresentationInitialized = false;
+
+async function ensureAndroidNotificationChannels(
+  Notifications: typeof ExpoNotifications,
+  AndroidImportance: (typeof ExpoNotifications)['AndroidImportance'],
+  AndroidNotificationVisibility: (typeof ExpoNotifications)['AndroidNotificationVisibility']
+): Promise<void> {
+  await Notifications.setNotificationChannelAsync(VALORIA_MESSAGES_CHANNEL_ID, {
+    name: 'Valoria Mesajlar',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lightColor: '#0ea5e9',
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
+    vibrationPattern: [0, 120, 80, 120],
+    showBadge: true,
+    description: 'Sohbet mesajları — gönderen ve içerik',
+  });
+  await Notifications.setNotificationChannelAsync(VALORIA_CHANNEL_ID, {
+    name: 'Valoria Bildirimleri',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
+    vibrationPattern: [0, 250, 250, 250],
+    showBadge: true,
+    description: 'Mesajlar, beğeniler ve duyurular',
+  });
+  await Notifications.setNotificationChannelAsync('valoria', {
+    name: 'Valoria Bildirimleri',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
+    vibrationPattern: [0, 250, 250, 250],
+    showBadge: true,
+  });
+  await Notifications.setNotificationChannelAsync('default', {
+    name: 'Bildirimler',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
+    vibrationPattern: [0, 250, 250, 250],
+    showBadge: true,
+  });
+  await Notifications.setNotificationChannelAsync(SILENT_CHANNEL_ID, {
+    name: 'Sessiz Bildirimler',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: null,
+    vibrationPattern: [0, 250, 250, 250],
+    showBadge: true,
+    description: 'Ses kapali ama gorunur bildirimler',
+  });
+  await Notifications.setNotificationChannelAsync(EMERGENCY_CHANNEL_ID, {
+    name: 'Acil Durum Bildirimleri',
+    importance: AndroidImportance.MAX,
+    enableVibrate: true,
+    enableLights: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+    sound: EMERGENCY_SOUND_NAME,
+    vibrationPattern: [0, 350, 200, 350, 200, 350],
+    showBadge: true,
+    description: 'Personel acil durum alarmlari',
+  });
+  for (const ch of FEATURE_SOUND_CHANNELS) {
+    await Notifications.setNotificationChannelAsync(ch.id, {
+      name: ch.name,
+      importance: AndroidImportance.HIGH,
+      enableVibrate: true,
+      enableLights: true,
+      lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+      sound: ch.sound,
+      vibrationPattern: [0, 200, 120, 200],
+      showBadge: true,
+      description: ch.description,
+    });
+  }
+}
 
 function normalizeNotificationType(raw: unknown): string {
   if (typeof raw !== 'string') return '';
@@ -130,10 +243,12 @@ export async function initPushNotificationsPresentation(): Promise<void> {
         );
         const playSound = !(muteByPayload || muteByLocalPref || muteByFeaturePref);
         const muteSystemSound = playSound && shouldMuteSystemNotificationSound(data);
+        const isChatMessage = isChatMessageNotificationType(notificationType);
+        const foregroundChat = isChatMessage && isAppForeground();
         return {
           shouldPlaySound: playSound && !muteSystemSound,
-          shouldShowAlert: true,
-          shouldShowBanner: true,
+          shouldShowAlert: !foregroundChat,
+          shouldShowBanner: !foregroundChat,
           shouldShowList: true,
           // Push payload'daki aps.badge / content.badge — iOS ön/arka planda simge sayacı için gerekli.
           shouldSetBadge: true,
@@ -147,61 +262,11 @@ export async function initPushNotificationsPresentation(): Promise<void> {
 
     if (Platform.OS === 'android') {
       try {
-        await Notifications.setNotificationChannelAsync(VALORIA_CHANNEL_ID, {
-          name: 'Valoria Bildirimleri',
-          importance: ExpoN.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: ExpoN.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-          description: 'Mesajlar, beğeniler ve duyurular',
-        });
-
-        await Notifications.setNotificationChannelAsync('valoria', {
-          name: 'Valoria Bildirimleri',
-          importance: ExpoN.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: ExpoN.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-        });
-
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Bildirimler',
-          importance: ExpoN.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: ExpoN.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-        });
-        await Notifications.setNotificationChannelAsync(SILENT_CHANNEL_ID, {
-          name: 'Sessiz Bildirimler',
-          importance: ExpoN.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: ExpoN.AndroidNotificationVisibility.PUBLIC,
-          sound: null,
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-          description: 'Ses kapali ama gorunur bildirimler',
-        });
-        await Notifications.setNotificationChannelAsync(EMERGENCY_CHANNEL_ID, {
-          name: 'Acil Durum Bildirimleri',
-          importance: ExpoN.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: ExpoN.AndroidNotificationVisibility.PUBLIC,
-          sound: EMERGENCY_SOUND_NAME,
-          vibrationPattern: [0, 350, 200, 350, 200, 350],
-          showBadge: true,
-          description: 'Personel acil durum alarmlari',
-        });
+        await ensureAndroidNotificationChannels(
+          Notifications,
+          ExpoN.AndroidImportance,
+          ExpoN.AndroidNotificationVisibility
+        );
       } catch (e) {
         log.warn('notificationsPush', 'Android kanal ayarı', e);
       }
@@ -209,10 +274,6 @@ export async function initPushNotificationsPresentation(): Promise<void> {
   } catch (e) {
     log.warn('notificationsPush', 'initPushNotificationsPresentation', e);
   }
-}
-
-if (!isExpoGo) {
-  void initPushNotificationsPresentation();
 }
 
 /** iOS: getExpoPushTokenAsync bazen asla resolve etmez (SDK 53+). Listener'ın uygulama başında kayıtlı olması gerekir. */
@@ -251,59 +312,11 @@ export async function getExpoPushTokenAsync(): Promise<string | null> {
     if (!Notifications) return null;
     if (Platform.OS === 'android') {
       try {
-        await Notifications.setNotificationChannelAsync(VALORIA_CHANNEL_ID, {
-          name: 'Valoria Bildirimleri',
-          importance: Notifications.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-          description: 'Mesajlar, beğeniler ve duyurular',
-        });
-        await Notifications.setNotificationChannelAsync('valoria', {
-          name: 'Valoria Bildirimleri',
-          importance: Notifications.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-        });
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Bildirimler',
-          importance: Notifications.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          sound: 'default',
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-        });
-        await Notifications.setNotificationChannelAsync(SILENT_CHANNEL_ID, {
-          name: 'Sessiz Bildirimler',
-          importance: Notifications.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          sound: null,
-          vibrationPattern: [0, 250, 250, 250],
-          showBadge: true,
-          description: 'Ses kapali ama gorunur bildirimler',
-        });
-        await Notifications.setNotificationChannelAsync(EMERGENCY_CHANNEL_ID, {
-          name: 'Acil Durum Bildirimleri',
-          importance: Notifications.AndroidImportance.MAX,
-          enableVibrate: true,
-          enableLights: true,
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          sound: EMERGENCY_SOUND_NAME,
-          vibrationPattern: [0, 350, 200, 350, 200, 350],
-          showBadge: true,
-          description: 'Personel acil durum alarmlari',
-        });
+        await ensureAndroidNotificationChannels(
+          Notifications,
+          Notifications.AndroidImportance,
+          Notifications.AndroidNotificationVisibility
+        );
       } catch (e) {
         log.warn('notificationsPush', 'Android kanal (token öncesi)', e);
       }
@@ -497,6 +510,27 @@ export async function savePushTokenForStaff(staffId: string): Promise<void> {
   }
 }
 
+/** Partner otel portalı girişinde push token kaydı. */
+export async function savePushTokenForPartner(partnerUserId: string): Promise<void> {
+  if (isExpoGo) return;
+  let token = await getStoredExpoPushToken();
+  if (!token) token = await getExpoPushTokenAsync();
+  if (!token) return;
+  try {
+    const { error } = await supabase.rpc('upsert_partner_push_token', {
+      p_token: token,
+      p_device_info: { platform: Platform.OS },
+    });
+    if (!error) {
+      log.info('notificationsPush', 'Partner push token kaydedildi', { partnerUserId: partnerUserId.slice(0, 8) });
+      return;
+    }
+    log.warn('notificationsPush', 'savePushTokenForPartner RPC', normalizeRpcError(error));
+  } catch (e) {
+    log.warn('notificationsPush', 'savePushTokenForPartner', sanitizeSupabaseErrorMessage((e as Error)?.message));
+  }
+}
+
 /** Misafir app_token ile: push token'ı backend'e kaydet (RPC ile push_tokens.guest_id). Token yoksa önce izin isteyip alır. */
 export async function savePushTokenForGuest(appToken: string): Promise<void> {
   if (isExpoGo) return;
@@ -539,17 +573,140 @@ export async function savePushTokenForGuest(appToken: string): Promise<void> {
   }
 }
 
+export type NotificationResponsePayload = {
+  notification: {
+    request: {
+      identifier?: string;
+      content: { data?: Record<string, unknown> };
+    };
+  };
+};
+
+const LAST_HANDLED_NOTIF_RESPONSE_ID_KEY = 'valoria_last_handled_notif_response_id';
+const NOTIF_COLD_START_DEDUP_MIGRATION_KEY = 'valoria_notif_cold_start_dedup_v1';
+
+const notificationResponseSessionIds = new Set<string>();
+
+let coldStartDedupMigrationPromise: Promise<void> | null = null;
+
+function notificationResponseId(response: NotificationResponsePayload | null | undefined): string {
+  const id = response?.notification?.request?.identifier;
+  return typeof id === 'string' ? id.trim() : '';
+}
+
+/** Expo'da biriken son bildirim yanıtını temizler; normal açılışta stale yönlendirmeyi önler. */
+export async function clearLastNotificationResponseAsync(): Promise<void> {
+  if (isExpoGo || Platform.OS === 'web') return;
+  try {
+    const Notifications = getNotifications();
+    if (!Notifications?.clearLastNotificationResponseAsync) return;
+    await Notifications.clearLastNotificationResponseAsync();
+  } catch (e) {
+    log.warn('notificationsPush', 'clearLastNotificationResponseAsync', e);
+  }
+}
+
+/** Güncelleme öncesi birikmiş eski yanıtı bir kez tüketir (yanlış cold-start navigasyonunu keser). */
+export async function ensureNotificationColdStartDedupMigration(): Promise<void> {
+  if (isExpoGo || Platform.OS === 'web') return;
+  if (coldStartDedupMigrationPromise) return coldStartDedupMigrationPromise;
+  coldStartDedupMigrationPromise = (async () => {
+    try {
+      const done = await AsyncStorage.getItem(NOTIF_COLD_START_DEDUP_MIGRATION_KEY);
+      if (done === '1') return;
+      const response = await getLastNotificationResponseAsync();
+      const id = notificationResponseId(response);
+      if (id) {
+        await AsyncStorage.setItem(LAST_HANDLED_NOTIF_RESPONSE_ID_KEY, id);
+      }
+      await clearLastNotificationResponseAsync();
+      await AsyncStorage.setItem(NOTIF_COLD_START_DEDUP_MIGRATION_KEY, '1');
+    } catch (e) {
+      log.warn('notificationsPush', 'ensureNotificationColdStartDedupMigration', e);
+    }
+  })();
+  return coldStartDedupMigrationPromise;
+}
+
+/** Cold start: yalnızca daha önce işlenmemiş bildirim yanıtında navigasyon yap. */
+export async function shouldNavigateFromColdStartNotification(
+  response: NotificationResponsePayload | null | undefined
+): Promise<boolean> {
+  if (isExpoGo || Platform.OS === 'web') return false;
+  if (!response?.notification) return false;
+
+  await ensureNotificationColdStartDedupMigration();
+
+  const id = notificationResponseId(response);
+  if (!id) {
+    if (Platform.OS === 'android') {
+      await clearLastNotificationResponseAsync();
+    }
+    return false;
+  }
+
+  if (notificationResponseSessionIdAlreadyClaimed(id)) return false;
+
+  try {
+    const lastHandled = await AsyncStorage.getItem(LAST_HANDLED_NOTIF_RESPONSE_ID_KEY);
+    if (lastHandled === id) {
+      await clearLastNotificationResponseAsync();
+      return false;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return true;
+}
+
+function notificationResponseIdAlreadyClaimed(id: string): boolean {
+  return notificationResponseSessionIds.has(id);
+}
+
+export function notificationResponseAlreadyHandledThisSession(
+  response: NotificationResponsePayload | null | undefined
+): boolean {
+  const id = notificationResponseId(response);
+  return id ? notificationResponseIdAlreadyClaimed(id) : false;
+}
+
+/** Aynı yanıtın cold start + listener ile çift işlenmesini önler. */
+export function claimNotificationResponseForHandling(
+  response: NotificationResponsePayload | null | undefined
+): boolean {
+  const id = notificationResponseId(response);
+  if (!id) return true;
+  if (notificationResponseSessionIds.has(id)) return false;
+  notificationResponseSessionIds.add(id);
+  return true;
+}
+
+export async function markNotificationResponseHandled(
+  response: NotificationResponsePayload | null | undefined
+): Promise<void> {
+  if (isExpoGo || Platform.OS === 'web') return;
+  const id = notificationResponseId(response);
+  if (id) {
+    notificationResponseSessionIds.add(id);
+    try {
+      await AsyncStorage.setItem(LAST_HANDLED_NOTIF_RESPONSE_ID_KEY, id);
+    } catch {
+      /* ignore */
+    }
+  }
+  await clearLastNotificationResponseAsync();
+}
+
 /** Uygulama bildirime tıklanarak açıldıysa (cold start) son yanıtı döndürür. Expo Go'da null. */
-export async function getLastNotificationResponseAsync(): Promise<{
-  notification: { request: { content: { data?: Record<string, unknown> } } };
-} | null> {
+export async function getLastNotificationResponseAsync(): Promise<NotificationResponsePayload | null> {
   if (isExpoGo) return null;
   try {
     const Notifications = getNotifications();
     if (!Notifications) return null;
     const response = await Notifications.getLastNotificationResponseAsync();
     if (!response) return null;
-    return response as unknown as { notification: { request: { content: { data?: Record<string, unknown> } } } };
+    return response as unknown as NotificationResponsePayload;
   } catch (e) {
     log.warn('notificationsPush', 'getLastNotificationResponseAsync', e);
     return null;
@@ -558,7 +715,7 @@ export async function getLastNotificationResponseAsync(): Promise<{
 
 /** Bildirime tıklandığında çağrılacak (root layout'ta listener ile bağlanır). Expo Go'da no-op. */
 export function addNotificationResponseListener(
-  handler: (response: { notification: { request: { content: { data?: Record<string, unknown> } } } }) => void
+  handler: (response: NotificationResponsePayload) => void
 ): () => void {
   if (Platform.OS === 'web' || isExpoGo) return () => {};
   const noop = (): void => {};

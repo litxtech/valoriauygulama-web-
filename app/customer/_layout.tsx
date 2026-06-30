@@ -5,6 +5,7 @@ import type { Session } from '@supabase/supabase-js';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { complaintsText } from '@/lib/complaintsI18n';
@@ -30,6 +31,8 @@ type GuestStatusRow = {
 export default function CustomerLayout() {
   const router = useRouter();
   const { t } = useTranslation();
+  const { isNight, colors: premiumColors } = usePremiumTheme();
+  const stackContentBg = isNight ? premiumColors.pageBg : theme.colors.backgroundSecondary;
   const { user, staff, staffCheckComplete, signOut } = useAuthStore();
   const [guestStatus, setGuestStatus] = useState<GuestStatusRow | null | undefined>(undefined);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -195,7 +198,7 @@ export default function CustomerLayout() {
     <Stack
       screenOptions={({ navigation }) => ({
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.backgroundSecondary },
+        contentStyle: { backgroundColor: stackContentBg },
         animation: 'slide_from_right',
         ...customerStackGestureForNavigation(navigation),
         headerStyle: { backgroundColor: theme.colors.surface },

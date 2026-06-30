@@ -56,7 +56,8 @@ function buildPreview(post: PostRow, first: MediaRow | null): StaffProfileFeedPr
 export async function loadStaffProfileFeedPreviews(
   staffId: string,
   limit = 30,
-  filter: StaffProfileFeedFilter = 'all'
+  filter: StaffProfileFeedFilter = 'all',
+  withCounts = true
 ): Promise<{ items: StaffProfileFeedPreview[]; error: Error | null }> {
   const { data: posts, error } = await supabase
     .from('feed_posts')
@@ -93,6 +94,10 @@ export async function loadStaffProfileFeedPreviews(
 
   if (filter === 'media') {
     items = items.filter((it) => it.kind === 'image' || it.kind === 'video');
+  }
+
+  if (!withCounts) {
+    return { items, error: null };
   }
 
   const counts = await loadFeedPostEngagementCounts(items.map((it) => it.id));

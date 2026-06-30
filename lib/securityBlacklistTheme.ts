@@ -1,0 +1,17 @@
+export const blacklistTheme = {
+  bg: '#0B1120',
+  bgSoft: '#111827',
+  surface: '#1A2332',
+  surfaceElevated: '#243044',
+  border: 'rgba(148, 163, 184, 0.18)',
+  text: '#F8FAFC',
+  textMuted: '#94A3B8',
+  textSecondary: '#CBD5E1',
+  accent: '#EF4444',
+  accentDeep: '#B91C1C',
+  accentSoft: 'rgba(239, 68, 68, 0.14)',
+  accentGradient: ['#7F1D1D', '#DC2626', '#F87171'] as const,
+  heroGradient: ['#0B1120', '#1E1B4B', '#450A0A'] as const,
+  success: '#22C55E',
+  warning: '#F59E0B',
+};

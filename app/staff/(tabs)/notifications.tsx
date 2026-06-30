@@ -3,13 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   RefreshControl,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
   Linking,
   Modal,
+  type ListRenderItem,
 } from 'react-native';
 import { useFocusEffect, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -365,7 +366,7 @@ export default function StaffNotificationsScreen() {
   const pathname = usePathname();
   const missingItemsBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { staff } = useAuthStore();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList<NotifRow>>(null);
   const lastLoadAtRef = useRef(0);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const NOTIF_LIST_TTL_MS = 60_000;
@@ -429,7 +430,7 @@ export default function StaffNotificationsScreen() {
     setLoading(false);
     if (opts?.scrollToTop) {
       requestAnimationFrame(() => {
-        scrollRef.current?.scrollTo({ y: 0, animated: true });
+        scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
       });
     }
   }, [staff?.id]);
@@ -905,14 +906,66 @@ export default function StaffNotificationsScreen() {
     );
   }
 
-  return (
-    <ScrollView
-      ref={scrollRef}
-      style={[styles.container, { backgroundColor: palette.pageBg }]}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
-      contentInsetAdjustmentBehavior="automatic"
-    >
+  const renderItem: ListRenderItem<NotifRow> = ({ item: n }) => {
+    const isTaskNotif = isStaffAssignmentNotification(n.notification_type, n.data);
+    const briefingSnap = isBreakfastBriefingNotification(n) ? breakfastBriefingSnapshot(n) : null;
+    const emergencySnap = isStaffEmergencyAlertNotification(n.notification_type)
+      ? staffEmergencySnapshot(n)
+      : null;
+    const agreementSnap = isCounterpartyAgreementNotification(n.notification_type)
+      ? counterpartyAgreementNotifFromData((n.data ?? {}) as Record<string, unknown>)
+      : null;
+    return (
+      <View style={[styles.row, n.read_at ? styles.rowRead : null]}>
+        <TouchableOpacity onPress={() => onNotificationPress(n)} activeOpacity={0.8}>
+          {isBreakfastBriefingNotification(n) ? (
+            <View style={styles.briefingTypePill}>
+              <Ionicons name="cafe-outline" size={12} color="#b45309" />
+              <Text style={styles.briefingTypePillText}>KAHVALTI BRİFİNGİ</Text>
+            </View>
+          ) : emergencySnap ? (
+            <View style={styles.emergencyTypePill}>
+              <Ionicons name="warning" size={12} color="#dc2626" />
+              <Text style={styles.emergencyTypePillText}>{t('staffNotifCatEmergency').toUpperCase()}</Text>
+            </View>
+          ) : agreementSnap ? (
+            <View style={styles.briefingTypePill}>
+              <Ionicons name="wallet-outline" size={12} color="#7c3aed" />
+              <Text style={[styles.briefingTypePillText, { color: '#5b21b6' }]}>BORÇ / ALACAK</Text>
+            </View>
+          ) : categoryLabel(n.category) ? (
+            <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
+          ) : null}
+          <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
+          {briefingSnap ? (
+            <BreakfastBriefingNotifCard snapshot={briefingSnap} compact />
+          ) : emergencySnap ? (
+            <StaffEmergencyNotifCard payload={emergencySnap} compact />
+          ) : agreementSnap ? (
+            <CounterpartyAgreementNotifCard snapshot={agreementSnap} compact />
+          ) : displayBody(n) ? (
+            <Text style={styles.rowBody} numberOfLines={isMissingNotification(n) ? 8 : 4}>
+              {displayBody(n)}
+            </Text>
+          ) : null}
+          <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
+        </TouchableOpacity>
+        {isTaskNotif ? (
+          <TouchableOpacity
+            style={styles.taskCompleteBtn}
+            onPress={() => void openTaskCompleteFromNotif(n)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+            <Text style={styles.taskCompleteBtnText}>{t('staffTasks_completeBtn')}</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
+  const ListHeader = (
+    <>
       <Text style={styles.title}>{t('staffNotifTitle')}</Text>
       <Text style={styles.subtitle}>{t('staffNotifSubtitle')}</Text>
       {!isExpoGo && (pushPerm === 'denied' || pushPerm === 'undetermined') && (
@@ -968,70 +1021,29 @@ export default function StaffNotificationsScreen() {
           )}
         </TouchableOpacity>
       )}
-      {list.length === 0 && !loading ? (
-        <Text style={styles.empty}>{t('staffNotifEmpty')}</Text>
-      ) : (
-        list.map((n) => {
-          const isTaskNotif = isStaffAssignmentNotification(n.notification_type, n.data);
-          const briefingSnap = isBreakfastBriefingNotification(n) ? breakfastBriefingSnapshot(n) : null;
-          const emergencySnap = isStaffEmergencyAlertNotification(n.notification_type)
-            ? staffEmergencySnapshot(n)
-            : null;
-          const agreementSnap = isCounterpartyAgreementNotification(n.notification_type)
-            ? counterpartyAgreementNotifFromData((n.data ?? {}) as Record<string, unknown>)
-            : null;
-          return (
-          <View key={n.id} style={[styles.row, n.read_at ? styles.rowRead : null]}>
-            <TouchableOpacity
-              onPress={() => onNotificationPress(n)}
-              activeOpacity={0.8}
-            >
-              {isBreakfastBriefingNotification(n) ? (
-                <View style={styles.briefingTypePill}>
-                  <Ionicons name="cafe-outline" size={12} color="#b45309" />
-                  <Text style={styles.briefingTypePillText}>KAHVALTI BRİFİNGİ</Text>
-                </View>
-              ) : emergencySnap ? (
-                <View style={styles.emergencyTypePill}>
-                  <Ionicons name="warning" size={12} color="#dc2626" />
-                  <Text style={styles.emergencyTypePillText}>{t('staffNotifCatEmergency').toUpperCase()}</Text>
-                </View>
-              ) : agreementSnap ? (
-                <View style={styles.briefingTypePill}>
-                  <Ionicons name="wallet-outline" size={12} color="#7c3aed" />
-                  <Text style={[styles.briefingTypePillText, { color: '#5b21b6' }]}>BORÇ / ALACAK</Text>
-                </View>
-              ) : categoryLabel(n.category) ? (
-                <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
-              ) : null}
-              <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
-              {briefingSnap ? (
-                <BreakfastBriefingNotifCard snapshot={briefingSnap} compact />
-              ) : emergencySnap ? (
-                <StaffEmergencyNotifCard payload={emergencySnap} compact />
-              ) : agreementSnap ? (
-                <CounterpartyAgreementNotifCard snapshot={agreementSnap} compact />
-              ) : displayBody(n) ? (
-                <Text style={styles.rowBody} numberOfLines={isMissingNotification(n) ? 8 : 4}>
-                  {displayBody(n)}
-                </Text>
-              ) : null}
-              <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
-            </TouchableOpacity>
-            {isTaskNotif ? (
-              <TouchableOpacity
-                style={styles.taskCompleteBtn}
-                onPress={() => void openTaskCompleteFromNotif(n)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
-                <Text style={styles.taskCompleteBtnText}>{t('staffTasks_completeBtn')}</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-          );
-        })
-      )}
+    </>
+  );
+
+  return (
+    <>
+      <FlatList
+        ref={scrollRef}
+        data={list}
+        keyExtractor={(n) => n.id}
+        renderItem={renderItem}
+        style={[styles.container, { backgroundColor: palette.pageBg }]}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
+        contentInsetAdjustmentBehavior="automatic"
+        ListHeaderComponent={ListHeader}
+        ListEmptyComponent={
+          !loading ? <Text style={styles.empty}>{t('staffNotifEmpty')}</Text> : null
+        }
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        removeClippedSubviews
+      />
       <Modal
         visible={detailVisible}
         transparent
@@ -1371,7 +1383,7 @@ export default function StaffNotificationsScreen() {
         onClose={() => setCompleteTarget(null)}
         onSubmit={submitTaskCompletion}
       />
-    </ScrollView>
+    </>
   );
 }
 

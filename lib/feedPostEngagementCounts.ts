@@ -16,7 +16,7 @@ export async function loadFeedPostEngagementCounts(
   }
 
   const [likesRows, commentRows, viewRows] = await Promise.all([
-    supabase.from('feed_post_likes').select('post_id').in('post_id', postIds),
+    supabase.from('feed_post_reactions').select('post_id').in('post_id', postIds),
     supabase.from('feed_post_comments').select('post_id').in('post_id', postIds),
     supabase.from('feed_post_views').select('post_id').in('post_id', postIds),
   ]);

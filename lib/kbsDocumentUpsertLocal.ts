@@ -3,6 +3,10 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 import { canSaveMrzDocument, isMrzPayload, type MrzSaveBlockReason } from '@/lib/scanner/mrzScanGate';
 import { OPS_SCHEMA_NOT_EXPOSED_MSG, resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import { isOpsSchemaNotExposedError } from '@/lib/supabaseTransientErrors';
+import {
+  findGuestDocumentByIdentity,
+  normalizeGuestDocumentNumber,
+} from '@/lib/kbsGuestDocumentIdentity';
 
 export type UpsertOk = { guestId: string; guestDocumentId: string; scanStatus: string };
 
@@ -89,7 +93,7 @@ export async function upsertGuestDocumentLocal(args: {
     }
   }
 
-  const normalizedDocNo = parsed.documentNumber ? parsed.documentNumber.trim() : null;
+  const normalizedDocNo = normalizeGuestDocumentNumber(parsed.documentNumber);
   const fullName =
     parsed.fullName ??
     (([parsed.firstName, parsed.lastName].filter(Boolean).join(' ').trim() || null) as string | null);
@@ -129,15 +133,7 @@ export async function upsertGuestDocumentLocal(args: {
     : { mrz_checksum_valid: null, ocr_engine: null, scanned_by_user_id: null };
 
   if (normalizedDocNo) {
-    const { data: existing, error: exErr } = await supabase
-      .schema('ops')
-      .from('guest_documents')
-      .select('id, guest_id, scan_status')
-      .eq('hotel_id', hotelId)
-      .eq('document_type', parsed.documentType)
-      .eq('document_number', normalizedDocNo)
-      .maybeSingle();
-    if (exErr) return { ok: false, message: mapOpsTableError(exErr), code: exErr.code };
+    const existing = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
     if (existing) {
       const { data: updated, error: updErr } = await supabase
         .schema('ops')
@@ -239,22 +235,15 @@ export async function upsertGuestDocumentLocal(args: {
 
   if (dErr || !doc) {
     if (normalizedDocNo && dErr?.code === '23505') {
-      const { data: again } = await supabase
-        .schema('ops')
-        .from('guest_documents')
-        .select('id, guest_id, scan_status')
-        .eq('hotel_id', hotelId)
-        .eq('document_type', parsed.documentType)
-        .eq('document_number', normalizedDocNo)
-        .maybeSingle();
+      const again = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
       if (again) {
         return {
           ok: true,
           data: {
             guestId: again.guest_id,
             guestDocumentId: again.id,
-            scanStatus: again.scan_status
-          }
+            scanStatus: again.scan_status,
+          },
         };
       }
     }

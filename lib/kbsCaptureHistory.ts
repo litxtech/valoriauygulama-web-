@@ -3,9 +3,11 @@ import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { isKbsPlaceholderName, mergeKbsOcrIntoExisting } from '@/lib/kbsCaptureOcrMerge';
-import { isKbsOcrPending, isKbsOcrProcessing } from '@/lib/kbsCaptureParsedFields';
+import { enrichKbsParsedFromSources } from '@/lib/kbsCaptureParsedFields';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
+import { findGuestDocumentByIdentity } from '@/lib/kbsGuestDocumentIdentity';
+import { log } from '@/lib/logger';
 
 export type KbsCapturedDocumentRow = {
   id: string;
@@ -24,15 +26,20 @@ export type KbsCapturedDocumentRow = {
 };
 
 /** Kimlik çekim listesi — ops.guest_documents (+ oda ataması). guest_stays kullanılmaz. */
-export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapturedDocumentRow[]> {
-  const ctx = await resolveOpsHotelIdForCaller();
+export async function fetchKbsCapturedDocuments(
+  limit = 300,
+  knownAuthUserId?: string | null
+): Promise<KbsCapturedDocumentRow[]> {
+  const ctx = await resolveOpsHotelIdForCaller(knownAuthUserId);
   if (!ctx.ok) throw new Error(ctx.message);
 
   const { data: docs, error } = await supabase
     .schema('ops')
     .from('guest_documents')
     .select(
-      'id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id'
+      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id,
+      document_number, nationality_code, issuing_country_code, expiry_date, document_type,
+      guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
     .eq('hotel_id', ctx.hotelId)
     .not('front_image_url', 'is', null)
@@ -51,31 +58,45 @@ export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapture
     ocr_engine: string | null;
     mrz_batch_key: string | null;
     scanned_by_user_id: string | null;
+    document_number: string | null;
+    nationality_code: string | null;
+    issuing_country_code: string | null;
+    expiry_date: string | null;
+    document_type: string | null;
+    guest: {
+      first_name: string | null;
+      last_name: string | null;
+      birth_date: string | null;
+      gender: string | null;
+      nationality_code: string | null;
+    } | null;
   }[];
   if (list.length === 0) return [];
 
   const scannerAuthIds = [...new Set(list.map((d) => d.scanned_by_user_id).filter(Boolean))] as string[];
-  let nameByAuthId = new Map<string, string>();
-  if (scannerAuthIds.length > 0) {
-    const { data: staffRows, error: staffErr } = await supabase
-      .from('staff')
-      .select('auth_id, full_name')
-      .in('auth_id', scannerAuthIds);
-    if (staffErr) throw new Error(staffErr.message);
-    nameByAuthId = new Map(
-      (staffRows ?? []).map((s) => [String(s.auth_id), String(s.full_name ?? '').trim() || '—'])
-    );
-  }
-
   const guestIds = [...new Set(list.map((d) => d.guest_id))];
-  const { data: stays, error: stayErr } = await supabase
-    .schema('ops')
-    .from('stay_assignments')
-    .select('guest_id, room_id, updated_at')
-    .eq('hotel_id', ctx.hotelId)
-    .in('guest_id', guestIds)
-    .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
-    .order('updated_at', { ascending: false });
+
+  // Personel adları ve konaklama bilgileri birbirinden bağımsız — paralel çek.
+  const [staffResult, stayResult] = await Promise.all([
+    scannerAuthIds.length > 0
+      ? supabase.from('staff').select('auth_id, full_name').in('auth_id', scannerAuthIds)
+      : Promise.resolve({ data: [], error: null } as const),
+    supabase
+      .schema('ops')
+      .from('stay_assignments')
+      .select('guest_id, room_id, updated_at')
+      .eq('hotel_id', ctx.hotelId)
+      .in('guest_id', guestIds)
+      .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
+      .order('updated_at', { ascending: false }),
+  ]);
+
+  if (staffResult.error) throw new Error(staffResult.error.message);
+  const nameByAuthId = new Map(
+    (staffResult.data ?? []).map((s) => [String(s.auth_id), String(s.full_name ?? '').trim() || '—'])
+  );
+
+  const { data: stays, error: stayErr } = stayResult;
   if (stayErr) throw new Error(stayErr.message);
 
   const roomIds = [...new Set((stays ?? []).map((s: { room_id: string }) => s.room_id))];
@@ -104,7 +125,14 @@ export async function fetchKbsCapturedDocuments(limit = 300): Promise<KbsCapture
     captured_at: d.captured_at,
     created_at: d.created_at,
     front_image_url: d.front_image_url,
-    parsed_payload: d.parsed_payload,
+    parsed_payload: enrichKbsParsedFromSources(d.parsed_payload, {
+      document_number: d.document_number,
+      nationality_code: d.nationality_code,
+      issuing_country_code: d.issuing_country_code,
+      expiry_date: d.expiry_date,
+      document_type: d.document_type,
+      guest: d.guest,
+    }),
     scan_status: d.scan_status,
     ocr_engine: d.ocr_engine ?? null,
     room_number: roomByGuest.get(d.guest_id) ?? null,
@@ -128,15 +156,11 @@ export function filterKbsCapturesForViewer(
 }
 
 export function displayCapturedName(row: KbsCapturedDocumentRow): string {
-  const p = row.parsed_payload as ParsedDocument | null;
+  const p = enrichKbsParsedFromSources(row.parsed_payload) as ParsedDocument | null;
   if (!p) return '—';
 
   const label = kbsDisplayFullName(p);
-
   if (label && !isKbsPlaceholderName(p)) return label;
-
-  if (isKbsOcrProcessing(p) || isKbsOcrPending(p)) return 'Okunuyor…';
-  if (isKbsPlaceholderName(p)) return 'Ad okunamadı';
 
   return label || '—';
 }
@@ -147,7 +171,12 @@ export function capturedAtTs(row: KbsCapturedDocumentRow): string {
 
 function stripOcrFlags(parsed: ParsedDocument): ParsedDocument {
   const warnings = (parsed.warnings ?? []).filter(
-    (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'manual_capture'
+    (w) =>
+      w !== 'ocr_pending' &&
+      w !== 'ocr_processing' &&
+      w !== 'ocr_failed' &&
+      w !== 'manual_capture' &&
+      !w.startsWith('kbs_side:')
   );
   return { ...parsed, warnings };
 }
@@ -157,12 +186,13 @@ export async function markKbsCaptureOcrState(
   docId: string,
   state: 'pending' | 'processing' | 'failed'
 ): Promise<void> {
-  const { data } = await supabase
+  const { data, error: loadErr } = await supabase
     .schema('ops')
     .from('guest_documents')
     .select('parsed_payload')
     .eq('id', docId)
     .maybeSingle();
+  if (loadErr) return;
   const prev = (data?.parsed_payload ?? {}) as ParsedDocument;
   let warnings = (prev.warnings ?? []).filter(
     (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
@@ -170,32 +200,32 @@ export async function markKbsCaptureOcrState(
   if (state === 'pending') warnings = [...warnings, 'ocr_pending'];
   if (state === 'processing') warnings = [...warnings, 'ocr_processing'];
   if (state === 'failed') warnings = [...warnings, 'ocr_failed'];
-  await supabase
+  const { error: updateErr } = await supabase
     .schema('ops')
     .from('guest_documents')
     .update({ parsed_payload: { ...prev, warnings } })
     .eq('id', docId);
+  if (updateErr) {
+    log.warn('kbsCaptureHistory', 'markKbsCaptureOcrState failed', { docId, state, updateErr });
+  }
 }
 
-/** OCR sonucu: belge + misafir kaydı güncellenir (mevcut dolu alanlar korunur). */
-export async function applyKbsCaptureOcrResult(
-  docId: string,
-  guestId: string,
-  parsed: ParsedDocument,
-  scanConfidence: number | null,
-  ocrEngine?: string | null
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { data: docRow, error: loadErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select('parsed_payload')
-    .eq('id', docId)
-    .maybeSingle();
-  if (loadErr) return { ok: false, message: loadErr.message };
+type KbsOcrCommitArgs = {
+  docId: string;
+  guestId: string;
+  hotelId: string | null;
+  documentType: string;
+  payload: ParsedDocument;
+  scanConfidence: number | null;
+  ocrEngine?: string | null;
+  /** false: aynı kimlik no başka kayıtta — sütuna yazma (unique index). */
+  writeDocumentNumber: boolean;
+};
 
-  const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
-  const merged = mergeKbsOcrIntoExisting(existing, parsed);
-  const payload = stripOcrFlags(merged);
+async function commitKbsCaptureOcrPatch(
+  args: KbsOcrCommitArgs
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { docId, guestId, payload, scanConfidence, ocrEngine, writeDocumentNumber } = args;
   const fullName =
     payload.fullName ??
     ([payload.firstName, payload.lastName].filter(Boolean).join(' ').trim() || null);
@@ -203,29 +233,53 @@ export async function applyKbsCaptureOcrResult(
     payload.birthDate && payload.birthDate.length >= 10 ? payload.birthDate.slice(0, 10) : null;
   const expiryDate =
     payload.expiryDate && payload.expiryDate.length >= 10 ? payload.expiryDate.slice(0, 10) : null;
-  const docNo = payload.documentNumber?.trim() || null;
+  const docNo = writeDocumentNumber ? payload.documentNumber?.trim() || null : null;
   const coreReady = !!(docNo && fullName);
   const effectiveConfidence =
     scanConfidence != null
       ? Math.max(scanConfidence, payload.confidence ?? 0)
       : payload.confidence ?? scanConfidence;
 
+  const patch: Record<string, unknown> = {
+    parsed_payload: payload,
+    scan_confidence: effectiveConfidence,
+    ocr_engine: ocrEngine ?? MRZ_OCR_ENGINE_VISION_MLKIT,
+    issuing_country_code: payload.issuingCountryCode,
+    nationality_code: payload.nationalityCode,
+    expiry_date: expiryDate,
+    raw_mrz: payload.rawMrz,
+    scan_status: coreReady ? 'ready_to_submit' : payload.rawMrz ? 'scanned' : 'draft',
+  };
+  if (writeDocumentNumber) {
+    patch.document_number = docNo;
+  }
+
   const { error: docErr } = await supabase
     .schema('ops')
     .from('guest_documents')
-    .update({
-      parsed_payload: payload,
-      scan_confidence: effectiveConfidence,
-      ocr_engine: ocrEngine ?? MRZ_OCR_ENGINE_VISION_MLKIT,
-      document_number: docNo,
-      issuing_country_code: payload.issuingCountryCode,
-      nationality_code: payload.nationalityCode,
-      expiry_date: expiryDate,
-      raw_mrz: payload.rawMrz,
-      scan_status: coreReady ? 'ready_to_submit' : payload.rawMrz ? 'scanned' : 'draft',
-    })
+    .update(patch)
     .eq('id', docId);
-  if (docErr) return { ok: false, message: docErr.message };
+
+  if (docErr) {
+    if (writeDocumentNumber && docNo && docErr.code === '23505' && args.hotelId) {
+      const conflict = await findGuestDocumentByIdentity(args.hotelId, args.documentType, docNo);
+      if (conflict && conflict.id !== docId) {
+        const dupPayload: ParsedDocument = {
+          ...payload,
+          documentNumber: null,
+          warnings: [...(payload.warnings ?? []), 'duplicate_identity'],
+        };
+        const dupRes = await commitKbsCaptureOcrPatch({
+          ...args,
+          payload: dupPayload,
+          writeDocumentNumber: false,
+        });
+        if (!dupRes.ok) return dupRes;
+        return applyKbsCaptureOcrResult(conflict.id, conflict.guest_id, payload, scanConfidence, ocrEngine);
+      }
+    }
+    return { ok: false, message: docErr.message };
+  }
 
   const guestPatch: Record<string, string | null> = {};
   if (fullName) guestPatch.full_name = fullName;
@@ -247,6 +301,116 @@ export async function applyKbsCaptureOcrResult(
     if (guestErr) return { ok: false, message: guestErr.message };
   }
   return { ok: true };
+}
+
+/** OCR sonucu: belge + misafir kaydı güncellenir (mevcut dolu alanlar korunur). */
+export async function applyKbsCaptureOcrResult(
+  docId: string,
+  guestId: string,
+  parsed: ParsedDocument,
+  scanConfidence: number | null,
+  ocrEngine?: string | null
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { data: docRow, error: loadErr } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select('parsed_payload, hotel_id, document_type')
+    .eq('id', docId)
+    .maybeSingle();
+  if (loadErr) return { ok: false, message: loadErr.message };
+
+  const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
+  const merged = mergeKbsOcrIntoExisting(existing, parsed);
+  const payload = stripOcrFlags(merged);
+  const docNo = payload.documentNumber?.trim() || null;
+  const hotelId = (docRow?.hotel_id as string | null) ?? null;
+  const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
+
+  let writeDocumentNumber = !!docNo;
+  if (docNo && hotelId) {
+    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo);
+    if (conflict && conflict.id !== docId) {
+      const canonical = await applyKbsCaptureOcrResult(
+        conflict.id,
+        conflict.guest_id,
+        payload,
+        scanConfidence,
+        ocrEngine
+      );
+      if (!canonical.ok) return canonical;
+      writeDocumentNumber = false;
+      if (!(payload.warnings ?? []).includes('duplicate_identity')) {
+        payload.warnings = [...(payload.warnings ?? []), 'duplicate_identity'];
+      }
+      payload.documentNumber = null;
+    }
+  }
+
+  return commitKbsCaptureOcrPatch({
+    docId,
+    guestId,
+    hotelId,
+    documentType,
+    payload,
+    scanConfidence,
+    ocrEngine,
+    writeDocumentNumber,
+  });
+}
+
+/** Düzelt — ad/soyad dahil OCR sonucunu zorla günceller (manuel ad korunur). */
+export async function applyKbsCaptureOcrCorrection(
+  docId: string,
+  guestId: string,
+  parsed: ParsedDocument,
+  scanConfidence: number | null,
+  ocrEngine?: string | null
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { data: docRow, error: loadErr } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select('parsed_payload, hotel_id, document_type')
+    .eq('id', docId)
+    .maybeSingle();
+  if (loadErr) return { ok: false, message: loadErr.message };
+
+  const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
+  const merged = mergeKbsOcrIntoExisting(existing, parsed, { correction: true });
+  const payload = stripOcrFlags(merged);
+  const docNo = payload.documentNumber?.trim() || null;
+  const hotelId = (docRow?.hotel_id as string | null) ?? null;
+  const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
+
+  let writeDocumentNumber = !!docNo;
+  if (docNo && hotelId) {
+    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo);
+    if (conflict && conflict.id !== docId) {
+      const canonical = await applyKbsCaptureOcrCorrection(
+        conflict.id,
+        conflict.guest_id,
+        payload,
+        scanConfidence,
+        ocrEngine
+      );
+      if (!canonical.ok) return canonical;
+      writeDocumentNumber = false;
+      if (!(payload.warnings ?? []).includes('duplicate_identity')) {
+        payload.warnings = [...(payload.warnings ?? []), 'duplicate_identity'];
+      }
+      payload.documentNumber = null;
+    }
+  }
+
+  return commitKbsCaptureOcrPatch({
+    docId,
+    guestId,
+    hotelId,
+    documentType,
+    payload,
+    scanConfidence,
+    ocrEngine,
+    writeDocumentNumber,
+  });
 }
 
 /** Manuel okuma sonucunu belgeye yazar. */
@@ -281,8 +445,104 @@ export async function saveKbsCapturedDocumentParsed(
 export async function fetchKbsCapturedDocumentById(
   docId: string
 ): Promise<KbsCapturedDocumentRow | null> {
-  const all = await fetchKbsCapturedDocuments(400);
-  return all.find((r) => r.id === docId) ?? null;
+  const ctx = await resolveOpsHotelIdForCaller();
+  if (!ctx.ok) throw new Error(ctx.message);
+
+  const { data: doc, error } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select(
+      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id,
+      document_number, nationality_code, issuing_country_code, expiry_date, document_type,
+      guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
+    )
+    .eq('hotel_id', ctx.hotelId)
+    .eq('id', docId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!doc?.front_image_url) return null;
+
+  const row = doc as {
+    id: string;
+    guest_id: string;
+    captured_at: string | null;
+    created_at: string;
+    front_image_url: string | null;
+    parsed_payload: KbsCapturedDocumentRow['parsed_payload'];
+    scan_status: string;
+    ocr_engine: string | null;
+    mrz_batch_key: string | null;
+    scanned_by_user_id: string | null;
+    document_number: string | null;
+    nationality_code: string | null;
+    issuing_country_code: string | null;
+    expiry_date: string | null;
+    document_type: string | null;
+    guest: {
+      first_name: string | null;
+      last_name: string | null;
+      birth_date: string | null;
+      gender: string | null;
+      nationality_code: string | null;
+    } | null;
+  };
+
+  const [staffResult, stayResult] = await Promise.all([
+    row.scanned_by_user_id
+      ? supabase.from('staff').select('auth_id, full_name').eq('auth_id', row.scanned_by_user_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null } as const),
+    supabase
+      .schema('ops')
+      .from('stay_assignments')
+      .select('guest_id, room_id, updated_at')
+      .eq('hotel_id', ctx.hotelId)
+      .eq('guest_id', row.guest_id)
+      .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (staffResult.error) throw new Error(staffResult.error.message);
+  if (stayResult.error) throw new Error(stayResult.error.message);
+
+  let roomNumber: string | null = null;
+  if (stayResult.data?.room_id) {
+    const { data: room, error: roomErr } = await supabase
+      .schema('ops')
+      .from('rooms')
+      .select('room_number')
+      .eq('id', stayResult.data.room_id as string)
+      .maybeSingle();
+    if (roomErr) throw new Error(roomErr.message);
+    roomNumber = room?.room_number != null ? String(room.room_number) : null;
+  }
+
+  const staffName = staffResult.data?.full_name
+    ? String(staffResult.data.full_name).trim() || '—'
+    : null;
+
+  return {
+    id: row.id,
+    guest_id: row.guest_id,
+    captured_at: row.captured_at,
+    created_at: row.created_at,
+    front_image_url: row.front_image_url,
+    parsed_payload: enrichKbsParsedFromSources(row.parsed_payload, {
+      document_number: row.document_number,
+      nationality_code: row.nationality_code,
+      issuing_country_code: row.issuing_country_code,
+      expiry_date: row.expiry_date,
+      document_type: row.document_type,
+      guest: row.guest,
+    }),
+    scan_status: row.scan_status,
+    ocr_engine: row.ocr_engine ?? null,
+    room_number: roomNumber,
+    mrz_batch_key: row.mrz_batch_key ?? null,
+    scanned_by_user_id: row.scanned_by_user_id ?? null,
+    captured_by_staff_name: row.scanned_by_user_id ? staffName : null,
+  };
 }
 
 export function staffCanDeleteKbsCaptures(staff: {

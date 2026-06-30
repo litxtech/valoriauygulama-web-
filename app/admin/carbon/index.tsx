@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickDocumentSafe } from '@/lib/documentPickerSafe';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -21,6 +21,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { DEFAULT_METHODOLOGY_SUMMARY } from '@/lib/carbonConstants';
 import { uploadBufferToPublicBucket } from '@/lib/storagePublicUpload';
 import { uriToArrayBuffer, getMimeAndExt } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 
 type CarbonInputRow = {
   month_start: string;
@@ -276,16 +277,15 @@ export default function AdminCarbonScreen() {
     }
     try {
       setUploadingEvidence(true);
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf'],
+      const res = await pickDocumentSafe({
+        type: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
         copyToCacheDirectory: true,
       });
       if (res.canceled || !res.assets?.[0]) return;
       const asset = res.assets[0];
-      const uri = asset.uri;
-      const { mime, ext } = asset.mimeType?.includes('pdf')
-        ? { mime: 'application/pdf', ext: 'pdf' }
-        : evidenceMime(uri);
+      const isPdf = !!asset.mimeType?.includes('pdf');
+      const uri = isPdf ? asset.uri : await prepareCrossPlatformUploadImageUri(asset.uri);
+      const { mime, ext } = isPdf ? { mime: 'application/pdf', ext: 'pdf' } : evidenceMime(uri);
       const buf = await uriToArrayBuffer(uri, { mediaKind: 'image' });
       const sub = `carbon/${monthStart.replace(/[^0-9-]/g, '')}`;
       const { publicUrl, path } = await uploadBufferToPublicBucket({

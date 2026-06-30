@@ -11,12 +11,16 @@ export const MRZ_OCR_ENGINE_EXPO = 'expo-text-extractor' as const;
 
 export type OcrLinesEngine = typeof MRZ_OCR_ENGINE_VISION_MLKIT | typeof MRZ_OCR_ENGINE_EXPO;
 
-type OcrImageOpts = { /** Galeri kimlik/pasaport: küçük fotoğrafları büyüt, çok büyükleri küçült. */ document?: boolean };
+type OcrImageOpts = {
+  document?: boolean;
+  /** Arka plan okuma — tek ML Kit ölçeği, hafif resize. */
+  fast?: boolean;
+};
 
 /** MRZ OCR öncesi kare boyutunu ayarlar. */
 async function normalizeImageForOcr(uri: string, opts?: OcrImageOpts): Promise<string> {
-  const maxEdge = opts?.document ? 2800 : 2000;
-  const minEdge = opts?.document ? 2000 : 0;
+  const maxEdge = opts?.fast ? 2600 : opts?.document ? 3200 : 2000;
+  const minEdge = opts?.fast ? 1800 : opts?.document ? 2400 : 0;
   try {
     const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
       Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
@@ -28,7 +32,7 @@ async function normalizeImageForOcr(uri: string, opts?: OcrImageOpts): Promise<s
       actions.push(width >= height ? { resize: { width: minEdge } } : { resize: { height: minEdge } });
     } else if (long > maxEdge) {
       actions.push(width >= height ? { resize: { width: maxEdge } } : { resize: { height: maxEdge } });
-    } else if (opts?.document && short < 900) {
+    } else if (opts?.document && short < 1100) {
       actions.push(width >= height ? { resize: { width: minEdge } } : { resize: { height: minEdge } });
     }
     if (!actions.length) return uri;
@@ -66,7 +70,7 @@ export async function ocrLinesFromImage(
   if (isMrzVisionScannerAvailable()) {
     try {
       const { ocrLinesFromMrzStillImage } = await import('@/lib/scanner/mrzStillImageOcr');
-      const mrz = await ocrLinesFromMrzStillImage(prepared);
+      const mrz = await ocrLinesFromMrzStillImage(prepared, { fast: opts?.fast });
       if (mrz?.lines.length) {
         visionLines = mrz.lines;
         if (visionLines.length >= 4) {

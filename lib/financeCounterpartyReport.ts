@@ -78,6 +78,8 @@ export type CounterpartyPersonReportInput = {
   expense: number;
   movements: CounterpartyReportMovement[];
   footer: FinanceReportFooter;
+  /** Açık/kısmi planların kalan tutarı — PDF’te “Mevcut borç” */
+  currentDebt?: number;
 };
 
 export type CounterpartyListReportRow = {
@@ -87,6 +89,7 @@ export type CounterpartyListReportRow = {
   income: number;
   expense: number;
   net: number;
+  currentDebt?: number;
 };
 
 /** PDF / yazdır: hangi hareket türü dahil edilsin */
@@ -161,43 +164,55 @@ function paymentLabel(method: string | null | undefined): string {
 }
 
 const REPORT_CSS = `
+  @page { size: A4 portrait; margin: 14mm 12mm; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px; color: #1e293b; font-size: 12px; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #7c3aed; padding-bottom: 12px; margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid; }
   .brand { font-size: 20px; font-weight: 800; color: #7c3aed; }
   .brandSub { font-size: 11px; color: #64748b; margin-top: 2px; }
-  .reportTitle { font-size: 18px; font-weight: 800; margin-top: 8px; }
-  .reportSub { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.5; }
-  .summary { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
-  .sumBox { flex: 1; min-width: 140px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #f8fafc; }
+  .reportTitle { font-size: 18px; font-weight: 800; margin-top: 8px; page-break-after: avoid; break-after: avoid; }
+  .reportSub { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.5; page-break-after: avoid; break-after: avoid; }
+  .accountOverview {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin-bottom: 16px;
+  }
+  .summary { display: flex; gap: 12px; margin: 16px 0 0; flex-wrap: wrap; page-break-inside: avoid; break-inside: avoid; }
+  .sumBox { flex: 1; min-width: 140px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid; }
   .sumLbl { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; }
   .sumVal { font-size: 18px; font-weight: 800; margin-top: 4px; }
   .sumIn { color: #16a34a; }
   .sumOut { color: #dc2626; }
   .sumPaid { color: #16a34a; }
+  .sumDebt { color: #7c3aed; }
   .rowPaid { color: #16a34a; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  table.reportTable thead { display: table-header-group; }
+  table.reportTable tr { page-break-inside: avoid; break-inside: avoid; }
   th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
   th { background: #f1f5f9; font-size: 10px; text-transform: uppercase; color: #475569; }
   .colAmt { text-align: right; white-space: nowrap; font-weight: 700; }
   .rowIn { color: #16a34a; }
   .rowOut { color: #dc2626; }
-  .footer { margin-top: 24px; font-size: 11px; color: #475569; border-top: 2px solid #e2e8f0; padding-top: 14px; }
+  .footer { margin-top: 24px; font-size: 11px; color: #475569; border-top: 2px solid #e2e8f0; padding-top: 14px; page-break-inside: avoid; break-inside: avoid; }
   .footerOrg { font-size: 11px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
   .footerPreparer { font-size: 12px; margin-bottom: 8px; color: #475569; }
   .footerDisclaimer { font-size: 10px; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
   .footerBrand { font-size: 11px; font-weight: 800; color: #7c3aed; text-align: center; letter-spacing: 0.06em; }
   .section { margin-top: 20px; }
-  h2 { font-size: 14px; margin: 0 0 8px; }
+  .section h2 { font-size: 14px; margin: 0 0 8px; page-break-after: avoid; break-after: avoid; }
+  h2 { font-size: 14px; margin: 0 0 8px; page-break-after: avoid; break-after: avoid; }
   .personCard {
     display: flex;
     align-items: flex-start;
     gap: 14px;
-    margin: 12px 0 18px;
+    margin: 12px 0 0;
     padding: 14px 16px;
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     background: #f8fafc;
     max-width: 420px;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
   .personPhoto {
     width: 64px;
@@ -287,13 +302,19 @@ export function buildCounterpartyPersonReportHtml(
     .join('');
 
   let summaryHtml = '';
+  const currentDebtBox =
+    input.currentDebt != null
+      ? `<div class="sumBox"><div class="sumLbl">Mevcut borç</div><div class="sumVal sumDebt">${esc(fmtMoneyTry(input.currentDebt))}</div></div>`
+      : '';
   if (kindFilter === 'paid') {
     summaryHtml = `<div class="summary">
+  ${currentDebtBox}
   <div class="sumBox"><div class="sumLbl">Toplam ödenen</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(input.expense))}</div></div>
   <div class="sumBox"><div class="sumLbl">İşlem</div><div class="sumVal">${sorted.length}</div></div>
 </div>`;
   } else if (kindFilter === 'received') {
     summaryHtml = `<div class="summary">
+  ${currentDebtBox}
   <div class="sumBox"><div class="sumLbl">Toplam alınan</div><div class="sumVal sumIn">${esc(fmtMoneyTry(input.income))}</div></div>
   <div class="sumBox"><div class="sumLbl">İşlem</div><div class="sumVal">${sorted.length}</div></div>
 </div>`;
@@ -301,6 +322,7 @@ export function buildCounterpartyPersonReportHtml(
     const net = input.income - input.expense;
     const netClass = net >= 0 ? 'sumIn' : 'sumPaid';
     summaryHtml = `<div class="summary">
+  ${currentDebtBox}
   <div class="sumBox"><div class="sumLbl">Toplam alınan</div><div class="sumVal sumIn">${esc(fmtMoneyTry(input.income))}</div></div>
   <div class="sumBox"><div class="sumLbl">Toplam ödenen</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(input.expense))}</div></div>
   <div class="sumBox"><div class="sumLbl">Net</div><div class="sumVal ${netClass}">${esc(fmtMoneyTry(net))}</div></div>
@@ -308,17 +330,40 @@ export function buildCounterpartyPersonReportHtml(
   }
 
   const body = `
+<div class="accountOverview">
 ${personCard}
 ${summaryHtml}
+</div>
 <div class="section">
   <h2>İşlem listesi (${sorted.length} kayıt)</h2>
-  ${sorted.length === 0 ? '<p>Seçilen türde kayıt yok.</p>' : `<table>
-    <tr>
+  ${sorted.length === 0 ? '<p>Seçilen türde kayıt yok.</p>' : `<table class="reportTable">
+    <thead><tr>
       <th>Tarih</th><th>Tür</th><th>Tutar</th><th>Kapsam</th><th>Kategori</th><th>Ödeme</th><th>Açıklama</th>
-    </tr>${rows}</table>`}
+    </tr></thead>
+    <tbody>${rows}</tbody></table>`}
 </div>`;
 
   return reportShell('Kişi ödeme raporu', reportMetaLine, body, input.footer);
+}
+
+function listReportGrandCurrentDebt(rows: CounterpartyListReportRow[]): number {
+  return rows.reduce((s, r) => s + (r.currentDebt ?? 0), 0);
+}
+
+function listReportHasCurrentDebt(rows: CounterpartyListReportRow[]): boolean {
+  return rows.some((r) => r.currentDebt != null);
+}
+
+function listReportCurrentDebtCell(amount: number | undefined): string {
+  const v = amount ?? 0;
+  if (v < 0.01) return `<td class="colAmt">—</td>`;
+  return `<td class="colAmt sumDebt">${esc(fmtMoneyTry(v))}</td>`;
+}
+
+function listReportCurrentDebtSummaryBox(rows: CounterpartyListReportRow[]): string {
+  if (!listReportHasCurrentDebt(rows)) return '';
+  const total = listReportGrandCurrentDebt(rows);
+  return `<div class="sumBox"><div class="sumLbl">Toplam mevcut borç</div><div class="sumVal sumDebt">${esc(fmtMoneyTry(total))}</div></div>`;
 }
 
 export function buildCounterpartyListReportHtml(
@@ -337,26 +382,31 @@ export function buildCounterpartyListReportHtml(
     const sorted = [...params.rows]
       .filter((r) => r.expense >= 0.01)
       .sort((a, b) => b.expense - a.expense || a.name.localeCompare(b.name, 'tr'));
+    const debtCol = listReportHasCurrentDebt(params.rows);
     const tableRows = sorted
       .map(
         (r) => `<tr>
       <td>${esc(r.name)}</td>
       <td>${esc(r.partyTypeLabel)}</td>
       <td>${esc(r.phone?.trim() || '—')}</td>
+      ${debtCol ? listReportCurrentDebtCell(r.currentDebt) : ''}
       <td class="colAmt rowPaid">${esc(fmtMoneyTry(r.expense))}</td>
     </tr>`
       )
       .join('');
     const body = `
+<div class="accountOverview">
 <div class="summary">
+  ${listReportCurrentDebtSummaryBox(params.rows)}
   <div class="sumBox"><div class="sumLbl">Toplam ödenen</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(params.grandExpense))}</div></div>
   <div class="sumBox"><div class="sumLbl">Kişi</div><div class="sumVal">${sorted.length}</div></div>
 </div>
+</div>
 <div class="section">
   <h2>Kişi bazlı özet — ödenen</h2>
-  <table>
-    <tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th><th>Ödenen</th></tr>
-    ${tableRows || '<tr><td colspan="4">Kayıt yok</td></tr>'}
+  <table class="reportTable">
+    <thead><tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th>${debtCol ? '<th>Mevcut borç</th>' : ''}<th>Ödenen</th></tr></thead>
+    <tbody>${tableRows || `<tr><td colspan="${debtCol ? 5 : 4}">Kayıt yok</td></tr>`}</tbody>
   </table>
 </div>`;
     return reportShell('Kişi ödemeleri — özet', subtitle, body, params.footer);
@@ -366,38 +416,45 @@ export function buildCounterpartyListReportHtml(
     const sorted = [...params.rows]
       .filter((r) => r.income >= 0.01)
       .sort((a, b) => b.income - a.income || a.name.localeCompare(b.name, 'tr'));
+    const debtCol = listReportHasCurrentDebt(params.rows);
     const tableRows = sorted
       .map(
         (r) => `<tr>
       <td>${esc(r.name)}</td>
       <td>${esc(r.partyTypeLabel)}</td>
       <td>${esc(r.phone?.trim() || '—')}</td>
+      ${debtCol ? listReportCurrentDebtCell(r.currentDebt) : ''}
       <td class="colAmt rowIn">${esc(fmtMoneyTry(r.income))}</td>
     </tr>`
       )
       .join('');
     const body = `
+<div class="accountOverview">
 <div class="summary">
+  ${listReportCurrentDebtSummaryBox(params.rows)}
   <div class="sumBox"><div class="sumLbl">Toplam alınan</div><div class="sumVal sumIn">${esc(fmtMoneyTry(params.grandIncome))}</div></div>
   <div class="sumBox"><div class="sumLbl">Kişi</div><div class="sumVal">${sorted.length}</div></div>
 </div>
+</div>
 <div class="section">
   <h2>Kişi bazlı özet — alınan</h2>
-  <table>
-    <tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th><th>Alınan</th></tr>
-    ${tableRows || '<tr><td colspan="4">Kayıt yok</td></tr>'}
+  <table class="reportTable">
+    <thead><tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th>${debtCol ? '<th>Mevcut borç</th>' : ''}<th>Alınan</th></tr></thead>
+    <tbody>${tableRows || `<tr><td colspan="${debtCol ? 5 : 4}">Kayıt yok</td></tr>`}</tbody>
   </table>
 </div>`;
     return reportShell('Kişi ödemeleri — özet', subtitle, body, params.footer);
   }
 
   const sorted = [...params.rows].sort((a, b) => b.expense - a.expense || a.name.localeCompare(b.name, 'tr'));
+  const debtCol = listReportHasCurrentDebt(params.rows);
   const tableRows = sorted
     .map(
       (r) => `<tr>
       <td>${esc(r.name)}</td>
       <td>${esc(r.partyTypeLabel)}</td>
       <td>${esc(r.phone?.trim() || '—')}</td>
+      ${debtCol ? listReportCurrentDebtCell(r.currentDebt) : ''}
       <td class="colAmt rowIn">${esc(fmtMoneyTry(r.income))}</td>
       <td class="colAmt rowPaid">${esc(fmtMoneyTry(r.expense))}</td>
       <td class="colAmt">${esc(fmtMoneyTry(r.net))}</td>
@@ -406,16 +463,19 @@ export function buildCounterpartyListReportHtml(
     .join('');
 
   const body = `
+<div class="accountOverview">
 <div class="summary">
+  ${listReportCurrentDebtSummaryBox(params.rows)}
   <div class="sumBox"><div class="sumLbl">Toplam alınan</div><div class="sumVal sumIn">${esc(fmtMoneyTry(params.grandIncome))}</div></div>
   <div class="sumBox"><div class="sumLbl">Toplam ödenen</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(params.grandExpense))}</div></div>
   <div class="sumBox"><div class="sumLbl">Kişi</div><div class="sumVal">${sorted.length}</div></div>
 </div>
+</div>
 <div class="section">
   <h2>Kişi bazlı özet — tümü</h2>
-  <table>
-    <tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th><th>Alınan</th><th>Ödenen</th><th>Net</th></tr>
-    ${tableRows || '<tr><td colspan="6">Kayıt yok</td></tr>'}
+  <table class="reportTable">
+    <thead><tr><th>Kişi / firma</th><th>Tür</th><th>Telefon</th>${debtCol ? '<th>Mevcut borç</th>' : ''}<th>Alınan</th><th>Ödenen</th><th>Net</th></tr></thead>
+    <tbody>${tableRows || `<tr><td colspan="${debtCol ? 7 : 6}">Kayıt yok</td></tr>`}</tbody>
   </table>
 </div>`;
 
@@ -481,20 +541,22 @@ export function buildDebtListReportHtml(
         : params.receivableTotal + params.payableTotal;
 
   const body = `
+<div class="accountOverview">
 <div class="summary">
   <div class="sumBox"><div class="sumLbl">${esc(toneLabel)}</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(totalVal))}</div></div>
   <div class="sumBox"><div class="sumLbl">Tahsil edilecek</div><div class="sumVal sumIn">${esc(fmtMoneyTry(params.receivableTotal))}</div></div>
   <div class="sumBox"><div class="sumLbl">Ödenecek</div><div class="sumVal sumPaid">${esc(fmtMoneyTry(params.payableTotal))}</div></div>
   <div class="sumBox"><div class="sumLbl">Kayıt</div><div class="sumVal">${sorted.length}</div></div>
 </div>
+</div>
 <div class="section">
   <h2>Borç / alacak listesi — ${esc(subtitle)}</h2>
-  <table>
-    <tr>
+  <table class="reportTable">
+    <thead><tr>
       <th>Özet</th><th>Borçlu</th><th>Alacaklı</th><th>Kategori</th><th>Durum</th>
       <th>Anapara</th><th>Kalan</th><th>Vade</th><th>Açıklama</th>
-    </tr>
-    ${tableRows || '<tr><td colspan="9">Kayıt yok</td></tr>'}
+    </tr></thead>
+    <tbody>${tableRows || '<tr><td colspan="9">Kayıt yok</td></tr>'}</tbody>
   </table>
 </div>`;
 

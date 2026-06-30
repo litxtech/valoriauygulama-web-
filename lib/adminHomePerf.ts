@@ -15,8 +15,8 @@ export const ADMIN_HOME_DEFER_MS = 400;
 /** Canlı kişi listesi poll — önbellek varken seyrek yenile */
 export const ADMIN_HOME_LIVE_PEOPLE_POLL_MS = 60_000;
 
-/** Canlı metrik şeridi poll */
-export const ADMIN_HOME_METRICS_POLL_MS = 90_000;
+/** Canlı metrik şeridi poll — arka planda çalışmaz (AppState kontrolü hook içinde). */
+export const ADMIN_HOME_METRICS_POLL_MS = 120_000;
 
 /** Canlı şerit oturum önbelleği (ms) */
 export const ADMIN_HOME_LIVE_OPS_SESSION_TTL_MS = 5 * 60_000;

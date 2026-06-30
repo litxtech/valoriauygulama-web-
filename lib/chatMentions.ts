@@ -1,4 +1,11 @@
 import type { ParticipantType } from '@/lib/messaging';
+import {
+  buildChatMentionPushCopy,
+  buildChatMessagePushCopy,
+  buildChatMediaPushCopy,
+  chatPushDataExtras,
+  truncateChatPushPreview,
+} from '@/lib/chatPushNotification';
 import { notifyConversationRecipients } from '@/lib/notificationService';
 
 export type ChatMention = {
@@ -131,11 +138,10 @@ export async function notifyChatMessageWithMentions(params: {
   messageText: string;
   mentions: ChatMention[];
   senderDisplayName: string;
+  isGroup?: boolean;
   excludeStaffId?: string;
   excludeAppToken?: string;
   chatUrl: string;
-  mentionPushBody: string;
-  defaultPushBody: string;
 }): Promise<void> {
   const {
     conversationId,
@@ -143,15 +149,21 @@ export async function notifyChatMessageWithMentions(params: {
     messageText,
     mentions,
     senderDisplayName,
+    isGroup,
     excludeStaffId,
     excludeAppToken,
     chatUrl,
-    mentionPushBody,
-    defaultPushBody,
   } = params;
 
-  const preview =
-    messageText.trim().slice(0, 80) + (messageText.trim().length > 80 ? '…' : '');
+  const preview = truncateChatPushPreview(messageText);
+  const pushBase = {
+    senderDisplayName,
+    messagePreview: preview,
+    conversationTitle,
+    isGroup,
+  };
+  const defaultCopy = buildChatMessagePushCopy(pushBase);
+  const mentionCopy = buildChatMentionPushCopy(pushBase);
 
   const staffMentioned = [
     ...new Set(
@@ -164,7 +176,15 @@ export async function notifyChatMessageWithMentions(params: {
     ),
   ];
 
-  const data = { conversationId, url: chatUrl, notificationType: 'chat_message' };
+  const dataExtras = chatPushDataExtras({
+    conversationId,
+    senderDisplayName,
+    messagePreview: preview,
+    isGroup,
+    subtitle: defaultCopy.subtitle,
+    url: chatUrl,
+    notificationType: 'chat_message',
+  });
 
   if (staffMentioned.length || guestMentioned.length) {
     await notifyConversationRecipients({
@@ -173,9 +193,14 @@ export async function notifyChatMessageWithMentions(params: {
       excludeAppToken,
       onlyStaffIds: staffMentioned.length ? staffMentioned : undefined,
       onlyGuestIds: guestMentioned.length ? guestMentioned : undefined,
-      title: conversationTitle || senderDisplayName,
-      body: mentionPushBody,
-      data: { ...data, notificationType: 'chat_mention' },
+      title: mentionCopy.title,
+      subtitle: mentionCopy.subtitle,
+      body: mentionCopy.body,
+      data: {
+        ...dataExtras,
+        notificationType: 'chat_mention',
+        pushSubtitle: mentionCopy.subtitle,
+      },
     }).catch(() => {});
   }
 
@@ -185,8 +210,45 @@ export async function notifyChatMessageWithMentions(params: {
     excludeAppToken,
     excludeStaffIds: staffMentioned,
     excludeGuestIds: guestMentioned,
-    title: conversationTitle || senderDisplayName,
-    body: defaultPushBody || preview,
-    data,
+    title: defaultCopy.title,
+    subtitle: defaultCopy.subtitle,
+    body: defaultCopy.body,
+    data: dataExtras,
+  }).catch(() => {});
+}
+
+/** Fotoğraf / video / ses gibi medya mesajları için push. */
+export async function notifyChatMediaPush(params: {
+  conversationId: string;
+  conversationTitle?: string | null;
+  senderDisplayName: string;
+  isGroup?: boolean;
+  kind: import('@/lib/chatPushNotification').ChatMediaKind;
+  excludeStaffId?: string;
+  excludeAppToken?: string;
+  chatUrl: string;
+}): Promise<void> {
+  const copy = buildChatMediaPushCopy({
+    senderDisplayName: params.senderDisplayName,
+    kind: params.kind,
+    conversationTitle: params.conversationTitle,
+    isGroup: params.isGroup,
+  });
+  await notifyConversationRecipients({
+    conversationId: params.conversationId,
+    excludeStaffId: params.excludeStaffId,
+    excludeAppToken: params.excludeAppToken,
+    title: copy.title,
+    subtitle: copy.subtitle,
+    body: copy.body,
+    data: chatPushDataExtras({
+      conversationId: params.conversationId,
+      senderDisplayName: params.senderDisplayName,
+      messagePreview: copy.body,
+      isGroup: params.isGroup,
+      subtitle: copy.subtitle,
+      url: params.chatUrl,
+      notificationType: 'chat_message',
+    }),
   }).catch(() => {});
 }

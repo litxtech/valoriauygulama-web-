@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
 import {
@@ -210,9 +211,30 @@ export function useGuestHotelPulse(refreshKey = 0, enabled = true): GuestHotelPu
   useEffect(() => {
     if (!enabled) return;
     void load(refreshKey !== 0);
-    const id = setInterval(() => void load(true), REFRESH_MS);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const startPolling = () => {
+      if (id) return;
+      id = setInterval(() => void load(true), REFRESH_MS);
+    };
+    const stopPolling = () => {
+      if (id) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+    // Yalnızca uygulama önplandayken poll et — arka planda pil/ısınma israfını önle
+    if (AppState.currentState === 'active') startPolling();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        void load(true);
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
     return () => {
-      clearInterval(id);
+      stopPolling();
+      sub.remove();
       if (refreshFlashTimer.current) clearTimeout(refreshFlashTimer.current);
     };
   }, [load, refreshKey, orgId, enabled]);

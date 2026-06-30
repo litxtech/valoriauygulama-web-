@@ -220,6 +220,8 @@ export function getMimeAndExt(
   }
   if (lower.includes('.png')) return { mime: 'image/png', ext: 'png' };
   if (lower.includes('.webp')) return { mime: 'image/webp', ext: 'webp' };
+  if (lower.includes('.heic')) return { mime: 'image/heic', ext: 'heic' };
+  if (lower.includes('.heif')) return { mime: 'image/heif', ext: 'heif' };
   return { mime: 'image/jpeg', ext: 'jpg' };
 }
 

@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { STAFF_TASK_MEDIA_BUCKET } from '@/lib/staffAssignmentMedia';
 import { uploadBufferToPublicBucket } from '@/lib/storagePublicUpload';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 
 export const MAX_COMPLETION_PROOF_PHOTOS = 4;
 
@@ -14,7 +15,8 @@ export async function uploadAssignmentCompletionProofs(
     const uri = imageUris[i]?.trim();
     if (!uri) continue;
     try {
-      const buf = await uriToArrayBuffer(uri);
+      const uploadUri = await prepareCrossPlatformUploadImageUri(uri);
+      const buf = await uriToArrayBuffer(uploadUri);
       const { publicUrl } = await uploadBufferToPublicBucket({
         bucketId: STAFF_TASK_MEDIA_BUCKET,
         buffer: buf,

@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { pickProfileCoverUri } from '@/lib/profileCoverPicker';
 import { adminTheme } from '@/constants/adminTheme';
@@ -164,7 +165,8 @@ export default function AdminProfileScreen() {
       });
       if (result.canceled || !result.assets[0]?.uri) return;
       setUploading(true);
-      const arrayBuffer = await uriToArrayBuffer(result.assets[0].uri);
+      const uploadUri = await prepareCrossPlatformUploadImageUri(result.assets[0].uri);
+      const arrayBuffer = await uriToArrayBuffer(uploadUri);
       const fileName = `staff/${profile.id}/${Date.now()}.jpg`;
       const { error } = await supabase.storage.from('profiles').upload(fileName, arrayBuffer, {
         contentType: 'image/jpeg',

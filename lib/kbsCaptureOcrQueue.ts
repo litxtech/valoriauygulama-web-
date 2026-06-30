@@ -1,7 +1,14 @@
-import { Platform } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { parseIdCardImageUriWithFallback } from '@/lib/kbsCaptureOcr';
+import {
+  hasKbsOcrApplyableData,
+  kbsOcrQualityScore,
+} from '@/lib/kbsCaptureProfessionalOcr';
+import { parseIdCardImageUriMaximum } from '@/lib/kbsCaptureGalleryDeepOcr';
+import { listCoreMissingIdFields, kbsCaptureHasReadableData } from '@/lib/kbsCaptureParsedFields';
+import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { applyKbsCaptureOcrResult, markKbsCaptureOcrState } from '@/lib/kbsCaptureHistory';
+import { log } from '@/lib/logger';
 
 export type KbsCaptureOcrJob = {
   docId: string;
@@ -9,15 +16,39 @@ export type KbsCaptureOcrJob = {
   imageUrl: string;
   /** Kayıt sonrası yerel dosya — ağdan indirme atlanır. */
   localUri?: string | null;
+  captureSide?: KbsCaptureSide;
+  captureSource?: 'camera' | 'gallery';
 };
 
-const OCR_GAP_MS = Platform.OS === 'android' ? 500 : 280;
+const OCR_GAP_MS = Platform.OS === 'android' ? 650 : 320;
+const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 120_000 : 100_000;
 
 let jobs: KbsCaptureOcrJob[] = [];
 let draining = false;
+const queuedOrActiveDocIds = new Set<string>();
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}_TIMEOUT`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+export function isKbsDocInOcrQueue(docId: string): boolean {
+  return queuedOrActiveDocIds.has(docId) || jobs.some((j) => j.docId === docId);
 }
 
 async function downloadImage(url: string, docId: string): Promise<string> {
@@ -27,7 +58,6 @@ async function downloadImage(url: string, docId: string): Promise<string> {
 }
 
 async function runJob(job: KbsCaptureOcrJob): Promise<void> {
-  await markKbsCaptureOcrState(job.docId, 'processing');
   try {
     let local = job.localUri?.trim() || '';
     if (local) {
@@ -37,7 +67,40 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
     if (!local) {
       local = await downloadImage(job.imageUrl, job.docId);
     }
-    const ocr = await parseIdCardImageUriWithFallback(local);
+
+    const ocr = await withTimeout(
+      parseIdCardImageUriMaximum(local, { captureSide: job.captureSide ?? 'front' }),
+      OCR_JOB_TIMEOUT_MS,
+      'kbs_ocr'
+    );
+
+    log.info('kbsOcrDebug', 'FINAL applied result', {
+      docId: job.docId,
+      captureSide: job.captureSide ?? 'front',
+      engine: ocr.engine,
+      firstName: ocr.parsed.firstName,
+      lastName: ocr.parsed.lastName,
+      documentNumber: ocr.parsed.documentNumber,
+      documentSeries: ocr.parsed.documentSeries,
+      birthDate: ocr.parsed.birthDate,
+      expiryDate: ocr.parsed.expiryDate,
+      nationalityCode: ocr.parsed.nationalityCode,
+      gender: ocr.parsed.gender,
+      hasMrz: !!ocr.parsed.rawMrz,
+    });
+
+    const canApply = hasKbsOcrApplyableData(ocr) || kbsCaptureHasReadableData(ocr.parsed);
+
+    if (!canApply) {
+      log.warn('kbsCaptureOcrQueue', 'no applyable ocr data', {
+        docId: job.docId,
+        score: kbsOcrQualityScore(ocr),
+        coreMissing: listCoreMissingIdFields(ocr.parsed),
+      });
+      await markKbsCaptureOcrState(job.docId, 'failed');
+      return;
+    }
+
     const res = await applyKbsCaptureOcrResult(
       job.docId,
       job.guestId,
@@ -46,10 +109,15 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
       ocr.engine
     );
     if (!res.ok) {
+      log.warn('kbsCaptureOcrQueue', 'apply failed', { docId: job.docId, message: res.message });
       await markKbsCaptureOcrState(job.docId, 'failed');
+      return;
     }
-  } catch {
+  } catch (e) {
+    log.warn('kbsCaptureOcrQueue', 'runJob failed', { docId: job.docId, e });
     await markKbsCaptureOcrState(job.docId, 'failed');
+  } finally {
+    queuedOrActiveDocIds.delete(job.docId);
   }
 }
 
@@ -67,8 +135,9 @@ async function drainQueue(): Promise<void> {
 /** Kayıt sonrası sırayla OCR (uygulamayı yormadan). */
 export function enqueueKbsCaptureOcr(job: KbsCaptureOcrJob): void {
   if (!job.imageUrl?.trim()) return;
-  const exists = jobs.some((j) => j.docId === job.docId);
-  if (!exists) jobs.push(job);
+  if (isKbsDocInOcrQueue(job.docId)) return;
+  queuedOrActiveDocIds.add(job.docId);
+  jobs.push(job);
   void drainQueue();
 }
 

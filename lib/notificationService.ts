@@ -426,6 +426,7 @@ export async function notifyConversationRecipients(params: {
   onlyStaffIds?: string[];
   onlyGuestIds?: string[];
   title: string;
+  subtitle?: string | null;
   body?: string | null;
   data?: Record<string, unknown>;
 }): Promise<{ sent?: number; failed?: number; error?: string }> {
@@ -438,6 +439,7 @@ export async function notifyConversationRecipients(params: {
     onlyStaffIds,
     onlyGuestIds,
     title,
+    subtitle,
     body,
     data,
   } = params;
@@ -453,6 +455,7 @@ export async function notifyConversationRecipients(params: {
         onlyStaffIds: onlyStaffIds?.length ? onlyStaffIds : undefined,
         onlyGuestIds: onlyGuestIds?.length ? onlyGuestIds : undefined,
         title: title.trim(),
+        subtitle: subtitle?.trim() || undefined,
         body: body ?? null,
         data: data ?? {},
       },
@@ -691,6 +694,121 @@ export async function notifyBreakfastRejected(params: {
       url: '/staff/breakfast-confirm',
       notificationType: 'breakfast_confirmation_rejected',
     },
+  }).catch(() => {});
+}
+
+const KITCHEN_NOTIFY_DEPARTMENTS = new Set([
+  'kitchen',
+  'kitchen_staff',
+  'mutfak',
+  'chef',
+  'head_chef',
+  'pastry',
+  'restaurant',
+]);
+
+async function resolveKitchenStaffIdsForOrg(organizationId: string): Promise<string[]> {
+  const { data: staffList, error } = await supabase
+    .from('staff')
+    .select('id, department, app_permissions')
+    .eq('organization_id', organizationId)
+    .eq('is_active', true)
+    .is('deleted_at', null);
+
+  if (error || !staffList?.length) return [];
+
+  const ids = new Set<string>();
+  for (const s of staffList) {
+    const dept = String(s.department ?? '').toLowerCase();
+    const perms = (s.app_permissions ?? {}) as Record<string, boolean>;
+    if (
+      KITCHEN_NOTIFY_DEPARTMENTS.has(dept) ||
+      perms.mutfak_operasyon === true ||
+      perms.yemek_listesi_mutfak_onay === true
+    ) {
+      ids.add(String(s.id));
+    }
+  }
+  return [...ids];
+}
+
+/** Partner otel günlük kahvaltı sayısı girince mutfak + admin push */
+export async function notifyBreakfastPartnerEntry(params: {
+  organizationId: string;
+  hotelName: string;
+  partnerHotelId: string;
+  recordDate: string;
+  guestCount: number;
+  lineTotal?: number;
+  note?: string | null;
+}): Promise<void> {
+  const { organizationId, hotelName, partnerHotelId, recordDate, guestCount, lineTotal, note } = params;
+  if (guestCount <= 0) return;
+
+  const dateLabel = (() => {
+    const [y, m, d] = recordDate.split('-');
+    return y && m && d ? `${d}.${m}.${y}` : recordDate;
+  })();
+
+  const title = `☕ Partner kahvaltı — ${hotelName}`;
+  const bodyParts = [`${dateLabel}: ${guestCount} kişi`];
+  if (lineTotal != null && lineTotal > 0) {
+    bodyParts.push(
+      new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(
+        lineTotal
+      )
+    );
+  }
+  if (note?.trim()) bodyParts.push(note.trim());
+  const body = bodyParts.join(' · ');
+
+  const adminHref = `/admin/breakfast-partners/${partnerHotelId}`;
+  const staffHref = '/staff/breakfast-partners';
+  const pushData = {
+    notificationType: 'breakfast_partner_entry',
+    screen: staffHref,
+    url: staffHref,
+    adminUrl: adminHref,
+    recordDate,
+    guestCount,
+    hotelName,
+    partnerHotelId,
+    organizationId,
+  };
+
+  const kitchenIds = await resolveKitchenStaffIdsForOrg(organizationId);
+  if (kitchenIds.length > 0) {
+    const filteredIds = await filterStaffRecipients(kitchenIds, 'breakfast_partner_entry');
+    if (filteredIds.length > 0) {
+      const rows = filteredIds.map((staffId) => ({
+        guest_id: null,
+        staff_id: staffId,
+        title,
+        body,
+        category: 'staff',
+        notification_type: 'breakfast_partner_entry',
+        data: pushData,
+        created_by: null,
+        sent_via: 'both',
+        sent_at: new Date().toISOString(),
+      }));
+      await postNotificationsReturnMinimal(rows).catch(() => {});
+      sendExpoPushToRecipients({
+        staffIds: filteredIds,
+        title,
+        body,
+        data: pushData,
+        notificationType: 'breakfast_partner_entry',
+        category: 'staff',
+      }).catch(() => {});
+    }
+  }
+
+  notifyAdminPanel({
+    title,
+    body,
+    href: adminHref,
+    notificationType: 'breakfast_partner_entry',
   }).catch(() => {});
 }
 

@@ -14,6 +14,10 @@ import {
   stripeLocaleForLang,
 } from "../_shared/guestTipI18n.ts";
 import { paymentRequestOpenUrl, stripeProductName } from "../_shared/paymentLinkPage.ts";
+import {
+  resolveGuestForPayment,
+  stripeCustomerEmailFromGuest,
+} from "../_shared/resolveGuestForPayment.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -75,15 +79,7 @@ Deno.serve(async (req: Request) => {
   const currency = (body.currency ?? defaultPaymentCurrency()).trim().toLowerCase();
   const note = body.note?.trim() || null;
 
-  const { data: guestRows } = await admin
-    .from("guests")
-    .select("id, full_name, organization_id")
-    .eq("auth_user_id", user.id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  const guest = guestRows?.[0];
+  const guest = await resolveGuestForPayment(admin, userClient, user.id);
   if (!guest?.id) return jsonErr("GUEST_NOT_FOUND", lang);
 
   const { data: staffRow } = await admin
@@ -178,9 +174,11 @@ Deno.serve(async (req: Request) => {
 
   try {
     const stripe = getStripe();
+    const customerEmail = stripeCustomerEmailFromGuest(guest);
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       locale: stripeLocaleForLang(lang) as "auto",
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
       success_url: paymentSuccessUrl(paymentRow.id, paymentRow.public_token),
       cancel_url: paymentCancelUrl(paymentRow.id, paymentRow.public_token),
       line_items: [

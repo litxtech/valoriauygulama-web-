@@ -1,3 +1,4 @@
+import { shouldRunOptionalSupabaseWork } from '@/lib/supabaseHealthGate';
 import type { Router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
@@ -96,6 +97,7 @@ export async function loadFeedPostViewers(postId: string): Promise<{
 /** Personel feed görüntülemesini kaydet (SECURITY DEFINER RPC; doğrudan upsert yok). */
 export async function recordStaffFeedPostViews(postIds: string[], staffId: string): Promise<void> {
   if (!postIds.length || !staffId) return;
+  if (!shouldRunOptionalSupabaseWork()) return;
   const { error } = await supabase.rpc('record_staff_feed_post_views', {
     p_post_ids: postIds,
     p_staff_id: staffId,
@@ -113,6 +115,7 @@ async function guestFeedRpcAppToken(): Promise<string | null> {
 /** Misafir feed görüntülemesini kaydet (SECURITY DEFINER RPC; doğrudan upsert yok). */
 export async function recordGuestFeedPostViews(postIds: string[], guestId: string): Promise<void> {
   if (!postIds.length || !guestId) return;
+  if (!shouldRunOptionalSupabaseWork()) return;
   const appToken = await guestFeedRpcAppToken();
   const { error } = await supabase.rpc('record_guest_feed_post_views', {
     p_post_ids: postIds,

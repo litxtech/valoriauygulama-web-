@@ -2,7 +2,6 @@
 import { useEffect, useLayoutEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, usePathname, type Href } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
@@ -12,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar, getAppTabBarColors } from '@/constants/tabBarTheme';
-import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
+import { getFloatingTabBarInnerHeight, getFloatingTabBarBarHeight } from '@/constants/floatingTabBarMetrics';
 import { StaffIdCaptureCenterTabIcon } from '@/components/AppTabBarCenterIdCaptureButton';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
@@ -85,10 +84,24 @@ function StaffProfileBackToHome() {
 }
 
 const HEADER_CTRL = 34;
-const BADGE_REFRESH_MIN_GAP_MS = Platform.OS === 'android' ? 90_000 : 60_000;
+const BADGE_REFRESH_MIN_GAP_MS = 90_000;
 const ANDROID_REALTIME_DEFER_MS = 3500;
 const ANDROID_BADGE_HEAVY_DEFER_MS = 2800;
 const IS_ANDROID = Platform.OS === 'android';
+
+const boardReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleDebouncedBoardLoad(staffId: string, run: () => void): void {
+  const prev = boardReloadTimers.get(staffId);
+  if (prev) clearTimeout(prev);
+  boardReloadTimers.set(
+    staffId,
+    setTimeout(() => {
+      boardReloadTimers.delete(staffId);
+      run();
+    }, 2_500)
+  );
+}
 
 function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['staff']): boolean {
   if (!staff) return false;
@@ -128,8 +141,7 @@ function StaffMainTabsLayout() {
   const tabBarColors = getAppTabBarColors(isNight);
   const headerTitleColor = isNight ? premiumColors.text : '#111827';
   const headerFg = isNight ? premiumColors.text : IG_HEADER_FG;
-  const insets = useSafeAreaInsets();
-  const tabBarHeight = getFloatingTabBarTotalHeight(insets);
+  const tabBarHeight = getFloatingTabBarBarHeight();
   const tabBarInnerHeight = getFloatingTabBarInnerHeight();
   const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
@@ -263,7 +275,7 @@ function StaffMainTabsLayout() {
     const start = () => {
       if (cancelled) return;
       unsub = subscribeMessagingUnreadLive({ kind: 'staff', staffId }, () => {
-        scheduleStaffMessagingUnreadRefresh(staffId, IS_ANDROID ? 520 : 280);
+        scheduleStaffMessagingUnreadRefresh(staffId);
       });
     };
 
@@ -296,7 +308,7 @@ function StaffMainTabsLayout() {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'announcements' },
           () => {
-            void loadBoardList(staffId);
+            scheduleDebouncedBoardLoad(staffId, () => void loadBoardList(staffId));
           }
         )
         .subscribe();
@@ -350,12 +362,30 @@ function StaffMainTabsLayout() {
     (props: BottomTabBarProps) => (
       <FloatingIslandTabBar
         {...props}
-        surfaceColor={isNight ? premiumColors.pageBg : 'transparent'}
+        surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.shellBackground}
         borderColor={tabBarColors.border}
         hidden={false}
+        floatOverContent
       />
     ),
-    [isNight, premiumColors.pageBg, tabBarColors.border]
+    [isNight, premiumColors.pageBg, tabBarColors.shellBackground, tabBarColors.border]
+  );
+
+  const staffTabScreenListeners = useCallback(
+    ({ route }: { route: { name: string } }) => ({
+      tabPress: (e: { preventDefault: () => void }) => {
+        if (route.name === 'admin') {
+          e.preventDefault();
+          clearAdminAutoOpenSuppress();
+          router.push('/admin' as Href);
+          hapticSelection();
+          return;
+        }
+        hapticSelection();
+        signalStaffExitedAdminPanelFromRoot();
+      },
+    }),
+    [router]
   );
 
   return (
@@ -363,28 +393,15 @@ function StaffMainTabsLayout() {
     <StaffBoardAnnouncementToast />
     <Tabs
       tabBar={renderTabBar}
-      screenListeners={({ route }) => ({
-        tabPress: (e) => {
-          if (route.name === 'admin') {
-            e.preventDefault();
-            clearAdminAutoOpenSuppress();
-            router.push('/admin' as Href);
-            hapticSelection();
-            return;
-          }
-          hapticSelection();
-          signalStaffExitedAdminPanelFromRoot();
-        },
-      })}
+      screenListeners={staffTabScreenListeners}
       screenOptions={({ route }) => {
         const feedTab = isStaffFeedTab(route.name);
-        const adminTab = route.name === 'admin';
         return {
-        /** iOS: tüm sekmeler erken mount. Android: lazy — admin sekmesi hariç (dokunuş gecikmesi olmasın). */
+        /** İlk ziyarette mount; ana feed/admin hariç. Dönüşte bellekte tut (detach kapalı). */
         sceneStyle: { backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg },
-        lazy: Platform.OS === 'android' && !adminTab,
-        /** Android: ziyaret edilmeyen sekmeyi bellekten ayır. iOS: feed flicker önleme için tut. */
-        detachInactiveScreens: Platform.OS === 'android',
+        lazy: true,
+        detachInactiveScreens: false,
+        freezeOnBlur: true,
         tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: tabBarColors.fallbackActive,
         tabBarInactiveTintColor: tabBarColors.inactive,
@@ -420,7 +437,7 @@ function StaffMainTabsLayout() {
           shadowOpacity: 0,
           borderBottomWidth: 0,
         },
-        headerBackground: () => <GlassHeaderBackground />,
+        headerBackground: GlassHeaderBackground,
         headerTransparent: false,
         headerShadowVisible: false,
         headerTitleAlign: 'center' as const,
@@ -441,6 +458,7 @@ function StaffMainTabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          lazy: false,
           href: tabHrefs.index,
           title: '',
           headerTitle: () => <StaffBoardHeaderEye />,
@@ -605,6 +623,7 @@ function StaffMainTabsLayout() {
       <Tabs.Screen
         name="admin"
         options={{
+          lazy: false,
           title: t('adminTab'),
           headerShown: false,
           sceneStyle: { backgroundColor: '#f8fafc' },

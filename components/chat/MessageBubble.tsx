@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter, usePathname, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
 import { VoiceMessagePlayer } from '@/components/VoiceMessagePlayer';
@@ -19,6 +20,7 @@ import { formatChatMessageDateTime, formatChatMessageTime } from '@/lib/formatCh
 import { parseMessageMentions } from '@/lib/chatMentions';
 import { isTempMessageId } from '@/lib/chatOptimisticMessage';
 import { getContrastTextColor } from '@/stores/messagingBubbleStore';
+import { chatSenderProfileHref } from '@/lib/chatSenderProfileHref';
 import type { Message } from '@/lib/messaging';
 import type { ChatVideoUploadState } from '@/lib/chatVideoUploadSession';
 
@@ -80,8 +82,18 @@ function MessageBubbleInner({
   bubbleColor,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
+  const router = useRouter();
+  const pathname = usePathname();
   const { width } = useWindowDimensions();
   const maxBubbleWidth = width * chatLayout.bubbleMaxWidthRatio;
+  const senderProfileHref =
+    !isOwn && msg.sender_id
+      ? chatSenderProfileHref({
+          senderId: msg.sender_id,
+          senderType: msg.sender_type,
+          pathname,
+        })
+      : null;
 
   const voiceUri = msg.message_type === 'voice' ? resolveVoiceMediaUrl(msg.media_url, msg.content) : null;
   const isVoice = msg.message_type === 'voice' && !!voiceUri;
@@ -273,7 +285,14 @@ function MessageBubbleInner({
     >
       {!isOwn && (
         <View style={styles.otherMeta}>
-          <View style={styles.avatarWrap}>
+          <Pressable
+            style={styles.avatarWrap}
+            onPress={senderProfileHref ? () => router.push(senderProfileHref as Href) : undefined}
+            disabled={!senderProfileHref}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={displayName}
+          >
             {msg.sender_avatar ? (
               <CachedImage uri={msg.sender_avatar} style={styles.avatarImg} contentFit="cover" />
             ) : (
@@ -281,13 +300,14 @@ function MessageBubbleInner({
                 <Text style={styles.avatarInitial}>{initial}</Text>
               </View>
             )}
-          </View>
-          <View style={[styles.otherContent, { maxWidth: maxBubbleWidth }]}>
+          </Pressable>
+          <View style={styles.otherContent}>
             {isGroup && displayName ? <Text style={styles.senderName}>{displayName}</Text> : null}
             <View
               style={[
                 styles.bubble,
                 styles.bubbleOther,
+                { maxWidth: maxBubbleWidth },
                 useCustomBubbleFill && !isOwn && bubbleColor ? { backgroundColor: bubbleColor, borderWidth: 0 } : null,
                 isMediaCard && styles.bubbleMedia,
                 isVoice && styles.bubbleVoice,
@@ -295,6 +315,9 @@ function MessageBubbleInner({
             >
               {renderContent(false)}
               <View style={styles.bubbleFooter}>
+                {msg.is_edited ? (
+                  <Text style={[styles.bubbleEdited, isMediaCard && styles.bubbleTimeMedia]}>{t('chatMessageEdited')}</Text>
+                ) : null}
                 <Text style={[styles.bubbleTime, isMediaCard && styles.bubbleTimeMedia]}>{timeStr}</Text>
               </View>
             </View>
@@ -314,6 +337,9 @@ function MessageBubbleInner({
             >
           {renderContent(true)}
           <View style={styles.bubbleFooter}>
+            {msg.is_edited ? (
+              <Text style={[styles.bubbleEdited, isMediaCard && styles.bubbleTimeMedia]}>{t('chatMessageEdited')}</Text>
+            ) : null}
             <Text style={[styles.bubbleTime, styles.bubbleTimeOwn, isMediaCard && styles.bubbleTimeMedia]}>
               {timeStr}
             </Text>
@@ -325,13 +351,42 @@ function MessageBubbleInner({
   );
 
   return (
-    <SwipeReplyRow enabled={!selectionMode && !!onReply && !msg.is_deleted} onReply={() => onReply?.()}>
+    <SwipeReplyRow
+      enabled={!selectionMode && !!onReply && !msg.is_deleted}
+      onReply={() => onReply?.()}
+    >
       {bubble}
     </SwipeReplyRow>
   );
 }
 
-export const MessageBubble = memo(MessageBubbleInner);
+/**
+ * Yalnızca görünümü etkileyen veriler değişince yeniden çiz.
+ * Inline callback'lerin kimliği (her parent render'da yenilenir) yok sayılır;
+ * böylece yükleme ilerlemesi tiklerken tüm balonlar değil, sadece ilgili olan render olur.
+ */
+function messageBubblePropsAreEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
+  return (
+    prev.msg === next.msg &&
+    prev.isOwn === next.isOwn &&
+    prev.isGroup === next.isGroup &&
+    prev.selected === next.selected &&
+    prev.selectionMode === next.selectionMode &&
+    prev.bubbleColor === next.bubbleColor &&
+    prev.videoUpload === next.videoUpload &&
+    prev.imageUploadProgress === next.imageUploadProgress &&
+    prev.imageUploadFailed === next.imageUploadFailed &&
+    prev.sendFailed === next.sendFailed &&
+    prev.replyToMessage === next.replyToMessage &&
+    prev.mediaPreloadReady === next.mediaPreloadReady &&
+    prev.imageAlbum === next.imageAlbum &&
+    prev.videoAlbum === next.videoAlbum &&
+    // videoUploads map'i yalnızca albüm balonlarında kullanılır; diğerlerinde ref değişimini yok say
+    ((!next.videoAlbum && !next.imageAlbum) || prev.videoUploads === next.videoUploads)
+  );
+}
+
+export const MessageBubble = memo(MessageBubbleInner, messageBubblePropsAreEqual);
 
 const styles = StyleSheet.create({
   albumUploadWrap: {
@@ -350,15 +405,18 @@ const styles = StyleSheet.create({
   },
   bubbleWrapOther: {
     alignItems: 'flex-start',
+    width: '100%',
   },
   otherMeta: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
+    width: '100%',
   },
   otherContent: {
     flex: 1,
     minWidth: 0,
+    alignSelf: 'stretch',
   },
   avatarWrap: {
     width: 28,
@@ -394,12 +452,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 16,
+    alignItems: 'stretch',
   },
   bubbleOwn: {
     backgroundColor: chatTheme.bubbleOutgoing,
     borderBottomRightRadius: 4,
   },
   bubbleOther: {
+    alignSelf: 'flex-start',
     backgroundColor: chatTheme.bubbleIncoming,
     borderBottomLeftRadius: 4,
     borderWidth: StyleSheet.hairlineWidth,
@@ -450,6 +510,12 @@ const styles = StyleSheet.create({
   bubbleTime: {
     fontSize: 11,
     color: chatTheme.textMuted,
+  },
+  bubbleEdited: {
+    fontSize: 10,
+    color: chatTheme.textMuted,
+    fontStyle: 'italic',
+    marginRight: 4,
   },
   bubbleTimeOwn: {
     color: 'rgba(17,24,39,0.55)',

@@ -20,11 +20,18 @@ type EnsureRpc = { ok?: boolean; hotel_id?: string; code?: string; message?: str
 /**
  * Oturumdaki kullanıcı için ops.app_users.hotel_id döner; yoksa RPC ile oluşturur.
  */
-export async function resolveOpsHotelIdForCaller(): Promise<
+export async function resolveOpsHotelIdForCaller(
+  knownAuthUserId?: string | null
+): Promise<
   { ok: true; hotelId: string; userId: string } | { ok: false; message: string; code: string }
 > {
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
+  let uid: string | null = null;
+  if (typeof knownAuthUserId === 'string' && knownAuthUserId.length > 0) {
+    uid = knownAuthUserId;
+  } else {
+    const { data: { session } } = await supabase.auth.getSession();
+    uid = session?.user?.id ?? null;
+  }
   if (!uid) return { ok: false, message: 'Oturum yok', code: 'AUTH' };
 
   // ops şeması PostgREST'te expose değilse doğrudan .schema('ops') → 406 PGRST106 verir; yalnızca public RPC kullan.

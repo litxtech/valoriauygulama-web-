@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
   ensureMediaLibraryPermission,
@@ -27,6 +28,12 @@ export async function pickGalleryImages(
     allowsEditing: false,
     quality: options?.quality ?? 0.8,
     selectionLimit: limit,
+    ...(Platform.OS === 'ios'
+      ? {
+          preferredAssetRepresentationMode:
+            ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+        }
+      : {}),
   });
 
   if (result.canceled || !result.assets?.length) return [];

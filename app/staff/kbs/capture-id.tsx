@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -84,6 +84,7 @@ export default function KbsCaptureIdScreen() {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const staff = useAuthStore((s) => s.staff);
+  const user = useAuthStore((s) => s.user);
   const cameraRef = useRef<CameraView | null>(null);
   const roomInputRef = useRef<TextInput | null>(null);
   const savingRef = useRef(false);
@@ -100,7 +101,7 @@ export default function KbsCaptureIdScreen() {
   const [guestNamesById, setGuestNamesById] = useState<Record<string, { firstName: string; lastName: string }>>(
     {}
   );
-  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const [splitting, setSplitting] = useState(false);
   const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
   const captureLockRef = useRef(false);
@@ -117,6 +118,25 @@ export default function KbsCaptureIdScreen() {
 
   const roomNoTrimmed = roomNoInput.trim();
 
+  const queueGalleryItems = useMemo(
+    () =>
+      queue.map((item, index) => ({
+        id: item.id,
+        uri: item.imageUri,
+        roomNumber: roomNoTrimmed || null,
+        label: `Kimlik ${index + 1}`,
+      })),
+    [queue, roomNoTrimmed]
+  );
+
+  const openQueueGallery = useCallback(
+    (itemId: string) => {
+      const idx = queue.findIndex((item) => item.id === itemId);
+      if (idx >= 0) setGalleryIndex(idx);
+    },
+    [queue]
+  );
+
   const onRoomNoChange = useCallback((text: string) => {
     const next = text.replace(/[^\dA-Za-z\-/]/g, '').slice(0, 24);
     setRoomNoInput(next);
@@ -126,10 +146,11 @@ export default function KbsCaptureIdScreen() {
   }, []);
 
   const prefetchHistory = useCallback(() => {
-    void fetchKbsCapturedDocuments()
+    if (!user?.id) return;
+    void fetchKbsCapturedDocuments(300, user.id)
       .then((data) => setKbsCaptureHistoryCache(data))
       .catch(() => {});
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!permission?.granted && permission?.canAskAgain !== false) {
@@ -138,12 +159,13 @@ export default function KbsCaptureIdScreen() {
   }, [permission?.granted, permission?.canAskAgain, requestPermission]);
 
   useEffect(() => {
-    warmKbsCaptureOpsContext();
+    if (!user?.id) return;
+    warmKbsCaptureOpsContext(user.id);
     const task = InteractionManager.runAfterInteractions(() => {
       prefetchHistory();
     });
     return () => task.cancel();
-  }, [prefetchHistory]);
+  }, [prefetchHistory, user?.id]);
 
   useEffect(() => {
     return () => {
@@ -384,7 +406,7 @@ export default function KbsCaptureIdScreen() {
     >
       {(queue ?? []).map((item, index) => (
         <View key={item.id} style={styles.queueStripCard}>
-          <Pressable style={styles.queueStripThumbWrap} onPress={() => setPreviewUri(item.imageUri)}>
+          <Pressable style={styles.queueStripThumbWrap} onPress={() => openQueueGallery(item.id)}>
             <Image source={{ uri: item.imageUri }} style={styles.queueStripThumb} contentFit="cover" />
             <Text style={styles.queueStripIndex}>{index + 1}</Text>
           </Pressable>
@@ -584,7 +606,7 @@ export default function KbsCaptureIdScreen() {
 
               <Text style={styles.nameSectionTitle}>Ad / soyad (isteğe bağlı)</Text>
               <Text style={styles.nameSectionHint}>
-                Boş bırakırsanız kimlik okununca veya geçici ad ile kaydedilir.
+                Boş bırakırsanız belge arka planda okunur; ad / soyad geçmişte güncellenir.
               </Text>
 
               {queue.length === 1 ? (
@@ -617,7 +639,7 @@ export default function KbsCaptureIdScreen() {
               ) : (
                 queue.map((item, index) => (
                   <View key={item.id} style={styles.nameCard}>
-                    <Pressable onPress={() => setPreviewUri(item.imageUri)}>
+                    <Pressable onPress={() => openQueueGallery(item.id)}>
                       <Image source={{ uri: item.imageUri }} style={styles.roomThumb} contentFit="cover" />
                     </Pressable>
                     <View style={styles.nameCardFields}>
@@ -671,7 +693,12 @@ export default function KbsCaptureIdScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <KbsZoomImageModal uri={previewUri} onClose={() => setPreviewUri(null)} />
+      <KbsZoomImageModal
+        items={queueGalleryItems}
+        initialIndex={galleryIndex ?? 0}
+        visible={galleryIndex !== null}
+        onClose={() => setGalleryIndex(null)}
+      />
     </View>
   );
 }

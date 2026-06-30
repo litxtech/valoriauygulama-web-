@@ -73,6 +73,7 @@ export const MOVEMENT_CATEGORY_LABELS: Record<string, string> = {
   transport: 'Ulaşım',
   office: 'Ofis gideri',
   tax: 'Vergi / Resmi',
+  bank_import: 'Banka ekstresi',
   other: 'Diğer',
 };
 

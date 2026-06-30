@@ -156,7 +156,7 @@ export default function KbsGuestConfirmScreen() {
       await playKbsScanSound('read', soundOn);
       setPending(null);
       Alert.alert(t('staffMrzArchiveSavedTitle'), t('staffMrzArchiveSavedBody'), [
-        { text: t('staffMrzContinueScan'), onPress: () => router.replace('/staff/mrz-scan' as never) },
+        { text: t('staffMrzContinueScan'), onPress: () => router.replace('/staff/kbs/guests/scan' as never) },
         { text: t('staffPassportsTitle'), onPress: () => router.replace('/staff/profile/passports' as never) },
       ]);
     } finally {

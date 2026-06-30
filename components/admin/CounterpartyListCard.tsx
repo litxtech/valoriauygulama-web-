@@ -9,6 +9,7 @@ import {
   resolveCounterpartyTypeMeta,
 } from '@/lib/financeCounterpartyUi';
 import type { FinanceCounterpartyType } from '@/lib/financeLedger';
+import { fmtMoneyTry } from '@/lib/financeLedger';
 
 type Props = {
   id: string;
@@ -25,8 +26,14 @@ type Props = {
   onPress: () => void;
   /** Uzun basınca listeden kaldır */
   onLongPress?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
   /** Daha sıkı satır — hızlı ödeme listesi */
   dense?: boolean;
+  /** Bakiye henüz gelmedi */
+  amountsPending?: boolean;
+  /** Açık borç / alacak kaydı toplamı */
+  openDebt?: number;
 };
 
 export function CounterpartyListCard({
@@ -41,21 +48,35 @@ export function CounterpartyListCard({
   organizationName,
   onPress,
   onLongPress,
+  selectionMode = false,
+  selected = false,
   dense,
+  amountsPending = false,
+  openDebt = 0,
 }: Props) {
   const meta = resolveCounterpartyTypeMeta(party_type, party_type_label);
   const bal = formatCounterpartyBalance(net);
   const flow = formatCounterpartyFlow(income, expense);
-  const hasFlow = income >= 0.01 || expense >= 0.01;
+  const hasFlow = !amountsPending && (income >= 0.01 || expense >= 0.01);
+  const hasOpenDebt = !amountsPending && openDebt >= 0.01;
 
   return (
     <TouchableOpacity
-      style={[styles.card, dense && styles.cardDense]}
+      style={[
+        styles.card,
+        dense && styles.cardDense,
+        selectionMode && selected && styles.cardSelected,
+      ]}
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={450}
       activeOpacity={0.88}
     >
+      {selectionMode ? (
+        <View style={[styles.check, selected && styles.checkOn]}>
+          {selected ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+        </View>
+      ) : null}
       <View style={[styles.avatar, dense && styles.avatarDense, { backgroundColor: meta.bg }]}>
         <Text style={[styles.avatarText, dense && styles.avatarTextDense, { color: meta.color }]}>
           {counterpartyInitials(name)}
@@ -80,8 +101,14 @@ export function CounterpartyListCard({
           <Text style={[styles.type, { color: meta.color }]}>{meta.label}</Text>
           {phone ? <Text style={styles.phone}> · {phone}</Text> : null}
         </View>
-        {hasFlow ? <Text style={styles.flow}>{flow}</Text> : <Text style={styles.flowMuted}>İşlem kaydı yok</Text>}
-        {hasFlow && bal.tone !== 'zero' ? (
+        {amountsPending ? (
+          <Text style={styles.flowMuted}>Tutarlar yükleniyor…</Text>
+        ) : hasFlow ? (
+          <Text style={styles.flow}>{flow}</Text>
+        ) : (
+          <Text style={styles.flowMuted}>İşlem kaydı yok</Text>
+        )}
+        {!amountsPending && hasFlow && bal.tone !== 'zero' ? (
           <Text
             style={[
               styles.net,
@@ -93,8 +120,18 @@ export function CounterpartyListCard({
             {bal.text}
           </Text>
         ) : null}
+        {hasOpenDebt ? (
+          <View style={[styles.debtBadge, dense && styles.debtBadgeDense]}>
+            <Ionicons name="alert-circle-outline" size={dense ? 11 : 12} color="#b45309" />
+            <Text style={[styles.debtBadgeText, dense && styles.debtBadgeTextDense]}>
+              Açık borç {fmtMoneyTry(openDebt)}
+            </Text>
+          </View>
+        ) : null}
       </View>
-      <Ionicons name="chevron-forward" size={22} color={adminTheme.colors.textMuted} />
+      {selectionMode ? null : (
+        <Ionicons name="chevron-forward" size={22} color={adminTheme.colors.textMuted} />
+      )}
     </TouchableOpacity>
   );
 }
@@ -112,6 +149,17 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
   },
   cardDense: { padding: 10, marginBottom: 6, borderRadius: 12, gap: 10 },
+  cardSelected: { borderColor: adminTheme.colors.accent, backgroundColor: '#fff7ed' },
+  check: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: adminTheme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkOn: { backgroundColor: adminTheme.colors.accent, borderColor: adminTheme.colors.accent },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
   avatarDense: { width: 42, height: 42, borderRadius: 21 },
   avatarImg: { overflow: 'hidden' },
@@ -156,4 +204,20 @@ const styles = StyleSheet.create({
   net: { fontSize: 12, fontWeight: '700', marginTop: 4 },
   netPos: { color: '#16a34a' },
   netNeg: { color: '#dc2626' },
+  debtBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  debtBadgeDense: { marginTop: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  debtBadgeText: { fontSize: 11, fontWeight: '700', color: '#b45309' },
+  debtBadgeTextDense: { fontSize: 10 },
 });

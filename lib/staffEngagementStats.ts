@@ -28,7 +28,7 @@ export async function loadStaffEngagementStats(staffId: string): Promise<StaffEn
   let comments = 0;
   if (postIds.length > 0) {
     const [likesRes, commentsRes] = await Promise.all([
-      supabase.from('feed_post_likes').select('id', { count: 'exact', head: true }).in('post_id', postIds),
+      supabase.from('feed_post_reactions').select('id', { count: 'exact', head: true }).in('post_id', postIds),
       supabase.from('feed_post_comments').select('id', { count: 'exact', head: true }).in('post_id', postIds),
     ]);
     likes = likesRes.count ?? 0;

@@ -5,6 +5,6 @@ export const FEED_FLASH_ESTIMATED_ITEM_SIZE = Platform.OS === 'android' ? 380 : 
 /** Ana sayfa / personel feed FlashList — uzun kaydırmada jank azaltır. */
 export const FEED_FLASH_LIST_PROPS = {
   estimatedItemSize: FEED_FLASH_ESTIMATED_ITEM_SIZE,
-  drawDistance: Platform.OS === 'android' ? 360 : 480,
-  removeClippedSubviews: Platform.OS === 'android',
+  drawDistance: Platform.OS === 'android' ? 280 : 360,
+  removeClippedSubviews: true,
 } as const;

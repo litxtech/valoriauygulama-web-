@@ -4,7 +4,7 @@
 
 import { parseChatAlbumId, parseChatVideoAlbumId } from '@/lib/chatImageAlbum';
 
-export type ParticipantType = 'guest' | 'staff' | 'admin';
+export type ParticipantType = 'guest' | 'staff' | 'admin' | 'partner';
 export type ConversationType = 'direct' | 'group' | 'department';
 export type MessageType =
   | 'text'
@@ -27,6 +27,8 @@ export interface Conversation {
   updated_at: string;
   last_message_id: string | null;
   last_message_at: string | null;
+  /** Grup kapatıldığında set edilir; yalnızca admin personel erişebilir. */
+  closed_at?: string | null;
 }
 
 export interface ConversationWithMeta extends Conversation {

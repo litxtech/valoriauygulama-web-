@@ -98,7 +98,7 @@ export async function createStaffAssignmentsForAssignees(
   const ids = (params.assigneeStaffIds ?? []).filter(Boolean);
   if (ids.length === 0) throw new Error(i18n.t('staffAssignPickStaff'));
 
-  const payload = ids.map((assigned_staff_id) => ({
+  const baseRow = (assigned_staff_id: string) => ({
     title: params.title,
     body: params.body,
     task_type: params.taskType,
@@ -108,12 +108,25 @@ export async function createStaffAssignmentsForAssignees(
     room_ids: params.roomIds,
     due_at: params.dueAt,
     status: 'pending' as const,
-  }));
+  });
 
-  const { data: rows, error } = await supabase
+  // Çoklu atamada her satır tüm görevlilerin id listesini taşır (kartta birlikte gösterim).
+  const payload = ids.map((id) => ({ ...baseRow(id), group_staff_ids: ids }));
+
+  let { data: rows, error } = await supabase
     .from('staff_assignments')
     .insert(payload)
     .select('id, assigned_staff_id');
+
+  // group_staff_ids kolonu (migration 501) yoksa kolon olmadan tekrar dene.
+  if (error && (error.message?.includes('group_staff_ids') || error.code === 'PGRST204')) {
+    const retry = await supabase
+      .from('staff_assignments')
+      .insert(ids.map((id) => baseRow(id)))
+      .select('id, assigned_staff_id');
+    rows = retry.data;
+    error = retry.error;
+  }
 
   if (error) throw error;
   const inserted = (rows ?? []) as { id: string; assigned_staff_id: string }[];

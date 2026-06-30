@@ -18,7 +18,6 @@ import {
   ActivityIndicator,
   Keyboard,
   FlatList,
-  InteractionManager,
 } from 'react-native';
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
 import { useRouter, useNavigation, useFocusEffect } from 'expo-router';
@@ -31,7 +30,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { theme } from '@/constants/theme';
-import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
+import { pds, feedXMediaWidth } from '@/constants/personelDesignSystem';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { formatRelative } from '@/lib/date';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
@@ -61,7 +60,10 @@ import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlaye
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CustomerFeedPostCard } from '@/components/customer/CustomerFeedPostCard';
 import { CustomerFeedSectionHeader } from '@/components/customer/CustomerFeedSectionHeader';
-import { CustomerFeedLiveDashboard } from '@/components/customer/CustomerFeedLiveDashboard';
+import { GuestFeedDashboardStrip } from '@/components/customer/GuestFeedDashboardStrip';
+import { GuestStaffContactsCard } from '@/components/customer/GuestStaffContactsCard';
+import { StaffFeedStoryAvatarCard } from '@/components/premium/StaffFeedStoryAvatarCard';
+import { resolveStaffPresenceStatus } from '@/lib/workStatusAura';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import {
   buildStaffAvatarLookup,
@@ -374,6 +376,12 @@ export default function CustomerHome() {
     return m;
   }, [storyGroups]);
 
+  const storyGroupByStaffId = useMemo(() => {
+    const m = new Map<string, StaffStoryGroup>();
+    storyGroups.forEach((g) => m.set(g.staff_id, g));
+    return m;
+  }, [storyGroups]);
+
   useEffect(() => {
     if (!activeStory?.id || !myGuestId) return;
     markStoryAsViewedForGuest(activeStory.id, myGuestId).catch(() => {});
@@ -441,6 +449,51 @@ export default function CustomerHome() {
     closeStoryPlayer();
     openStaffProfileWithVisit(router, id, 'customer');
   }, [activeStoryGroup?.staff_id, closeStoryPlayer, router]);
+
+  const renderGuestStaffAvatarCard = useCallback(
+    (s: StaffRow) => {
+      const displayName = displayStaffNameForViewer(
+        s.full_name,
+        s.profile_hidden_by_admin ?? null,
+        false,
+        t('visitorTypeStaff')
+      );
+      const staffStory = storyGroupByStaffId.get(s.id);
+      const hasStory = !!staffStory;
+      const orgLabel = !s.profile_hidden_by_admin && s.organization?.name
+        ? `${s.organization.name}${s.organization.kind === 'tour_office' ? ' • Ofis' : s.organization.kind ? ' • Otel' : ''}`
+        : null;
+
+      return (
+        <StaffFeedStoryAvatarCard
+          key={s.id}
+          id={s.id}
+          name={displayName}
+          profileImage={s.profile_image}
+          department={s.department}
+          position={null}
+          role={s.role}
+          orgLabel={orgLabel}
+          verificationBadge={s.verification_badge ?? null}
+          isOnline={!!s.is_online}
+          hasStory={hasStory}
+          hasUnseen={!!staffStory?.has_unseen}
+          profileHidden={!!s.profile_hidden_by_admin}
+          presenceStatus={resolveStaffPresenceStatus({ isOnline: s.is_online, workStatus: s.work_status })}
+          compact
+          onPress={() => {
+            if (hasStory) {
+              const gIdx = storyGroupIndexByStaffId.get(s.id);
+              if (gIdx !== undefined) openStoryAt(gIdx, 0);
+              return;
+            }
+            openStaffProfileWithVisit(router, s.id, 'customer');
+          }}
+        />
+      );
+    },
+    [storyGroupByStaffId, storyGroupIndexByStaffId, openStoryAt, router, t]
+  );
 
   const toggleStoryLikeAsGuest = useCallback(async () => {
     if (!activeStory?.id || !myGuestId || storyBusy) return;
@@ -573,6 +626,9 @@ export default function CustomerHome() {
     setActiveStaff(activeStaffFiltered);
     const hotel = hotelRes.data ?? null;
     setHotelInfo(hotel);
+    // Feed sorgusu geçici olarak hata verdiyse mevcut feed'i, beğeni/yorum sayılarını ve
+    // cache'i SİLME (boş ekran flaşı / "veri kayboldu sonra geldi" hissini önler).
+    if (feedRes.error) return;
     const posts = ((feedRes.data ?? []) as FeedPost[]).filter(
       (p) =>
         !(p.staff_id && hidden.hiddenStaffIds.has(p.staff_id)) &&
@@ -728,10 +784,14 @@ export default function CustomerHome() {
   }, [load]);
 
   useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      load().then(() => setLoading(false));
+    // Cache anında basıldı; ağdan taze veriyi beklemeden HEMEN arka planda yenile.
+    let cancelled = false;
+    load().finally(() => {
+      if (!cancelled) setLoading(false);
     });
-    return () => (task as { cancel?: () => void }).cancel?.();
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -1243,7 +1303,7 @@ export default function CustomerHome() {
 
   const renderFeedPost = useCallback(
     ({ item: post }: ListRenderItemInfo<FeedPost>) => {
-      const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH);
+      const feedCardWidth = feedXMediaWidth(SCREEN_WIDTH, 12);
       const staffInfo = parseFeedStaffEmbed(post.staff);
       const guestInfo = parseFeedGuestEmbed(post.guest);
       const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
@@ -1338,7 +1398,8 @@ export default function CustomerHome() {
       return (
         <View style={styles.feedListItem}>
           <CustomerFeedPostCard
-            horizontalInset={0}
+            horizontalInset={12}
+            socialHeader
             postTag={post.post_tag ?? null}
             authorName={authorName}
             authorAvatarUrl={authorAvatarUrl}
@@ -1451,24 +1512,16 @@ export default function CustomerHome() {
   if (loading && activeStaff.length === 0 && !hotelInfo) {
     return (
       <ScrollView style={[styles.container, { backgroundColor: palette.pageBg }]} contentContainerStyle={styles.content}>
-        <Skeleton height={118} borderRadius={theme.radius.lg} style={{ marginBottom: theme.spacing.md }} />
-        <View style={styles.quickActionsRow}>
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} height={72} borderRadius={theme.radius.md} style={{ flex: 1, minWidth: 0 }} />
-          ))}
-        </View>
-        <View style={styles.categoryRow}>
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} width={56} height={56} borderRadius={12} style={{ marginRight: 12 }} />
-          ))}
-        </View>
-        <Text style={styles.sectionTitle}>{feedSharedText('guestHomeStaff')}</Text>
-        <View style={{ flexDirection: 'row', gap: 16, marginBottom: 24 }}>
+        <Skeleton height={40} borderRadius={0} style={{ marginBottom: 8 }} />
+        <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: HORIZONTAL_GUTTER, marginBottom: 16 }}>
           {[1, 2, 3, 4].map((i) => (
             <Skeleton key={i} width={72} height={72} borderRadius={36} />
           ))}
         </View>
-        <SkeletonCard />
+        <View style={styles.headerPad}>
+          <Skeleton height={140} borderRadius={20} style={{ marginBottom: theme.spacing.md }} />
+          <SkeletonCard />
+        </View>
       </ScrollView>
     );
   }
@@ -1494,8 +1547,27 @@ export default function CustomerHome() {
       }
       ListHeaderComponent={
       <>
+      <GuestFeedDashboardStrip
+        refreshKey={refreshing ? Date.now() : 0}
+        onCreatePost={() => router.push('/customer/feed/new')}
+      />
+
+      {activeStaff.length > 0 ? (
+        <View style={styles.staffAvatarsSection}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            style={styles.staffAvatarsScroll}
+            contentContainerStyle={styles.staffAvatarsScrollContent}
+          >
+            {activeStaff.map((s) => renderGuestStaffAvatarCard(s))}
+          </ScrollView>
+        </View>
+      ) : null}
+
       {myRoom ? (
-        <>
+        <View style={styles.headerPad}>
           <Text style={[styles.sectionTitle, styles.sectionTitleAfterHero]}>{feedSharedText('guestHomeMyRoom')}</Text>
           <View style={styles.roomCard}>
             <View style={styles.roomCardAccent} />
@@ -1585,11 +1657,11 @@ export default function CustomerHome() {
               </TouchableOpacity>
             </View>
           </View>
-        </>
+        </View>
       ) : null}
 
       {facilities.length > 0 ? (
-        <>
+        <View style={styles.headerPad}>
           <Text style={styles.sectionLabel}>{feedSharedText('guestHomeFacilities')}</Text>
           <ScrollView
             horizontal
@@ -1608,90 +1680,17 @@ export default function CustomerHome() {
               </View>
             ))}
           </ScrollView>
-        </>
+        </View>
       ) : null}
 
-      {/* Personeller - kart stili */}
-      <Text style={styles.sectionLabel}>{feedSharedText('guestHomeStaff')}</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.staffCardsRow}
-        style={styles.storyScroll}
-      >
-        {activeStaff.map((staff) => {
-          const storyGIdx = storyGroupIndexByStaffId.get(staff.id);
-          const hasStory = storyGIdx !== undefined;
-          const displayName = displayStaffNameForViewer(
-            staff.full_name,
-            staff.profile_hidden_by_admin ?? null,
-            false,
-            t('visitorTypeStaff')
-          );
-          return (
-            <View key={staff.id} style={styles.staffCard}>
-              <View style={styles.staffCardInner}>
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    if (hasStory) openStoryAt(storyGIdx, 0);
-                    else openStaffProfileWithVisit(router, staff.id, 'customer');
-                  }}
-                  onLongPress={
-                    hasStory ? () => openStaffProfileWithVisit(router, staff.id, 'customer') : undefined
-                  }
-                  delayLongPress={1000}
-                >
-                  <LinearGradient
-                    colors={['#ff2d55', '#ff375f', '#ff8a00', '#7c3aed']}
-                    start={{ x: 0.1, y: 0.2 }}
-                    end={{ x: 0.9, y: 0.8 }}
-                    style={styles.staffCardRing}
-                  >
-                    <AvatarWithBadge badge={staff.verification_badge ?? null} avatarSize={68} badgeSize={14}>
-                      {staff.profile_image ? (
-                        <CachedImage uri={staff.profile_image} style={styles.staffCardAvatar} contentFit="cover" />
-                      ) : (
-                        <View style={[styles.staffCardAvatar, styles.staffCardPlaceholder]}>
-                          <Text style={styles.staffCardLetter}>{(displayName || 'P').charAt(0).toUpperCase()}</Text>
-                        </View>
-                      )}
-                    </AvatarWithBadge>
-                    <OnlinePresenceDot online={!!staff.is_online} size={14} borderColor={theme.colors.surface} />
-                  </LinearGradient>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => openStaffProfileWithVisit(router, staff.id, 'customer')}
-                  style={styles.staffCardTextBlock}
-                >
-                  <StaffNameWithBadge
-                    name={displayName.split(/\s+/)[0] || t('visitorTypeStaff')}
-                    badge={staff.verification_badge ?? null}
-                    textStyle={styles.staffCardName}
-                  />
-                  <Text style={styles.staffCardDept} numberOfLines={1}>
-                    {staff.profile_hidden_by_admin ? '—' : staff.department || '—'}
-                  </Text>
-                  {staff.organization?.name ? (
-                    <Text style={styles.staffCardOrg} numberOfLines={2}>
-                      {staff.organization.name}
-                      {staff.organization.kind === 'tour_office' ? ' • Ofis' : staff.organization.kind ? ' • Otel' : ''}
-                    </Text>
-                  ) : null}
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+      <View style={styles.headerPad}>
+        <GuestStaffContactsCard refreshKey={refreshing ? Date.now() : 0} />
 
-      <CustomerFeedLiveDashboard refreshKey={refreshing ? Date.now() : 0} />
-
-      <CustomerFeedSectionHeader
-        postCount={feedPosts.length}
-        onCreatePost={() => router.push('/customer/feed/new')}
-      />
+        <CustomerFeedSectionHeader
+          postCount={feedPosts.length}
+          onCreatePost={() => router.push('/customer/feed/new')}
+        />
+      </View>
       {loading && feedPosts.length === 0 ? (
         <View style={{ gap: 14 }}>
           {[1, 2].map((i) => (
@@ -2158,7 +2157,17 @@ export default function CustomerHome() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: pds.pageBg },
-  content: { padding: HORIZONTAL_GUTTER, paddingBottom: theme.spacing.xxl + 24 },
+  content: { paddingTop: 4, paddingBottom: theme.spacing.xxl + 24 },
+  headerPad: { paddingHorizontal: HORIZONTAL_GUTTER },
+  staffAvatarsSection: {
+    backgroundColor: pds.pageBg,
+    paddingTop: 4,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: pds.cardBorder,
+  },
+  staffAvatarsScroll: {},
+  staffAvatarsScrollContent: { paddingLeft: 12, paddingRight: 16, alignItems: 'center' },
   heroCard: {
     borderRadius: theme.radius.lg,
     padding: theme.spacing.lg,
@@ -2213,7 +2222,6 @@ const styles = StyleSheet.create({
   facilitiesRow: {
     flexDirection: 'row',
     paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.lg,
     gap: 12,
     paddingRight: theme.spacing.xl,
   },

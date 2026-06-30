@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs, useRouter, useFocusEffect, type Href } from 'expo-router';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +21,7 @@ import { savePushTokenForGuest } from '@/lib/notificationsPush';
 import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
 import { appTabBar, appTabBarCustomer, getAppTabBarColors, vibrantIconColor } from '@/constants/tabBarTheme';
-import { getFloatingTabBarInnerHeight, getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
+import { getFloatingTabBarInnerHeight, getFloatingTabBarBarHeight } from '@/constants/floatingTabBarMetrics';
 import { CachedImage } from '@/components/CachedImage';
 import { CenterMessageTabBarIcon } from '@/components/AppTabBarCenterMessageButton';
 import { complaintsText } from '@/lib/complaintsI18n';
@@ -30,6 +30,8 @@ import { useAppFeatureVisible, useCustomerTabHref } from '@/hooks/useAppFeatureV
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { GlassSurface } from '@/components/premium/GlassSurface';
 import { FeedCreateAnchorMenu } from '@/components/header/FeedCreateAnchorMenu';
+import { PartnerReturnPortalHeaderButton } from '@/components/breakfastPartner/PartnerUi';
+import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
 
 const TAB_ICON_SIZE = 24;
 const PROFILE_TAB_AVATAR_SIZE = 26;
@@ -188,6 +190,31 @@ const styles = StyleSheet.create({
   },
 });
 
+function CustomerNightHeaderBackground() {
+  return <GlassSurface style={{ flex: 1, borderRadius: 0 }} strong intensity={52} />;
+}
+
+function CustomerPartnerPortalShortcut() {
+  const partner = usePartnerAuthStore((s) => s.partner);
+  const partnerCheckComplete = usePartnerAuthStore((s) => s.partnerCheckComplete);
+  if (!partnerCheckComplete || !partner) return null;
+  return <PartnerReturnPortalHeaderButton label="Partner portal" compact />;
+}
+
+function CustomerFeedTabHeaderRight({
+  showNotifBell,
+}: {
+  showNotifBell: boolean;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <CustomerPartnerPortalShortcut />
+      {showNotifBell ? <NotificationBellHeaderButton /> : null}
+      <AdminPanelHeaderButton />
+    </View>
+  );
+}
+
 export default function CustomerTabsLayout() {
   const router = useRouter();
   const { t } = useTranslation();
@@ -198,8 +225,7 @@ export default function CustomerTabsLayout() {
   const headerFg = isNight ? premiumColors.text : IG_HEADER_FG;
   const headerBg = isNight ? 'transparent' : IG_HEADER_BG;
   const headerBorder = isNight ? tabBarColors.border : IG_HEADER_BORDER;
-  const insets = useSafeAreaInsets();
-  const tabBarHeight = getFloatingTabBarTotalHeight(insets);
+  const tabBarHeight = getFloatingTabBarBarHeight();
   const tabBarInnerHeight = getFloatingTabBarInnerHeight();
   const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
@@ -242,6 +268,7 @@ export default function CustomerTabsLayout() {
 
   useFocusEffect(
     useCallback(() => {
+      void refreshNotifications();
       if (!appToken) return () => {};
       let cancelled = false;
       const refresh = async () => {
@@ -254,14 +281,7 @@ export default function CustomerTabsLayout() {
       return () => {
         cancelled = true;
       };
-    }, [appToken, setUnreadCount])
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      void refreshNotifications();
-      return () => {};
-    }, [refreshNotifications])
+    }, [appToken, refreshNotifications, setUnreadCount])
   );
 
   // Android: ön plana gelince tab rozetleri (debounce — resume anında UI donmasın)
@@ -309,21 +329,37 @@ export default function CustomerTabsLayout() {
     [router, t]
   );
 
+  const renderFeedHeaderRight = useCallback(
+    () => <CustomerFeedTabHeaderRight showNotifBell={showNotifBell} />,
+    [showNotifBell]
+  );
+
+  const renderFeedHeaderLeft = useCallback(
+    () => <FeedCreateHeaderButton onPress={() => setFeedCreateMenuOpen(true)} />,
+    []
+  );
+
+  const renderTabBar = useCallback(
+    (props: BottomTabBarProps) => (
+      <FloatingIslandTabBar
+        {...props}
+        surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.shellBackground}
+        borderColor={tabBarColors.border}
+      />
+    ),
+    [isNight, premiumColors.pageBg, tabBarColors.shellBackground, tabBarColors.border]
+  );
+
   return (
     <>
     <Tabs
-      tabBar={(props) => (
-        <FloatingIslandTabBar
-          {...props}
-          surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.background}
-          borderColor={tabBarColors.border}
-        />
-      )}
+      tabBar={renderTabBar}
       screenOptions={({ route }) => {
         const feedTab = route.name === 'index';
         return {
-        lazy: Platform.OS === 'android',
+        lazy: true,
         detachInactiveScreens: false,
+        freezeOnBlur: true,
         sceneStyle: { backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg },
         tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: tabBarColors.fallbackActive,
@@ -359,7 +395,7 @@ export default function CustomerTabsLayout() {
           borderBottomWidth: isNight ? StyleSheet.hairlineWidth : 1,
           borderBottomColor: headerBorder,
         },
-        headerBackground: isNight ? () => <GlassSurface style={{ flex: 1, borderRadius: 0 }} strong intensity={52} /> : undefined,
+        headerBackground: isNight ? CustomerNightHeaderBackground : undefined,
         headerShadowVisible: false,
         headerTitleAlign: 'center' as const,
         headerTintColor: headerFg,
@@ -367,24 +403,16 @@ export default function CustomerTabsLayout() {
         ...(Platform.OS === 'android' ? { statusBarStyle: (isNight ? 'light' : 'dark') as const } : null),
         headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 88 } : { paddingLeft: 0, minWidth: 0 },
         headerRightContainerStyle: feedTab ? { paddingRight: 6, minWidth: 88 } : { paddingRight: 0, minWidth: 0 },
-        headerRight: feedTab
-          ? () => (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {showNotifBell ? <NotificationBellHeaderButton /> : null}
-                <AdminPanelHeaderButton />
-              </View>
-            )
-          : () => null,
+        headerRight: feedTab ? renderFeedHeaderRight : () => null,
         headerLeft:
-          feedTab && showFeedCreate
-            ? () => <FeedCreateHeaderButton onPress={() => setFeedCreateMenuOpen(true)} />
-            : () => null,
+          feedTab && showFeedCreate ? renderFeedHeaderLeft : () => null,
       };
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
+          lazy: false,
           href: tabHrefHome,
           title: t('home'),
           headerTitle: '',
@@ -467,6 +495,7 @@ export default function CustomerTabsLayout() {
           tabBarActiveTintColor: appTabBarCustomer.messages,
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <CustomerPartnerPortalShortcut />
               <NotificationBellHeaderButton />
               <NewChatHeaderButton />
             </View>
@@ -569,7 +598,7 @@ export default function CustomerTabsLayout() {
             },
             headerShadowVisible: false,
             headerLeft: () => <CustomerProfileBackToHome />,
-            headerRight: () => null,
+            headerRight: () => <CustomerPartnerPortalShortcut />,
             headerTintColor: '#ffffff',
             tabBarShowLabel: false,
             tabBarActiveTintColor: appTabBarCustomer.profile,

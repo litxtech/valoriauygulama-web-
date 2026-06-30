@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import type Stripe from "https://esm.sh/stripe@14.25.0?target=deno";
+import type Stripe from "npm:stripe@14.25.0";
 import {
   guestTipRefundedNotif,
   parseTipNotifLang,

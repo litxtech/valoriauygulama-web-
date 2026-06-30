@@ -1,8 +1,8 @@
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
+import { notesTheme, NOTE_TAG_STRIP } from '@/constants/adminNotesTheme';
 import {
-  ADMIN_NOTE_TAG_COLORS,
   ADMIN_NOTE_TAG_LABELS,
   adminNoteDisplayTitle,
   adminNotePreview,
@@ -17,9 +17,9 @@ type Props = {
 };
 
 export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
-  const tagStyle = ADMIN_NOTE_TAG_COLORS[note.tag] ?? ADMIN_NOTE_TAG_COLORS.general;
   const media = note.media ?? [];
   const thumb = media.find((m) => m.media_type === 'image') ?? media[0];
+  const stripColor = NOTE_TAG_STRIP[note.tag] ?? notesTheme.accent;
   const when = new Date(note.created_at).toLocaleString('tr-TR', {
     day: 'numeric',
     month: 'short',
@@ -28,56 +28,70 @@ export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
   });
 
   return (
-    <Pressable style={[styles.card, note.is_pinned && styles.cardPinned]} onPress={() => onPress(note.id)}>
-      <View style={styles.top}>
-        <View style={styles.numWrap}>
-          <Text style={styles.num}>{note.note_number}</Text>
-          {note.is_pinned ? <Ionicons name="pin" size={12} color="#6366F1" /> : null}
+    <Pressable
+      style={({ pressed }) => [
+        styles.card,
+        note.is_pinned && styles.cardPinned,
+        note.is_archived && styles.cardArchived,
+        pressed && styles.cardPressed,
+      ]}
+      onPress={() => onPress(note.id)}
+    >
+      <View style={[styles.strip, { backgroundColor: stripColor }]} />
+
+      <View style={styles.content}>
+        <View style={styles.topRow}>
+          <Text style={styles.number}>{note.note_number}</Text>
+          <View style={styles.badges}>
+            {note.is_pinned ? (
+              <View style={styles.pinBadge}>
+                <Ionicons name="pin" size={10} color={notesTheme.pinned} />
+              </View>
+            ) : null}
+            <View style={styles.tagPill}>
+              <Text style={styles.tagText}>{ADMIN_NOTE_TAG_LABELS[note.tag]}</Text>
+            </View>
+          </View>
         </View>
-        <View style={[styles.tag, { backgroundColor: tagStyle.bg }]}>
-          <Text style={[styles.tagText, { color: tagStyle.text }]}>{ADMIN_NOTE_TAG_LABELS[note.tag]}</Text>
+
+        <Text style={styles.title} numberOfLines={1}>
+          {adminNoteDisplayTitle(note)}
+        </Text>
+        <Text style={styles.preview} numberOfLines={2}>
+          {adminNotePreview(note.body_text)}
+        </Text>
+
+        <View style={styles.footer}>
+          <View style={styles.footerLeft}>
+            {showAuthor ? <Text style={styles.author}>{quickNoteAuthorLabel(note)}</Text> : null}
+            <Text style={styles.when}>{when}</Text>
+          </View>
+          <View style={styles.meta}>
+            {note.room_label ? (
+              <View style={styles.metaItem}>
+                <Ionicons name="location-outline" size={12} color={notesTheme.textMuted} />
+                <Text style={styles.metaText}>{note.room_label}</Text>
+              </View>
+            ) : null}
+            {media.length > 0 ? (
+              <View style={styles.metaItem}>
+                <Ionicons name="images-outline" size={12} color={notesTheme.textMuted} />
+                <Text style={styles.metaText}>{media.length}</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
       </View>
-      <Text style={styles.title} numberOfLines={1}>
-        {adminNoteDisplayTitle(note)}
-      </Text>
-      <Text style={styles.preview} numberOfLines={2}>
-        {adminNotePreview(note.body_text)}
-      </Text>
-      {showAuthor ? (
-        <Text style={styles.author}>{quickNoteAuthorLabel(note)}</Text>
-      ) : null}
-      <View style={styles.footer}>
-        <Text style={styles.when}>{when}</Text>
-        <View style={styles.meta}>
-          {note.room_label ? (
-            <View style={styles.metaChip}>
-              <Ionicons name="bed-outline" size={11} color="#64748B" />
-              <Text style={styles.metaText}>{note.room_label}</Text>
-            </View>
-          ) : null}
-          {media.length > 0 ? (
-            <View style={styles.metaChip}>
-              <Ionicons name="attach-outline" size={11} color="#64748B" />
-              <Text style={styles.metaText}>{media.length}</Text>
-            </View>
-          ) : null}
-        </View>
-      </View>
+
       {thumb ? (
-        <View style={styles.thumbWrap}>
+        <View style={styles.thumbCol}>
           <CachedImage
             uri={thumb.media_type === 'video' ? thumb.thumbnail_url ?? thumb.public_url : thumb.public_url}
             style={styles.thumb}
           />
           {thumb.media_type === 'video' ? (
             <View style={styles.thumbPlay}>
-              <Ionicons name="play" size={12} color="#fff" />
-            </View>
-          ) : null}
-          {media.length > 1 ? (
-            <View style={styles.thumbCount}>
-              <Text style={styles.thumbCountText}>+{media.length - 1}</Text>
+              <Ionicons name="play" size={14} color="#fff" />
             </View>
           ) : null}
         </View>
@@ -88,58 +102,82 @@ export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
+    flexDirection: 'row',
+    backgroundColor: notesTheme.card,
+    borderRadius: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(99,102,241,0.12)',
-    shadowColor: '#312e81',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 2,
+    borderColor: notesTheme.border,
     overflow: 'hidden',
+    minHeight: 108,
   },
-  cardPinned: { borderColor: '#A5B4FC', backgroundColor: '#FAFAFF' },
-  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  numWrap: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  num: { fontSize: 11, fontWeight: '900', color: '#6366F1', letterSpacing: 0.3 },
-  tag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  tagText: { fontSize: 10, fontWeight: '800' },
-  title: { fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 4 },
-  preview: { fontSize: 13, color: '#64748B', lineHeight: 18 },
-  author: { fontSize: 11, fontWeight: '700', color: '#6366F1', marginTop: 4 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
-  when: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-  meta: { flexDirection: 'row', gap: 8 },
-  metaChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText: { fontSize: 11, color: '#64748B', fontWeight: '700' },
-  thumbWrap: {
-    position: 'absolute',
-    right: 12,
-    top: 42,
-    width: 52,
-    height: 52,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#F1F5F9',
+  cardPinned: {
+    borderColor: '#FCD34D',
+    backgroundColor: notesTheme.pinnedSoft,
+  },
+  cardArchived: { opacity: 0.72 },
+  cardPressed: { opacity: 0.92 },
+  strip: { width: 4 },
+  content: { flex: 1, padding: 14, paddingRight: 8, minWidth: 0 },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    gap: 8,
+  },
+  number: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: notesTheme.accentDark,
+    letterSpacing: 0.4,
+    fontVariant: ['tabular-nums'],
+  },
+  badges: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pinBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tagPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: notesTheme.cardMuted,
+    borderWidth: 1,
+    borderColor: notesTheme.border,
+  },
+  tagText: { fontSize: 10, fontWeight: '700', color: notesTheme.textSecondary },
+  title: { fontSize: 15, fontWeight: '700', color: notesTheme.text, marginBottom: 4 },
+  preview: { fontSize: 13, color: notesTheme.textMuted, lineHeight: 18 },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 8,
+  },
+  footerLeft: { flex: 1, gap: 2 },
+  author: { fontSize: 11, fontWeight: '700', color: notesTheme.accentDark },
+  when: { fontSize: 11, color: notesTheme.textSoft, fontWeight: '500' },
+  meta: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  metaText: { fontSize: 11, color: notesTheme.textMuted, fontWeight: '600' },
+  thumbCol: {
+    width: 72,
+    alignSelf: 'stretch',
+    backgroundColor: notesTheme.cardMuted,
+    borderLeftWidth: 1,
+    borderLeftColor: notesTheme.border,
   },
   thumb: { width: '100%', height: '100%' },
   thumbPlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
-  thumbCount: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
-  thumbCountText: { color: '#fff', fontSize: 9, fontWeight: '800' },
 });

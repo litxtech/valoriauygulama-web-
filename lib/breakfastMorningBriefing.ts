@@ -187,6 +187,11 @@ async function resolveStaffIdsForTargets(
   return [...ids];
 }
 
+/** Mutfak departmanı + mutfak izinli personel (partner kahvaltı bildirimi vb.). */
+export async function resolveKitchenStaffIdsForOrg(organizationId: string): Promise<string[]> {
+  return resolveStaffIdsForTargets(organizationId, ['kitchen']);
+}
+
 function formatBriefingDateLabel(date: string): string {
   try {
     const d = new Date(`${date}T12:00:00`);

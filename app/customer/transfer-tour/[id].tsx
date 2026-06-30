@@ -166,7 +166,7 @@ export default function CustomerTransferTourDetail() {
     try {
       const g = await getOrCreateGuestForCurrentSession();
       if (!g?.guest_id) {
-        Alert.alert(t('error'), t('errorEnterEmail'));
+        Alert.alert(t('error'), t('transferTourRequestError'));
         return;
       }
       const { data: gRow } = await supabase.from('guests').select('full_name, phone, organization_id').eq('id', g.guest_id).single();

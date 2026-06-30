@@ -36,6 +36,7 @@ import {
 } from '@/lib/kitchenMenuTheme';
 import { fetchOrganizationSlugById, invalidatePublicMenuCache } from '@/lib/publicKitchenMenu';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
+import { KITCHEN_MENU_THEME_PRESETS } from '@/lib/kitchenMenuThemePresets';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const LAYOUTS: { value: KitchenMenuLayoutMode; label: string }[] = [
@@ -227,6 +228,28 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
       >
         <View ref={contentRef} collapsable={false}>
       <Text style={styles.lead}>{t('hotelKitchenMenuThemeLead')}</Text>
+
+      <Text style={styles.label}>{t('hotelKitchenMenuThemePresets')}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetScroll}>
+        {KITCHEN_MENU_THEME_PRESETS.map((preset) => (
+          <TouchableOpacity
+            key={preset.id}
+            style={styles.presetChip}
+            onPress={() => setForm({ ...preset.theme })}
+            activeOpacity={0.88}
+          >
+            <LinearGradient
+              colors={[preset.theme.navyColor ?? menuUi.navy, preset.theme.primaryColor ?? menuUi.accent]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.presetSwatch}
+            />
+            <Text style={styles.presetName}>{preset.name}</Text>
+            <Text style={styles.presetTag}>{preset.tag}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <Text style={styles.presetHint}>{t('hotelKitchenMenuThemePresetHint')}</Text>
 
       {migrationMissing ? (
         <View style={styles.warnBox}>

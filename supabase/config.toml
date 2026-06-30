@@ -108,6 +108,9 @@ verify_jwt = true
 [functions.create-guest-extra-payment]
 verify_jwt = true
 
+[functions.create-breakfast-partner-payment]
+verify_jwt = true
+
 [functions.create-public-kitchen-menu-payment]
 verify_jwt = false
 

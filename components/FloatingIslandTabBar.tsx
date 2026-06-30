@@ -1,43 +1,65 @@
-import { useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
-import { View, StyleSheet, Platform, Animated, type LayoutChangeEvent } from 'react-native';
+import { useCallback, useContext, useEffect, useRef, type ReactNode, type LayoutChangeEvent } from 'react';
+import { View, StyleSheet, Platform, Animated } from 'react-native';
 import { BottomTabBar, BottomTabBarHeightCallbackContext } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IOS_TAB_BAR_FLOAT_MARGIN } from '@/constants/floatingTabBarMetrics';
 import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 import { GlassTabBarShell } from '@/components/premium/GlassTabBarShell';
+import { PartnerGlassTabBarShell } from '@/components/breakfastPartner/PartnerGlassTabBarShell';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { getAppTabBarColors } from '@/constants/tabBarTheme';
-import { getPersonelDesign } from '@/constants/personelDesignSystem';
+import { FLOAT_SIDE_INSET, FLOAT_BOTTOM_GAP } from '@/constants/floatingTabBarMetrics';
 
-const ISLAND_RADIUS = 22;
-const IOS_HORIZONTAL_INSET = 10;
+const ISLAND_RADIUS = 26;
 
 export type FloatingIslandTabBarProps = BottomTabBarProps & {
   surfaceColor?: string;
   borderColor?: string;
   hidden?: boolean;
+  /** Partner portal — koyu cam + her platformda yüzen ada */
+  variant?: 'default' | 'partner';
   /** Tab slotu dışında, barın tam ortasında yüzen aksiyon (ör. kimlik çekim FAB). */
   centerAction?: ReactNode;
+  /**
+   * true: ada absolute yüzer, arka plan şeffaf → içerik (feed) barın arkasından akar.
+   * Bu modda her sekme ekranı kendi alt boşluğunu eklemeli (getFloatingTabBarTotalHeight).
+   * false (varsayılan): ada flex akışında yer kaplar, dolu yüzey (geriye dönük uyumlu).
+   */
+  floatOverContent?: boolean;
 };
 
+function TabBarGlassShell({
+  variant,
+  borderRadius,
+  children,
+}: {
+  variant: 'default' | 'partner';
+  borderRadius: number;
+  children: ReactNode;
+}) {
+  if (variant === 'partner') {
+    return <PartnerGlassTabBarShell borderRadius={borderRadius}>{children}</PartnerGlassTabBarShell>;
+  }
+  return <GlassTabBarShell borderRadius={borderRadius}>{children}</GlassTabBarShell>;
+}
+
 /**
- * Android: tam genişlik, sistem navigasyon inset’i BottomTabBar’da (eskisi gibi birleşir).
- * iOS: kompakt yüzen ada, alta yakın.
+ * Tüm platformlarda yüzen ada: alt/sol/sağ kenardan boşluklu, şeffaf buzlu cam.
  */
 export function FloatingIslandTabBar({
   surfaceColor,
-  borderColor: borderColorProp,
+  borderColor: _borderColorProp,
   hidden = false,
+  variant = 'default',
   centerAction,
+  floatOverContent = false,
   insets: navInsets,
   ...props
 }: FloatingIslandTabBarProps) {
   const { isNight } = usePremiumTheme();
-  const palette = getPersonelDesign(isNight);
   const tabBar = getAppTabBarColors(isNight);
-  const resolvedSurface = surfaceColor ?? (isNight ? palette.pageBg : 'transparent');
-  const resolvedBorder = borderColorProp ?? tabBar.border;
+  // floatOverContent: feed arkadan görünsün diye şeffaf. Aksi halde eski dolu yüzey.
+  const resolvedSurface = floatOverContent ? 'transparent' : surfaceColor ?? tabBar.shellBackground;
 
   const translateY = useRef(new Animated.Value(0)).current;
 
@@ -60,67 +82,50 @@ export function FloatingIslandTabBar({
   };
   const onTabBarHeightChange = useContext(BottomTabBarHeightCallbackContext);
 
+  // floatOverContent: ada absolute yüzer, flex akışında yer kaplamaz → sahne tam
+  // yükseklik alır, feed barın arkasından akar. Ekranlar kendi alt boşluğunu eklediği
+  // için react-navigation'a 0 rapor ederek çift boşluğu önlüyoruz.
+  // Aksi halde (eski mod) gerçek yükseklik raporlanır ve bar flex'te yer kaplar.
   const handleShellLayout = useCallback(
     (e: LayoutChangeEvent) => {
-      onTabBarHeightChange?.(e.nativeEvent.layout.height);
+      onTabBarHeightChange?.(floatOverContent ? 0 : e.nativeEvent.layout.height);
     },
-    [onTabBarHeightChange]
+    [onTabBarHeightChange, floatOverContent]
   );
 
-  if (Platform.OS === 'android') {
-    return (
-      <Animated.View
-        onLayout={handleShellLayout}
-        style={[
-          styles.androidShell,
-          {
-            backgroundColor: resolvedSurface,
-            borderTopColor: resolvedBorder,
-            transform: [{ translateY }],
-          },
-        ]}
-      >
-        <GlassTabBarShell borderRadius={0}>
-          <BottomTabBar
-            {...props}
-            insets={{
-              top: 0,
-              right: resolvedInsets.right,
-              bottom: resolvedInsets.bottom,
-              left: resolvedInsets.left,
-            }}
-          />
-        </GlassTabBarShell>
-        {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
-      </Animated.View>
-    );
-  }
+  const tabBarNode = (
+    <BottomTabBar
+      {...props}
+      insets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+    />
+  );
 
   return (
     <Animated.View
       onLayout={handleShellLayout}
       style={[
         styles.iosShell,
+        floatOverContent ? styles.iosShellFloating : null,
         {
           backgroundColor: resolvedSurface,
-          paddingBottom: IOS_TAB_BAR_FLOAT_MARGIN,
-          paddingHorizontal: IOS_HORIZONTAL_INSET,
+          paddingBottom: resolvedInsets.bottom + FLOAT_BOTTOM_GAP,
+          paddingHorizontal: FLOAT_SIDE_INSET,
           transform: [{ translateY }],
         },
       ]}
+      pointerEvents="box-none"
     >
-      <View style={[styles.shadowHost, isNight && styles.shadowHostNight]}>
-        <GlassTabBarShell borderRadius={ISLAND_RADIUS}>
-          <BottomTabBar
-            {...props}
-            insets={{
-              top: 0,
-              right: 0,
-              bottom: resolvedInsets.bottom,
-              left: 0,
-            }}
-          />
-        </GlassTabBarShell>
+      <View
+        style={[
+          styles.shadowHost,
+          variant === 'partner' && styles.shadowHostPartner,
+          isNight && variant === 'default' && styles.shadowHostNight,
+        ]}
+        pointerEvents="box-none"
+      >
+        <TabBarGlassShell variant={variant} borderRadius={ISLAND_RADIUS}>
+          {tabBarNode}
+        </TabBarGlassShell>
         {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
       </View>
     </Animated.View>
@@ -128,26 +133,29 @@ export function FloatingIslandTabBar({
 }
 
 const styles = StyleSheet.create({
-  androidShell: {
-    width: '100%',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    elevation: 8,
-    overflow: 'visible',
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-  },
   iosShell: {
     width: '100%',
+  },
+  iosShellFloating: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   shadowHost: {
     borderRadius: ISLAND_RADIUS,
     overflow: 'visible',
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+  },
+  shadowHostPartner: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 12,
   },
   centerActionSlot: {
     position: 'absolute',

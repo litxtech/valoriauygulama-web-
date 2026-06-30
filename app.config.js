@@ -13,7 +13,7 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.17',
+  version: '2.2.21',
   /** Android tablet: döner; iPad kapalı (supportsTablet false). Bkz. withTabletOrientation.js */
   orientation: 'default',
   icon: './assets/icon.png',
@@ -29,7 +29,7 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '24',
+    buildNumber: '28',
     newArchEnabled: true,
     infoPlist: {
       /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
@@ -53,7 +53,7 @@ const baseConfig = {
     newArchEnabled: true,
     /** SDK 54 / target 35+: edge-to-edge; statusBarColor gibi eski API kullanmayın. */
     edgeToEdgeEnabled: true,
-    versionCode: 25,
+    versionCode: 29,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {
@@ -162,6 +162,20 @@ const baseConfig = {
         defaultChannel: 'valoria_urgent',
         mode: expoPushIosMode,
         enableBackgroundRemoteNotifications: true,
+        /**
+         * Özellik bazlı varsayılan bildirim sesleri (Android raw + iOS bundle).
+         * Üretim: scripts/generate_notification_sounds.py
+         * Değişiklik sonrası yeni native build (EAS) gerekir.
+         */
+        sounds: [
+          './assets/sounds/emergency_alert.wav',
+          './assets/sounds/task_ping.wav',
+          './assets/sounds/meal_chime.wav',
+          './assets/sounds/salary_cash.wav',
+          './assets/sounds/warning_alert.wav',
+          './assets/sounds/kbs_scan.wav',
+          './assets/sounds/message_pop.wav',
+        ],
       },
     ],
     'expo-font',
@@ -186,6 +200,7 @@ const baseConfig = {
       },
     ],
     './plugins/withPlaySafeManifest.js',
+    './plugins/withGoogleModularHeaders.js',
   ],
   experiments: {
     typedRoutes: true,

@@ -18,16 +18,30 @@ const entries = new Map<string, Entry>();
 let opsCtxPromise: ReturnType<typeof resolveOpsHotelIdForCaller> | null = null;
 
 /** İlk çekimde otel bağlamını ısıt — onayda tekrar beklenmesin. */
-export function warmKbsCaptureOpsContext(): void {
+export function warmKbsCaptureOpsContext(knownAuthUserId?: string | null): void {
   if (!opsCtxPromise) {
-    opsCtxPromise = resolveOpsHotelIdForCaller();
+    // Başarısız sonucu önbelleğe ALMA: soğuk açılışta oturum henüz hazır değilse
+    // "Oturum yok" sonucu kalıcı olarak yapışıp sonraki tüm çağrıları bozuyordu.
+    const p = resolveOpsHotelIdForCaller(knownAuthUserId);
+    opsCtxPromise = p;
+    void p
+      .then((ctx) => {
+        if (!ctx.ok && opsCtxPromise === p) opsCtxPromise = null;
+      })
+      .catch(() => {
+        if (opsCtxPromise === p) opsCtxPromise = null;
+      });
   }
 }
 
-export async function getKbsCaptureOpsContext() {
-  warmKbsCaptureOpsContext();
+export async function getKbsCaptureOpsContext(knownAuthUserId?: string | null) {
+  warmKbsCaptureOpsContext(knownAuthUserId);
   const ctx = await opsCtxPromise!;
-  if (!ctx.ok) throw new Error(ctx.message);
+  if (!ctx.ok) {
+    // Başarısız önbelleği temizle ki bir sonraki deneme yeniden çözülebilsin.
+    opsCtxPromise = null;
+    throw new Error(ctx.message);
+  }
   return ctx;
 }
 

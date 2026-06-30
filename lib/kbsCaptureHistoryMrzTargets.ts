@@ -1,5 +1,5 @@
 import { capturedAtTs, type KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
-import { kbsOcrStatusLabel } from '@/lib/kbsCaptureParsedFields';
+import { isKbsCaptureOcrCoreComplete } from '@/lib/kbsCaptureParsedFields';
 
 const RECENT_WINDOW_MS = 15 * 60 * 1000;
 
@@ -53,10 +53,12 @@ export function pickKbsMrzOcrTargets(opts: {
 export function filterKbsMrzOcrPending(rows: KbsCapturedDocumentRow[]): KbsCapturedDocumentRow[] {
   return rows.filter((r) => {
     if (!r.front_image_url) return false;
-    const st = kbsOcrStatusLabel(r.parsed_payload);
-    return st === 'pending' || st === 'empty';
+    return !isKbsCaptureOcrCoreComplete(r.parsed_payload);
   });
 }
+
+/** İlk ziyaret (lastSeen yok): son 7 gün içindeki kayıtlar "Yeni" sayılır. */
+const NEW_FALLBACK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function isKbsCaptureRowNew(
   row: KbsCapturedDocumentRow,
@@ -64,6 +66,7 @@ export function isKbsCaptureRowNew(
   lastSeenAt: string | null
 ): boolean {
   if (justSavedIds.has(row.id)) return true;
-  if (!lastSeenAt) return false;
-  return capturedAtTs(row) > lastSeenAt;
+  const ts = capturedAtTs(row);
+  if (lastSeenAt) return ts > lastSeenAt;
+  return Date.now() - new Date(ts).getTime() <= NEW_FALLBACK_WINDOW_MS;
 }

@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, type ViewStyle, Modal, Pressable, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
+import { pickDocumentSafe } from '@/lib/documentPickerSafe';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { adminTheme } from '@/constants/adminTheme';
+import { documentDetailHref, useDocumentsBasePath } from '@/lib/documentManagementRoutes';
 import { supabase } from '@/lib/supabase';
 import { listDocumentCategories, upsertDocumentCategory, type DocumentCategoryRow } from '@/lib/documentManagement';
 import { useAuthStore } from '@/stores/authStore';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 import {
   defaultExtensionForMime,
   inferDocumentMimeFromFileName,
@@ -22,6 +24,7 @@ type Picked = { uri: string; name: string; size?: number; mimeType?: string | nu
 
 export default function AdminDocumentNew() {
   const router = useRouter();
+  const base = useDocumentsBasePath();
   const { relatedStaffId, relatedStaffName } = useLocalSearchParams<{
     relatedStaffId?: string;
     relatedStaffName?: string;
@@ -99,7 +102,7 @@ export default function AdminDocumentNew() {
   };
 
   const pickFile = async () => {
-    const res = await DocumentPicker.getDocumentAsync({
+    const res = await pickDocumentSafe({
       multiple: false,
       type: ['application/pdf', 'image/jpeg', 'image/png'],
       copyToCacheDirectory: true,
@@ -124,7 +127,8 @@ export default function AdminDocumentNew() {
       quality: 0.8,
     });
     if (res.canceled || !res.assets?.[0]?.uri) return;
-    await setPickedFromUri(res.assets[0].uri, `kamera_${Date.now()}.jpg`, 'image/jpeg');
+    const jpegUri = await prepareCrossPlatformUploadImageUri(res.assets[0].uri);
+    await setPickedFromUri(jpegUri, `kamera_${Date.now()}.jpg`, 'image/jpeg');
   };
 
   const chooseSource = () => {
@@ -284,7 +288,7 @@ export default function AdminDocumentNew() {
       // From here on, treat the document as successfully persisted (avoid accidental cleanup if navigation throws).
       createdDocId = null;
       // push: stack’te “yükle” ekranı kalır; geri düzgün çalışır. replace kullanınca GO_BACK hatası oluşuyordu.
-      router.push(`/admin/documents/${doc.id}` as never);
+      router.push(documentDetailHref(base, doc.id) as never);
     } catch (e) {
       const msg = (e as Error)?.message ?? 'Kaydedilemedi';
       // If we created the DB row but failed later (common with storage RLS), remove the draft document to avoid "ghost" records.

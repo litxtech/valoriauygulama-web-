@@ -370,6 +370,8 @@ const translation = {
       chatMentionPickerHint: 'Etiketlemek için seçin',
       chatMentionNoResults: 'Kişi bulunamadı',
       chatMentionPushBody: '{{name}} sizi etiketledi: {{preview}}',
+      chatPushPreviewFallback: 'Yeni mesaj',
+      chatPushToastKicker: 'Valoria Mesaj',
       staffChatVideoSentBody: 'Video gönderildi.',
       chatAttachTitle: 'Ekle',
       chatSendVideo: 'Video seç',

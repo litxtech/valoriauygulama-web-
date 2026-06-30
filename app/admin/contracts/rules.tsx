@@ -16,7 +16,9 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
+import { prepareCrossPlatformUploadImageUri } from '@/lib/crossPlatformImage';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
+import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
 
 const VERSION = 2;
 
@@ -61,7 +63,7 @@ export default function RulesContractEdit() {
     if (result.canceled || !result.assets[0]?.uri) return;
     setUploadingImage(true);
     try {
-      const uri = result.assets[0].uri;
+      const uri = await prepareCrossPlatformUploadImageUri(result.assets[0].uri);
       const arrayBuffer = await uriToArrayBuffer(uri);
       const ext = uri.toLowerCase().includes('.png') ? 'png' : 'jpg';
       const contentType = ext === 'png' ? 'image/png' : 'image/jpeg';
@@ -189,14 +191,14 @@ export default function RulesContractEdit() {
           </View>
           <Text style={styles.pasteHint}>Yapıştırmak için alanda uzun basın → Yapıştır</Text>
           <View collapsable={false}>
-            <TextInput
+            <AutoGrowMultilineInput
               style={styles.contentInput}
               value={content}
               onChangeText={setContent}
+              minHeight={320}
+              lineHeight={20}
               placeholder="Sözleşme metnini buraya yazın."
               placeholderTextColor="#94a3b8"
-              multiline
-              textAlignVertical="top"
               selectTextOnFocus
             />
           </View>

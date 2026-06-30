@@ -5,23 +5,25 @@ import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 
 /** Sohbet listesi / ekran arka planları — gece modu */
 export const chatThemeNight = {
-  background: '#0F1117',
-  surface: '#171923',
+  background: '#0E1621',
+  surface: '#17212B',
+  searchBg: '#242F3D',
+  rowPressed: '#1C2733',
   text: '#FFFFFF',
-  textSecondary: '#A7B0C0',
-  textMuted: '#7A8499',
+  textSecondary: '#8C9AA9',
+  textMuted: '#6D7F8F',
   border: 'rgba(255,255,255,0.08)',
-  accent: '#B88900',
+  accent: '#2AABEE',
   accentPurple: '#7C5CFF',
-  bubbleOutgoing: '#CFA64A',
-  bubbleOutgoingAlt: '#C89B2E',
-  bubbleIncoming: '#232734',
-  selected: 'rgba(124,92,255,0.18)',
+  bubbleOutgoing: '#2B5278',
+  bubbleOutgoingAlt: '#2B5278',
+  bubbleIncoming: '#182533',
+  selected: 'rgba(42,171,238,0.15)',
   danger: '#EF4444',
-  success: '#22C55E',
-  unreadBadge: '#B88900',
-  readCheck: '#B88900',
-  deliveredCheck: '#7A8499',
+  success: '#3CCB4A',
+  unreadBadge: '#2AABEE',
+  readCheck: '#2AABEE',
+  deliveredCheck: '#6D7F8F',
 } as const;
 
 export type ChatThemePalette = typeof chatTheme;

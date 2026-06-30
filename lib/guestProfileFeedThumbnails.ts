@@ -48,7 +48,8 @@ export async function loadGuestProfileFeedPreviews(
   guestId: string,
   limit = 30,
   filter: StaffProfileFeedFilter = 'all',
-  visibility: GuestFeedVisibility = 'own'
+  visibility: GuestFeedVisibility = 'own',
+  withCounts = true
 ): Promise<{ items: StaffProfileFeedPreview[]; error: Error | null }> {
   let q = supabase
     .from('feed_posts')
@@ -90,6 +91,10 @@ export async function loadGuestProfileFeedPreviews(
 
   if (filter === 'media') {
     items = items.filter((it) => it.kind === 'image' || it.kind === 'video');
+  }
+
+  if (!withCounts) {
+    return { items, error: null };
   }
 
   const counts = await loadFeedPostEngagementCounts(items.map((it) => it.id));

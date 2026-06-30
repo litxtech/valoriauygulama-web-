@@ -22,6 +22,11 @@ import { useTranslation } from 'react-i18next';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore, completeSignIn } from '@/stores/authStore';
+import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
+import {
+  resolvePartnerEntryPath,
+  usePartnerAppSurfaceStore,
+} from '@/stores/partnerAppSurfaceStore';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { startGeofenceWatch, stopGeofenceWatch, type HotelGeofenceConfig } from '@/lib/geofencing';
@@ -39,6 +44,10 @@ import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
 import { hasPendingNotificationData } from '@/lib/notificationNavigation';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
+import { LobbyAnimatedBackground } from '@/components/lobby/LobbyAnimatedBackground';
+import { LobbyHero } from '@/components/lobby/LobbyHero';
+import { LobbyGlassCard } from '@/components/lobby/LobbyGlassCard';
+import { LobbyPortalGrid } from '@/components/lobby/LobbyPortalGrid';
 
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
 const GEOFENCE_LOCATION_PERMISSION_PROMPT_KEY = '@valoria/geofence_location_permission_prompt_shown';
@@ -47,86 +56,6 @@ const CHECKIN_PROMPT_CARD_DISMISSED_KEY = '@valoria/checkin_prompt_card_dismisse
 const BOOT_SCREEN_BG = '#1a365d';
 /** Geçici: Android’de Google ile giriş — tekrar açmak için true yapın */
 const GOOGLE_SIGN_IN_ANDROID_ENABLED = false;
-
-function AnimatedLobbyBackground() {
-  const { width, height } = useWindowDimensions();
-  const drift1 = useRef(new Animated.Value(0)).current;
-  const drift2 = useRef(new Animated.Value(0)).current;
-  const drift3 = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const loop = (val: Animated.Value, duration: number, delta: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, { toValue: 1, duration, useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration, useNativeDriver: true }),
-        ])
-      );
-    const a1 = loop(drift1, 22000, 40);
-    const a2 = loop(drift2, 32000, 50);
-    const a3 = loop(drift3, 28000, 35);
-    a1.start();
-    a2.start();
-    a3.start();
-    return () => {
-      a1.stop();
-      a2.stop();
-      a3.stop();
-    };
-  }, [drift1, drift2, drift3]);
-
-  const orbSize = Math.max(width, height) * 0.6;
-  const y1 = drift1.interpolate({ inputRange: [0, 1], outputRange: [0, 30] });
-  const x2 = drift2.interpolate({ inputRange: [0, 1], outputRange: [0, -25] });
-  const y3 = drift3.interpolate({ inputRange: [0, 1], outputRange: [0, -20] });
-
-  return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Animated.View
-        style={[
-          styles.bgOrb,
-          {
-            width: orbSize,
-            height: orbSize,
-            borderRadius: orbSize / 2,
-            left: -orbSize * 0.35,
-            top: -orbSize * 0.2,
-            backgroundColor: 'rgba(13, 148, 136, 0.18)',
-            transform: [{ translateY: y1 }],
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.bgOrb,
-          {
-            width: orbSize * 0.85,
-            height: orbSize * 0.85,
-            borderRadius: (orbSize * 0.85) / 2,
-            right: -orbSize * 0.4,
-            top: height * 0.25,
-            backgroundColor: 'rgba(30, 58, 95, 0.2)',
-            transform: [{ translateX: x2 }],
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.bgOrb,
-          {
-            width: orbSize * 0.7,
-            height: orbSize * 0.7,
-            borderRadius: (orbSize * 0.7) / 2,
-            left: width * 0.1,
-            bottom: -orbSize * 0.15,
-            backgroundColor: 'rgba(59, 130, 246, 0.12)',
-            transform: [{ translateY: y3 }],
-          },
-        ]}
-      />
-    </View>
-  );
-}
 
 const HOTEL_COORDS: HotelGeofenceConfig | null =
   typeof process.env.EXPO_PUBLIC_HOTEL_LAT !== 'undefined' &&
@@ -160,12 +89,36 @@ function BootScreen() {
   return <View style={styles.bootLoaderRoot} />;
 }
 
+/**
+ * Açılış (oturum kontrolü) sırasında lobi arka planını gösterir; düz koyu ekranda
+ * "çok bekletme" hissi olmadan, splash animasyonundan lobiye akıcı geçiş sağlar.
+ */
+function LobbyBootScreen() {
+  return (
+    <View style={styles.wrapper}>
+      <LobbyAnimatedBackground />
+    </View>
+  );
+}
+
 /** Giriş sonrası anında panele yönlendir (staff kontrolü arka planda sürer). */
 async function enterAppAfterSignIn(router: ReturnType<typeof useRouter>, userId: string): Promise<void> {
-  const { staff } = useAuthStore.getState();
+  const { staff, user } = useAuthStore.getState();
+  if (!staff && user) {
+    await usePartnerAuthStore.getState().resolvePartner(user);
+  }
+  const partner = usePartnerAuthStore.getState().partner;
+  const surface = usePartnerAppSurfaceStore.getState().surface;
   const accepted = await hasPolicyConsent(userId);
-  const path = staff ? '/staff' : '/customer';
-  const nextParam = staff ? 'staff' : 'customer';
+  let path = '/customer';
+  let nextParam = 'customer';
+  if (staff) {
+    path = '/staff';
+    nextParam = 'staff';
+  } else if (partner) {
+    path = resolvePartnerEntryPath(partner, surface);
+    nextParam = 'partner';
+  }
   if (accepted) {
     safeRouterReplace(router, path);
   } else {
@@ -183,6 +136,10 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user, staff, loading, staffCheckComplete, staffCheckUnavailable, retryStaffCheck, signOut } =
     useAuthStore();
+  const partner = usePartnerAuthStore((s) => s.partner);
+  const partnerCheckComplete = usePartnerAuthStore((s) => s.partnerCheckComplete);
+  const partnerSurface = usePartnerAppSurfaceStore((s) => s.surface);
+  const partnerSurfaceHydrated = usePartnerAppSurfaceStore((s) => s.hydrated);
   const [isOffline, setIsOffline] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -196,6 +153,8 @@ export default function HomeScreen() {
   const [showCheckinPromptCard, setShowCheckinPromptCard] = useState<boolean | null>(null);
   const notifiedNearby = useRef(false);
   const scrollRef = useRef<ScrollViewType>(null);
+  // Kart açılışta anında görünsün — yavaş spring "fade" yerine direkt yerinde.
+  const cardEntrance = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     let cancelled = false;
@@ -337,6 +296,12 @@ export default function HomeScreen() {
     if (loading) return;
     if (!user) return;
     if (!staffCheckComplete) return;
+    // Personel ise partner kontrolünü (ağ sorgusu) bekleme — /staff'a anında yönlendir.
+    // Yalnızca personel değilse partner/yüzey kontrolü gerekir (customer vs partner ayrımı).
+    if (!staff) {
+      if (!partnerCheckComplete) return;
+      if (!partnerSurfaceHydrated) return;
+    }
     if (hasPendingNotificationData()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
@@ -358,8 +323,12 @@ export default function HomeScreen() {
         return;
       }
     }
-    const path = staff ? '/staff' : '/customer';
-    const nextParam = staff ? 'staff' : 'customer';
+    const path = staff
+      ? '/staff'
+      : partner
+        ? resolvePartnerEntryPath(partner, partnerSurface)
+        : '/customer';
+    const nextParam = staff ? 'staff' : partner ? 'partner' : 'customer';
     let cancelled = false;
     hasPolicyConsent(user?.id ?? null).then((accepted) => {
       if (cancelled) return;
@@ -375,7 +344,7 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [navigationReady, loading, user, staff, staffCheckComplete, staffCheckUnavailable, router]);
+  }, [navigationReady, loading, user, staff, partner, partnerCheckComplete, partnerSurface, partnerSurfaceHydrated, staffCheckComplete, staffCheckUnavailable, router]);
 
   const signInWithPassword = async () => {
     const e = email.trim().toLowerCase();
@@ -559,7 +528,7 @@ export default function HomeScreen() {
   const paddingH = 12;
 
   if (loading && !user) {
-    return <BootScreen />;
+    return <LobbyBootScreen />;
   }
 
   if (isOffline) {
@@ -569,7 +538,7 @@ export default function HomeScreen() {
   if (user && staffCheckUnavailable && !staffCheckComplete) {
     return (
       <View style={styles.wrapper}>
-        <AnimatedLobbyBackground />
+        <LobbyAnimatedBackground />
         <View style={[styles.bootLoaderRoot, { paddingTop: insets.top + 48 }]}>
           <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
           <Text style={[styles.lobbyTaglineWhite, { marginTop: 16, textAlign: 'center', paddingHorizontal: 24 }]}>
@@ -596,7 +565,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.wrapper}>
-      <AnimatedLobbyBackground />
+      <LobbyAnimatedBackground />
       <ScrollView
         ref={scrollRef}
         onScroll={(e) => setShowScrollTop(e.nativeEvent.contentOffset.y > 200)}
@@ -606,11 +575,12 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Full-bleed dark hero */}
-        <View style={[styles.lobbyHeroDark, { paddingTop: 32 + insets.top * 0.5, paddingBottom: 48 }]}>
-          <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
-          <Text style={styles.lobbyTaglineWhite}>{t('tagline')}</Text>
-        </View>
+        <LobbyHero
+          brand={t('valoria')}
+          tagline={t('tagline')}
+          location="Uzungöl, Türkiye"
+          paddingTop={insets.top * 0.35}
+        />
 
         {/* Web (valoria.tr): yalnızca halka açık menü / sözleşme / maliye — Play incelemesi native uygulamada */}
         {Platform.OS === 'web' && (
@@ -730,23 +700,41 @@ export default function HomeScreen() {
         {/* Check-in prompt kartı — bir kere sorulur, sonra gösterilmez */}
         {showCheckinPromptCard === true && (
           <View style={[styles.checkinPromptCard, { marginHorizontal: paddingH, width: cardWidth }]}>
-            <Text style={styles.checkinPromptTitle}>{t('nearbyCheckinTitle')}</Text>
-            <Text style={styles.checkinPromptMessage}>{t('checkinPromptCardMessage') || t('nearbyCheckinMessage')}</Text>
-            <View style={styles.checkinPromptActions}>
-              <TouchableOpacity
-                style={[styles.checkinPromptBtn, styles.checkinPromptBtnNo]}
-                onPress={() => dismissCheckinPromptCard(false)}
-                activeOpacity={0.82}
-              >
-                <Text style={styles.checkinPromptBtnNoText}>{t('no')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.checkinPromptBtn, styles.checkinPromptBtnYes]}
-                onPress={() => dismissCheckinPromptCard(true)}
-                activeOpacity={0.82}
-              >
-                <Text style={styles.checkinPromptBtnYesText}>{t('yes')}</Text>
-              </TouchableOpacity>
+            <LinearGradient
+              colors={['#0d9488', '#0891b2']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.checkinPromptAccent}
+            />
+            <View style={styles.checkinPromptInner}>
+              <View style={styles.checkinPromptIconWrap}>
+                <Ionicons name="navigate-circle" size={28} color="#0d9488" />
+              </View>
+              <Text style={styles.checkinPromptTitle}>{t('nearbyCheckinTitle')}</Text>
+              <Text style={styles.checkinPromptMessage}>{t('checkinPromptCardMessage') || t('nearbyCheckinMessage')}</Text>
+              <View style={styles.checkinPromptActions}>
+                <TouchableOpacity
+                  style={[styles.checkinPromptBtn, styles.checkinPromptBtnNo]}
+                  onPress={() => dismissCheckinPromptCard(false)}
+                  activeOpacity={0.82}
+                >
+                  <Text style={styles.checkinPromptBtnNoText}>{t('no')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.checkinPromptBtn, styles.checkinPromptBtnYes]}
+                  onPress={() => dismissCheckinPromptCard(true)}
+                  activeOpacity={0.82}
+                >
+                  <LinearGradient
+                    colors={['#14b8a6', '#0d9488']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.checkinPromptBtnGradient}
+                  >
+                    <Text style={styles.checkinPromptBtnYesText}>{t('yes')}</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
@@ -756,13 +744,37 @@ export default function HomeScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
-          <View style={styles.lobbyCard}>
+          <Animated.View
+            style={{
+              opacity: cardEntrance,
+              transform: [
+                {
+                  translateY: cardEntrance.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [28, 0],
+                  }),
+                },
+              ],
+            }}
+          >
+          <LobbyGlassCard>
             <View style={styles.lobbyCardInner}>
               <View style={styles.lobbySection}>
-                <Text style={styles.lobbySectionTitle}>{t('signIn')}</Text>
+                <View style={styles.lobbySectionHeader}>
+                  <LinearGradient
+                    colors={['#14b8a6', '#0ea5e9']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 0, y: 1 }}
+                    style={styles.lobbySectionHeaderBar}
+                  />
+                  <Text style={styles.lobbySectionTitle}>{t('signIn')}</Text>
+                </View>
                 {Platform.OS !== 'web' && notifStatus === 'undetermined' && (
                   <View style={styles.permissionCard}>
-                    <Text style={styles.permissionCardTitle}>Bildirim izni</Text>
+                    <View style={styles.permissionCardHeader}>
+                      <Ionicons name="notifications" size={18} color="#0d9488" />
+                      <Text style={styles.permissionCardTitle}>Bildirim izni</Text>
+                    </View>
                     <Text style={styles.permissionCardText}>
                       Yeni mesajlar ve duyurular icin bildirim izni onerilir.
                     </Text>
@@ -789,43 +801,61 @@ export default function HomeScreen() {
                     </View>
                   </View>
                 )}
-                <TextInput
-                  style={styles.input}
-                  placeholder={t('emailPlaceholder')}
-                  placeholderTextColor="#94a3b8"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!signInLoading}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder={t('passwordPlaceholder')}
-                  placeholderTextColor="#94a3b8"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  editable={!signInLoading}
-                />
+                <View style={styles.inputWrap}>
+                  <Ionicons name="mail-outline" size={20} color="#64748b" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder={t('emailPlaceholder')}
+                    placeholderTextColor="#94a3b8"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!signInLoading}
+                  />
+                </View>
+                <View style={styles.inputWrap}>
+                  <Ionicons name="lock-closed-outline" size={20} color="#64748b" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder={t('passwordPlaceholder')}
+                    placeholderTextColor="#94a3b8"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    editable={!signInLoading}
+                  />
+                </View>
                 <TouchableOpacity
-                  style={[styles.cardBtn, styles.cardBtnPrimary, signInLoading && styles.cardBtnDisabled]}
+                  style={[styles.cardBtnWrap, signInLoading && styles.cardBtnDisabled]}
                   onPress={signInWithPassword}
                   disabled={signInLoading}
-                  activeOpacity={0.82}
+                  activeOpacity={0.88}
                 >
-                  {signInLoading ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.cardBtnTextPrimary}>{t('signInButton')}</Text>
-                  )}
+                  <LinearGradient
+                    colors={['#14b8a6', '#0d9488', '#0891b2']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.cardBtnGradient}
+                  >
+                    {signInLoading ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <>
+                        <Ionicons name="log-in-outline" size={20} color="#ffffff" />
+                        <Text style={styles.cardBtnTextPrimary}>{t('signInButton')}</Text>
+                      </>
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
                 <View style={styles.authLinksRow}>
                   <TouchableOpacity onPress={() => router.push('/auth/register')} style={styles.authLinkWrap}>
+                    <Ionicons name="person-add-outline" size={15} color="#0d9488" />
                     <Text style={styles.cardLinkText}>{t('signUp')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => router.push('/auth/reset')} style={styles.authLinkWrap}>
+                    <Ionicons name="key-outline" size={15} color="#0d9488" />
                     <Text style={styles.cardLinkText}>{t('forgotPassword')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -860,7 +890,10 @@ export default function HomeScreen() {
                     {appleLoading ? (
                       <ActivityIndicator size="small" color="#0f172a" />
                     ) : (
-                      <Text style={styles.cardBtnTextOutlined}>{t('appleSignIn')}</Text>
+                      <View style={styles.cardBtnOutlinedRow}>
+                        <Ionicons name="logo-apple" size={20} color="#0f172a" />
+                        <Text style={styles.cardBtnTextOutlined}>{t('appleSignIn')}</Text>
+                      </View>
                     )}
                   </TouchableOpacity>
                 )}
@@ -875,7 +908,10 @@ export default function HomeScreen() {
                     <ActivityIndicator size="small" color="#0d9488" />
                   ) : (
                     <>
-                      <Text style={styles.guestLoginBtnText}>{t('guestAccountLogin')}</Text>
+                      <View style={styles.guestLoginBtnRow}>
+                        <Ionicons name="sparkles-outline" size={18} color="#0d9488" />
+                        <Text style={styles.guestLoginBtnText}>{t('guestAccountLogin')}</Text>
+                      </View>
                       <Text style={styles.guestLoginBtnHint}>{t('guestAccountLoginHint')}</Text>
                     </>
                   )}
@@ -885,49 +921,45 @@ export default function HomeScreen() {
               <View style={styles.lobbyDivider} />
 
               <Text style={styles.lobbySectionLabel}>{t('moreOptions') || 'Diğer seçenekler'}</Text>
-              <View style={styles.lobbyActionGrid}>
-                <TouchableOpacity style={styles.lobbyActionTile} onPress={() => router.push('/guest')} activeOpacity={0.85}>
-                  <View style={styles.lobbyActionTileTop}>
-                    <View style={[styles.lobbyActionPill, styles.lobbyActionPillGuest]}>
-                      <Text style={styles.lobbyActionPillText}>MİSAFİR</Text>
-                    </View>
-                    <View style={styles.lobbyActionChevronWrap}>
-                      <Text style={styles.lobbyActionChevron}>→</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.lobbyActionTileIcon, styles.lobbyActionTileGuest]}>
-                    <Text style={styles.lobbyActionTileEmoji}>M</Text>
-                  </View>
-                  <Text style={styles.lobbyActionTileTitle}>{t('guestCheckIn') || 'Misafir check-in'}</Text>
-                  <Text style={styles.lobbyActionTileHint} numberOfLines={2}>{t('guestCheckInHint') || 'QR veya link ile sözleşme onayı'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.lobbyActionTile} onPress={() => router.push('/join')} activeOpacity={0.85}>
-                  <View style={styles.lobbyActionTileTop}>
-                    <View style={[styles.lobbyActionPill, styles.lobbyActionPillStaff]}>
-                      <Text style={styles.lobbyActionPillText}>PERSONEL</Text>
-                    </View>
-                    <View style={styles.lobbyActionChevronWrap}>
-                      <Text style={styles.lobbyActionChevron}>→</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.lobbyActionTileIcon, styles.lobbyActionTileStaff]}>
-                    <Text style={styles.lobbyActionTileEmoji}>P</Text>
-                  </View>
-                  <Text style={styles.lobbyActionTileTitle}>{t('staffApplication')}</Text>
-                  <Text style={styles.lobbyActionTileHint} numberOfLines={2}>{t('staffApplicationHint')}</Text>
-                </TouchableOpacity>
-              </View>
+              <LobbyPortalGrid
+                items={[
+                  {
+                    id: 'guest',
+                    title: t('guestCheckIn') || 'Misafir check-in',
+                    hint: t('guestCheckInHint') || 'QR veya link ile sözleşme onayı',
+                    onPress: () => router.push('/guest'),
+                  },
+                  {
+                    id: 'staff',
+                    title: t('staffApplication'),
+                    hint: t('staffApplicationHint'),
+                    onPress: () => router.push('/join'),
+                  },
+                  {
+                    id: 'partner',
+                    title: 'Partner otel girişi',
+                    hint: 'Profil oluştur · kahvaltı kaydı · cari',
+                    onPress: () => router.push('/partner/login'),
+                  },
+                  {
+                    id: 'trade',
+                    title: 'Partner Ticaret girişi',
+                    hint: 'İşlem onayı · cari hesap · itiraz',
+                    onPress: () => router.push('/trade-partner/login'),
+                  },
+                ]}
+              />
 
               <View style={styles.lobbyDivider} />
 
               <View style={styles.lobbyFooter}>
-                <Text style={styles.lobbyFooterLocation}>📍 Uzungöl, Türkiye</Text>
                 <View style={styles.lobbyFooterButtons}>
                   <TouchableOpacity
                     style={styles.lobbyFooterBtn}
                     onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'privacy' } })}
                     activeOpacity={0.85}
                   >
+                    <Ionicons name="shield-outline" size={14} color="#64748b" />
                     <Text style={styles.lobbyFooterBtnText}>{t('privacy')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -935,6 +967,7 @@ export default function HomeScreen() {
                     onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'terms' } })}
                     activeOpacity={0.85}
                   >
+                    <Ionicons name="document-text-outline" size={14} color="#64748b" />
                     <Text style={styles.lobbyFooterBtnText}>{t('terms')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -942,12 +975,14 @@ export default function HomeScreen() {
                     onPress={() => router.push('/guest/language')}
                     activeOpacity={0.85}
                   >
+                    <Ionicons name="language-outline" size={14} color="#64748b" />
                     <Text style={styles.lobbyFooterBtnText}>{t('language')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
-          </View>
+          </LobbyGlassCard>
+          </Animated.View>
         </KeyboardAvoidingView>
           </>
         )}
@@ -959,7 +994,15 @@ export default function HomeScreen() {
             onPress={() => scrollRef.current?.scrollTo({ y: 0, animated: true })}
             activeOpacity={0.85}
           >
-            <Text style={styles.scrollTopBtnText}>{t('scrollTop')}</Text>
+            <LinearGradient
+              colors={['#14b8a6', '#0d9488']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.scrollTopBtnGradient}
+            >
+              <Ionicons name="arrow-up" size={16} color="#ffffff" />
+              <Text style={styles.scrollTopBtnText}>{t('scrollTop')}</Text>
+            </LinearGradient>
           </TouchableOpacity>
         </View>
       )}
@@ -970,7 +1013,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   wrapper: {
     flex: 1,
-    backgroundColor: '#0c1222',
+    backgroundColor: '#050a14',
   },
   /** Oturum + sözleşme yönlendirmesi beklerken; layout splash (#1a365d) ile hizalı */
   bootLoaderRoot: {
@@ -1006,8 +1049,15 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cardsContainer: {
-    marginTop: -32,
+    marginTop: -48,
     marginBottom: 24,
+  },
+  bgSparkleField: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  bgSparkle: {
+    position: 'absolute',
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   lobbyHeroDark: {
     width: '100%',
@@ -1016,19 +1066,77 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     paddingHorizontal: 28,
   },
-  lobbyBrandWhite: {
-    fontSize: 34,
-    fontWeight: '800',
+  lobbyBrandRing: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  lobbyBrandBadge: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(6, 13, 26, 0.55)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lobbyBrandBadgeLetter: {
+    fontSize: 36,
+    fontWeight: '900',
     color: '#ffffff',
-    letterSpacing: Platform.OS === 'android' ? 0.5 : -0.8,
+    letterSpacing: -1,
+  },
+  lobbyBrandWhite: {
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: Platform.OS === 'android' ? 0.5 : -1.2,
     paddingHorizontal: 8,
+    textShadowColor: 'rgba(20, 184, 166, 0.35)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 12,
+  },
+  lobbyTaglineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 12,
+    paddingHorizontal: 8,
+  },
+  lobbyTaglineAccent: {
+    width: 28,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: 'rgba(20, 184, 166, 0.65)',
   },
   lobbyTaglineWhite: {
     fontSize: 15,
-    color: 'rgba(255,255,255,0.72)',
-    marginTop: 10,
-    fontWeight: '500',
+    color: 'rgba(255,255,255,0.82)',
+    fontWeight: '600',
     textAlign: 'center',
+    flexShrink: 1,
+  },
+  lobbyLocationChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.28)',
+  },
+  lobbyLocationChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.78)',
+    letterSpacing: 0.3,
   },
   portalPanel: {
     backgroundColor: 'rgba(255,255,255,0.97)',
@@ -1089,15 +1197,31 @@ const styles = StyleSheet.create({
   portalTileHint: { fontSize: 10, fontWeight: '600', textAlign: 'center', opacity: 0.8 },
   checkinPromptCard: {
     backgroundColor: 'rgba(255,255,255,0.98)',
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 22,
     marginTop: 0,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    elevation: 8,
+    overflow: 'hidden',
+  },
+  checkinPromptAccent: {
+    height: 4,
+    width: '100%',
+  },
+  checkinPromptInner: {
+    padding: 20,
+  },
+  checkinPromptIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(13, 148, 136, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   checkinPromptTitle: {
     fontSize: 18,
@@ -1126,7 +1250,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
   },
   checkinPromptBtnYes: {
-    backgroundColor: '#0d9488',
+    overflow: 'hidden',
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+  },
+  checkinPromptBtnGradient: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 12,
   },
   checkinPromptBtnNoText: {
     fontSize: 15,
@@ -1142,28 +1273,49 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   lobbyCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
+    borderRadius: 26,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    elevation: 8,
+    shadowColor: '#14b8a6',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.22,
+    shadowRadius: 32,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+  },
+  lobbyCardAndroid: {
+    backgroundColor: 'rgba(255,255,255,0.97)',
+  },
+  lobbyCardAccent: {
+    height: 4,
+    width: '100%',
+  },
+  lobbyCardBlur: {
+    overflow: 'hidden',
+  },
+  lobbyCardSheen: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   lobbyCardInner: {
-    padding: 28,
+    padding: 0,
   },
   lobbySection: {
     alignItems: 'stretch',
   },
   permissionCard: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'rgba(13, 148, 136, 0.06)',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 14,
+    borderColor: 'rgba(13, 148, 136, 0.18)',
+    borderRadius: 16,
     padding: 14,
     marginBottom: 14,
+  },
+  permissionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
   },
   permissionCardTitle: {
     fontSize: 14,
@@ -1202,12 +1354,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  lobbySectionTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -0.4,
+  lobbySectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     marginBottom: 20,
+  },
+  lobbySectionHeaderBar: {
+    width: 4,
+    height: 28,
+    borderRadius: 2,
+  },
+  lobbySectionTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: -0.6,
+    marginBottom: 0,
   },
   lobbyDivider: {
     height: 1,
@@ -1238,130 +1401,110 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#94a3b8',
   },
-  lobbyActionGrid: {
-    flexDirection: 'row',
-    gap: 14,
+  lobbyActionList: {
+    gap: 12,
   },
-  lobbyActionTile: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    minHeight: 140,
+  lobbyActionCard: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 5,
   },
-  lobbyActionTileTop: {
+  lobbyActionCardGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    gap: 14,
+    minHeight: 88,
   },
-  lobbyActionPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
+  lobbyActionCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  lobbyActionPillGuest: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderColor: 'rgba(59, 130, 246, 0.24)',
+  lobbyActionCardBody: {
+    flex: 1,
   },
-  lobbyActionPillStaff: {
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-    borderColor: 'rgba(34, 197, 94, 0.24)',
-  },
-  lobbyActionPillText: {
+  lobbyActionCardPill: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#334155',
-    letterSpacing: 0.9,
-  },
-  lobbyActionChevronWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lobbyActionChevron: {
-    fontSize: 14,
-    color: '#64748b',
-    fontWeight: '800',
-    marginTop: -1,
-  },
-  lobbyActionTileIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  lobbyActionTileGuest: {
-    backgroundColor: 'rgba(59, 130, 246, 0.14)',
-  },
-  lobbyActionTileStaff: {
-    backgroundColor: 'rgba(34, 197, 94, 0.14)',
-  },
-  lobbyActionTileEmoji: {
-    fontSize: 24,
-    color: '#0f172a',
-    fontWeight: '800',
-  },
-  lobbyActionTileTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0f172a',
+    color: 'rgba(255,255,255,0.85)',
+    letterSpacing: 1,
     marginBottom: 4,
   },
-  lobbyActionTileHint: {
+  lobbyActionCardTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 2,
+  },
+  lobbyActionCardHint: {
     fontSize: 12,
-    color: '#64748b',
+    color: 'rgba(255,255,255,0.82)',
     lineHeight: 16,
-    marginBottom: 12,
+  },
+  lobbyActionCardArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lobbyFooter: {
     marginTop: 2,
-  },
-  lobbyFooterLocation: {
-    fontSize: 13,
-    color: '#64748b',
-    marginBottom: 16,
-    textAlign: 'center',
-    fontWeight: '500',
   },
   lobbyFooterButtons: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 12,
+    gap: 10,
   },
   lobbyFooterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   lobbyFooterBtnText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#64748b',
   },
+  inputWrap: {
+    position: 'relative',
+    marginBottom: 14,
+  },
+  inputIcon: {
+    position: 'absolute',
+    left: 16,
+    top: 18,
+    zIndex: 1,
+  },
   input: {
     width: '100%',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f1f5f9',
     borderRadius: 16,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
+    paddingVertical: 17,
+    paddingLeft: 48,
+    paddingRight: 20,
     color: '#0f172a',
     fontSize: 16,
-    marginBottom: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e2e8f0',
+    marginBottom: 0,
   },
   authLinksRow: {
     flexDirection: 'row',
@@ -1372,12 +1515,15 @@ const styles = StyleSheet.create({
     marginBottom: (Platform.OS === 'ios' || Platform.OS === 'android') ? 14 : 0,
   },
   authLinkWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    backgroundColor: 'rgba(13, 148, 136, 0.08)',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: 'rgba(13, 148, 136, 0.2)',
   },
   cardEmoji: {
     fontSize: 32,
@@ -1395,6 +1541,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 18,
     lineHeight: 20,
+  },
+  cardBtnWrap: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  cardBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 17,
+    paddingHorizontal: 28,
+    minWidth: 180,
+  },
+  cardBtnOutlinedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  guestLoginBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   cardBtn: {
     paddingVertical: 17,
@@ -1492,20 +1662,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scrollTopBtn: {
+    borderRadius: 999,
+    overflow: 'hidden',
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  scrollTopBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 4,
+    paddingHorizontal: 22,
   },
   scrollTopBtnText: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#0f172a',
+    color: '#ffffff',
   },
   offlineWrapper: {
     justifyContent: 'center',

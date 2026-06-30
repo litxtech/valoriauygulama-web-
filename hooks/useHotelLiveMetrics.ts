@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, InteractionManager } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import {
   type HotelLiveMetrics,
@@ -42,7 +43,7 @@ function endOfTodayIso(): string {
   return d.toISOString();
 }
 
-export function useHotelLiveMetrics(refreshKey = 0): HotelLiveMetrics {
+export function useHotelLiveMetrics(refreshKey = 0, opts?: { enablePolling?: boolean }): HotelLiveMetrics {
   const { staff, orgScoped, canUseAll } = useAdminOrganizationQueryScope();
   const orgId = orgScoped ?? staff?.organization_id ?? null;
   const cacheKey = orgId ? hotelLiveMetricsCacheKey(orgId) : '';
@@ -148,9 +149,9 @@ export function useHotelLiveMetrics(refreshKey = 0): HotelLiveMetrics {
           roomsTotal = roomsTotalRes.count ?? 0;
           roomsOccupied = roomsOccupiedRes.count ?? 0;
           staffOnline = staffOnlineRes.count ?? 0;
-          tasksRes = tasksResult;
-          checkInRes = checkInResult;
-          checkOutRes = checkOutResult;
+          pendingTasks = tasksResult.count ?? 0;
+          checkInsToday = checkInResult.count ?? 0;
+          checkOutsToday = checkOutResult.count ?? 0;
         }
 
         const pct = roomsTotal > 0 ? Math.round((roomsOccupied / roomsTotal) * 100) : 0;
@@ -194,10 +195,21 @@ export function useHotelLiveMetrics(refreshKey = 0): HotelLiveMetrics {
 
   useEffect(() => {
     if (!orgId) return;
-    void load(refreshKey !== 0);
-    const id = setInterval(() => void load(false), ADMIN_HOME_METRICS_POLL_MS);
-    return () => clearInterval(id);
-  }, [load, orgId, refreshKey]);
+    const task = InteractionManager.runAfterInteractions(() => {
+      void load(refreshKey !== 0);
+    });
+    if (opts?.enablePolling === false) {
+      return () => task.cancel();
+    }
+    const id = setInterval(() => {
+      if (AppState.currentState !== 'active') return;
+      void load(false);
+    }, ADMIN_HOME_METRICS_POLL_MS);
+    return () => {
+      task.cancel();
+      clearInterval(id);
+    };
+  }, [load, orgId, refreshKey, opts?.enablePolling]);
 
   return metrics;
 }

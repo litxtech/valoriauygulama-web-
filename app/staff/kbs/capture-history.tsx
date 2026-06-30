@@ -7,6 +7,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -15,6 +16,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseIdCapture, canStaffViewAllKbsCaptures, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
@@ -27,13 +29,22 @@ import {
   staffCanDeleteKbsCaptures,
   type KbsCapturedDocumentRow,
 } from '@/lib/kbsCaptureHistory';
-import { getKbsCaptureHistoryCache, setKbsCaptureHistoryCache } from '@/lib/kbsCaptureHistoryCache';
-import { listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
+import {
+  getKbsCaptureHistoryCache,
+  loadKbsCaptureHistoryCacheFromDisk,
+  setKbsCaptureHistoryCache,
+} from '@/lib/kbsCaptureHistoryCache';
+import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete } from '@/lib/kbsCaptureParsedFields';
 import { buildKbsCaptureReportHtml } from '@/lib/kbsCaptureReportHtml';
 import { buildKbsCaptureListItems } from '@/lib/kbsCaptureListGroups';
 import {
   isKbsCaptureRowNew,
 } from '@/lib/kbsCaptureHistoryMrzTargets';
+import {
+  buildKbsCaptureSearchSuggestions,
+  filterKbsCapturesBySearchQuery,
+  type KbsCaptureSearchSuggestion,
+} from '@/lib/kbsCaptureHistorySearch';
 import {
   consumeKbsCapturesJustSaved,
   getKbsCaptureHistoryLastSeenAt,
@@ -41,7 +52,7 @@ import {
 } from '@/lib/kbsCaptureHistorySeen';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
-import { supabase } from '@/lib/supabase';
+import { buildKbsCaptureGalleryItems } from '@/lib/kbsCaptureGallery';
 import { useTranslation } from 'react-i18next';
 
 const CAPTURE_ID_ROUTE = '/staff/kbs/capture-id' as Href;
@@ -64,7 +75,7 @@ function inRange(ts: string, key: FilterKey) {
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
   const p = row.parsed_payload;
   if (!p || typeof p !== 'object') return null;
-  return p as ParsedDocument;
+  return enrichKbsParsedFromSources(p) as ParsedDocument;
 }
 
 type CaptureCardProps = {
@@ -74,11 +85,13 @@ type CaptureCardProps = {
   onPress: () => void;
   onLongPress: () => void;
   onDelete: () => void;
-  onThumbPress?: (uri: string) => void;
+  onThumbPress?: (rowId: string) => void;
   inGroup?: boolean;
   groupPosition?: 'first' | 'middle' | 'last' | 'only';
   isNew?: boolean;
   showCapturedBy?: boolean;
+  selectionMode?: boolean;
+  selected?: boolean;
 };
 
 function CaptureCard({
@@ -93,12 +106,15 @@ function CaptureCard({
   groupPosition = 'only',
   isNew = false,
   showCapturedBy = false,
+  selectionMode = false,
+  selected = false,
 }: CaptureCardProps) {
   const { t } = useTranslation();
   const parsed = asParsed(item);
-  const missing = parsed ? listMissingIdFields(parsed) : [];
-  const isManualCapture = Array.isArray(parsed?.warnings) && parsed.warnings.includes('manual_capture');
-  const statusLabel = isManualCapture ? 'Kaydedildi' : t('kbsStatusIncomplete');
+  const cardStatus = kbsCaptureCardStatus(parsed);
+  const statusChipStyle = cardStatus?.tone === 'ok' ? styles.statusChipOk : styles.statusChipMuted;
+  const statusChipTextStyle =
+    cardStatus?.tone === 'ok' ? styles.statusChipTextOk : styles.statusChipText;
 
   const isFirst = groupPosition === 'first' || groupPosition === 'only';
   const isLast = groupPosition === 'last' || groupPosition === 'only';
@@ -110,13 +126,19 @@ function CaptureCard({
         inGroup && styles.cardInGroup,
         inGroup && isFirst && styles.cardInGroupFirst,
         inGroup && isLast && styles.cardInGroupLast,
+        selectionMode && selected && (inGroup ? styles.cardInGroupSelected : styles.cardSelected),
       ]}
       onPress={onPress}
       onLongPress={onLongPress}
     >
+      {selectionMode ? (
+        <View style={[styles.check, selected && styles.checkOn]}>
+          {selected ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+        </View>
+      ) : null}
       {canSeeImages && item.front_image_url ? (
         <Pressable
-          onPress={() => onThumbPress?.(item.front_image_url!)}
+          onPress={() => onThumbPress?.(item.id)}
           accessibilityLabel={t('kbsEnlargeIdA11y')}
         >
           <Image source={{ uri: item.front_image_url }} style={styles.thumb} contentFit="cover" />
@@ -136,30 +158,25 @@ function CaptureCard({
               <Text style={styles.newBadgeText}>Yeni</Text>
             </View>
           ) : null}
-          <View
-            style={[
-              styles.statusChip,
-              isManualCapture && styles.statusChipOk,
-            ]}
-          >
-            <Text style={styles.statusChipText}>{statusLabel}</Text>
-          </View>
+          {cardStatus ? (
+            <View style={[styles.statusChip, statusChipStyle]}>
+              <Text style={[styles.statusChipText, statusChipTextStyle]}>{cardStatus.label}</Text>
+            </View>
+          ) : null}
         </View>
         {!inGroup ? <Text style={styles.meta}>Oda {item.room_number ?? '—'}</Text> : null}
         {showCapturedBy && item.captured_by_staff_name ? (
           <Text style={styles.meta}>Çeken: {item.captured_by_staff_name}</Text>
         ) : null}
         <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
-        {isManualCapture ? (
-          <Text style={styles.okLine}>Görsel kaydedildi</Text>
-        ) : missing.length > 0 ? (
-          <Text style={styles.missingLine} numberOfLines={1}>
-            Eksik: {missing.join(', ')}
+        {cardStatus?.tone === 'ok' ? (
+          <Text style={styles.okLine}>
+            {parsed && isKbsCaptureOcrCoreComplete(parsed) ? 'Tüm alanlar okundu' : 'Okundu'}
           </Text>
         ) : null}
       </View>
       <Ionicons name="chevron-forward" size={22} color={theme.colors.textMuted} />
-      {canDelete ? (
+      {canDelete && !selectionMode ? (
         <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} hitSlop={8}>
           <Ionicons name="trash-outline" size={20} color="#dc2626" />
         </TouchableOpacity>
@@ -172,15 +189,22 @@ export default function KbsCaptureHistoryScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
+  const user = useAuthStore((s) => s.user);
   const viewAllCaptures = canStaffViewAllKbsCaptures(staff);
   const [filter, setFilter] = useState<FilterKey>(viewAllCaptures ? 'all' : 'day');
   const [rows, setRows] = useState<KbsCapturedDocumentRow[]>(() => getKbsCaptureHistoryCache() ?? []);
   const [loading, setLoading] = useState(() => !getKbsCaptureHistoryCache()?.length);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
   const [justSavedIds] = useState(() => consumeKbsCapturesJustSaved());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const canDelete = staffCanDeleteKbsCaptures(staff);
   const canSeeImages =
@@ -190,9 +214,11 @@ export default function KbsCaptureHistoryScreen() {
     canStaffUseIdCapture(staff);
 
   const reload = useCallback(async () => {
+    const authId = user?.id ?? staff?.auth_id;
+    if (!authId) return;
     try {
       setError(null);
-      const data = await fetchKbsCapturedDocuments();
+      const data = await fetchKbsCapturedDocuments(300, authId);
       const scoped = filterKbsCapturesForViewer(data, staff, staff?.auth_id);
       setRows(scoped);
       setKbsCaptureHistoryCache(scoped);
@@ -202,7 +228,7 @@ export default function KbsCaptureHistoryScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [staff, t]);
+  }, [staff, user?.id, t]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -210,30 +236,24 @@ export default function KbsCaptureHistoryScreen() {
   }, [reload]);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  useEffect(() => {
-    void getKbsCaptureHistoryLastSeenAt().then(setLastSeenAt);
-  }, []);
-
-  useEffect(() => {
+    if (getKbsCaptureHistoryCache()?.length) return;
+    let active = true;
+    void loadKbsCaptureHistoryCacheFromDisk().then((cached) => {
+      if (!active || !cached?.length) return;
+      const scoped = filterKbsCapturesForViewer(cached, staff, staff?.auth_id);
+      setRows((prev) => (prev.length ? prev : scoped));
+      setLoading(false);
+    });
     return () => {
-      void setKbsCaptureHistoryLastSeenAt(new Date().toISOString());
+      active = false;
     };
-  }, []);
+  }, [staff]);
 
-  useEffect(() => {
-    const channel = supabase
-      .channel('kbs-captured-documents-live')
-      .on('postgres_changes', { event: '*', schema: 'ops', table: 'guest_documents' }, () => {
-        void reload();
-      })
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [reload]);
+  useFocusEffect(
+    useCallback(() => {
+      void reload();
+    }, [reload])
+  );
 
   const combined = useMemo(
     () =>
@@ -243,14 +263,73 @@ export default function KbsCaptureHistoryScreen() {
     [rows, filter]
   );
 
-  const listItems = useMemo(() => buildKbsCaptureListItems(combined), [combined]);
+  // Okuma yalnızca kayıt anında (saveKbsCaptureItemsParallel) ve "Düzelt" ile; sürekli tarama yok.
+
+  useEffect(() => {
+    if (!staff?.id) return;
+    void getKbsCaptureHistoryLastSeenAt(staff.id).then(setLastSeenAt);
+  }, [staff?.id]);
+
+  useEffect(() => {
+    if (!staff?.id) return;
+    return () => {
+      void setKbsCaptureHistoryLastSeenAt(staff.id, new Date().toISOString());
+    };
+  }, [staff?.id]);
+
+  const searched = useMemo(
+    () => filterKbsCapturesBySearchQuery(combined, searchQuery),
+    [combined, searchQuery]
+  );
+
+  const searchSuggestions = useMemo(
+    () =>
+      searchFocused && searchQuery.trim().length >= 1
+        ? buildKbsCaptureSearchSuggestions(combined, searchQuery, 8)
+        : [],
+    [combined, searchQuery, searchFocused]
+  );
+
+  const listItems = useMemo(() => buildKbsCaptureListItems(searched), [searched]);
+
+  const galleryItems = useMemo(
+    () => buildKbsCaptureGalleryItems(combined, canSeeImages),
+    [combined, canSeeImages]
+  );
+
+  const openGallery = useCallback(
+    (rowId: string) => {
+      const idx = galleryItems.findIndex((item) => item.id === rowId);
+      if (idx >= 0) setGalleryIndex(idx);
+    },
+    [galleryItems]
+  );
 
   const isRowNew = useCallback(
     (row: KbsCapturedDocumentRow) => isKbsCaptureRowNew(row, justSavedIds, lastSeenAt),
     [justSavedIds, lastSeenAt]
   );
 
-  const newCount = useMemo(() => rows.filter(isRowNew).length, [rows, isRowNew]);
+  const newCount = useMemo(() => combined.filter(isRowNew).length, [combined, isRowNew]);
+
+  const onSearchSuggestionPress = useCallback(
+    (suggestion: KbsCaptureSearchSuggestion) => {
+      if (suggestion.kind === 'room') {
+        setSearchQuery(suggestion.label.replace(/^Oda\s*/i, '').trim());
+        setSearchFocused(false);
+        return;
+      }
+      if (suggestion.kind === 'staff') {
+        setSearchQuery(suggestion.label);
+        setSearchFocused(false);
+        return;
+      }
+      setSearchQuery(suggestion.label);
+      setSearchFocused(false);
+      router.push(detailRoute(suggestion.rowId));
+    },
+    [router]
+  );
 
   const confirmDelete = (row: KbsCapturedDocumentRow) => {
     Alert.alert(t('kbsDeleteIdTitle'), t('kbsDeleteIdBody'), [
@@ -270,20 +349,128 @@ export default function KbsCaptureHistoryScreen() {
               setKbsCaptureHistoryCache(next);
               return next;
             });
+            setSelectedIds((prev) => {
+              if (!prev.has(row.id)) return prev;
+              const next = new Set(prev);
+              next.delete(row.id);
+              return next;
+            });
           })();
         },
       },
     ]);
   };
 
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleGroupSelect = useCallback((groupRows: KbsCapturedDocumentRow[]) => {
+    setSelectedIds((prev) => {
+      const ids = groupRows.map((r) => r.id);
+      const allSelected = ids.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of ids) next.delete(id);
+      } else {
+        for (const id of ids) next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    const ids = new Set<string>();
+    for (const entry of listItems) {
+      if (entry.kind === 'single') ids.add(entry.row.id);
+      else for (const row of entry.rows) ids.add(row.id);
+    }
+    setSelectedIds(ids);
+  }, [listItems]);
+
+  const deleteRows = useCallback(
+    async (targetRows: KbsCapturedDocumentRow[]) => {
+      if (!targetRows.length || bulkDeleting) return;
+      setBulkDeleting(true);
+      let failed = 0;
+      const deletedIds = new Set<string>();
+      for (const row of targetRows) {
+        const res = await deleteKbsCapturedDocument(row.id, row.guest_id);
+        if (!res.ok) failed += 1;
+        else deletedIds.add(row.id);
+      }
+      if (deletedIds.size > 0) {
+        setRows((prev) => {
+          const next = prev.filter((r) => !deletedIds.has(r.id));
+          setKbsCaptureHistoryCache(next);
+          return next;
+        });
+      }
+      setBulkDeleting(false);
+      exitSelectionMode();
+      if (failed > 0) Alert.alert(t('error'), t('kbsBulkDeleteFailed', { count: failed }));
+    },
+    [bulkDeleting, exitSelectionMode, t]
+  );
+
+  const confirmDeleteGroup = useCallback(
+    (groupRows: KbsCapturedDocumentRow[]) => {
+      Alert.alert(t('kbsDeleteGroupTitle'), t('kbsDeleteGroupBody', { count: groupRows.length }), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => void deleteRows(groupRows),
+        },
+      ]);
+    },
+    [deleteRows, t]
+  );
+
+  const confirmBulkDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const targetRows = rows.filter((r) => selectedIds.has(r.id));
+    Alert.alert(t('kbsBulkDeleteTitle'), t('kbsBulkDeleteBody', { count: targetRows.length }), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: () => void deleteRows(targetRows),
+      },
+    ]);
+  }, [deleteRows, rows, selectedIds, t]);
+
+  const enterSelectionWith = useCallback((id: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  }, []);
+
   const onSharePrint = async () => {
     if (!combined.length) return Alert.alert(t('kbsListEmpty'), t('kbsNothingToShare'));
-    const html = buildKbsCaptureReportHtml('KBS Kimlik Raporu', combined, canSeeImages);
-    const { uri } = await Print.printToFileAsync({ html });
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'KBS kimlik raporu' });
-    } else {
-      await Print.printAsync({ uri });
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const html = await buildKbsCaptureReportHtml('KBS Kimlik Raporu', combined, canSeeImages);
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'KBS kimlik raporu' });
+      } else {
+        await Print.printAsync({ uri });
+      }
+    } catch (e) {
+      Alert.alert('PDF', e instanceof Error ? e.message : 'PDF oluşturulamadı');
+    } finally {
+      setPdfBusy(false);
     }
   };
 
@@ -326,11 +513,119 @@ export default function KbsCaptureHistoryScreen() {
             <Text style={[styles.chipText, filter === k && styles.chipTextOn]}>{l}</Text>
           </TouchableOpacity>
         ))}
-        <TouchableOpacity style={styles.reportBtn} onPress={() => void onSharePrint()}>
-          <Ionicons name="print-outline" size={14} color="#fff" />
-          <Text style={styles.reportBtnText}>PDF</Text>
+        <TouchableOpacity
+          style={[styles.reportBtn, pdfBusy && styles.reportBtnBusy]}
+          onPress={() => void onSharePrint()}
+          disabled={pdfBusy}
+        >
+          {pdfBusy ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="print-outline" size={14} color="#fff" />
+          )}
+          <Text style={styles.reportBtnText}>{pdfBusy ? '…' : 'PDF'}</Text>
         </TouchableOpacity>
       </View>
+
+      {canDelete ? (
+        <View style={styles.toolRow}>
+          {selectionMode ? (
+            <>
+              <Text style={styles.selectHint} numberOfLines={2}>
+                {t('kbsSelectForMrz')}
+              </Text>
+              <TouchableOpacity style={styles.toolChip} onPress={selectAllVisible}>
+                <Ionicons name="checkbox-outline" size={14} color={theme.colors.text} />
+                <Text style={styles.toolChipText}>{t('kbsSelectAll')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.toolChip} onPress={exitSelectionMode}>
+                <Text style={styles.toolChipText}>{t('cancel')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.toolChip}
+              onPress={() => setSelectionMode(true)}
+            >
+              <Ionicons name="trash-outline" size={14} color="#dc2626" />
+              <Text style={[styles.toolChipText, styles.toolChipDangerText]}>{t('kbsBulkDeleteMode')}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : null}
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Ad, soyad, oda, kimlik no, uyruk, yaş…"
+          placeholderTextColor={theme.colors.textMuted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => {
+            setTimeout(() => setSearchFocused(false), 180);
+          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+        />
+        {searchQuery.length > 0 ? (
+          <TouchableOpacity
+            onPress={() => {
+              setSearchQuery('');
+              setSearchFocused(false);
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="close-circle" size={18} color={theme.colors.textMuted} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {searchSuggestions.length > 0 ? (
+        <View style={styles.suggestPanel}>
+          {searchSuggestions.map((s) => (
+            <Pressable
+              key={s.id}
+              style={({ pressed }) => [styles.suggestRow, pressed && styles.suggestRowPressed]}
+              onPress={() => onSearchSuggestionPress(s)}
+            >
+              <View style={styles.suggestIcon}>
+                <Ionicons
+                  name={
+                    s.kind === 'room'
+                      ? 'bed-outline'
+                      : s.kind === 'document'
+                        ? 'card-outline'
+                        : s.kind === 'staff'
+                          ? 'person-outline'
+                          : 'id-card-outline'
+                  }
+                  size={16}
+                  color={theme.colors.primary}
+                />
+              </View>
+              <View style={styles.suggestTextCol}>
+                <Text style={styles.suggestLabel} numberOfLines={1}>
+                  {s.label}
+                </Text>
+                <Text style={styles.suggestSub} numberOfLines={1}>
+                  {s.subtitle}
+                </Text>
+              </View>
+              <Ionicons name="arrow-forward" size={16} color={theme.colors.textMuted} />
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {searchQuery.trim().length > 0 ? (
+        <Text style={styles.searchMeta}>
+          {searched.length} sonuç · {searchQuery.trim()}
+        </Text>
+      ) : null}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -344,17 +639,26 @@ export default function KbsCaptureHistoryScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         ListEmptyComponent={
           <Text style={styles.empty}>
-            {filter === 'day'
-              ? t('kbsEmptyToday')
-              : t('kbsEmptyRange')}
+            {searchQuery.trim().length > 0
+              ? `"${searchQuery.trim()}" için sonuç bulunamadı`
+              : filter === 'day'
+                ? t('kbsEmptyToday')
+                : t('kbsEmptyRange')}
           </Text>
         }
         renderItem={({ item: entry }) => {
           const openRow = (row: KbsCapturedDocumentRow) => {
+            if (selectionMode) {
+              toggleSelect(row.id);
+              return;
+            }
             router.push(detailRoute(row.id));
           };
 
-          const thumbZoom = (uri: string) => setPreviewUri(uri);
+          const thumbZoom = (rowId: string) => {
+            if (selectionMode) return;
+            openGallery(rowId);
+          };
 
           if (entry.kind === 'single') {
             const row = entry.row;
@@ -365,8 +669,13 @@ export default function KbsCaptureHistoryScreen() {
                 canDelete={canDelete}
                 isNew={isRowNew(row)}
                 showCapturedBy={viewAllCaptures}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(row.id)}
                 onPress={() => openRow(row)}
-                onLongPress={() => openRow(row)}
+                onLongPress={() => {
+                  if (selectionMode) toggleSelect(row.id);
+                  else enterSelectionWith(row.id);
+                }}
                 onDelete={() => confirmDelete(row)}
                 onThumbPress={thumbZoom}
               />
@@ -375,11 +684,19 @@ export default function KbsCaptureHistoryScreen() {
 
           const { rows, roomNumber, capturedAt } = entry;
           const capturedLabel = new Date(capturedAt).toLocaleString('tr-TR');
+          const groupAllSelected = rows.every((r) => selectedIds.has(r.id));
+          const groupSomeSelected = rows.some((r) => selectedIds.has(r.id));
 
           return (
             <View style={styles.groupBlock}>
               <View style={styles.groupAccent} />
-              <View style={styles.groupHeader}>
+              <Pressable
+                style={styles.groupHeader}
+                onPress={() => {
+                  if (selectionMode) toggleGroupSelect(rows);
+                }}
+                disabled={!selectionMode}
+              >
                 <View style={styles.groupHeaderIcon}>
                   <Ionicons name="people" size={18} color="#0d9488" />
                 </View>
@@ -389,7 +706,24 @@ export default function KbsCaptureHistoryScreen() {
                     Oda {roomNumber ?? '—'} · {capturedLabel}
                   </Text>
                 </View>
-              </View>
+                {selectionMode ? (
+                  <View style={[styles.check, groupAllSelected && styles.checkOn]}>
+                    {groupAllSelected ? (
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    ) : groupSomeSelected ? (
+                      <View style={styles.checkPartial} />
+                    ) : null}
+                  </View>
+                ) : canDelete ? (
+                  <TouchableOpacity
+                    style={styles.groupDeleteBtn}
+                    onPress={() => confirmDeleteGroup(rows)}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                  </TouchableOpacity>
+                ) : null}
+              </Pressable>
               <View style={styles.groupDivider} />
               <View style={styles.groupCards}>
                 {rows.map((row, index) => {
@@ -412,8 +746,13 @@ export default function KbsCaptureHistoryScreen() {
                         showCapturedBy={viewAllCaptures}
                         inGroup
                         groupPosition={pos}
+                        selectionMode={selectionMode}
+                        selected={selectedIds.has(row.id)}
                         onPress={() => openRow(row)}
-                        onLongPress={() => openRow(row)}
+                        onLongPress={() => {
+                          if (selectionMode) toggleSelect(row.id);
+                          else enterSelectionWith(row.id);
+                        }}
                         onDelete={() => confirmDelete(row)}
                         onThumbPress={thumbZoom}
                       />
@@ -430,7 +769,30 @@ export default function KbsCaptureHistoryScreen() {
         <Text style={styles.permHint}>Görseller yalnızca yetkili personelde açılır.</Text>
       ) : null}
 
-      <KbsZoomImageModal uri={previewUri} onClose={() => setPreviewUri(null)} />
+      {selectionMode && canDelete ? (
+        <View style={styles.bulkFooter}>
+          <TouchableOpacity
+            style={[styles.bulkDeleteBtn, (selectedIds.size === 0 || bulkDeleting) && styles.bulkDeleteBtnDisabled]}
+            onPress={confirmBulkDelete}
+            disabled={selectedIds.size === 0 || bulkDeleting}
+          >
+            {bulkDeleting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.bulkDeleteBtnText}>
+                {t('kbsBulkDeleteSelected', { count: selectedIds.size })}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <KbsZoomImageModal
+        items={galleryItems}
+        initialIndex={galleryIndex ?? 0}
+        visible={galleryIndex !== null}
+        onClose={() => setGalleryIndex(null)}
+      />
     </View>
   );
 }
@@ -511,7 +873,10 @@ const styles = StyleSheet.create({
   },
   statusChipOk: { backgroundColor: '#ecfdf5' },
   statusChipBusy: { backgroundColor: '#eff6ff' },
+  statusChipWarn: { backgroundColor: '#fffbeb' },
+  statusChipMuted: { backgroundColor: '#f1f5f9' },
   statusChipText: { fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary },
+  statusChipTextOk: { color: '#059669' },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   toolChip: {
     flexDirection: 'row',
@@ -527,8 +892,62 @@ const styles = StyleSheet.create({
   toolChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   toolChipText: { fontSize: 12, fontWeight: '700', color: theme.colors.text },
   toolChipTextOn: { color: '#fff' },
+  toolChipDangerText: { color: '#dc2626' },
   selectHint: { flex: 1, fontSize: 12, color: theme.colors.textSecondary },
   filterRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: theme.colors.text,
+    paddingVertical: 2,
+  },
+  searchMeta: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+    marginBottom: 8,
+  },
+  suggestPanel: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.borderLight,
+  },
+  suggestRowPressed: { backgroundColor: theme.colors.backgroundSecondary },
+  suggestIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  suggestTextCol: { flex: 1, minWidth: 0 },
+  suggestLabel: { fontSize: 14, fontWeight: '700', color: theme.colors.text },
+  suggestSub: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -551,6 +970,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   reportBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  reportBtnBusy: { opacity: 0.75 },
   errorText: { color: theme.colors.error, marginBottom: 8, fontSize: 13 },
   groupBlock: {
     marginBottom: 12,
@@ -591,6 +1011,7 @@ const styles = StyleSheet.create({
   groupHeaderText: { flex: 1 },
   groupTitle: { fontSize: 14, fontWeight: '800', color: '#0f766e' },
   groupSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  groupDeleteBtn: { padding: 6 },
   groupDivider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#99f6e4',
@@ -636,6 +1057,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  checkPartial: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: theme.colors.primary,
+  },
   thumb: {
     width: 88,
     height: 112,
@@ -661,7 +1088,25 @@ const styles = StyleSheet.create({
   parsedHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontStyle: 'italic' },
   missingLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '700' },
   okLine: { fontSize: 11, color: '#059669', marginTop: 4, fontWeight: '700' },
+  busyLine: { fontSize: 11, color: '#2563eb', marginTop: 4, fontWeight: '700' },
   deleteBtn: { padding: 6 },
+  bulkFooter: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.borderLight,
+    marginTop: 4,
+  },
+  bulkDeleteBtn: {
+    backgroundColor: '#dc2626',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  bulkDeleteBtnDisabled: { opacity: 0.45 },
+  bulkDeleteBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
   empty: { textAlign: 'center', color: theme.colors.textSecondary, marginTop: 40, lineHeight: 20, paddingHorizontal: 16 },
   permHint: { fontSize: 12, color: theme.colors.textMuted, marginTop: 6, textAlign: 'center' },
 });

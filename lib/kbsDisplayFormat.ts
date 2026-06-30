@@ -18,6 +18,15 @@ export function formatKbsNationality(code: string | null | undefined): string | 
   return formatIcao3ForTr(code);
 }
 
+/** Doğum tarihinden yaş (tam yıl). */
+export function kbsAgeYearsFromBirthDate(iso: string | null | undefined): number | null {
+  if (!iso?.trim() || iso.length < 10) return null;
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  const years = Math.floor((Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000));
+  return years >= 0 && years <= 120 ? years : null;
+}
+
 /** Tam ad yalnızca ad + soyaddan; OCR gürültüsünü gösterme. */
 export function kbsDisplayFullName(parsed: ParsedDocument | null | undefined): string | null {
   if (!parsed) return null;

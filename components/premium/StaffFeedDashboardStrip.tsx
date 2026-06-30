@@ -15,7 +15,7 @@ type Props = { refreshKey?: number };
 
 /** Feed üstü: ince metrik şeridi + kısayol ikonları (AI, görev) — akışa yer bırakır */
 export const StaffFeedDashboardStrip = memo(function StaffFeedDashboardStrip({ refreshKey = 0 }: Props) {
-  const metrics = useHotelLiveMetrics(refreshKey);
+  const metrics = useHotelLiveMetrics(refreshKey, { enablePolling: false });
   const router = useRouter();
   const { isNight, toggleNight, colors } = usePremiumTheme();
   const staff = useAuthStore((s) => s.staff);

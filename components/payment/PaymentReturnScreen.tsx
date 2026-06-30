@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
+import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
 import {
   fetchPaymentRequestById,
   subscribePaymentRequestStatus,
@@ -54,6 +55,7 @@ export function PaymentReturnScreen({ kind }: Props) {
   void i18n.language;
   const { id } = useLocalSearchParams<{ id?: string; token?: string }>();
   const { user, staff } = useAuthStore();
+  const partner = usePartnerAuthStore((s) => s.partner);
   const [row, setRow] = useState<PaymentRequestRow | null>(null);
   const [tipRow, setTipRow] = useState<StaffTipRow | null>(null);
   const [tipStaffName, setTipStaffName] = useState<string | null>(null);
@@ -67,7 +69,8 @@ export function PaymentReturnScreen({ kind }: Props) {
   const [receiptSent, setReceiptSent] = useState(false);
   const redirected = useRef(false);
 
-  const isGuest = !!user && !staff;
+  const isPartner = !!partner || row?.reference_type === 'breakfast_partner_hotel';
+  const isGuest = !!user && !staff && !isPartner;
 
   const goHome = useCallback(() => {
     if (redirected.current) return;
@@ -75,10 +78,11 @@ export function PaymentReturnScreen({ kind }: Props) {
     navigateFromPaymentReturn(router, {
       isStaff: !!staff,
       isGuest,
+      isPartner,
       paymentId: id,
       referenceType: row?.reference_type,
     });
-  }, [router, staff, isGuest, id, row?.reference_type]);
+  }, [router, staff, isGuest, isPartner, id, row?.reference_type]);
 
   useEffect(() => {
     if (!id) {

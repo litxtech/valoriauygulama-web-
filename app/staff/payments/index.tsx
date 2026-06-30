@@ -40,21 +40,36 @@ export default function StaffPaymentsIndex() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [allRows, setAllRows] = useState<PaymentRequestRow[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const orgId = staff?.organization_id ?? null;
-      const [payments, qrStands] = await Promise.all([
+      const [paymentsResult, qrStandsResult] = await Promise.allSettled([
         fetchPaymentRequests(orgId),
         fetchPaymentQrStands(orgId),
       ]);
-      setAllRows(payments);
-      setRows(payments.filter(isPaymentActiveForList));
-      setStands(qrStands);
-    } catch {
+
+      if (paymentsResult.status === 'fulfilled') {
+        setAllRows(paymentsResult.value);
+        setRows(paymentsResult.value.filter(isPaymentActiveForList));
+      } else {
+        setAllRows([]);
+        setRows([]);
+        setLoadError((paymentsResult.reason as Error)?.message ?? 'Ödemeler yüklenemedi');
+      }
+
+      if (qrStandsResult.status === 'fulfilled') {
+        setStands(qrStandsResult.value);
+      } else {
+        setStands([]);
+      }
+    } catch (e) {
       setAllRows([]);
       setRows([]);
       setStands([]);
+      setLoadError((e as Error).message || 'Yüklenemedi');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -104,7 +119,9 @@ export default function StaffPaymentsIndex() {
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
           ListHeaderComponent={
-            stands.length > 0 ? (
+            <>
+              {loadError ? <Text style={styles.loadError}>{loadError}</Text> : null}
+              {stands.length > 0 ? (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>{paymentText('paymentsQrModeStanding')}</Text>
                 {stands.map((stand) => (
@@ -128,7 +145,8 @@ export default function StaffPaymentsIndex() {
                 ))}
                 <Text style={styles.sectionTitle}>Güncel ödemeler</Text>
               </View>
-            ) : null
+            ) : null}
+            </>
           }
           ListEmptyComponent={
             stands.length === 0 ? (
@@ -202,4 +220,11 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 12, fontWeight: '800', color: theme.colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 },
   standCard: { borderLeftWidth: 4, borderLeftColor: '#94a3b8' },
   standCardActive: { borderLeftColor: '#16a34a' },
+  loadError: {
+    color: '#b91c1c',
+    fontSize: 13,
+    marginBottom: 10,
+    paddingHorizontal: 4,
+    lineHeight: 18,
+  },
 });

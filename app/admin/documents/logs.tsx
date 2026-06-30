@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
-import { adminTheme } from '@/constants/adminTheme';
 import { supabase } from '@/lib/supabase';
+import { DocumentScreenIntro } from '@/components/documents/DocumentScreenIntro';
+import { docTheme } from '@/constants/documentManagementTheme';
+
+const ACTION_LABELS: Record<string, string> = {
+  'document.created': 'Belge oluşturuldu',
+  'document.updated': 'Belge güncellendi',
+  'document.submit_approval': 'Onaya gönderildi',
+  'document.approved': 'Onaylandı',
+  'document.rejected': 'Reddedildi',
+  'document.archived': 'Arşivlendi',
+  'document.unarchived': 'Arşivden çıkarıldı',
+};
+
+function formatAction(action: string): string {
+  return ACTION_LABELS[action] ?? action.replace('document.', '').replace(/_/g, ' ');
+}
 
 export default function AdminDocumentsLogs() {
   const [rows, setRows] = useState<any[]>([]);
@@ -19,7 +34,7 @@ export default function AdminDocumentsLogs() {
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   return (
@@ -28,12 +43,14 @@ export default function AdminDocumentsLogs() {
         data={rows}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.content}
-        ListEmptyComponent={<Text style={styles.sub}>{loading ? 'Yükleniyor…' : 'Log yok'}</Text>}
+        ListHeaderComponent={<DocumentScreenIntro screenKey="logs" />}
+        ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Yükleniyor…' : 'Henüz işlem kaydı yok'}</Text>}
         renderItem={({ item }) => (
           <View style={styles.row}>
-            <Text style={styles.rowTitle}>{item.action_type}</Text>
+            <Text style={styles.rowTitle}>{formatAction(item.action_type)}</Text>
             <Text style={styles.rowMeta}>
-              {new Date(item.created_at).toLocaleString('tr-TR')} · doc: {String(item.document_id ?? '-').slice(0, 8)}
+              {new Date(item.created_at).toLocaleString('tr-TR')}
+              {item.document_id ? ` · Belge #${String(item.document_id).slice(0, 8)}` : ''}
             </Text>
           </View>
         )}
@@ -43,11 +60,17 @@ export default function AdminDocumentsLogs() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 20, paddingBottom: 24 },
-  sub: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.textMuted, lineHeight: 18 },
-  row: { backgroundColor: adminTheme.colors.surface, borderRadius: adminTheme.radius.lg, borderWidth: 1, borderColor: adminTheme.colors.border, padding: 14, marginBottom: 10 },
-  rowTitle: { fontSize: 14, fontWeight: '900', color: adminTheme.colors.text },
-  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted },
+  container: { flex: 1, backgroundColor: docTheme.bg },
+  content: { padding: 16, paddingBottom: 24 },
+  empty: { fontSize: 14, fontWeight: '600', color: docTheme.textMuted, textAlign: 'center', paddingVertical: 24 },
+  row: {
+    backgroundColor: docTheme.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: docTheme.border,
+    padding: 14,
+    marginBottom: 10,
+  },
+  rowTitle: { fontSize: 14, fontWeight: '800', color: docTheme.text },
+  rowMeta: { marginTop: 4, fontSize: 12, fontWeight: '600', color: docTheme.textMuted },
 });
-

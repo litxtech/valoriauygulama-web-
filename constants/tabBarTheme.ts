@@ -3,7 +3,9 @@
  * (Admin paneli Stack — alt tab yok; bu tema orada kullanılmaz.)
  */
 export const appTabBar = {
-  /** Tab ada + alt güvenli alan: opak (yarı saydamda alt grimsi belli oluyordu) */
+  /** Dış tab bar kabuğu — içerik alttan görünsün (iOS yüzen ada) */
+  shellBackground: 'transparent',
+  /** Eski opak fallback (artık tab shell’de kullanılmıyor) */
   background: '#FFFFFF',
   border: '#EEEEEE',
   /** Pasif ikon + etiket */
@@ -22,8 +24,33 @@ export const appTabBar = {
   },
 } as const;
 
+/** Instagram tarzı buzlu cam — yoğun blur + çok ince yarı saydam dolgu + parlak üst kenar */
+export const appTabBarGlass = {
+  light: {
+    blurIntensity: 100,
+    fill: 'rgba(255,255,255,0.40)',
+    border: 'rgba(15,23,42,0.08)',
+    /** Cam üst kenarındaki ışık çizgisi (buz parıltısı) */
+    highlight: 'rgba(255,255,255,0.65)',
+  },
+  dark: {
+    blurIntensity: 100,
+    fill: 'rgba(20,22,30,0.42)',
+    border: 'rgba(255,255,255,0.12)',
+    highlight: 'rgba(255,255,255,0.18)',
+  },
+} as const;
+
+/** Partner portal tab bar cam katmanı — koyu zeminde belirgin iOS cam halkası */
+export const appTabBarPartnerGlass = {
+  blurIntensity: 96,
+  fill: 'rgba(255, 255, 255, 0.07)',
+  border: 'rgba(255, 255, 255, 0.16)',
+} as const;
+
 /** Karanlık mod tab bar — #666/#777 kullanılmaz */
 export const appTabBarNight = {
+  shellBackground: 'transparent',
   background: '#171923',
   border: 'rgba(255,255,255,0.08)',
   inactive: '#A7B0C0',
@@ -74,4 +101,18 @@ export const appTabBarStaff = {
   admin: '#B91C1C',
   profile: '#4F46E5',
 } as const;
+
+export const appTabBarPartner = {
+  index: '#a78bfa',
+  teyit: '#f59e0b',
+  history: '#60a5fa',
+  notifications: '#f472b6',
+  account: '#34d399',
+  profile: '#c084fc',
+} as const;
+
+export function vibrantPartnerIconColor(routeName: string, focused: boolean): string {
+  if (!focused) return '#64748b';
+  return (appTabBarPartner as Record<string, string>)[routeName] ?? '#f59e0b';
+}
 

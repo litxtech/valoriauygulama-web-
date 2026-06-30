@@ -267,6 +267,7 @@ export default function StaffLayout() {
       <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="demirbaslar" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ title: t('screenChat'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="chat/group-members" options={{ title: t('groupMembersGroupInfo'), headerBackTitle: t('back') }} />
       <Stack.Screen name="new-chat" options={{ title: t('screenNewChat'), headerBackTitle: t('back') }} />
       <Stack.Screen name="new-group" options={{ title: t('screenNewGroup'), headerBackTitle: t('back') }} />
       <Stack.Screen name="feed/new" options={{ title: t('screenNewPost'), headerBackTitle: t('back') }} />
@@ -321,6 +322,7 @@ export default function StaffLayout() {
       <Stack.Screen name="admin-notes/index" options={{ title: 'Not Al', headerBackTitle: t('back') }} />
       <Stack.Screen name="admin-notes/new" options={{ title: 'Yeni not', headerBackTitle: t('back') }} />
       <Stack.Screen name="admin-notes/[id]" options={{ title: 'Not detayı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="admin-notes/edit/[id]" options={{ title: 'Notu düzenle', headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/index" options={{ title: t('screenDocumentManagement'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/all" options={{ title: feedSharedText('staffStackDocAll'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerBackTitle: t('back') }} />
@@ -359,6 +361,14 @@ export default function StaffLayout() {
       <Stack.Screen name="lost-found/index" options={{ title: t('screenLostFound'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/new" options={{ title: t('lfNewRecord'), headerBackTitle: t('back') }} />
       <Stack.Screen name="lost-found/[id]" options={{ title: t('lfDetailTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="blacklist/index"
+        options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }}
+      />
+      <Stack.Screen
+        name="blacklist/[id]"
+        options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }}
+      />
       <Stack.Screen name="facility-journal/index" options={{ title: t('staffFacilityJournal'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/new" options={{ title: t('staffFacilityJournalNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/[id]" options={{ title: t('staffFacilityJournalDetail'), headerBackTitle: t('back') }} />
@@ -375,10 +385,6 @@ export default function StaffLayout() {
       <Stack.Screen name="guests/index" options={{ title: t('adminGuests'), headerBackTitle: t('back') }} />
       <Stack.Screen name="guests/[id]" options={{ title: t('screenGuestProfile'), headerShown: false }} />
       <Stack.Screen name="kbs" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="mrz-scan"
-        options={{ headerShown: false, contentStyle: { backgroundColor: '#000' } }}
-      />
       <Stack.Screen
         name="meal-menu"
         options={{ title: t('staffMealMenuTitle'), headerBackTitle: t('back'), ...staffStackScrollSafeGestureOptions }}
@@ -397,6 +403,7 @@ export default function StaffLayout() {
       <Stack.Screen name="breakfast-confirm/index" options={{ title: feedSharedText('staffBreakfastConfirm'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-confirm/list" options={{ title: feedSharedText('staffBreakfastList'), headerBackTitle: t('back') }} />
       <Stack.Screen name="breakfast-briefing" options={{ headerShown: false }} />
+      <Stack.Screen name="breakfast-partners" options={{ headerShown: false }} />
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />

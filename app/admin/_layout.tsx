@@ -324,7 +324,7 @@ export default function AdminLayout() {
         />
         <Stack.Screen name="approvals/index" options={{ title: t('adminApprovals'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/index" options={{ title: t('adminRooms'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="rooms/cleaning-plan" options={{ title: 'Yarın temizlenecek odalar', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="rooms/cleaning-plan" options={{ title: 'Oda temizlik planı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/[id]" options={{ title: t('adminRoomDetail'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/new" options={{ title: t('adminRoomNew'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="guests/index" options={{ title: t('adminGuests'), headerRight: renderHeaderRight }} />
@@ -449,6 +449,7 @@ export default function AdminLayout() {
       <Stack.Screen name="staff-emergency" options={{ title: 'Personel Toplanma Alarmi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/index" options={{ title: t('adminMessages'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/chat/[id]" options={{ title: t('adminChat'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="messages/group-members" options={{ title: t('groupMembersGroupInfo'), headerBackTitle: t('back') }} />
       <Stack.Screen name="messages/new" options={{ title: t('adminNewChat'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="messages/bulk" options={{ title: t('adminBulkMessage'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/index" options={{ title: t('adminStaffCreate'), headerRight: renderHeaderRight }} />
@@ -479,7 +480,10 @@ export default function AdminLayout() {
       <Stack.Screen name="performance" options={{ headerShown: false }} />
       <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="finance-checks/settings" options={{ title: 'Çek bildirimleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/[id]" options={{ title: 'Çek detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="finance-checks/edit/[id]" options={{ title: 'Çek düzenle', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="finance-checks/preview/[id]" options={{ title: 'Çek önizleme', headerRight: renderHeaderRight }} />
       <Stack.Screen name="debts/index" options={{ title: 'Borç / alacak', headerRight: renderHeaderRight }} />
       <Stack.Screen name="payments" options={{ headerShown: false }} />
       <Stack.Screen name="tips/index" options={{ title: 'Bahşişler', headerRight: renderHeaderRight }} />
@@ -490,6 +494,23 @@ export default function AdminLayout() {
       <Stack.Screen name="notes/index" options={{ title: 'Not Al', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notes/new" options={{ title: 'Yeni not', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notes/[id]" options={{ title: 'Not detayı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="notes/edit/[id]" options={{ title: 'Notu düzenle', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="blacklist/index" options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }} />
+      <Stack.Screen name="breakfast-partners/index" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="breakfast-partners/new" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="breakfast-partners/[id]" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="breakfast-partners/settings" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="breakfast-partners/prices" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="camera-requests/index" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="camera-requests/[id]" options={{ headerShown: false, contentStyle: { backgroundColor: '#0c1222' } }} />
+      <Stack.Screen name="trade-partners/index" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="trade-partners/partners" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="trade-partners/new" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="trade-partners/[id]" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="trade-partners/transactions/new" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="trade-partners/transactions/[id]" options={{ headerShown: false, contentStyle: { backgroundColor: '#070b12' } }} />
+      <Stack.Screen name="blacklist/new" options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }} />
+      <Stack.Screen name="blacklist/[id]" options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }} />
       <Stack.Screen name="breakfast-confirm/index" options={{ title: 'Kahvaltı Teyit Kayıtları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="breakfast-confirm/settings" options={{ title: 'Kahvaltı Teyit Ayarları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="transfer-tour/index" options={{ title: t('transferTourAdminMenu'), headerRight: renderHeaderRight }} />
