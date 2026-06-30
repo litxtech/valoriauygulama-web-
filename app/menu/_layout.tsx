@@ -7,13 +7,22 @@ const MENU_BG = '#faf9f7';
 export default function PublicMenuLayout() {
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const html = document.documentElement;
     document.body.style.backgroundColor = MENU_BG;
     document.body.style.margin = '0';
-    document.documentElement.style.scrollBehavior = 'smooth';
+    document.body.style.overflowX = 'hidden';
+    html.style.scrollBehavior = 'smooth';
+    html.style.overflowX = 'hidden';
+    html.style.height = '100%';
+    document.body.style.minHeight = '100%';
     return () => {
       document.body.style.backgroundColor = '';
       document.body.style.margin = '';
-      document.documentElement.style.scrollBehavior = '';
+      document.body.style.overflowX = '';
+      document.body.style.minHeight = '';
+      html.style.scrollBehavior = '';
+      html.style.overflowX = '';
+      html.style.height = '';
     };
   }, []);
 

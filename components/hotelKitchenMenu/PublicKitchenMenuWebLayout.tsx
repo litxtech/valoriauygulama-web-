@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
@@ -114,7 +115,9 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height: viewportH } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  const menuSectionY = useRef(0);
   const menuTheme =
     menuThemeProp ??
     resolveKitchenMenuTheme(null, {
@@ -165,6 +168,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
     setProductFilter(null);
     setTagFilter(null);
     setSearch('');
+  };
+
+  const scrollToMenu = () => {
+    const y = menuSectionY.current > 0 ? menuSectionY.current : viewportH;
+    scrollRef.current?.scrollTo({ y, animated: true });
+    setMenuTab('menu');
   };
 
   const filterSidebar = (
@@ -277,42 +286,62 @@ export function PublicKitchenMenuWebLayout(props: Props) {
       ) : null}
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: insets.bottom + (cartItemCount(cartLines) > 0 ? 110 : 40) }}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + (cartItemCount(cartLines) > 0 ? 110 : 40) },
+        ]}
         showsVerticalScrollIndicator
       >
-        <View style={[styles.heroWrap, { paddingTop: insets.top + 12, backgroundColor: menuUi.webSurface }]}>
-          <View style={{ maxWidth: maxW + 80, width: '100%', alignSelf: 'center' }}>
-            <PublicKitchenMenuWelcomeHero
-              orgName={org.name}
-              heroTitle={heroTitle}
-              heroSubtitle={heroSubtitle}
-              accentColor={accent}
-              heroImage={heroImage}
-              promoVideos={promoVideos}
-              liveBadge={t('publicKitchenMenuLiveBadge')}
-              langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
-              onOrdersPress={() => setOrdersOpen(true)}
-            />
-            <View style={[styles.searchBoxLight, { borderColor: `${accent}22` }]}>
-              <View style={[styles.searchIconWrap, { backgroundColor: `${accent}14` }]}>
-                <Ionicons name="search" size={16} color={accent} />
+        <View
+          style={[
+            styles.welcomeViewport,
+            { minHeight: viewportH, height: viewportH, paddingTop: insets.top },
+          ]}
+        >
+          <PublicKitchenMenuWelcomeHero
+            orgName={org.name}
+            heroTitle={heroTitle}
+            heroSubtitle={heroSubtitle}
+            accentColor={accent}
+            heroImage={heroImage}
+            promoVideos={promoVideos}
+            liveBadge={t('publicKitchenMenuLiveBadge')}
+            langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
+            onOrdersPress={() => setOrdersOpen(true)}
+            fullScreen
+            onEnterMenu={scrollToMenu}
+          />
+        </View>
+
+        <View
+          style={styles.menuSection}
+          onLayout={(e) => {
+            menuSectionY.current = e.nativeEvent.layout.y;
+          }}
+        >
+          <View style={[styles.heroWrap, { backgroundColor: menuUi.webSurface }]}>
+            <View style={{ maxWidth: maxW + 80, width: '100%', alignSelf: 'center', paddingHorizontal: 16 }}>
+              <View style={[styles.searchBoxLight, { borderColor: `${accent}22` }]}>
+                <View style={[styles.searchIconWrap, { backgroundColor: `${accent}14` }]}>
+                  <Ionicons name="search" size={16} color={accent} />
+                </View>
+                <TextInput
+                  style={styles.searchInputLight}
+                  placeholder={t('hotelKitchenMenuSearchPh')}
+                  placeholderTextColor="#94a3b8"
+                  value={search}
+                  onChangeText={setSearch}
+                />
+                {search ? (
+                  <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
-              <TextInput
-                style={styles.searchInputLight}
-                placeholder={t('hotelKitchenMenuSearchPh')}
-                placeholderTextColor="#94a3b8"
-                value={search}
-                onChangeText={setSearch}
-              />
-              {search ? (
-                <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-                  <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                </TouchableOpacity>
-              ) : null}
             </View>
           </View>
-        </View>
 
         {/* Mobile filters strip */}
         {!wide && categoryChips.length > 0 ? (
@@ -435,6 +464,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           <Text style={styles.footerBrand}>{org.name}</Text>
           <Text style={styles.footerMeta}>{t('homePortalMenu')} · {PUBLIC_MENU_WEB_BUILD}</Text>
         </View>
+        </View>
       </ScrollView>
 
       <PublicKitchenMenuDishDetailModal
@@ -483,7 +513,26 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   rtl: { direction: 'rtl' } as object,
   scroll: { flex: 1 },
-  heroWrap: { width: '100%', position: 'relative' },
+  scrollContent: Platform.select({
+    web: { scrollSnapType: 'y proximity' } as object,
+    default: {},
+  }),
+  welcomeViewport: {
+    width: '100%',
+    overflow: 'hidden',
+    ...Platform.select({
+      web: { scrollSnapAlign: 'start', scrollSnapStop: 'always' } as object,
+      default: {},
+    }),
+  },
+  menuSection: {
+    width: '100%',
+    ...Platform.select({
+      web: { scrollSnapAlign: 'start' } as object,
+      default: {},
+    }),
+  },
+  heroWrap: { width: '100%', position: 'relative', paddingTop: 16, paddingBottom: 4 },
   hero: { minHeight: 300, position: 'relative', overflow: 'hidden' },
   heroCompact: { minHeight: 220 },
   heroGlow: {
