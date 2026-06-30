@@ -27,7 +27,6 @@ import { canManageHotelKitchenMenu } from '@/lib/staffPermissions';
 import { supabase } from '@/lib/supabase';
 import {
   kitchenMenuThemeColorErrors,
-  kitchenMenuThemeToPayload,
   normalizeKitchenMenuHexColor,
   parseKitchenMenuPublicTheme,
   resolveKitchenMenuTheme,
@@ -46,7 +45,7 @@ import {
   pickAndUploadKitchenMenuPromoVideo,
   pickKitchenMenuPromoPoster,
 } from '@/lib/hotelKitchenMenuPromoUpload';
-import { fetchOrganizationSlugById, invalidatePublicMenuCache } from '@/lib/publicKitchenMenu';
+import { fetchOrganizationSlugById } from '@/lib/publicKitchenMenu';
 import { persistKitchenMenuPublicTheme } from '@/lib/kitchenMenuPromoPersist';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
 import { KITCHEN_MENU_THEME_PRESETS } from '@/lib/kitchenMenuThemePresets';
@@ -587,6 +586,8 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
             disabled={!staff?.organization_id || promoUploadingId === video.id}
             onPress={async () => {
               if (!staff?.organization_id) return;
+              setPromoUploadingId(video.id);
+              setPromoUploadStep('');
               const res = await pickKitchenMenuPromoPoster({
                 organizationId: staff.organization_id,
                 onProgress: setPromoUploadStep,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -33,6 +33,41 @@ function InlinePromoPlayer({ video, accent }: { video: KitchenMenuPromoVideo; ac
     return (
       <View style={styles.playerPlaceholder}>
         <Ionicons name="videocam-off-outline" size={28} color="#94a3b8" />
+      </View>
+    );
+  }
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.playerWrap}>
+        {loading && !error ? (
+          <View style={styles.playerOverlay}>
+            {poster ? (
+              <CachedImage uri={poster} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+            ) : null}
+            <ActivityIndicator color={accent} />
+          </View>
+        ) : null}
+        {error ? (
+          <View style={styles.playerOverlay}>
+            <Ionicons name="alert-circle-outline" size={24} color="#f87171" />
+          </View>
+        ) : (
+          <video
+            key={playUrl}
+            src={playUrl}
+            poster={poster ?? undefined}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ width: '100%', height: '100%', minHeight: 140, objectFit: 'contain', backgroundColor: '#000' }}
+            onLoadedData={() => setLoading(false)}
+            onError={() => {
+              setLoading(false);
+              setError(true);
+            }}
+          />
+        )}
       </View>
     );
   }
