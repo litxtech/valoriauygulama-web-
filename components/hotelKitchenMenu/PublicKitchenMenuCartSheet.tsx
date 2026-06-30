@@ -158,6 +158,7 @@ export function PublicKitchenMenuCartSheet({
     setError(null);
     setPaying(true);
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
       const result = await checkoutPublicKitchenMenu({
         orgSlug,
         items: lines.map((l) => ({ menu_item_id: l.itemId, quantity: l.quantity })),
@@ -170,6 +171,7 @@ export function PublicKitchenMenuCartSheet({
         deliveryLng: locationPick?.lng,
         deliveryAddress: locationPick?.address,
         lang,
+        accessToken: sessionData.session?.access_token ?? null,
       });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         if (!result.pay_url) throw new Error(t('publicKitchenMenuCheckoutError'));

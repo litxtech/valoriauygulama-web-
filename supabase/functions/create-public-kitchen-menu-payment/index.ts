@@ -155,15 +155,19 @@ async function handlePublicKitchenMenuPayment(req: Request): Promise<Response> {
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   let authGuest: Awaited<ReturnType<typeof resolveGuestForPayment>> = null;
   if (token && !isAnonAccessToken(token, anonKey)) {
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: { user } } = await userClient.auth.getUser();
-    if (user?.id) {
-      const { data: staffCaller } = await admin.from("staff").select("id").eq("auth_id", user.id).maybeSingle();
-      if (!staffCaller?.id) {
-        authGuest = await resolveGuestForPayment(admin, userClient, user.id);
+    try {
+      const userClient = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: { user } } = await userClient.auth.getUser();
+      if (user?.id) {
+        const { data: staffCaller } = await admin.from("staff").select("id").eq("auth_id", user.id).maybeSingle();
+        if (!staffCaller?.id) {
+          authGuest = await resolveGuestForPayment(admin, userClient, user.id);
+        }
       }
+    } catch (authErr) {
+      console.warn("create-public-kitchen-menu-payment: optional guest auth skipped", authErr);
     }
   }
 

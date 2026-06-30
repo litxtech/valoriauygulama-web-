@@ -1,5 +1,4 @@
-import { supabase } from '@/lib/supabase';
-import { getEdgeFunctionErrorMessage, parseEdgeFunctionErrorBody } from '@/lib/functionsError';
+import { supabaseUrl, supabaseAnonKey } from '@/lib/supabase';
 import i18n from '@/i18n';
 
 export type PublicMenuCheckoutLine = { menu_item_id: string; quantity: number };
@@ -16,6 +15,8 @@ export type PublicMenuCheckoutInput = {
   deliveryLng?: number;
   deliveryAddress?: string;
   lang: string;
+  /** Oturum varsa misafir kaydı siparişe bağlanır; yoksa anon devam eder. */
+  accessToken?: string | null;
 };
 
 export type PublicMenuCheckoutResult = {
@@ -32,6 +33,14 @@ type CheckoutErrorPayload = {
   error_code?: string;
   message?: string;
 };
+
+function edgeBaseUrl(): string {
+  return (supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+}
+
+function anonKey(): string {
+  return supabaseAnonKey || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+}
 
 function readPayloadError(data: unknown): CheckoutErrorPayload | null {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
@@ -77,21 +86,42 @@ export function mapPublicMenuCheckoutError(code: string | undefined, message: st
     case 'PAYMENT_INSERT':
       return msg || t('publicKitchenMenuErrPayment');
     case 'EDGE_DEPLOY':
+    case 'EDGE_CRASH':
       return t('publicKitchenMenuErrEdgeDeploy');
     default:
       if (/Function not found|404|not found/i.test(msg)) {
         return t('publicKitchenMenuErrEdgeDeploy');
       }
-      if (/non-2xx|2xx status/i.test(msg)) {
+      if (/server_unavailable|522|524|503/i.test(msg)) {
         return t('publicKitchenMenuCheckoutError');
       }
       return msg || t('publicKitchenMenuCheckoutError');
   }
 }
 
+async function parseCheckoutResponse(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { error: text.slice(0, 300), error_code: res.ok ? undefined : 'EDGE_HTTP' };
+  }
+}
+
+/**
+ * Web QR menü — doğrudan fetch (supabase.invoke "non-2xx" sarmalayıcısı yok).
+ * Yanıt gövdesi her durumda JSON olarak okunur; gerçek hata mesajı kullanıcıya iletilir.
+ */
 export async function checkoutPublicKitchenMenu(
   input: PublicMenuCheckoutInput
 ): Promise<PublicMenuCheckoutResult> {
+  const base = edgeBaseUrl();
+  const key = anonKey();
+  if (!base || !key) {
+    throw new Error(mapPublicMenuCheckoutError('EDGE_DEPLOY', 'Supabase yapılandırması eksik'));
+  }
+
   const body = {
     org_slug: input.orgSlug,
     items: input.items,
@@ -106,29 +136,30 @@ export async function checkoutPublicKitchenMenu(
     lang: input.lang,
   };
 
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData.session?.access_token;
-
-  const { data, error } = await supabase.functions.invoke('create-public-kitchen-menu-payment', {
-    body,
-    ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+  const bearer = input.accessToken?.trim() || key;
+  const res = await fetch(`${base}/functions/v1/create-public-kitchen-menu-payment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${bearer}`,
+      apikey: key,
+    },
+    body: JSON.stringify(body),
   });
 
+  const data = await parseCheckoutResponse(res);
   const payloadErr = readPayloadError(data);
-  if (payloadErr?.error) {
-    throw new Error(mapPublicMenuCheckoutError(payloadErr.error_code, payloadErr.error));
-  }
 
-  if (error) {
-    const parsed = await parseEdgeFunctionErrorBody(error);
-    const rawMsg = parsed?.message ?? (await getEdgeFunctionErrorMessage(error));
-    throw new Error(mapPublicMenuCheckoutError(parsed?.code ?? payloadErr?.error_code, rawMsg));
+  if (!res.ok || payloadErr?.error) {
+    throw new Error(
+      mapPublicMenuCheckoutError(
+        payloadErr?.error_code,
+        payloadErr?.error || payloadErr?.message || `HTTP ${res.status}`
+      )
+    );
   }
 
   const payload = data as PublicMenuCheckoutResult & CheckoutErrorPayload;
-  if (payload?.error) {
-    throw new Error(mapPublicMenuCheckoutError(payload.error_code, payload.error));
-  }
   if (!payload?.pay_url) {
     throw new Error(i18n.t('publicKitchenMenuCheckoutError'));
   }

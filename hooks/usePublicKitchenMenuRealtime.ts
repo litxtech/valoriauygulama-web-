@@ -1,15 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
 const REALTIME_DELAY_MS = 900;
-const DEBOUNCE_MS = 600;
+const DEBOUNCE_MS = 800;
 
 export type PublicMenuLiveEvent = {
-  kind: 'item_insert' | 'item_update' | 'item_delete' | 'image_change' | 'theme_update';
+  kind: 'item_insert';
 };
 
-/** Dış menü: yalnızca gerçek değişikliklerde yeniler; sürekli poll yok */
+/**
+ * Dış menü: yalnızca yeni ürün (INSERT) eklendiğinde tetiklenir.
+ * Güncelleme, görsel, tema veya sekme değişimi sayfayı yenilemez.
+ */
 export function usePublicKitchenMenuLive(
   organizationId: string | null | undefined,
   onEvent: (event: PublicMenuLiveEvent) => void
@@ -17,7 +19,6 @@ export function usePublicKitchenMenuLive(
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingKindRef = useRef<PublicMenuLiveEvent['kind'] | null>(null);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -26,25 +27,14 @@ export function usePublicKitchenMenuLive(
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null;
-        const kind = pendingKindRef.current ?? 'item_update';
-        pendingKindRef.current = null;
-        eventRef.current({ kind });
+        eventRef.current({ kind: 'item_insert' });
       }, DEBOUNCE_MS);
-    };
-
-    const queue = (kind: PublicMenuLiveEvent['kind']) => {
-      if (kind === 'item_insert') {
-        pendingKindRef.current = 'item_insert';
-      } else if (!pendingKindRef.current || pendingKindRef.current !== 'item_insert') {
-        pendingKindRef.current = kind;
-      }
-      flush();
     };
 
     let channel: ReturnType<typeof supabase.channel> | null = null;
     const realtimeTimer = setTimeout(() => {
       channel = supabase
-        .channel(`public-kitchen-menu-${organizationId}`)
+        .channel(`public-kitchen-menu-insert-${organizationId}`)
         .on(
           'postgres_changes',
           {
@@ -53,59 +43,14 @@ export function usePublicKitchenMenuLive(
             table: 'hotel_kitchen_menu_items',
             filter: `organization_id=eq.${organizationId}`,
           },
-          () => queue('item_insert')
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'hotel_kitchen_menu_items',
-            filter: `organization_id=eq.${organizationId}`,
-          },
-          () => queue('item_update')
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'DELETE',
-            schema: 'public',
-            table: 'hotel_kitchen_menu_items',
-            filter: `organization_id=eq.${organizationId}`,
-          },
-          () => queue('item_delete')
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'hotel_kitchen_menu_images',
-          },
-          () => queue('image_change')
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'organizations',
-            filter: `id=eq.${organizationId}`,
-          },
-          () => queue('theme_update')
+          () => flush()
         )
         .subscribe();
     }, REALTIME_DELAY_MS);
 
-    const onAppState = (state: AppStateStatus) => {
-      if (state === 'active') queue('item_update');
-    };
-    const sub = AppState.addEventListener('change', onAppState);
-
     return () => {
       clearTimeout(realtimeTimer);
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      sub.remove();
       if (channel) void supabase.removeChannel(channel);
     };
   }, [organizationId]);

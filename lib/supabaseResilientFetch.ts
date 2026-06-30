@@ -73,8 +73,13 @@ async function responseLooksLikeCloudflareHtml(res: Response): Promise<boolean> 
   return false;
 }
 
-/** 522 HTML, text/plain veya düz metin (ör. "error…") — auth-js JSON parse patlamasın. */
-async function responseNeedsJsonNormalization(res: Response): Promise<boolean> {
+async function responseNeedsJsonNormalization(res: Response, requestUrl?: string): Promise<boolean> {
+  // Edge Function JSON hata gövdesi — invoke tarafında parse edilebilsin.
+  if (requestUrl?.includes("/functions/v1/")) {
+    const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+    if (ct.includes("json")) return false;
+  }
+
   // Gerçek geçici/edge hataları (Cloudflare HTML, 5xx) her zaman normalize edilmeli.
   if (await responseLooksLikeCloudflareHtml(res)) return true;
   if (TRANSIENT_HTTP.has(res.status)) return true;
@@ -125,7 +130,8 @@ async function attemptFetch(
 
   try {
     const res = await fetch(input, { ...init, signal });
-    if (await responseNeedsJsonNormalization(res)) {
+    const requestUrl = resolveFetchUrl(input);
+    if (await responseNeedsJsonNormalization(res, requestUrl)) {
       return {
         kind: 'transient',
         status: TRANSIENT_HTTP.has(res.status) ? res.status : res.ok ? 503 : res.status,

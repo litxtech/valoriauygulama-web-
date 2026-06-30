@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,7 @@ import {
   invalidatePublicMenuCache,
   type PublicKitchenMenuOrg,
 } from '@/lib/publicKitchenMenu';
-import { getPublicMenuCache } from '@/lib/publicKitchenMenuCache';
+import { getPublicMenuCache, setPublicMenuCache } from '@/lib/publicKitchenMenuCache';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import {
   buildCategoryChips,
@@ -95,6 +95,8 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   const [menuLang, setMenuLang] = useState<PublicMenuLang>('tr');
   const [cartLines, setCartLines] = useState<PublicMenuCartLine[]>([]);
   const [paymentBanner, setPaymentBanner] = useState<'success' | 'cancel' | null>(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   useEffect(() => {
     if (!isWeb) return;
@@ -210,17 +212,28 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
     void bootstrap({ silent: !!cachedBoot });
   }, [bootstrap, slugKey, cachedBoot]);
 
+  const refreshForNewItems = useCallback(async () => {
+    if (!slugKey) return;
+    try {
+      const bundle = await fetchPublicKitchenMenuBySlug(orgSlug, { skipCache: true });
+      if (!bundle) return;
+      const prevIds = new Set(itemsRef.current.map((i) => i.id));
+      const hasNew = bundle.items.some((i) => !prevIds.has(i.id));
+      if (!hasNew) return;
+      setPublicMenuCache(slugKey, bundle);
+      applyBundle(bundle);
+      setUpdateToastKind('new_item');
+      setUpdateToast(true);
+    } catch {
+      /* ağ hatası — mevcut menüyü bozma */
+    }
+  }, [applyBundle, orgSlug, slugKey]);
+
   const onLiveEvent = useCallback(
-    (event: PublicMenuLiveEvent) => {
-      const showNewToast = event.kind === 'item_insert';
-      void bootstrap({ silent: true, forceNetwork: true }).then(() => {
-        if (showNewToast) {
-          setUpdateToastKind('new_item');
-          setUpdateToast(true);
-        }
-      });
+    (_event: PublicMenuLiveEvent) => {
+      void refreshForNewItems();
     },
-    [bootstrap]
+    [refreshForNewItems]
   );
 
   usePublicKitchenMenuLive(org?.id, onLiveEvent);
