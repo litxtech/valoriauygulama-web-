@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/constants/theme';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
+import { PublicKitchenMenuOrderHistorySheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuOrderHistorySheet';
 import { menuUi } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
 import { scheduleMenuImagePrefetch } from '@/lib/scheduleMenuImagePrefetch';
 import {
@@ -78,6 +79,7 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
+  const [ordersOpen, setOrdersOpen] = useState(false);
 
   const applyRows = useCallback(
     (rows: HotelKitchenMenuItemWithImages[], favIds?: Set<string>) => {
@@ -231,6 +233,11 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
               {t('hotelKitchenMenuIntro')}
             </Text>
           </View>
+          {mode === 'guest' ? (
+            <TouchableOpacity style={styles.ordersIconBtn} onPress={() => setOrdersOpen(true)} hitSlop={8}>
+              <Ionicons name="receipt-outline" size={22} color={menuUi.navy} />
+            </TouchableOpacity>
+          ) : null}
         </View>
         <View style={styles.searchBar}>
           <Ionicons name="search" size={16} color={theme.colors.textMuted} />
@@ -439,6 +446,16 @@ export function HotelKitchenMenuBrowse({ mode, detailHref, manageHref, showManag
         onClose={() => setLightbox(null)}
       />
 
+      {mode === 'guest' ? (
+        <PublicKitchenMenuOrderHistorySheet
+          visible={ordersOpen}
+          onClose={() => setOrdersOpen(false)}
+          orgName={t('hotelKitchenMenuHeroTitle')}
+          orgSlug=""
+          mode="guest"
+          accentColor={menuUi.accent}
+        />
+      ) : null}
     </View>
   );
 }
@@ -449,6 +466,17 @@ const styles = StyleSheet.create({
   loadingHint: { fontSize: 14, color: theme.colors.textMuted },
   pageHeader: { marginHorizontal: 16, marginTop: 6, marginBottom: 4 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ordersIconBtn: {
+    marginLeft: 'auto',
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: menuUi.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   titleIcon: {
     width: 36,
     height: 36,

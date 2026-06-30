@@ -20,6 +20,7 @@ import { formatMenuPrice } from '@/lib/hotelKitchenMenu';
 import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
 import { cartTotal } from '@/lib/publicKitchenMenuCart';
 import { checkoutPublicKitchenMenu } from '@/lib/publicKitchenMenuCheckout';
+import { rememberPublicKitchenMenuOrder } from '@/lib/publicKitchenMenuOrderHistory';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import {
   DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
@@ -165,6 +166,7 @@ export function PublicKitchenMenuCartSheet({
         deliveryAddress: deliveryAddress.trim() || undefined,
         lang,
       });
+      rememberPublicKitchenMenuOrder(orgSlug, result.order_id);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         if (!result.pay_url) throw new Error(t('publicKitchenMenuCheckoutError'));
         window.location.href = result.pay_url;

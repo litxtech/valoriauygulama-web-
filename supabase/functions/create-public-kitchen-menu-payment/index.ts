@@ -50,10 +50,10 @@ function publicMenuBaseUrl(): string {
   return (Deno.env.get("PAYMENT_PUBLIC_BASE_URL") ?? "https://valoria.tr").replace(/\/$/, "");
 }
 
-function menuPaymentUrls(slug: string, requestId: string, token: string) {
+function menuPaymentUrls(slug: string, requestId: string, token: string, orderId: string) {
   const base = publicMenuBaseUrl();
   const encSlug = encodeURIComponent(slug.trim().toLowerCase());
-  const successQ = new URLSearchParams({ payment: "success", id: requestId, token });
+  const successQ = new URLSearchParams({ payment: "success", id: requestId, token, order: orderId });
   const cancelQ = new URLSearchParams({ payment: "cancel", id: requestId, token });
   return {
     success: `${base}/menu/${encSlug}?${successQ.toString()}`,
@@ -428,7 +428,7 @@ async function handlePublicKitchenMenuPayment(req: Request): Promise<Response> {
     .update({ payment_request_id: paymentRow.id })
     .eq("id", orderId);
 
-  const urls = menuPaymentUrls(orgSlug, paymentRow.id, paymentRow.public_token);
+  const urls = menuPaymentUrls(orgSlug, paymentRow.id, paymentRow.public_token, orderId);
 
   try {
     const stripe = getStripe();

@@ -38,6 +38,14 @@ import {
   DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS,
   type CheckoutFieldMode,
 } from '@/lib/kitchenMenuCheckoutFields';
+import {
+  newKitchenMenuPromoVideoId,
+  type KitchenMenuPromoVideo,
+} from '@/lib/kitchenMenuPromoVideo';
+import {
+  pickAndUploadKitchenMenuPromoVideo,
+  pickKitchenMenuPromoPoster,
+} from '@/lib/hotelKitchenMenuPromoUpload';
 import { fetchOrganizationSlugById, invalidatePublicMenuCache } from '@/lib/publicKitchenMenu';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
 import { KITCHEN_MENU_THEME_PRESETS } from '@/lib/kitchenMenuThemePresets';
@@ -85,6 +93,8 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
   const [orgSlug, setOrgSlug] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  const [promoUploadingId, setPromoUploadingId] = useState<string | null>(null);
+  const [promoUploadStep, setPromoUploadStep] = useState('');
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -463,6 +473,126 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
         );
       })}
 
+      <Text style={styles.label}>{t('hotelKitchenMenuPromoVideosTitle')}</Text>
+      <Text style={styles.presetHint}>{t('hotelKitchenMenuPromoVideosLead')}</Text>
+      {(form.promoVideos ?? []).map((video, idx) => (
+        <View key={video.id} style={styles.promoCard}>
+          <View style={styles.promoCardHeader}>
+            <Text style={styles.promoCardTitle}>{t('hotelKitchenMenuPromoVideoN', { n: idx + 1 })}</Text>
+            <TouchableOpacity
+              onPress={() =>
+                setForm((f) => ({
+                  ...f,
+                  promoVideos: (f.promoVideos ?? []).filter((v) => v.id !== video.id),
+                }))
+              }
+              hitSlop={8}
+            >
+              <Ionicons name="trash-outline" size={18} color="#ef4444" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.promoFieldLabel}>{t('hotelKitchenMenuPromoVideoTitle')}</Text>
+          <TextInput
+            style={styles.input}
+            value={video.title}
+            onChangeText={(v) =>
+              setForm((f) => ({
+                ...f,
+                promoVideos: (f.promoVideos ?? []).map((row) =>
+                  row.id === video.id ? { ...row, title: v } : row
+                ),
+              }))
+            }
+            placeholder={t('hotelKitchenMenuPromoVideoTitlePh')}
+            placeholderTextColor="#94a3b8"
+          />
+          <TouchableOpacity
+            style={[styles.promoPickBtn, { borderColor: preview.primaryColor }]}
+            disabled={!staff?.organization_id || promoUploadingId === video.id}
+            onPress={async () => {
+              if (!staff?.organization_id) return;
+              setPromoUploadingId(video.id);
+              setPromoUploadStep('');
+              const res = await pickAndUploadKitchenMenuPromoVideo({
+                organizationId: staff.organization_id,
+                onProgress: setPromoUploadStep,
+              });
+              setPromoUploadingId(null);
+              setPromoUploadStep('');
+              if (res.cancelled) return;
+              if (res.error) {
+                Alert.alert(t('error'), res.error);
+                return;
+              }
+              if (!res.publicUrl) return;
+              setForm((f) => ({
+                ...f,
+                promoVideos: (f.promoVideos ?? []).map((row) =>
+                  row.id === video.id ? { ...row, videoUrl: res.publicUrl, muxPlaybackId: null } : row
+                ),
+              }));
+            }}
+          >
+            {promoUploadingId === video.id ? (
+              <ActivityIndicator color={preview.primaryColor} />
+            ) : (
+              <Ionicons name="film-outline" size={18} color={preview.primaryColor} />
+            )}
+            <Text style={[styles.promoPickText, { color: preview.primaryColor }]}>
+              {promoUploadingId === video.id
+                ? promoUploadStep || t('hotelKitchenMenuPromoPickingVideo')
+                : video.videoUrl
+                  ? t('hotelKitchenMenuPromoChangeVideo')
+                  : t('hotelKitchenMenuPromoPickVideo')}
+            </Text>
+          </TouchableOpacity>
+          {video.videoUrl ? (
+            <Text style={styles.promoUrlHint} numberOfLines={1}>
+              {video.videoUrl}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            style={styles.promoPickBtnSecondary}
+            disabled={!staff?.organization_id || promoUploadingId === video.id}
+            onPress={async () => {
+              if (!staff?.organization_id) return;
+              const res = await pickKitchenMenuPromoPoster({ organizationId: staff.organization_id });
+              if (res.cancelled || !res.publicUrl) {
+                if (res.error) Alert.alert(t('error'), res.error);
+                return;
+              }
+              setForm((f) => ({
+                ...f,
+                promoVideos: (f.promoVideos ?? []).map((row) =>
+                  row.id === video.id ? { ...row, posterUrl: res.publicUrl } : row
+                ),
+              }));
+            }}
+          >
+            <Ionicons name="image-outline" size={16} color="#64748b" />
+            <Text style={styles.promoPickTextSecondary}>
+              {video.posterUrl ? t('hotelKitchenMenuPromoChangePoster') : t('hotelKitchenMenuPromoPickPoster')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <TouchableOpacity
+        style={styles.promoAddBtn}
+        onPress={() => {
+          const row: KitchenMenuPromoVideo = {
+            id: newKitchenMenuPromoVideoId(),
+            title: '',
+            videoUrl: '',
+            muxPlaybackId: null,
+            posterUrl: null,
+          };
+          setForm((f) => ({ ...f, promoVideos: [...(f.promoVideos ?? []), row] }));
+        }}
+      >
+        <Ionicons name="add-circle-outline" size={20} color={preview.primaryColor} />
+        <Text style={[styles.promoAddText, { color: preview.primaryColor }]}>{t('hotelKitchenMenuPromoAddVideo')}</Text>
+      </TouchableOpacity>
+
       <View ref={heroImageRef} collapsable={false}>
       <Text style={styles.label}>{t('hotelKitchenMenuThemeHeroImage')}</Text>
       <TextInput
@@ -605,4 +735,38 @@ const styles = StyleSheet.create({
   },
   checkoutModeText: { fontSize: 12, fontWeight: '600', color: '#475569' },
   checkoutModeTextOn: { color: '#fff' },
+  promoCard: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    gap: 6,
+  },
+  promoCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  promoCardTitle: { fontSize: 13, fontWeight: '800', color: '#334155' },
+  promoFieldLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', marginTop: 4 },
+  promoAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16, paddingVertical: 8 },
+  promoAddText: { fontSize: 14, fontWeight: '700' },
+  promoPickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginTop: 4,
+  },
+  promoPickText: { fontSize: 13, fontWeight: '700', flex: 1 },
+  promoUrlHint: { fontSize: 10, color: '#94a3b8', marginTop: 4 },
+  promoPickBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  promoPickTextSecondary: { fontSize: 12, fontWeight: '600', color: '#64748b' },
 });

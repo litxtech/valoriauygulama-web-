@@ -53,6 +53,10 @@ import {
   type PublicMenuLang,
 } from '@/lib/publicKitchenMenuLang';
 import { resolveKitchenMenuTheme } from '@/lib/kitchenMenuTheme';
+import {
+  fetchPublicKitchenMenuOrderByPayment,
+  rememberPublicKitchenMenuOrder,
+} from '@/lib/publicKitchenMenuOrderHistory';
 
 type Props = {
   orgSlug: string;
@@ -124,14 +128,27 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
       if (payment === 'success' && slugKey) {
         clearPublicMenuCart(slugKey);
         setCartLines([]);
+        const orderId = params.get('order');
+        const paymentId = params.get('id');
+        const token = params.get('token');
+        if (orderId) {
+          rememberPublicKitchenMenuOrder(slugKey, orderId);
+        } else if (paymentId && token) {
+          void fetchPublicKitchenMenuOrderByPayment(slugKey, paymentId, token)
+            .then((order) => {
+              if (order?.id) rememberPublicKitchenMenuOrder(slugKey, order.id);
+            })
+            .catch(() => {});
+        }
       }
       params.delete('payment');
       params.delete('id');
       params.delete('token');
+      params.delete('order');
       const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
       window.history.replaceState({}, '', next);
     }
-  }, [isWeb]);
+  }, [isWeb, slugKey]);
 
   const handleMenuLangChange = useCallback((lang: PublicMenuLang) => {
     setMenuLang(lang);

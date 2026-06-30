@@ -6,8 +6,14 @@ import {
   parseKitchenMenuCheckoutFields,
   type KitchenMenuCheckoutFields,
 } from '@/lib/kitchenMenuCheckoutFields';
+import {
+  kitchenMenuPromoVideosToPayload,
+  parseKitchenMenuPromoVideos,
+  type KitchenMenuPromoVideo,
+} from '@/lib/kitchenMenuPromoVideo';
 
 export type { KitchenMenuCheckoutFields, CheckoutFieldMode } from '@/lib/kitchenMenuCheckoutFields';
+export type { KitchenMenuPromoVideo } from '@/lib/kitchenMenuPromoVideo';
 
 export type KitchenMenuLayoutMode = 'classic' | 'compact' | 'featured';
 
@@ -23,6 +29,7 @@ export type KitchenMenuPublicTheme = {
   heroImageUrl?: string | null;
   landingMode?: KitchenMenuLandingMode | null;
   checkoutFields?: KitchenMenuCheckoutFields | null;
+  promoVideos?: KitchenMenuPromoVideo[] | null;
 };
 
 export type ResolvedKitchenMenuTheme = {
@@ -35,6 +42,7 @@ export type ResolvedKitchenMenuTheme = {
   heroImageUrl: string | null;
   landingMode: KitchenMenuLandingMode;
   checkoutFields: KitchenMenuCheckoutFields;
+  promoVideos: KitchenMenuPromoVideo[];
   webHeroGradient: readonly [string, string, string, string];
   webHeroGlow: string;
 };
@@ -74,6 +82,7 @@ export function parseKitchenMenuPublicTheme(raw: unknown): KitchenMenuPublicThem
     heroImageUrl: typeof o.heroImageUrl === 'string' ? o.heroImageUrl : null,
     landingMode: o.landingMode === 'hero' || o.landingMode === 'explore' ? o.landingMode : null,
     checkoutFields: parseKitchenMenuCheckoutFields(o.checkoutFields),
+    promoVideos: parseKitchenMenuPromoVideos(o.promoVideos),
   };
 }
 
@@ -98,6 +107,7 @@ export function resolveKitchenMenuTheme(
     heroImageUrl: theme.heroImageUrl?.trim() || null,
     landingMode: theme.landingMode === 'explore' ? 'explore' : 'hero',
     checkoutFields: theme.checkoutFields ?? { ...DEFAULT_KITCHEN_MENU_CHECKOUT_FIELDS },
+    promoVideos: theme.promoVideos ?? [],
     webHeroGradient: [blendHex(navy, '#000000', 0.35), navy, navyMid, navySoft] as const,
     webHeroGlow: hexToRgba(primary, 0.18),
   };
@@ -117,6 +127,7 @@ export function kitchenMenuThemeToPayload(theme: KitchenMenuPublicTheme): Kitche
   if (theme.heroImageUrl?.trim()) out.heroImageUrl = theme.heroImageUrl.trim();
   if (theme.landingMode) out.landingMode = theme.landingMode;
   if (theme.checkoutFields) out.checkoutFields = kitchenMenuCheckoutFieldsToPayload(theme.checkoutFields);
+  if (theme.promoVideos?.length) out.promoVideos = kitchenMenuPromoVideosToPayload(theme.promoVideos);
   return out;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,9 @@ import {
   TouchableOpacity,
   TextInput,
   useWindowDimensions,
-  Animated,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PublicKitchenMenuDishCard } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishCard';
 import { PublicKitchenMenuDishDetailModal } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishDetailModal';
@@ -19,12 +17,13 @@ import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMe
 import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
 import { PublicKitchenMenuCartBar } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartBar';
 import { PublicKitchenMenuCartSheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartSheet';
+import { PublicKitchenMenuWelcomeHero } from '@/components/hotelKitchenMenu/PublicKitchenMenuWelcomeHero';
+import { PublicKitchenMenuOrderHistorySheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuOrderHistorySheet';
 import {
   menuUi,
   menuWebPageBg,
   PUBLIC_MENU_WEB_BUILD,
 } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
-import { CachedImage } from '@/components/CachedImage';
 import type { PublicKitchenMenuOrg } from '@/lib/publicKitchenMenu';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import type { MenuSectionFilter } from '@/lib/hotelKitchenMenuFilters';
@@ -73,28 +72,6 @@ type Props = {
   menuTheme?: ResolvedKitchenMenuTheme;
 };
 
-function LiveDot({ label }: { label: string }) {
-  const pulse = useRef(new Animated.Value(0.4)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.4, duration: 800, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-
-  return (
-    <View style={styles.livePill}>
-      <Animated.View style={[styles.liveRing, { opacity: pulse }]} />
-      <View style={styles.liveCore} />
-      <Text style={styles.liveText}>{label}</Text>
-    </View>
-  );
-}
-
 export function PublicKitchenMenuWebLayout(props: Props) {
   const {
     orgSlug,
@@ -142,9 +119,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const [detailItem, setDetailItem] = useState<HotelKitchenMenuItemWithImages | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'explore' | 'menu'>(
     menuTheme.landingMode === 'explore' ? 'explore' : 'menu'
   );
+
+  const promoVideos = menuTheme.promoVideos;
 
   useEffect(() => {
     setMenuTab(menuTheme.landingMode === 'explore' ? 'explore' : 'menu');
@@ -174,7 +154,6 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const activeGrouped =
     menuTab === 'explore' ? [{ title: '', items: filtered }] : grouped;
-  const compactHero = menuTheme.landingMode === 'explore';
 
   const clearAll = () => {
     pickCategory(null);
@@ -295,47 +274,37 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         contentContainerStyle={{ paddingBottom: insets.bottom + (cartItemCount(cartLines) > 0 ? 110 : 40) }}
         showsVerticalScrollIndicator
       >
-        {/* Hero */}
-        <View style={styles.heroWrap}>
-          <LinearGradient colors={[...menuTheme.webHeroGradient]} style={[styles.hero, compactHero && styles.heroCompact]}>
-            {heroImage ? (
-              <>
-                <CachedImage uri={heroImage} style={StyleSheet.absoluteFillObject} contentFit="cover" recyclingKey={`hero-${orgSlug}`} />
-                <LinearGradient colors={['rgba(4,6,12,0.35)', 'rgba(4,6,12,0.88)']} style={StyleSheet.absoluteFillObject} />
-              </>
-            ) : (
-              <View style={[styles.heroGlow, { backgroundColor: menuTheme.webHeroGlow }]} pointerEvents="none" />
-            )}
-            <View style={[styles.heroInner, { paddingTop: insets.top + 32, maxWidth: maxW + 80 }]}>
-              <View style={styles.heroTop}>
-                <LiveDot label={t('publicKitchenMenuLiveBadge')} />
-                <View style={styles.heroLang}>
-                  <PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />
-                </View>
+        <View style={[styles.heroWrap, { paddingTop: insets.top + 12, backgroundColor: menuUi.webSurface }]}>
+          <View style={{ maxWidth: maxW + 80, width: '100%', alignSelf: 'center' }}>
+            <PublicKitchenMenuWelcomeHero
+              orgName={org.name}
+              heroTitle={heroTitle}
+              heroSubtitle={heroSubtitle}
+              accentColor={accent}
+              heroImage={heroImage}
+              promoVideos={promoVideos}
+              liveBadge={t('publicKitchenMenuLiveBadge')}
+              langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
+              onOrdersPress={() => setOrdersOpen(true)}
+            />
+            <View style={[styles.searchBoxLight, { borderColor: `${accent}22` }]}>
+              <View style={[styles.searchIconWrap, { backgroundColor: `${accent}14` }]}>
+                <Ionicons name="search" size={16} color={accent} />
               </View>
-              <Text style={[styles.heroKicker, { color: accent }]}>{org.name.toUpperCase()}</Text>
-              <Text style={styles.heroHotel}>{heroTitle}</Text>
-              <Text style={styles.heroSub}>{heroSubtitle}</Text>
-              <View style={[styles.searchBox, { borderColor: `${accent}33` }]}>
-                <View style={[styles.searchIconWrap, { backgroundColor: `${accent}22` }]}>
-                  <Ionicons name="search" size={16} color={accent} />
-                </View>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder={t('hotelKitchenMenuSearchPh')}
-                  placeholderTextColor="rgba(255,255,255,0.38)"
-                  value={search}
-                  onChangeText={setSearch}
-                />
-                {search ? (
-                  <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-                    <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.45)" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
+              <TextInput
+                style={styles.searchInputLight}
+                placeholder={t('hotelKitchenMenuSearchPh')}
+                placeholderTextColor="#94a3b8"
+                value={search}
+                onChangeText={setSearch}
+              />
+              {search ? (
+                <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                  <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                </TouchableOpacity>
+              ) : null}
             </View>
-          </LinearGradient>
-          <View style={[styles.heroCurve, { backgroundColor: menuUi.webSurface }]} />
+          </View>
         </View>
 
         {/* Mobile filters strip */}
@@ -485,6 +454,15 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           accentColor={accent}
         />
       ) : null}
+
+      <PublicKitchenMenuOrderHistorySheet
+        visible={ordersOpen}
+        onClose={() => setOrdersOpen(false)}
+        orgName={org.name}
+        orgSlug={orgSlug}
+        mode="web"
+        accentColor={accent}
+      />
     </View>
   );
 }
@@ -520,6 +498,20 @@ const styles = StyleSheet.create({
   heroKicker: { fontSize: 11, fontWeight: '800', letterSpacing: 3.5, marginBottom: 8 },
   heroHotel: { fontSize: 34, fontWeight: '800', color: '#fff', letterSpacing: -1.2, lineHeight: 38 },
   heroSub: { fontSize: 15, color: 'rgba(255,255,255,0.72)', marginTop: 10, lineHeight: 22, maxWidth: 520, fontWeight: '500' },
+  searchBoxLight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+    marginBottom: 8,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    minHeight: 52,
+  },
+  searchInputLight: { flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 10, outlineStyle: 'none' } as object,
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
