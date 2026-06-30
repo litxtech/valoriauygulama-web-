@@ -1,19 +1,26 @@
 import {
+  parseKbsFromDocumentOcr,
   parseIdCardImageUriWithFallback,
   type KbsCaptureSide,
   type KbsOcrOptions,
   type KbsOcrResult,
 } from '@/lib/kbsCaptureOcr';
-import { shouldPreferKbsFrontIdParse } from '@/lib/guestScan/idCardOcrParser';
 import { buildKbsCopyFields, listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
-import { cropImageForKbsOcr, cropMrzBandForKbsOcr } from '@/lib/kbsOcrDocumentFocus';
-import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
+import { prepareProfessionalKbsOcrUriCached } from '@/lib/kbsOcrSessionCache';
+import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
+import { ocrLinesForKbsDocument } from '@/lib/scanner/mrzDocumentOcr';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 export { type KbsOcrResult };
 
 const STRONG_SCORE = 42;
 const WEAK_SCORE = 28;
+
+function pickOcrEngine(...engines: string[]): string {
+  return engines.some((e) => e === MRZ_OCR_ENGINE_VISION_MLKIT)
+    ? MRZ_OCR_ENGINE_VISION_MLKIT
+    : engines[0] ?? MRZ_OCR_ENGINE_VISION_MLKIT;
+}
 
 /** OCR sonucu kalite puanı — en iyi geçiş seçimi. */
 export function kbsOcrQualityScore(result: KbsOcrResult): number {
@@ -36,27 +43,41 @@ export function pickBetterKbsOcrResult(a: KbsOcrResult, b: KbsOcrResult): KbsOcr
   return kbsOcrQualityScore(b) > kbsOcrQualityScore(a) ? b : a;
 }
 
-function altCaptureSide(side: KbsCaptureSide): KbsCaptureSide {
-  return side === 'mrz_back' ? 'front' : 'mrz_back';
+function isGoodEnough(result: KbsOcrResult, galleryDeep: boolean): boolean {
+  if (galleryDeep) return false;
+  const missing = listCoreMissingIdFields(result.parsed).length;
+  if (missing === 0) return true;
+  if (shouldApplyKbsOcrResult(result)) return true;
+  if (missing <= 1 && result.parsed.rawMrz) return true;
+  return hasKbsOcrApplyableData(result) && missing <= 1;
 }
 
-async function parseFast(
-  uri: string,
-  side: KbsCaptureSide,
-  galleryDeep?: boolean,
-  imagePrepared?: boolean
+/** Tek OCR taraması — ön yüz + MRZ parse aynı satırlardan (tekrar OCR yok). */
+async function parseFromOcrBatch(
+  prepared: string,
+  opts: { fast: boolean; galleryDeep: boolean; side: KbsCaptureSide }
 ): Promise<KbsOcrResult> {
-  return parseIdCardImageUriWithFallback(uri, {
-    captureSide: side,
-    fast: galleryDeep ? false : true,
-    galleryDeep,
-    imagePrepared,
+  const docOcr = await ocrLinesForKbsDocument(prepared, {
+    fast: opts.fast,
+    imagePrepared: true,
+    mrzFocused: opts.side === 'mrz_back',
   });
+  const engine = pickOcrEngine(docOcr.engine);
+  const front = parseKbsFromDocumentOcr({
+    lineSets: docOcr.lineSets,
+    engine,
+    mrzFocused: false,
+  });
+  const mrz = parseKbsFromDocumentOcr({
+    lineSets: docOcr.lineSets,
+    engine,
+    mrzFocused: true,
+  });
+  return pickBetterKbsOcrResult(front, mrz);
 }
 
 /**
- * Hızlı kimlik okuma — önce tek geçiş, eksik alan varsa hedefli 1–2 ek geçiş.
- * galleryDeep: galeri seçimi — tüm geçişler, erken çıkış yok.
+ * Hızlı kimlik okuma — tek paralel OCR, ön+MRZ birleşik parse; yetersizse bir yavaş geçiş.
  */
 export async function parseIdCardImageUriProfessional(
   uri: string,
@@ -64,72 +85,52 @@ export async function parseIdCardImageUriProfessional(
 ): Promise<KbsOcrResult> {
   const side = options?.captureSide ?? 'front';
   const galleryDeep = options?.galleryDeep === true;
-  const imagePrepared = options?.imagePrepared === true;
-  const prepared = imagePrepared ? uri : await prepareProfessionalKbsOcrUri(uri);
+  const prepared = options?.imagePrepared ? uri : await prepareProfessionalKbsOcrUriCached(uri);
+  const wantFast = !galleryDeep && options?.fast !== false;
 
-  let best = await parseFast(prepared, side, galleryDeep, true);
-  if (!galleryDeep && listCoreMissingIdFields(best.parsed).length === 0) return best;
+  let best = await parseFromOcrBatch(prepared, { fast: wantFast, galleryDeep, side });
+  if (isGoodEnough(best, galleryDeep)) return best;
 
-  const alt = await parseFast(prepared, altCaptureSide(side), galleryDeep, true);
-  best = pickBetterKbsOcrResult(best, alt);
-  if (!galleryDeep && listCoreMissingIdFields(best.parsed).length <= 1) return best;
-
-  try {
-    const docUri = await cropImageForKbsOcr(prepared);
-    const docPass = await parseFast(docUri, side, galleryDeep, true);
-    best = pickBetterKbsOcrResult(best, docPass);
-    if (!galleryDeep && listCoreMissingIdFields(best.parsed).length <= 1) return best;
-
-    const missing = listCoreMissingIdFields(best.parsed);
-    const strongTcFront = side === 'front' && shouldPreferKbsFrontIdParse(best.parsed);
-    const needsMrz =
-      !strongTcFront &&
-      (galleryDeep ||
-        missing.length > 0 ||
-        best.parsed.documentType === 'passport' ||
-        !best.parsed.rawMrz);
-    if (needsMrz) {
-      const bandUri = await cropMrzBandForKbsOcr(prepared);
-      const mrzPass = await parseFast(bandUri, 'mrz_back', galleryDeep, true);
-      best = pickBetterKbsOcrResult(best, mrzPass);
-    }
-  } catch {
-    /* ilk geçiş sonucu yeterli olabilir */
+  if (wantFast) {
+    const slow = await parseFromOcrBatch(prepared, { fast: false, galleryDeep, side });
+    best = pickBetterKbsOcrResult(best, slow);
+    if (isGoodEnough(best, galleryDeep)) return best;
   }
 
-  return best;
+  if (!galleryDeep && hasKbsOcrApplyableData(best)) return best;
+
+  const fallback = await parseIdCardImageUriWithFallback(prepared, {
+    captureSide: side,
+    fast: false,
+    galleryDeep,
+    imagePrepared: true,
+  });
+  return pickBetterKbsOcrResult(best, fallback);
 }
 
 /**
- * Sisteme yüklenen belgeler — önce hızlı okuma, yetersizse kademeli derinleşme.
- * Arka plan kuyruğu için parseIdCardImageUriMaximum yerine kullanılır.
+ * Sisteme yüklenen belgeler — hızlı profesyonel okuma, gerekirse derin tarama.
  */
 export async function parseIdCardImageUriForUpload(
   uri: string,
   options?: Pick<KbsOcrOptions, 'captureSide' | 'galleryDeep'>
 ): Promise<KbsOcrResult> {
   const side = options?.captureSide ?? 'front';
-  const prepared = await prepareProfessionalKbsOcrUri(uri);
-  const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true };
+  const prepared = await prepareProfessionalKbsOcrUriCached(uri);
+  const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true, fast: true };
 
-  let best = await parseIdCardImageUriProfessional(prepared, { ...baseOpts, fast: true });
+  const best = await parseIdCardImageUriProfessional(prepared, baseOpts);
   if (shouldApplyKbsOcrResult(best)) return best;
   if (hasKbsOcrApplyableData(best) && listCoreMissingIdFields(best.parsed).length <= 1) return best;
 
-  best = await parseIdCardImageUriProfessional(prepared, { ...baseOpts, fast: false });
-  if (shouldApplyKbsOcrResult(best) || listCoreMissingIdFields(best.parsed).length <= 2) {
-    if (hasKbsOcrApplyableData(best)) return best;
+  const refined = await parseIdCardImageUriProfessional(prepared, {
+    ...baseOpts,
+    fast: false,
+    galleryDeep: options?.galleryDeep,
+  });
+  if (shouldApplyKbsOcrResult(refined) || hasKbsOcrApplyableData(refined)) {
+    return pickBetterKbsOcrResult(best, refined);
   }
-
-  if (options?.galleryDeep) {
-    const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
-    return parseIdCardImageUriMaximum(prepared, { captureSide: side });
-  }
-
-  const { parseIdCardImageUriAiFallback } = await import('@/lib/kbsCaptureOcr');
-  const ai = await parseIdCardImageUriAiFallback(prepared, { captureSide: side });
-  best = pickBetterKbsOcrResult(best, ai);
-  if (hasKbsOcrApplyableData(best)) return best;
 
   const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
   return parseIdCardImageUriMaximum(prepared, { captureSide: side });

@@ -95,7 +95,11 @@ export async function scanDocumentFromGallery(): Promise<GalleryScanResult> {
       };
     }
 
-    const { lines: rawLines } = await ocrLinesFromImage(uri, { document: true });
+    const { lines: rawLines } = await ocrLinesFromImage(uri, {
+      document: true,
+      fast: true,
+      imagePrepared: true,
+    });
     const lines = normalizeOcrLines(rawLines);
     if (!lines.length) {
       return {

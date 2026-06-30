@@ -3,8 +3,8 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { cropImageForKbsOcr, cropMrzBandForKbsOcr } from '@/lib/kbsOcrDocumentFocus';
 
 /** Profesyonel OCR — ML Kit / MRZ için hedef çözünürlük. */
-export const KBS_OCR_PRO_MIN_LONG_EDGE = 2600;
-export const KBS_OCR_PRO_MAX_LONG_EDGE = 3200;
+export const KBS_OCR_PRO_MIN_LONG_EDGE = 2400;
+export const KBS_OCR_PRO_MAX_LONG_EDGE = 3000;
 const PRO_JPEG_QUALITY = 0.98;
 
 async function imageSize(uri: string): Promise<{ width: number; height: number; long: number }> {
@@ -47,8 +47,11 @@ export type KbsOcrEnhancedVariants = {
 };
 
 /** Profesyonel OCR geçişleri — tam, belge kırpımı, MRZ şeridi. */
-export async function buildKbsOcrEnhancedVariants(uri: string): Promise<KbsOcrEnhancedVariants> {
-  const full = await prepareProfessionalKbsOcrUri(uri);
+export async function buildKbsOcrEnhancedVariants(
+  uri: string,
+  alreadyPrepared = false
+): Promise<KbsOcrEnhancedVariants> {
+  const full = alreadyPrepared ? uri : await prepareProfessionalKbsOcrUri(uri);
   const [documentCrop, mrzBand] = await Promise.all([
     cropImageForKbsOcr(full),
     cropMrzBandForKbsOcr(full),

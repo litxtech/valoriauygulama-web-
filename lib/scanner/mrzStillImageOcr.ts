@@ -28,7 +28,12 @@ function blocksFromMlKitResult(result: MlKitResult, imageHeight: number): MrzOcr
 
 /** MRZ canlı tarama ile aynı ML Kit motoru. */
 const MLKIT_SCALE_FACTORS = [1.5, 2.0, 2.5] as const;
-const MLKIT_SCALE_FAST = 2.0;
+const MLKIT_SCALE_FAST = 1.75;
+
+function looksMrzRich(lines: string[]): boolean {
+  const mrzish = lines.filter((l) => l.includes('<<') || /^[A-Z0-9<]{28,}$/i.test(l.replace(/\s/g, '')));
+  return mrzish.length >= 2;
+}
 
 export async function ocrLinesFromMrzStillImage(
   uri: string,
@@ -56,7 +61,10 @@ export async function ocrLinesFromMrzStillImage(
         });
         const blocks = blocksFromMlKitResult(result, height);
         const lines = linesFromMlKitOcr(result.text ?? '', blocks);
-        if (lines.length >= 2) lineSets.push(lines);
+        if (lines.length >= 2) {
+          lineSets.push(lines);
+          if (opts?.fast !== false && looksMrzRich(lines)) break;
+        }
       } catch {
         /* sonraki ölçek */
       }

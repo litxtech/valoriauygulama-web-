@@ -15,12 +15,15 @@ type OcrImageOpts = {
   document?: boolean;
   /** Arka plan okuma — tek ML Kit ölçeği, hafif resize. */
   fast?: boolean;
+  /** prepareProfessionalKbsOcrUri sonrası — normalize atlanır. */
+  imagePrepared?: boolean;
 };
 
 /** MRZ OCR öncesi kare boyutunu ayarlar. */
 async function normalizeImageForOcr(uri: string, opts?: OcrImageOpts): Promise<string> {
-  const maxEdge = opts?.fast ? 2200 : opts?.document ? 3200 : 2000;
-  const minEdge = opts?.fast ? 1600 : opts?.document ? 2400 : 0;
+  if (opts?.imagePrepared) return uri;
+  const maxEdge = opts?.fast ? 2000 : opts?.document ? 3200 : 2000;
+  const minEdge = opts?.fast ? 1500 : opts?.document ? 2400 : 0;
   try {
     const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
       Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
@@ -66,20 +69,25 @@ export async function ocrLinesFromImage(
   opts?: OcrImageOpts
 ): Promise<{ lines: string[]; engine: OcrLinesEngine }> {
   const prepared = await normalizeImageForOcr(uri, opts);
+  const fast = opts?.fast !== false;
   let visionLines: string[] = [];
   if (isMrzVisionScannerAvailable()) {
     try {
       const { ocrLinesFromMrzStillImage } = await import('@/lib/scanner/mrzStillImageOcr');
-      const mrz = await ocrLinesFromMrzStillImage(prepared, { fast: opts?.fast });
+      const mrz = await ocrLinesFromMrzStillImage(prepared, { fast });
       if (mrz?.lines.length) {
         visionLines = mrz.lines;
-        if (visionLines.length >= 4) {
+        const minLines = fast ? 2 : 4;
+        if (visionLines.length >= minLines) {
           return mrz;
         }
       }
     } catch {
       /* ML Kit yüklenemedi — expo yedek */
     }
+  }
+  if (fast && visionLines.length >= 1) {
+    return { lines: visionLines, engine: MRZ_OCR_ENGINE_VISION_MLKIT };
   }
   const expo = await ocrLinesFromExpo(prepared, opts);
   if (visionLines.length === 0) return expo;

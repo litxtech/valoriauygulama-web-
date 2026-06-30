@@ -21,11 +21,12 @@ export type KbsCaptureOcrJob = {
   captureSource?: 'camera' | 'gallery';
 };
 
-const OCR_GAP_MS = Platform.OS === 'android' ? 200 : 80;
+const OCR_GAP_MS = Platform.OS === 'android' ? 80 : 0;
 const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 90_000 : 75_000;
+const OCR_MAX_CONCURRENT = Platform.OS === 'android' ? 1 : 2;
 
 let jobs: KbsCaptureOcrJob[] = [];
-let draining = false;
+let activeCount = 0;
 const queuedOrActiveDocIds = new Set<string>();
 const ocrPrewarmByUri = new Map<string, Promise<KbsOcrResult>>();
 
@@ -58,10 +59,6 @@ async function consumeKbsCaptureOcrPrewarm(localUri: string): Promise<KbsOcrResu
   } catch {
     return null;
   }
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -102,15 +99,13 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
     }
 
     const prewarmed = await consumeKbsCaptureOcrPrewarm(local);
-    const ocr = await withTimeout(
-      prewarmed ??
-        parseIdCardImageUriForUpload(local, {
+    const ocrWork = prewarmed
+      ? Promise.resolve(prewarmed)
+      : parseIdCardImageUriForUpload(local, {
           captureSide: job.captureSide ?? 'front',
           galleryDeep: job.captureSource === 'gallery',
-        }),
-      OCR_JOB_TIMEOUT_MS,
-      'kbs_ocr'
-    );
+        });
+    const ocr = await withTimeout(ocrWork, OCR_JOB_TIMEOUT_MS, 'kbs_ocr');
 
     log.info('kbsOcrDebug', 'FINAL applied result', {
       docId: job.docId,
@@ -160,17 +155,23 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
 }
 
 async function drainQueue(): Promise<void> {
-  if (draining) return;
-  draining = true;
-  while (jobs.length > 0) {
+  while (jobs.length > 0 && activeCount < OCR_MAX_CONCURRENT) {
     const job = jobs.shift()!;
-    await runJob(job);
-    if (jobs.length > 0) await sleep(OCR_GAP_MS);
+    activeCount += 1;
+    void runJob(job).finally(() => {
+      activeCount -= 1;
+      if (jobs.length > 0) {
+        if (OCR_GAP_MS > 0) {
+          setTimeout(() => void drainQueue(), OCR_GAP_MS);
+        } else {
+          void drainQueue();
+        }
+      }
+    });
   }
-  draining = false;
 }
 
-/** Kayıt sonrası sırayla OCR (uygulamayı yormadan). */
+/** Kayıt sonrası OCR — iOS’ta 2 paralel, Android’de sıralı. */
 export function enqueueKbsCaptureOcr(job: KbsCaptureOcrJob): void {
   if (!job.imageUrl?.trim()) return;
   if (isKbsDocInOcrQueue(job.docId)) return;

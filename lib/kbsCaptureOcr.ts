@@ -262,7 +262,11 @@ export async function parseIdCardImageUriWithFallback(
 
   if (hasMrz && coreMissing <= 1) return primary;
   if (coreMissing === 0) return primary;
-  if (options?.fast !== false && coreMissing <= 2) return primary;
+  if (options?.fast !== false) {
+    if (coreMissing <= 2) return primary;
+    if (hasMrz && coreMissing <= 3) return primary;
+    return primary;
+  }
 
   if (!hasMrz && coreMissing >= 4) {
     const fallback = await parseIdCardImageUriAiFallback(uri, options);
