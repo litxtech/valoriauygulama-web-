@@ -74,8 +74,8 @@ export async function notifyKitchenMenuOrderPaid(
 
   const notificationType = "kitchen_menu_order_paid";
   const pushData = {
-    url: "/staff/hotel-menu",
-    screen: "staff_hotel_menu",
+    url: "/staff/kitchen-ops/menu-orders",
+    screen: "staff_kitchen_menu_orders",
     notificationType,
     notification_type: notificationType,
     feature_key: "guest_service_request",

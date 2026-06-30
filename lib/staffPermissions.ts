@@ -180,6 +180,12 @@ export function canAccessKitchenOps(staff: StaffPermissionSlice): boolean {
   return MEAL_MENU_KITCHEN_DEPARTMENTS.has(dept);
 }
 
+/** Dijital menü siparişleri ve canlı sepet (ödeme bekleyen) — mutfak paneli. */
+export function canViewStaffKitchenMenuOrders(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  return canAccessKitchenOps(staff) || canManageHotelKitchenMenu(staff);
+}
+
 /** Mutfak operasyon yönetimi (düzeltme, silme, limit, rapor). */
 export function canManageKitchenOps(staff: StaffPermissionSlice): boolean {
   return hasStaffAppPermission(staff, 'mutfak_operasyon_yonetim');

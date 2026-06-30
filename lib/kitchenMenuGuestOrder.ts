@@ -48,7 +48,7 @@ export async function requestKitchenMenuItemOrder(item: HotelKitchenMenuItemWith
     title: 'Otel menüsü — Sipariş',
     body: `${who}${room}: ${item.name} (${price})`,
     data: {
-      url: '/staff/hotel-menu',
+      url: '/staff/kitchen-ops/menu-orders',
       screen: 'hotel_kitchen_menu',
       notificationType: 'hotel_kitchen_menu_order',
       feature_key: 'guest_service_request',

@@ -16,6 +16,7 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'fnb_hub', labelTr: 'F&B Merkezi', section: 'fnb' },
   // Mutfak hızlı işlemler
   { id: 'kitchen_ops', labelTr: 'Mutfak operasyonları', section: 'kitchen' },
+  { id: 'kitchen_menu_orders', labelTr: 'Dijital menü siparişleri', section: 'kitchen' },
   { id: 'kitchen_ops_manage', labelTr: 'Mutfak operasyonları (yönetim)', section: 'kitchen' },
   { id: 'kitchen_reception', labelTr: 'Mutfak resepsiyon muhasebe', section: 'kitchen' },
   { id: 'kitchen_quick_entry', labelTr: 'Mutfak — giriş', section: 'kitchen' },

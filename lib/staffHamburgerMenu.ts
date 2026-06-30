@@ -234,6 +234,13 @@ export function buildStaffHamburgerMenuSections(
   // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
   if (isKitchenStaff) {
     push('kitchen', {
+      id: 'kitchen_menu_orders',
+      label: t('staffKitchenMenuOrdersTitle'),
+      href: '/staff/kitchen-ops/menu-orders',
+      icon: 'bag-handle-outline',
+      accent: '#d97706',
+    });
+    push('kitchen', {
       id: 'kitchen_ops',
       label: t('staffKitchenOpsTitle'),
       href: '/staff/kitchen-ops',
@@ -976,7 +983,10 @@ export function buildStaffHamburgerMenuSections(
     admin: t('staffMenuSectionAdmin'),
   };
 
-  const built = (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'payments', 'ops', 'admin'] as const)
+  const built = (isKitchenStaff
+    ? (['kitchen', 'fnb', 'nav', 'staff', 'hotel', 'payments', 'ops', 'admin'] as const)
+    : (['fnb', 'kitchen', 'nav', 'staff', 'hotel', 'payments', 'ops', 'admin'] as const)
+  )
     .filter((id) => sections[id].length > 0)
     .map((id) => ({ id, title: sectionTitles[id], items: sections[id] }));
 
@@ -1005,10 +1015,17 @@ export function buildStaffHamburgerMenuLayout(
   if (primary) used.add(primary.id);
 
   const hubIds = resolveHamburgerHubItemIds(layout);
-  const hubs = hubIds
+  let hubs = hubIds
     .map((id) => all.find((i) => i.id === id))
     .filter((i): i is StaffHamburgerMenuItem => !!i && !used.has(i.id));
   for (const h of hubs) used.add(h.id);
+
+  const isKitchenStaff = staff ? isKitchenStaffMember(staff) && canAccessKitchenOps(staff) : false;
+  const menuOrdersItem = all.find((i) => i.id === 'kitchen_menu_orders');
+  if (isKitchenStaff && menuOrdersItem && !used.has(menuOrdersItem.id)) {
+    hubs = [menuOrdersItem, ...hubs];
+    used.add(menuOrdersItem.id);
+  }
 
   const sections = rawSections
     .map((section) => ({

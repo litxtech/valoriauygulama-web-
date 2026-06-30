@@ -41,6 +41,7 @@ export default function KitchenOpsLayout() {
       <Stack.Screen name="finance/index" options={{ title: t('staffKitchenFinanceSummary') }} />
       <Stack.Screen name="finance-bridge/index" options={{ title: 'Mutfak ↔ Resepsiyon Finans' }} />
       <Stack.Screen name="reception" options={{ title: t('staffKitchenReceptionAccounting') }} />
+      <Stack.Screen name="menu-orders" options={{ title: t('staffKitchenMenuOrdersTitle') }} />
     </Stack>
   );
 }

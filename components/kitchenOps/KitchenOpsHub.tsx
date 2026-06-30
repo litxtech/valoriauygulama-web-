@@ -27,6 +27,7 @@ const STOCK_TILES: KitchenHubTile[] = [
 ];
 
 const QUICK_ACTIONS: KitchenHubTile[] = [
+  { key: 'menu_orders', label: 'Menü siparişleri', icon: 'bag-handle', route: '/staff/kitchen-ops/menu-orders', color: '#d97706', bg: '#fffbeb' },
   { key: 'scan', label: 'Barkod', icon: 'scan', route: '/staff/kitchen-ops/stock/scan', color: '#7c3aed', bg: '#f5f3ff' },
   { key: 'revenue', label: 'Hasılat', icon: 'cash', route: '/staff/kitchen-ops/revenue', color: '#059669', bg: '#ecfdf5' },
   { key: 'expense', label: 'Gider', icon: 'receipt', route: '/staff/kitchen-ops/expenses', color: '#ea580c', bg: '#fff7ed' },
