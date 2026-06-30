@@ -81,6 +81,15 @@ export function buildFnbHubQuickActions(
       visible: canAccessKitchenFinance(staff, financeStaffIds) || canAccessKitchenReceptionAccounting(staff),
     },
     {
+      id: 'menu_qr',
+      label: 'Masa QR kodu',
+      desc: 'Sabit menü QR — bas, masaya koy, uygulama gerekmez',
+      href: '/staff/hotel-menu/manage?qr=1',
+      icon: 'qr-code-outline',
+      color: '#1a365d',
+      visible: canManageHotelKitchenMenu(staff),
+    },
+    {
       id: 'menu_manage',
       label: 'Menü yönet',
       desc: 'Ürün, fiyat, fotoğraf ve kategori',

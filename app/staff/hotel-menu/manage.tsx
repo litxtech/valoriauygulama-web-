@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -27,12 +27,14 @@ import {
 import { openHotelMenuLightbox } from '@/lib/openHotelMenuLightbox';
 import { HotelKitchenMenuListCard } from '@/components/hotelKitchenMenu/HotelKitchenMenuListCard';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
+import { HotelKitchenMenuQrSheet } from '@/components/hotelKitchenMenu/HotelKitchenMenuQrSheet';
 
 const CACHE_KEY = 'list:all';
 
 export default function StaffHotelMenuManageScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { qr } = useLocalSearchParams<{ qr?: string }>();
   const navigation = useNavigation();
   const staff = useAuthStore((s) => s.staff);
   const [items, setItems] = useState<HotelKitchenMenuItemWithImages[]>([]);
@@ -69,8 +71,9 @@ export default function StaffHotelMenuManageScreen() {
         setLoading(true);
         void load({ skipCache: true }).finally(() => setLoading(false));
       }
+      if (qr === '1') setQrOpen(true);
       return undefined;
-    }, [load])
+    }, [load, qr])
   );
 
   const onRefresh = async () => {
@@ -110,6 +113,25 @@ export default function StaffHotelMenuManageScreen() {
         <Text style={styles.manageHeroTitle}>{t('hotelKitchenMenuManageHero')}</Text>
         <Text style={styles.manageHeroSub}>{t('hotelKitchenMenuManageHeroSub')}</Text>
       </LinearGradient>
+      <TouchableOpacity
+        style={styles.qrBtn}
+        onPress={() => setQrOpen(true)}
+        activeOpacity={0.88}
+      >
+        <LinearGradient
+          colors={[menuUi.navy, menuUi.navyMid]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.qrBtnGrad}
+        >
+          <Ionicons name="qr-code-outline" size={22} color="#fff" />
+          <View style={styles.qrBtnTexts}>
+            <Text style={styles.qrBtnTitle}>{t('publicKitchenMenuQrOpenBtn')}</Text>
+            <Text style={styles.qrBtnSub}>{t('publicKitchenMenuQrSub')}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
+        </LinearGradient>
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.themeBtn}
         onPress={() => router.push('/staff/fnb-hub/menu-theme')}
@@ -163,6 +185,14 @@ export default function StaffHotelMenuManageScreen() {
         onClose={() => setLightbox(null)}
       />
 
+      {staff?.organization_id ? (
+        <HotelKitchenMenuQrSheet
+          visible={qrOpen}
+          onClose={() => setQrOpen(false)}
+          organizationId={staff.organization_id}
+          organizationName={staff.organization?.name}
+        />
+      ) : null}
     </View>
   );
 }
@@ -180,6 +210,23 @@ const styles = StyleSheet.create({
   },
   manageHeroTitle: { fontSize: 20, fontWeight: '800', color: '#fff' },
   manageHeroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 6, lineHeight: 18 },
+  qrBtn: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 14,
+    overflow: 'hidden',
+    ...menuUi.shadowSm,
+  },
+  qrBtnGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  qrBtnTexts: { flex: 1, minWidth: 0 },
+  qrBtnTitle: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  qrBtnSub: { fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2, lineHeight: 16 },
   themeBtn: {
     marginHorizontal: 16,
     marginTop: 12,
