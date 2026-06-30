@@ -23,6 +23,7 @@ import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 const LINKS = [
   { href: '/admin/kitchen-ops/finance-access', icon: 'shield-checkmark-outline' as const, label: 'Finans erişimi', color: '#4f46e5' },
   { href: '/admin/kitchen-ops/revenue-notify', icon: 'notifications-outline' as const, label: 'Hasılat bildirimleri', color: '#0d9488' },
+  { href: '/admin/kitchen-ops/menu-order-notify', icon: 'bag-handle-outline' as const, label: 'Menü sipariş bildirimleri', color: '#d97706' },
   { href: '/admin/kitchen-ops/reports', icon: 'bar-chart-outline' as const, label: 'Raporlar', color: '#2563eb' },
   { href: '/admin/kitchen-ops/reception', icon: 'checkmark-done-outline' as const, label: 'Reception Kontrol', color: '#059669' },
   { href: '/admin/kitchen-ops/categories', icon: 'grid-outline' as const, label: 'Kategoriler', color: '#7c3aed' },

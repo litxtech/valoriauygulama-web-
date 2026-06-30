@@ -59,6 +59,13 @@ export default function AdminKitchenOpsLayout() {
         }}
       />
       <Stack.Screen
+        name="menu-order-notify"
+        options={{
+          title: 'Menü sipariş bildirimleri',
+          headerLeft: () => <AdminStackBackButton fallback={ADMIN_KITCHEN_OPS_HUB} />,
+        }}
+      />
+      <Stack.Screen
         name="finance-access"
         options={{
           title: 'Finans erişimi',

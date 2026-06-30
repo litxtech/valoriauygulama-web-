@@ -231,7 +231,7 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('guest_service_request', 'staffNotifGuestServiceRequestTitle', 'staffNotifGuestServiceRequestHint', {
     soundFeatureKey: 'guest_service_request',
-    matchExact: ['guest_service_request_new', 'guest_service_request_status', 'hotel_kitchen_menu_order'],
+    matchExact: ['guest_service_request_new', 'guest_service_request_status', 'hotel_kitchen_menu_order', 'kitchen_menu_order_paid'],
   }),
   entry('technical_asset', 'staffNotifTechnicalAssetTitle', 'staffNotifTechnicalAssetHint', {
     soundFeatureKey: 'technical_asset',
