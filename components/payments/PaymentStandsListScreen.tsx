@@ -5,8 +5,10 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Pressable,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -78,25 +80,28 @@ export function PaymentStandsListScreen({ basePath }: Props) {
               Restoran, bar ve resepsiyon için sabit veya serbest tutarlı QR kodlar. Kapatana kadar aktif kalır;
               serbest QR'da müşteri tutarı kendisi girer.
             </Text>
-            <TouchableOpacity
-              activeOpacity={0.88}
+            <Pressable
+              style={({ pressed }) => [pressed && styles.btnPressed, Platform.OS === 'web' && styles.webClickable]}
               onPress={() => router.push(`${basePath}/new?mode=standing&kind=food` as never)}
             >
-              <LinearGradient colors={['#635bff', '#4f46e5']} style={styles.newBtn}>
+              <LinearGradient colors={['#635bff', '#4f46e5']} style={styles.newBtn} pointerEvents="none">
                 <Ionicons name="add-circle-outline" size={22} color="#fff" />
                 <Text style={styles.newBtnText}>Yeni sabit QR</Text>
               </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.88}
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.newBtnSecondaryWrap,
+                pressed && styles.btnPressed,
+                Platform.OS === 'web' && styles.webClickable,
+              ]}
               onPress={() => router.push(`${basePath}/new?mode=standing_variable&kind=food` as never)}
-              style={styles.newBtnSecondaryWrap}
             >
               <View style={styles.newBtnSecondary}>
                 <Ionicons name="create-outline" size={22} color="#635bff" />
                 <Text style={styles.newBtnSecondaryText}>Yeni serbest QR</Text>
               </View>
-            </TouchableOpacity>
+            </Pressable>
             <Text style={styles.sectionTitle}>Aktif ve geçmiş noktalar</Text>
           </View>
         }
@@ -159,6 +164,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   newBtnText: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  btnPressed: { opacity: 0.88 },
+  webClickable: { cursor: 'pointer' } as const,
   newBtnSecondaryWrap: { marginBottom: 16 },
   newBtnSecondary: {
     flexDirection: 'row',

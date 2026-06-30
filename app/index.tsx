@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Alert,
   useWindowDimensions,
   Platform,
@@ -315,6 +316,8 @@ export default function HomeScreen() {
         pathname.startsWith('/maliye/') ||
         pathname === '/payment' ||
         pathname === '/payment/qr' ||
+        pathname === '/payment/new' ||
+        pathname.startsWith('/payment/new') ||
         pathname === '/odeme' ||
         pathname === '/odeme/qr' ||
         pathname.startsWith('/staff/payments') ||
@@ -645,21 +648,21 @@ export default function HomeScreen() {
 
             <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('homePortalPayments')}</Text>
             <View style={styles.portalRow}>
-              <TouchableOpacity
-                style={styles.portalTile}
+              <Pressable
+                style={({ pressed }) => [styles.portalTile, pressed && styles.portalTilePressed, styles.portalTileWeb]}
                 onPress={() =>
                   safeRouterPush(
                     router,
                     publicPaymentNewHref('standing', { admin: staff?.role === 'admin' })
                   )
                 }
-                activeOpacity={0.82}
               >
                 <LinearGradient
                   colors={['#ede9fe', '#ddd6fe', '#c4b5fd']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.portalTileGradient}
+                  pointerEvents="none"
                 >
                   <View style={styles.portalIconCircle}>
                     <Ionicons name="qr-code" size={26} color="#635bff" />
@@ -667,22 +670,22 @@ export default function HomeScreen() {
                   <Text style={[styles.portalTileTitle, { color: '#4c1d95' }]}>{t('homePortalPaymentFixed')}</Text>
                   <Text style={[styles.portalTileHint, { color: '#5b21b6' }]}>{t('homePortalPaymentFixedHint')}</Text>
                 </LinearGradient>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.portalTile}
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.portalTile, pressed && styles.portalTilePressed, styles.portalTileWeb]}
                 onPress={() =>
                   safeRouterPush(
                     router,
                     publicPaymentNewHref('standing_variable', { admin: staff?.role === 'admin' })
                   )
                 }
-                activeOpacity={0.82}
               >
                 <LinearGradient
                   colors={['#eef2ff', '#e0e7ff', '#c7d2fe']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.portalTileGradient}
+                  pointerEvents="none"
                 >
                   <View style={styles.portalIconCircle}>
                     <Ionicons name="create-outline" size={26} color="#4f46e5" />
@@ -690,7 +693,7 @@ export default function HomeScreen() {
                   <Text style={[styles.portalTileTitle, { color: '#312e81' }]}>{t('homePortalPaymentVariable')}</Text>
                   <Text style={[styles.portalTileHint, { color: '#4338ca' }]}>{t('homePortalPaymentVariableHint')}</Text>
                 </LinearGradient>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           </View>
         )}
@@ -1151,6 +1154,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 22,
     elevation: 8,
+    ...(Platform.OS === 'web' ? { position: 'relative' as const, zIndex: 4 } : null),
   },
   portalPanelLabel: {
     fontSize: 12,
@@ -1173,6 +1177,8 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
+  portalTileWeb: Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {},
+  portalTilePressed: { opacity: 0.82 },
   portalTileGradient: {
     alignItems: 'center',
     paddingVertical: 18,

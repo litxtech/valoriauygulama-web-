@@ -6,8 +6,10 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
+  Pressable,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +28,7 @@ import {
 } from '@/lib/paymentsI18n';
 
 const ACCENT = '#635bff';
+const webClickable = Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : null;
 
 type QrMode = 'single' | 'standing' | 'standing_variable';
 
@@ -121,34 +124,49 @@ export function PaymentNewForm({ successBasePath, initialMode, initialServiceKin
 
       <Text style={styles.label}>QR türü</Text>
       <View style={styles.modeRow}>
-        <TouchableOpacity
-          style={[styles.modeBtn, qrMode === 'single' && styles.modeBtnActive]}
+        <Pressable
+          style={({ pressed }) => [
+            styles.modeBtn,
+            qrMode === 'single' && styles.modeBtnActive,
+            pressed && styles.modeBtnPressed,
+            webClickable,
+          ]}
           onPress={() => setQrMode('single')}
         >
           <Ionicons name="flash-outline" size={18} color={qrMode === 'single' ? '#fff' : ACCENT} />
           <Text style={[styles.modeBtnText, qrMode === 'single' && styles.modeBtnTextActive]}>
             {paymentText('paymentsQrModeSingle')}
           </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeBtn, qrMode === 'standing' && styles.modeBtnActive]}
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [
+            styles.modeBtn,
+            qrMode === 'standing' && styles.modeBtnActive,
+            pressed && styles.modeBtnPressed,
+            webClickable,
+          ]}
           onPress={() => setQrMode('standing')}
         >
           <Ionicons name="infinite-outline" size={18} color={qrMode === 'standing' ? '#fff' : ACCENT} />
           <Text style={[styles.modeBtnText, qrMode === 'standing' && styles.modeBtnTextActive]}>
             {paymentText('paymentsQrModeStanding')}
           </Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
-      <TouchableOpacity
-        style={[styles.modeBtnWide, qrMode === 'standing_variable' && styles.modeBtnActive]}
+      <Pressable
+        style={({ pressed }) => [
+          styles.modeBtnWide,
+          qrMode === 'standing_variable' && styles.modeBtnActive,
+          pressed && styles.modeBtnPressed,
+          webClickable,
+        ]}
         onPress={() => setQrMode('standing_variable')}
       >
         <Ionicons name="create-outline" size={18} color={qrMode === 'standing_variable' ? '#fff' : ACCENT} />
         <Text style={[styles.modeBtnText, qrMode === 'standing_variable' && styles.modeBtnTextActive]}>
           {paymentText('paymentsQrModeStandingVariable')}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
       <Text style={styles.modeHint}>{modeHint}</Text>
 
       <Text style={styles.label}>{paymentText('paymentsCurrency')}</Text>
@@ -261,6 +279,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   modeBtnActive: { backgroundColor: ACCENT, borderColor: ACCENT },
+  modeBtnPressed: { opacity: 0.88 },
   modeBtnText: { fontSize: 12, fontWeight: '800', color: ACCENT },
   modeBtnTextActive: { color: '#fff' },
   modeHint: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 8, lineHeight: 18 },

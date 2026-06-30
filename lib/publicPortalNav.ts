@@ -1,10 +1,11 @@
-import { Platform } from 'react-native';
 import type { Href } from 'expo-router';
 import {
   DEFAULT_CONTRACT_QR_LANG,
   DEFAULT_CONTRACT_QR_TOKEN,
 } from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
+
+export { publicPaymentNewHref, type PublicPaymentQrMode } from '@/lib/paymentNewRoute';
 
 /** Canlı menü QR varsayılan işletme kodu */
 export const DEFAULT_PUBLIC_MENU_ORG_SLUG = (
@@ -26,23 +27,4 @@ export function publicContractHref(): Href {
 
 export function publicMaliyeHref(): Href {
   return { pathname: '/maliye', params: { token: FIXED_MALIYE_QR_TOKEN } } as Href;
-}
-
-export type PublicPaymentQrMode = 'standing' | 'standing_variable';
-
-/** valoria.tr — personel ödeme QR oluşturma (sabit / serbest) */
-export function publicPaymentNewHref(
-  mode: PublicPaymentQrMode,
-  opts?: { admin?: boolean; serviceKind?: string }
-): Href {
-  /** Web SPA: /admin yığını erken yönlendirme / unmatched route veriyor; personel rotası kullan */
-  const base =
-    Platform.OS === 'web' ? '/staff/payments/new' : opts?.admin ? '/admin/payments/new' : '/staff/payments/new';
-  return {
-    pathname: base,
-    params: {
-      mode,
-      kind: opts?.serviceKind ?? 'food',
-    },
-  } as Href;
 }
