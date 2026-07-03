@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -84,6 +84,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadStep, setUploadStep] = useState<string | null>(null);
+  const submitInFlightRef = useRef(false);
 
   const keptExistingMedia = useMemo(
     () =>
@@ -159,6 +160,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
   };
 
   const submit = async () => {
+    if (submitInFlightRef.current) return;
     if (!staff?.id || !staff.organization_id) {
       Alert.alert('Hata', 'Oturum bulunamadı');
       return;
@@ -167,6 +169,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
       Alert.alert('Eksik', 'Not metni veya en az bir medya ekleyin.');
       return;
     }
+    submitInFlightRef.current = true;
     setSaving(true);
     try {
       let uploaded: Array<{ publicUrl: string; path: string; thumbnailUrl: string | null }> = [];
@@ -232,6 +235,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Not kaydedilemedi');
     } finally {
+      submitInFlightRef.current = false;
       setSaving(false);
       setUploadStep(null);
     }

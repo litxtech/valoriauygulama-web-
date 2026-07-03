@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { invalidateAdminQuickNotesListCache } from '@/lib/adminQuickNotesCache';
+import { sleepMs } from '@/lib/supabaseTransientErrors';
 
 export type AdminNoteTag = 'general' | 'room' | 'staff' | 'guest' | 'urgent';
 
@@ -65,6 +66,50 @@ const NOTE_SELECT = `
 `;
 
 const LIST_PAGE_SIZE = 120;
+const NOTE_INSERT_MAX_ATTEMPTS = 3;
+
+function isDuplicateNoteNumberError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === '23505') return true;
+  const m = (error.message ?? '').toLowerCase();
+  return m.includes('duplicate') && m.includes('note_number');
+}
+
+type InsertedNoteRow = { id: string; note_number: string };
+
+async function insertAdminQuickNoteRow(params: {
+  organizationId: string;
+  staffId: string;
+  bodyText: string;
+  title?: string | null;
+  tag?: AdminNoteTag;
+  roomLabel?: string | null;
+}): Promise<{ data: InsertedNoteRow | null; error: string | null }> {
+  let lastError: string | null = null;
+  for (let attempt = 0; attempt < NOTE_INSERT_MAX_ATTEMPTS; attempt++) {
+    const { data, error } = await supabase
+      .from('admin_quick_notes')
+      .insert({
+        organization_id: params.organizationId,
+        created_by_staff_id: params.staffId,
+        body_text: params.bodyText,
+        title: params.title?.trim() || null,
+        tag: params.tag ?? 'general',
+        room_label: params.roomLabel?.trim() || null,
+      })
+      .select('id, note_number')
+      .single();
+
+    if (!error && data) return { data: data as InsertedNoteRow, error: null };
+
+    lastError = error?.message ?? 'Not oluşturulamadı';
+    if (!isDuplicateNoteNumberError(error) || attempt >= NOTE_INSERT_MAX_ATTEMPTS - 1) {
+      return { data: null, error: lastError };
+    }
+    await sleepMs(80 * (attempt + 1));
+  }
+  return { data: null, error: lastError ?? 'Not oluşturulamadı' };
+}
 
 type ListNoteMediaRow = {
   note_id: string;
@@ -179,20 +224,16 @@ export async function createAdminQuickNote(params: {
     sortOrder: number;
   }>;
 }): Promise<{ data: AdminQuickNoteRow | null; error: string | null }> {
-  const { data: note, error } = await supabase
-    .from('admin_quick_notes')
-    .insert({
-      organization_id: params.organizationId,
-      created_by_staff_id: params.staffId,
-      body_text: params.bodyText,
-      title: params.title?.trim() || null,
-      tag: params.tag ?? 'general',
-      room_label: params.roomLabel?.trim() || null,
-    })
-    .select('id, note_number')
-    .single();
+  const { data: note, error } = await insertAdminQuickNoteRow({
+    organizationId: params.organizationId,
+    staffId: params.staffId,
+    bodyText: params.bodyText,
+    title: params.title,
+    tag: params.tag,
+    roomLabel: params.roomLabel,
+  });
 
-  if (error || !note) return { data: null, error: error?.message ?? 'Not oluşturulamadı' };
+  if (error || !note) return { data: null, error: error ?? 'Not oluşturulamadı' };
 
   if (params.media?.length) {
     const { error: mediaErr } = await supabase.from('admin_quick_note_media').insert(
