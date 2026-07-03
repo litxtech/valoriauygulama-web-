@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { invalidateAdminQuickNotesListCache } from '@/lib/adminQuickNotesCache';
 
 export type AdminNoteTag = 'general' | 'room' | 'staff' | 'guest' | 'urgent';
 
@@ -43,8 +44,18 @@ export type AdminQuickNoteRow = {
   created_at: string;
   updated_at: string;
   media?: AdminQuickNoteMediaRow[];
+  /** Liste sorgusunda kapak medyası dışındaki ek sayısı */
+  media_count?: number;
   creator?: { full_name: string | null; role: string | null } | null;
 };
+
+const LIST_NOTES_SELECT = `
+  id, organization_id, note_number, title, body_text, tag, room_label,
+  is_pinned, is_archived, created_by_staff_id, created_at, updated_at,
+  creator:staff!admin_quick_notes_created_by_staff_id_fkey(full_name, role)
+`;
+
+const LIST_MEDIA_SELECT = 'note_id, media_type, public_url, thumbnail_url, sort_order';
 
 const NOTE_SELECT = `
   id, organization_id, note_number, title, body_text, tag, room_label,
@@ -53,15 +64,66 @@ const NOTE_SELECT = `
   creator:staff!admin_quick_notes_created_by_staff_id_fkey(full_name, role)
 `;
 
+const LIST_PAGE_SIZE = 120;
+
+type ListNoteMediaRow = {
+  note_id: string;
+  media_type: 'image' | 'video';
+  public_url: string;
+  thumbnail_url: string | null;
+  sort_order: number;
+};
+
+function listMediaRowToNoteMedia(m: ListNoteMediaRow, noteId: string): AdminQuickNoteMediaRow {
+  return {
+    id: `${noteId}-${m.sort_order}`,
+    note_id: noteId,
+    media_type: m.media_type,
+    storage_path: '',
+    public_url: m.public_url,
+    thumbnail_url: m.thumbnail_url,
+    sort_order: m.sort_order,
+    created_at: '',
+  };
+}
+
+function attachListCoverMedia(
+  notes: AdminQuickNoteRow[],
+  mediaRows: ListNoteMediaRow[] | null
+): AdminQuickNoteRow[] {
+  if (!mediaRows?.length) {
+    return notes.map((n) => ({ ...n, media: [], media_count: 0 }));
+  }
+
+  const byNote = new Map<string, ListNoteMediaRow[]>();
+  for (const m of mediaRows) {
+    const list = byNote.get(m.note_id) ?? [];
+    list.push(m);
+    byNote.set(m.note_id, list);
+  }
+
+  return notes.map((n) => {
+    const sorted = (byNote.get(n.id) ?? []).sort((a, b) => a.sort_order - b.sort_order);
+    const thumb = sorted.find((m) => m.media_type === 'image') ?? sorted[0];
+    return {
+      ...n,
+      media_count: sorted.length,
+      media: thumb ? [listMediaRowToNoteMedia(thumb, n.id)] : [],
+    };
+  });
+}
+
+/** Notlar + kapak medyası (gömülü join yerine iki sorgu — liste ekranı hızlı açılır). */
 export async function listAdminQuickNotes(params?: {
   includeArchived?: boolean;
   search?: string;
 }): Promise<{ data: AdminQuickNoteRow[]; error: string | null }> {
   let q = supabase
     .from('admin_quick_notes')
-    .select(NOTE_SELECT)
+    .select(LIST_NOTES_SELECT)
     .order('is_pinned', { ascending: false })
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(LIST_PAGE_SIZE);
 
   if (!params?.includeArchived) {
     q = q.eq('is_archived', false);
@@ -70,18 +132,30 @@ export async function listAdminQuickNotes(params?: {
   const { data, error } = await q;
   if (error) return { data: [], error: error.message };
 
-  let rows = (data ?? []) as AdminQuickNoteRow[];
+  const rows = (data ?? []) as AdminQuickNoteRow[];
+  if (rows.length === 0) return { data: [], error: null };
+
+  const ids = rows.map((n) => n.id);
+  const { data: media, error: mediaErr } = await supabase
+    .from('admin_quick_note_media')
+    .select(LIST_MEDIA_SELECT)
+    .in('note_id', ids)
+    .order('sort_order', { ascending: true });
+
+  let withMedia = attachListCoverMedia(rows, mediaErr ? null : ((media ?? []) as ListNoteMediaRow[]));
+
   const term = params?.search?.trim().toLowerCase();
   if (term) {
-    rows = rows.filter(
+    withMedia = withMedia.filter(
       (n) =>
         n.note_number.toLowerCase().includes(term) ||
         (n.title ?? '').toLowerCase().includes(term) ||
         n.body_text.toLowerCase().includes(term) ||
-        (n.room_label ?? '').toLowerCase().includes(term)
+        (n.room_label ?? '').toLowerCase().includes(term) ||
+        (n.creator?.full_name ?? '').toLowerCase().includes(term)
     );
   }
-  return { data: rows, error: null };
+  return { data: withMedia, error: mediaErr?.message ?? null };
 }
 
 export async function getAdminQuickNote(id: string): Promise<{ data: AdminQuickNoteRow | null; error: string | null }> {
@@ -134,6 +208,7 @@ export async function createAdminQuickNote(params: {
     if (mediaErr) return { data: null, error: mediaErr.message };
   }
 
+  invalidateAdminQuickNotesListCache();
   return getAdminQuickNote(note.id);
 }
 
@@ -157,6 +232,7 @@ export async function updateAdminQuickNote(
   if (patch.isArchived !== undefined) payload.is_archived = patch.isArchived;
 
   const { error } = await supabase.from('admin_quick_notes').update(payload).eq('id', id);
+  if (!error) invalidateAdminQuickNotesListCache();
   return { error: error?.message ?? null };
 }
 
@@ -208,11 +284,13 @@ export async function saveAdminQuickNoteEdit(params: {
     if (mediaErr) return { data: null, error: mediaErr.message };
   }
 
+  invalidateAdminQuickNotesListCache();
   return getAdminQuickNote(params.noteId);
 }
 
 export async function deleteAdminQuickNote(id: string): Promise<{ error: string | null }> {
   const { error } = await supabase.from('admin_quick_notes').delete().eq('id', id);
+  if (!error) invalidateAdminQuickNotesListCache();
   return { error: error?.message ?? null };
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,13 @@ import { AdminNoteListCard } from '@/components/adminNotes/AdminNoteListCard';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewAllOrgQuickNotes } from '@/lib/staffPermissions';
 import { isStaffAuthoredQuickNote, listAdminQuickNotes, type AdminQuickNoteRow } from '@/lib/adminQuickNotes';
+import {
+  ADMIN_QUICK_NOTES_FOCUS_REFRESH_MS,
+  getAdminQuickNotesListCache,
+  getAdminQuickNotesListCacheAgeMs,
+  hydrateAdminQuickNotesListCache,
+  setAdminQuickNotesListCache,
+} from '@/lib/adminQuickNotesCache';
 import { PressableScale } from '@/components/premium/PressableScale';
 import { notesTheme } from '@/constants/adminNotesTheme';
 
@@ -32,19 +39,64 @@ function AdminNotesIndexScreen() {
   const isAdminRoute = pathname?.startsWith('/admin') ?? false;
   const base = isAdminRoute ? '/admin/notes' : '/staff/admin-notes';
 
-  const [allItems, setAllItems] = useState<AdminQuickNoteRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [showArchived, setShowArchived] = useState(false);
+  const [allItems, setAllItems] = useState<AdminQuickNoteRow[]>(
+    () => getAdminQuickNotesListCache(showArchived) ?? []
+  );
+  const [loading, setLoading] = useState(() => !getAdminQuickNotesListCache(showArchived)?.length);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
   const [adminFilter, setAdminFilter] = useState<AdminFilter>('all');
+  const loadInFlightRef = useRef(false);
 
-  const load = useCallback(async () => {
-    const { data, error } = await listAdminQuickNotes({ includeArchived: showArchived });
-    if (!error) setAllItems(data);
-    setLoading(false);
-    setRefreshing(false);
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (loadInFlightRef.current) return;
+      loadInFlightRef.current = true;
+      try {
+        const { data, error } = await listAdminQuickNotes({ includeArchived: showArchived });
+        if (!error) {
+          setAllItems(data);
+          setAdminQuickNotesListCache(data, showArchived);
+        } else if (!getAdminQuickNotesListCache(showArchived)?.length) {
+          setAllItems([]);
+        }
+      } finally {
+        loadInFlightRef.current = false;
+        if (!opts?.silent) setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [showArchived]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateAdminQuickNotesListCache(showArchived).then((cached) => {
+      if (cancelled || !cached?.length) return;
+      setAllItems(cached);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [showArchived]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const mem = getAdminQuickNotesListCache(showArchived);
+      const age = getAdminQuickNotesListCacheAgeMs(showArchived);
+      if (mem?.length) {
+        setAllItems(mem);
+        setLoading(false);
+        if (age != null && age < ADMIN_QUICK_NOTES_FOCUS_REFRESH_MS) return;
+        void load({ silent: true });
+        return;
+      }
+      setLoading(true);
+      void load();
+    }, [load, showArchived])
+  );
 
   const items = useMemo(() => {
     let rows = allItems;
@@ -66,17 +118,26 @@ function AdminNotesIndexScreen() {
 
   const pinnedCount = useMemo(() => items.filter((n) => n.is_pinned).length, [items]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
-
   const onRefresh = () => {
     setRefreshing(true);
     void load();
   };
+
+  const openNote = useCallback(
+    (id: string) => {
+      router.push(`${base}/${id}` as never);
+    },
+    [router, base]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: AdminQuickNoteRow }) => (
+      <AdminNoteListCard note={item} showAuthor={isAdminViewer} onPress={openNote} />
+    ),
+    [isAdminViewer, openNote]
+  );
+
+  const showList = !loading || items.length > 0;
 
   return (
     <View style={styles.container}>
@@ -99,7 +160,19 @@ function AdminNotesIndexScreen() {
         </View>
         <Pressable
           style={[styles.iconBtn, showArchived && styles.iconBtnOn]}
-          onPress={() => setShowArchived((v) => !v)}
+          onPress={() => {
+            const next = !showArchived;
+            setShowArchived(next);
+            const cached = getAdminQuickNotesListCache(next);
+            if (cached?.length) {
+              setAllItems(cached);
+              setLoading(false);
+              void load({ silent: true });
+            } else {
+              setLoading(true);
+              void load();
+            }
+          }}
           accessibilityLabel={showArchived ? 'Aktif notlar' : 'Arşiv'}
         >
           <Ionicons
@@ -149,17 +222,17 @@ function AdminNotesIndexScreen() {
 
       {loading && !items.length ? (
         <ActivityIndicator style={styles.loader} color={notesTheme.accent} />
-      ) : (
+      ) : null}
+
+      {showList ? (
         <FlatList
           data={items}
           keyExtractor={(i) => i.id}
-          renderItem={({ item }) => (
-            <AdminNoteListCard
-              note={item}
-              showAuthor={isAdminViewer}
-              onPress={(id) => router.push(`${base}/${id}` as never)}
-            />
-          )}
+          renderItem={renderItem}
+          initialNumToRender={10}
+          maxToRenderPerBatch={6}
+          windowSize={8}
+          removeClippedSubviews={Platform.OS === 'android'}
           contentContainerStyle={items.length ? styles.list : styles.listEmpty}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={notesTheme.accent} />
@@ -176,7 +249,7 @@ function AdminNotesIndexScreen() {
             </View>
           }
         />
-      )}
+      ) : null}
 
       <PressableScale
         style={[styles.fab, { bottom: 16 + insets.bottom }]}

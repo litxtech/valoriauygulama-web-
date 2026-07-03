@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
@@ -16,8 +17,9 @@ type Props = {
   showAuthor?: boolean;
 };
 
-export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
+export const AdminNoteListCard = memo(function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
   const media = note.media ?? [];
+  const mediaCount = note.media_count ?? media.length;
   const thumb = media.find((m) => m.media_type === 'image') ?? media[0];
   const stripColor = NOTE_TAG_STRIP[note.tag] ?? notesTheme.accent;
   const when = new Date(note.created_at).toLocaleString('tr-TR', {
@@ -73,10 +75,10 @@ export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
                 <Text style={styles.metaText}>{note.room_label}</Text>
               </View>
             ) : null}
-            {media.length > 0 ? (
+            {mediaCount > 0 ? (
               <View style={styles.metaItem}>
                 <Ionicons name="images-outline" size={12} color={notesTheme.textMuted} />
-                <Text style={styles.metaText}>{media.length}</Text>
+                <Text style={styles.metaText}>{mediaCount}</Text>
               </View>
             ) : null}
           </View>
@@ -98,7 +100,7 @@ export function AdminNoteListCard({ note, onPress, showAuthor }: Props) {
       ) : null}
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AdminNotesAccessGate } from '@/components/adminNotes/AdminNotesAccessGate';
@@ -27,6 +27,8 @@ function AdminNoteDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const hasNoteRef = useRef(false);
+  hasNoteRef.current = !!note;
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -38,6 +40,10 @@ function AdminNoteDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (hasNoteRef.current) {
+        void load();
+        return;
+      }
       setLoading(true);
       void load();
     }, [load])
