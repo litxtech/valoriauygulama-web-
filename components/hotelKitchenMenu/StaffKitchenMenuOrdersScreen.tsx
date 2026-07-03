@@ -97,7 +97,7 @@ export function StaffKitchenMenuOrdersScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const staff = useAuthStore((s) => s.staff);
-  const orgId = staff?.organization_id ?? null;
+  const orgId = staff?.organization_id?.trim() || null;
   const allowed = canViewStaffKitchenMenuOrders(staff);
 
   const [loading, setLoading] = useState(true);
@@ -165,6 +165,15 @@ export function StaffKitchenMenuOrdersScreen() {
       <View style={styles.centered}>
         <Ionicons name="lock-closed-outline" size={40} color={theme.colors.textMuted} />
         <Text style={styles.denied}>{t('staffKitchenMenuOrdersNoAccess')}</Text>
+      </View>
+    );
+  }
+
+  if (!orgId) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="business-outline" size={40} color={theme.colors.textMuted} />
+        <Text style={styles.denied}>{t('staffKitchenMenuOrdersNoOrg')}</Text>
       </View>
     );
   }

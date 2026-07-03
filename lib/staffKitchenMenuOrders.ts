@@ -1,6 +1,26 @@
 import { supabase } from '@/lib/supabase';
 import type { KitchenMenuOrderRecord } from '@/lib/publicKitchenMenuOrderHistory';
 
+const ORDER_SELECT_MINIMAL = `
+  id,
+  org_slug,
+  status,
+  total_amount,
+  currency,
+  customer_name,
+  customer_email,
+  room_number,
+  table_number,
+  paid_at,
+  created_at,
+  kitchen_menu_order_items (
+    item_name,
+    quantity,
+    unit_price,
+    line_total
+  )
+`;
+
 const ORDER_SELECT = `
   id,
   org_slug,
@@ -22,6 +42,14 @@ const ORDER_SELECT = `
     line_total
   )
 `;
+
+function isMissingColumnError(message: string): boolean {
+  return /guest_hotel_name|delivery_address|does not exist|schema cache/i.test(message);
+}
+
+function isRpcPermissionError(message: string): boolean {
+  return /yetkiniz yok|permission denied|not authorized/i.test(message);
+}
 
 function mapRow(raw: Record<string, unknown>): KitchenMenuOrderRecord {
   const itemsRaw = raw.items ?? raw.kitchen_menu_order_items;
@@ -68,7 +96,8 @@ function parseBundle(raw: unknown): StaffKitchenMenuOrdersBundle {
 
 async function fetchStaffKitchenMenuOrdersDirect(
   organizationId: string,
-  opts?: { paidLimit?: number; pendingHours?: number }
+  opts?: { paidLimit?: number; pendingHours?: number },
+  select = ORDER_SELECT
 ): Promise<StaffKitchenMenuOrdersBundle> {
   const paidLimit = opts?.paidLimit ?? 40;
   const pendingHours = opts?.pendingHours ?? 24;
@@ -77,7 +106,7 @@ async function fetchStaffKitchenMenuOrdersDirect(
   const [pendingRes, paidRes] = await Promise.all([
     supabase
       .from('kitchen_menu_orders')
-      .select(ORDER_SELECT)
+      .select(select)
       .eq('organization_id', organizationId)
       .eq('status', 'pending_payment')
       .gte('created_at', pendingSince)
@@ -85,12 +114,21 @@ async function fetchStaffKitchenMenuOrdersDirect(
       .limit(30),
     supabase
       .from('kitchen_menu_orders')
-      .select(ORDER_SELECT)
+      .select(select)
       .eq('organization_id', organizationId)
       .eq('status', 'paid')
       .order('created_at', { ascending: false })
       .limit(paidLimit),
   ]);
+
+  const pendingErr = pendingRes.error?.message ?? '';
+  const paidErr = paidRes.error?.message ?? '';
+  if ((pendingRes.error || paidRes.error) && select === ORDER_SELECT) {
+    const combined = `${pendingErr} ${paidErr}`;
+    if (isMissingColumnError(combined)) {
+      return fetchStaffKitchenMenuOrdersDirect(organizationId, opts, ORDER_SELECT_MINIMAL);
+    }
+  }
 
   if (pendingRes.error) throw new Error(pendingRes.error.message);
   if (paidRes.error) throw new Error(paidRes.error.message);
@@ -106,20 +144,33 @@ export async function fetchStaffKitchenMenuOrders(
   organizationId: string,
   opts?: { paidLimit?: number; pendingHours?: number }
 ): Promise<StaffKitchenMenuOrdersBundle> {
+  const orgId = organizationId.trim();
+  if (!orgId) {
+    throw new Error('Otel bilgisi eksik — personel kaydında organization_id tanımlı olmalı.');
+  }
+
   const { data, error } = await supabase.rpc('get_staff_kitchen_menu_orders', {
-    p_organization_id: organizationId,
+    p_organization_id: orgId,
     p_paid_limit: opts?.paidLimit ?? 40,
     p_pending_hours: opts?.pendingHours ?? 24,
   });
 
+  const rpcMsg = error?.message ?? '';
   if (!error && data) {
     return parseBundle(data);
   }
 
+  if (!error && !data) {
+    return fetchStaffKitchenMenuOrdersDirect(orgId, opts);
+  }
+
+  if (isRpcPermissionError(rpcMsg) || /could not find the function|PGRST202/i.test(rpcMsg)) {
+    return fetchStaffKitchenMenuOrdersDirect(orgId, opts);
+  }
+
   try {
-    return await fetchStaffKitchenMenuOrdersDirect(organizationId, opts);
+    return await fetchStaffKitchenMenuOrdersDirect(orgId, opts);
   } catch (directErr) {
-    const rpcMsg = error?.message ?? '';
     const directMsg = (directErr as Error)?.message ?? '';
     throw new Error(rpcMsg || directMsg || 'Siparişler yüklenemedi');
   }
