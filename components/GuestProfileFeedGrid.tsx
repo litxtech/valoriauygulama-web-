@@ -24,8 +24,11 @@ import { formatStatCompact } from '@/lib/modernProfileTenure';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
+import { computeProfileFeedGridMetrics, profileFeedCellSize } from '@/lib/profileFeedGridLayout';
 
 const GAP = 1;
+/** TikTokProfileBody paddingHorizontal — edgeToEdge grid breaks out to full width */
+const PROFILE_BODY_HPAD = 16;
 
 type Props = {
   guestId: string;
@@ -58,13 +61,12 @@ export function GuestProfileFeedGrid({
   const [gridW, setGridW] = useState(0);
   const loadSeqRef = useRef(0);
 
-  const numColumns = 3;
-  const w = edgeToEdge ? winW : gridW > 0 ? gridW : Math.max(0, winW - 32);
-  const cell = numColumns > 0 ? (w - GAP * (numColumns - 1)) / numColumns : 0;
+  const gridWidth = edgeToEdge ? winW : gridW > 0 ? gridW : Math.max(0, winW - PROFILE_BODY_HPAD * 2);
+  const gridMetrics = computeProfileFeedGridMetrics(gridWidth, GAP);
 
   const onGridLayout = useCallback((e: LayoutChangeEvent) => {
-    setGridW(e.nativeEvent.layout.width);
-  }, []);
+    if (!edgeToEdge) setGridW(e.nativeEvent.layout.width);
+  }, [edgeToEdge]);
 
   const load = useCallback(async () => {
     if (!guestId) return;
@@ -154,10 +156,17 @@ export function GuestProfileFeedGrid({
   }
 
   return (
-    <View onLayout={onGridLayout} style={styles.gridOuter}>
-      <View style={styles.grid}>
+    <View
+      onLayout={onGridLayout}
+      style={[
+        styles.gridOuter,
+        edgeToEdge && styles.gridOuterEdge,
+        edgeToEdge ? { width: winW } : null,
+      ]}
+    >
+      <View style={[styles.grid, { width: gridMetrics.width }]}>
         {items.map((it, i) => {
-          const rowEnd = (i + 1) % numColumns === 0;
+          const cellStyle = profileFeedCellSize(i, gridMetrics);
           return (
             <TouchableOpacity
               key={it.id}
@@ -167,12 +176,7 @@ export function GuestProfileFeedGrid({
               delayLongPress={280}
               style={[
                 styles.cell,
-                {
-                  width: cell,
-                  height: cell,
-                  marginRight: rowEnd ? 0 : GAP,
-                  marginBottom: GAP,
-                },
+                cellStyle,
               ]}
             >
               {it.kind === 'text' ? (
@@ -214,6 +218,7 @@ const styles = StyleSheet.create({
   emptyBlock: { paddingVertical: 32, paddingHorizontal: 24 },
   emptyText: { textAlign: 'center', fontSize: 14, color: theme.colors.textMuted },
   gridOuter: { width: '100%' },
+  gridOuterEdge: { marginHorizontal: -PROFILE_BODY_HPAD },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cell: { backgroundColor: theme.colors.borderLight, overflow: 'hidden' },
   textCell: {

@@ -52,6 +52,14 @@ import type { ModernProfileStaffInput } from '@/lib/modernProfileModel';
 import { getDepartmentLabel } from '@/lib/departmentLabels';
 import { buildStaffProfileContactActions } from '@/lib/staffProfileContactActions';
 import { resolveStaffTipsEnabledForGuest } from '@/lib/staffTipsEnabled';
+import { getBlobCacheRaw, setBlobCache, hydrateBlobCache } from '@/lib/listCache';
+import {
+  peekStaffSelfTabCache,
+  staffProfileFromAuth,
+  staffSelfTabCacheKey,
+  writeStaffSelfTabMemoryCache,
+} from '@/lib/staffSelfTabCache';
+import type { StaffProfile as AuthStaffProfile } from '@/stores/authStore';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STAFF_HERO_HEIGHT = P.hero.height;
 
@@ -112,8 +120,15 @@ const LANGUAGE_FLAGS: Record<string, string> = {
   es: '🇪🇸',
 };
 
-function staffSelfTabCacheKey(staffId: string) {
-  return `staff_tab_self_v1_${staffId}`;
+function extendedStatsCacheKey(staffId: string) {
+  return `staff-self-extended-stats:${staffId}`;
+}
+
+function initialStaffProfile(authStaff: AuthStaffProfile | null | undefined): StaffProfile | null {
+  if (!authStaff?.id) return null;
+  const mem = peekStaffSelfTabCache<StaffProfile, SalaryPaymentRow>(authStaff.id);
+  if (mem?.profile) return mem.profile;
+  return staffProfileFromAuth(authStaff) as StaffProfile;
 }
 
 export default function StaffProfileScreen() {
@@ -131,13 +146,18 @@ export default function StaffProfileScreen() {
   const insets = useSafeAreaInsets();
   const { t, i18n } = useTranslation();
   const { staff: authStaff, loadSession } = useAuthStore();
-  const [profile, setProfile] = useState<StaffProfile | null>(null);
+  const [profile, setProfile] = useState<StaffProfile | null>(() => initialStaffProfile(authStaff));
+  const [salaryPayments, setSalaryPayments] = useState<SalaryPaymentRow[]>(() => {
+    if (!authStaff?.id) return [];
+    return peekStaffSelfTabCache<StaffProfile, SalaryPaymentRow>(authStaff.id)?.salaryPayments ?? [];
+  });
   const [uploading, setUploading] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [imageViewVisible, setImageViewVisible] = useState(false);
   const [coverImageViewVisible, setCoverImageViewVisible] = useState(false);
-  const [salaryPayments, setSalaryPayments] = useState<SalaryPaymentRow[]>([]);
-  const [extendedStats, setExtendedStats] = useState<StaffProfileExtendedStats | null>(null);
+  const [extendedStats, setExtendedStats] = useState<StaffProfileExtendedStats | null>(() =>
+    authStaff?.id ? getBlobCacheRaw<StaffProfileExtendedStats>(extendedStatsCacheKey(authStaff.id)) : null
+  );
   const [profileVisits, setProfileVisits] = useState<StaffProfileVisitRow[]>([]);
   const [profileVisitsLoading, setProfileVisitsLoading] = useState(false);
   const [profileVisitsRefreshing, setProfileVisitsRefreshing] = useState(false);
@@ -178,6 +198,13 @@ export default function StaffProfileScreen() {
     lastProfileFocusSyncRef.current = Date.now();
     let cancelled = false;
     const key = staffSelfTabCacheKey(authStaff.id);
+    const memCached = peekStaffSelfTabCache<StaffProfile, SalaryPaymentRow>(authStaff.id);
+    if (memCached?.profile && !cancelled) {
+      setProfile(memCached.profile);
+      setSalaryPayments(memCached.salaryPayments);
+    } else if (!profileRef.current && !cancelled) {
+      setProfile(staffProfileFromAuth(authStaff) as StaffProfile);
+    }
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(key);
@@ -185,6 +212,7 @@ export default function StaffProfileScreen() {
           const parsed = JSON.parse(raw) as { profile?: StaffProfile; salaryPayments?: SalaryPaymentRow[] };
           if (parsed.profile && typeof parsed.profile === 'object') {
             setProfile(parsed.profile);
+            writeStaffSelfTabMemoryCache(authStaff.id, parsed.profile, parsed.salaryPayments ?? []);
           }
           if (Array.isArray(parsed.salaryPayments)) {
             setSalaryPayments(parsed.salaryPayments);
@@ -193,27 +221,34 @@ export default function StaffProfileScreen() {
       } catch (_) {}
 
       const load = async () => {
-        const res = await loadStaffProfileSelf(authStaff.id);
+        const [res, salRes] = await Promise.all([
+          loadStaffProfileSelf(authStaff.id),
+          supabase
+            .from('salary_payments')
+            .select('id, period_month, period_year, amount, payment_date, status, staff_approved_at, staff_rejected_at, rejection_reason')
+            .eq('staff_id', authStaff.id)
+            .order('period_year', { ascending: false })
+            .order('period_month', { ascending: false }),
+        ]);
         let nextProfile: StaffProfile | null = null;
         if (res.data) {
           const data = res.data;
           nextProfile = { ...data, shift: null } as StaffProfile;
           if (!cancelled) setProfile(nextProfile);
           if (data.shift_id) {
-            const { data: shift } = await supabase.from('shifts').select('start_time, end_time').eq('id', data.shift_id).single();
+            const { data: shift } = await supabase
+              .from('shifts')
+              .select('start_time, end_time')
+              .eq('id', data.shift_id)
+              .single();
             nextProfile = nextProfile ? { ...nextProfile, shift } : null;
             if (!cancelled && nextProfile) setProfile(nextProfile);
           }
         }
-        const { data: sal } = await supabase
-          .from('salary_payments')
-          .select('id, period_month, period_year, amount, payment_date, status, staff_approved_at, staff_rejected_at, rejection_reason')
-          .eq('staff_id', authStaff.id)
-          .order('period_year', { ascending: false })
-          .order('period_month', { ascending: false });
-        const salRows = (sal ?? []) as SalaryPaymentRow[];
+        const salRows = (salRes.data ?? []) as SalaryPaymentRow[];
         if (!cancelled) setSalaryPayments(salRows);
         if (!cancelled && nextProfile) {
+          writeStaffSelfTabMemoryCache(authStaff.id, nextProfile, salRows);
           AsyncStorage.setItem(key, JSON.stringify({ profile: nextProfile, salaryPayments: salRows })).catch(() => {});
         }
         if (!cancelled) {
@@ -375,6 +410,7 @@ export default function StaffProfileScreen() {
       const raw = await AsyncStorage.getItem(key);
       const parsed = raw ? (JSON.parse(raw) as { profile?: StaffProfile; salaryPayments?: SalaryPaymentRow[] }) : {};
       const nextProfile = parsed.profile ? { ...parsed.profile, is_online: value } : { ...profile, is_online: value };
+      writeStaffSelfTabMemoryCache(profile.id, nextProfile, parsed.salaryPayments ?? salaryPayments);
       await AsyncStorage.setItem(key, JSON.stringify({ profile: nextProfile, salaryPayments: parsed.salaryPayments ?? salaryPayments }));
     } catch {
       // cache yazımı başarısız olsa da akış bozulmasın
@@ -441,6 +477,7 @@ export default function StaffProfileScreen() {
       try {
         const raw = await AsyncStorage.getItem(key);
         const sp = (raw ? JSON.parse(raw) : {}) as { salaryPayments?: SalaryPaymentRow[] };
+        writeStaffSelfTabMemoryCache(authStaff.id, next, sp.salaryPayments ?? []);
         await AsyncStorage.setItem(key, JSON.stringify({ profile: next, salaryPayments: sp.salaryPayments ?? [] }));
       } catch (_) {}
     }
@@ -455,7 +492,19 @@ export default function StaffProfileScreen() {
     const days = joinIso ? calculateDaysWithUs(joinIso, todayAnchor) : null;
     const stats = await loadStaffProfileExtendedStats(authStaff.id, days);
     setExtendedStats(stats);
+    setBlobCache(extendedStatsCacheKey(authStaff.id), stats);
   }, [authStaff?.id, todayAnchor]);
+
+  useEffect(() => {
+    if (!authStaff?.id) return;
+    let cancelled = false;
+    void hydrateBlobCache<StaffProfileExtendedStats>(extendedStatsCacheKey(authStaff.id)).then((cached) => {
+      if (!cancelled && cached) setExtendedStats(cached);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authStaff?.id]);
 
   const loadProfileVisits = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -514,7 +563,9 @@ export default function StaffProfileScreen() {
   const daysWithUs = joinDateIso ? calculateDaysWithUs(joinDateIso, todayAnchor) : null;
   if (!profile) {
     return (
-      <View style={styles.centered}><Text>{t('loading')}</Text></View>
+      <View style={[styles.centered, { backgroundColor: palette.pageBg }]}>
+        <ActivityIndicator color={theme.colors.primary} />
+      </View>
     );
   }
 

@@ -23,8 +23,16 @@ import { formatStatCompact } from '@/lib/modernProfileTenure';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete';
+import {
+  hydrateStaffProfileFeedCache,
+  peekStaffProfileFeedCache,
+  writeStaffProfileFeedCache,
+} from '@/lib/staffProfileFeedCache';
+import { computeProfileFeedGridMetrics, profileFeedCellSize } from '@/lib/profileFeedGridLayout';
 
 const GAP = 1;
+/** TikTokProfileBody paddingHorizontal — edgeToEdge grid breaks out to full width */
+const PROFILE_BODY_HPAD = 16;
 
 type Props = {
   staffId: string;
@@ -39,6 +47,8 @@ type Props = {
   viewerStaffId?: string | null;
   /** Instagram-style edge-to-edge: no border-radius, uses full screen width */
   edgeToEdge?: boolean;
+  feedFilter?: StaffProfileFeedFilter;
+  showEngagementOverlay?: boolean;
 };
 
 export function StaffProfileFeedGrid({
@@ -57,37 +67,42 @@ export function StaffProfileFeedGrid({
   const router = useRouter();
   const { t, i18n } = useTranslation();
   const lang = i18n.language || 'tr';
-  const [items, setItems] = useState<StaffProfileFeedPreview[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<StaffProfileFeedPreview[]>(
+    () => peekStaffProfileFeedCache(staffId, feedFilter) ?? []
+  );
+  const [loading, setLoading] = useState(() => (peekStaffProfileFeedCache(staffId, feedFilter)?.length ?? 0) === 0);
   const [err, setErr] = useState<string | null>(null);
   const [gridW, setGridW] = useState(0);
   const loadSeqRef = useRef(0);
 
-  const numColumns = 3;
-  const w = edgeToEdge ? winW : (gridW > 0 ? gridW : Math.max(0, winW - 32));
-  const cell = numColumns > 0 ? (w - GAP * (numColumns - 1)) / numColumns : 0;
+  const gridWidth = edgeToEdge ? winW : gridW > 0 ? gridW : Math.max(0, winW - PROFILE_BODY_HPAD * 2);
+  const gridMetrics = computeProfileFeedGridMetrics(gridWidth, GAP);
 
   const onGridLayout = useCallback((e: LayoutChangeEvent) => {
-    setGridW(e.nativeEvent.layout.width);
-  }, []);
+    if (!edgeToEdge) setGridW(e.nativeEvent.layout.width);
+  }, [edgeToEdge]);
 
   const load = useCallback(async () => {
     if (!staffId) return;
     const seq = ++loadSeqRef.current;
-    setLoading(true);
+    const cached = peekStaffProfileFeedCache(staffId, feedFilter);
+    if (!cached?.length) setLoading(true);
     setErr(null);
     const lim = maxPreview != null ? Math.max(maxPreview, 30) : 30;
     const { items: row, error } = await loadStaffProfileFeedPreviews(staffId, lim, feedFilter, false);
     if (seq !== loadSeqRef.current) return;
     if (error) {
       setErr(error.message);
-      setItems([]);
-      onPreviewCount?.(0);
+      if (!cached?.length) {
+        setItems([]);
+        onPreviewCount?.(0);
+      }
       setLoading(false);
       return;
     }
     const slice = maxPreview != null ? row.slice(0, maxPreview) : row;
     setItems(slice);
+    writeStaffProfileFeedCache(staffId, feedFilter, slice);
     onPreviewCount?.(slice.length);
     setLoading(false);
 
@@ -95,16 +110,31 @@ export function StaffProfileFeedGrid({
       const ids = slice.map((it) => it.id);
       const counts = await loadFeedPostEngagementCounts(ids);
       if (seq !== loadSeqRef.current) return;
-      setItems((prev) =>
-        prev.map((it) => {
+      setItems((prev) => {
+        const next = prev.map((it) => {
           const c = counts.get(it.id);
           return c
             ? { ...it, likesCount: c.likes, commentsCount: c.comments, viewsCount: c.views }
             : it;
-        })
-      );
+        });
+        writeStaffProfileFeedCache(staffId, feedFilter, next);
+        return next;
+      });
     }
   }, [staffId, maxPreview, onPreviewCount, feedFilter, showEngagementOverlay]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateStaffProfileFeedCache(staffId, feedFilter).then((cached) => {
+      if (cancelled || !cached?.length) return;
+      setItems(cached);
+      onPreviewCount?.(cached.length);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [staffId, feedFilter, onPreviewCount]);
 
   useEffect(() => {
     load();
@@ -141,13 +171,17 @@ export function StaffProfileFeedGrid({
             return;
           }
           await removeFeedMediaObjectsForPostUrls([row.media_url, row.thumbnail_url]);
-          setItems((prev) => prev.filter((x) => x.id !== item.id));
+          setItems((prev) => {
+            const next = prev.filter((x) => x.id !== item.id);
+            writeStaffProfileFeedCache(staffId, feedFilter, next);
+            return next;
+          });
         },
       },
     ]);
   };
 
-  if (loading) {
+  if (loading && items.length === 0) {
     return (
       <View style={styles.loadWrap} accessibilityLabel={t('profileFeedPostsSection')}>
         <ActivityIndicator color={theme.colors.primary} size="small" />
@@ -169,10 +203,18 @@ export function StaffProfileFeedGrid({
   }
 
   return (
-    <View onLayout={onGridLayout} style={styles.gridOuter} accessibilityLabel={t('profileFeedPostsSection')}>
-      <View style={styles.grid}>
+    <View
+      onLayout={onGridLayout}
+      style={[
+        styles.gridOuter,
+        edgeToEdge && styles.gridOuterEdge,
+        edgeToEdge ? { width: winW } : null,
+      ]}
+      accessibilityLabel={t('profileFeedPostsSection')}
+    >
+      <View style={[styles.grid, { width: gridMetrics.width }]}>
         {items.map((it, i) => {
-          const rowEnd = (i + 1) % numColumns === 0;
+          const cellStyle = profileFeedCellSize(i, gridMetrics);
           return (
         <TouchableOpacity
           key={it.id}
@@ -182,12 +224,7 @@ export function StaffProfileFeedGrid({
           delayLongPress={280}
           style={[
             styles.cell,
-            {
-              width: cell,
-              height: cell,
-              marginRight: rowEnd ? 0 : GAP,
-              marginBottom: GAP,
-            },
+            cellStyle,
           ]}
         >
           {it.kind === 'text' ? (
@@ -240,6 +277,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
   },
   gridOuter: { width: '100%' },
+  gridOuterEdge: { marginHorizontal: -PROFILE_BODY_HPAD },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
