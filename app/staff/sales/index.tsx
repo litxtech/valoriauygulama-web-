@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -7,27 +7,14 @@ import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessReservationSales } from '@/lib/staffPermissions';
 import { useTranslation } from 'react-i18next';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+import {
+  staffSalesIndexCacheKey,
+  type SaleRow,
+  type StaffSalesIndexCache,
+} from '@/lib/staffSalesIndexCache';
 
-type SummaryRow = {
-  sales_count: number;
-  total_net_amount: number;
-  total_commission_amount: number;
-  pending_commission_amount: number;
-  paid_commission_amount: number;
-};
-
-type SaleRow = {
-  id: string;
-  created_at: string;
-  customer_full_name: string;
-  customer_phone: string;
-  check_in_date: string | null;
-  check_out_date: string | null;
-  reservation_status: string;
-  net_amount: number;
-  commission_amount: number;
-  commission_status: string;
-};
+type SummaryRow = NonNullable<StaffSalesIndexCache['summary']>;
 
 function fmtMoneyTry(n: number): string {
   try {
@@ -61,10 +48,33 @@ export default function StaffSalesHome() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const canUse = canAccessReservationSales(staff);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [summary, setSummary] = useState<SummaryRow | null>(null);
-  const [sales, setSales] = useState<SaleRow[]>([]);
+  const cacheKey = staffSalesIndexCacheKey(staff?.id);
+
+  const fetchData = useCallback(async (): Promise<StaffSalesIndexCache | null> => {
+    if (!staff?.id || !canUse) return null;
+    const [{ data: sumData }, { data: listData }] = await Promise.all([
+      supabase.rpc('my_sales_commission_summary', { p_from: null, p_to: null }),
+      supabase
+        .from('reservation_sales')
+        .select('id, created_at, customer_full_name, customer_phone, check_in_date, check_out_date, reservation_status, net_amount, commission_amount, commission_status')
+        .order('created_at', { ascending: false })
+        .limit(30),
+    ]);
+    const sumRow = (Array.isArray(sumData) ? sumData[0] : sumData) as unknown as SummaryRow | null;
+    return {
+      summary: sumRow ?? null,
+      sales: ((listData ?? []) as unknown as SaleRow[]) ?? [],
+    };
+  }, [staff?.id, canUse]);
+
+  const { data, refreshing, refresh, showContent } = useCachedFocusLoad({
+    cacheKey,
+    enabled: !!staff?.id && canUse,
+    fetchData,
+  });
+
+  const summary = data?.summary ?? null;
+  const sales = data?.sales ?? [];
 
   const headerRight = useMemo(() => {
     return (
@@ -80,31 +90,7 @@ export default function StaffSalesHome() {
     );
   }, [router]);
 
-  const load = useCallback(async () => {
-    if (!staff?.id || !canUse) return;
-    const [{ data: sumData }, { data: listData }] = await Promise.all([
-      supabase.rpc('my_sales_commission_summary', { p_from: null, p_to: null }),
-      supabase
-        .from('reservation_sales')
-        .select('id, created_at, customer_full_name, customer_phone, check_in_date, check_out_date, reservation_status, net_amount, commission_amount, commission_status')
-        .order('created_at', { ascending: false })
-        .limit(30),
-    ]);
-    const sumRow = (Array.isArray(sumData) ? sumData[0] : sumData) as unknown as SummaryRow | null;
-    setSummary(sumRow ?? null);
-    setSales(((listData ?? []) as unknown as SaleRow[]) ?? []);
-  }, [staff?.id, canUse]);
-
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const onRefresh = refresh;
 
   if (!canUse) {
     return (
@@ -116,7 +102,7 @@ export default function StaffSalesHome() {
     );
   }
 
-  if (loading) {
+  if (!showContent && !summary && sales.length === 0) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={theme.colors.primary} />

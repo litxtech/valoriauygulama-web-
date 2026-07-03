@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,42 +11,33 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { fetchMyStaffTips, isPaidStaffTip, subscribeMyStaffTips, type StaffTipRow } from '@/lib/staffTips';
 import { promptStaffTipReceiptShare } from '@/lib/staffTipReceiptPdf';
 import { staffTipText, tipPaymentMethodLabel, formatTipAmount, staffTipLang } from '@/lib/staffTipsI18n';
+import { useCachedList } from '@/hooks/useCachedList';
 
 export default function CustomerTipsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { i18n } = useTranslation();
   const locale = staffTipLang();
-  const [rows, setRows] = useState<StaffTipRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     try {
-      const data = await fetchMyStaffTips();
-      setRows(data);
+      return await fetchMyStaffTips();
     } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      return [];
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { items: rows, loading, refreshing, refresh, load } = useCachedList<StaffTipRow>({
+    cacheKey: 'customer-staff-tips',
+    fetchItems,
+  });
 
-  useEffect(() => subscribeMyStaffTips(() => void load()), [load]);
+  useEffect(() => subscribeMyStaffTips(() => void load({ silent: true })), [load]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -65,7 +56,7 @@ export default function CustomerTipsScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.content}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         >
           {rows.length === 0 ? (
             <View style={styles.empty}>

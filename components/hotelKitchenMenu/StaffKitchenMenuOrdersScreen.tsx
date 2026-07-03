@@ -21,9 +21,18 @@ import {
   kitchenMenuOrderLocation,
   type StaffKitchenMenuOrdersBundle,
 } from '@/lib/staffKitchenMenuOrders';
+import {
+  STAFF_KITCHEN_ORDERS_FOCUS_REFRESH_MS,
+  getStaffKitchenMenuOrdersCache,
+  getStaffKitchenMenuOrdersCacheAgeMs,
+  hydrateStaffKitchenMenuOrdersCache,
+  setStaffKitchenMenuOrdersCache,
+} from '@/lib/staffKitchenMenuOrdersCache';
 import { useStaffKitchenMenuOrdersLive } from '@/hooks/useStaffKitchenMenuOrdersLive';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewStaffKitchenMenuOrders } from '@/lib/staffPermissions';
+
+const emptyBundle = (): StaffKitchenMenuOrdersBundle => ({ pending: [], paid: [] });
 
 function formatWhen(iso: string): string {
   try {
@@ -100,46 +109,80 @@ export function StaffKitchenMenuOrdersScreen() {
   const orgId = staff?.organization_id?.trim() || null;
   const allowed = canViewStaffKitchenMenuOrders(staff);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(
+    () => !getStaffKitchenMenuOrdersCache(orgId ?? '')?.paid.length && !getStaffKitchenMenuOrdersCache(orgId ?? '')?.pending.length
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [bundle, setBundle] = useState<StaffKitchenMenuOrdersBundle>({ pending: [], paid: [] });
+  const [bundle, setBundle] = useState<StaffKitchenMenuOrdersBundle>(
+    () => getStaffKitchenMenuOrdersCache(orgId ?? '') ?? emptyBundle()
+  );
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [tab, setTab] = useState<OrdersTab>('paid');
   const paidCountRef = useRef(0);
   const initialTabSetRef = useRef(false);
+  const loadInFlightRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!orgId || loadInFlightRef.current) return;
+      loadInFlightRef.current = true;
+      try {
+        const rows = await fetchStaffKitchenMenuOrders(orgId, { paidLimit: 60, pendingHours: 48 });
+        const prevPaid = paidCountRef.current;
+        setBundle(rows);
+        setStaffKitchenMenuOrdersCache(orgId, rows);
+        paidCountRef.current = rows.paid.length;
+        if (rows.paid.length > prevPaid) setTab('paid');
+        setLoadError(null);
+      } catch (e) {
+        if (!getStaffKitchenMenuOrdersCache(orgId)?.paid.length) {
+          setLoadError((e as Error)?.message ?? t('staffKitchenMenuOrdersLoadError'));
+        }
+      } finally {
+        loadInFlightRef.current = false;
+        if (!opts?.silent) setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [orgId, t]
+  );
+
+  useEffect(() => {
     if (!orgId) return;
-    try {
-      const rows = await fetchStaffKitchenMenuOrders(orgId, { paidLimit: 60, pendingHours: 48 });
-      const prevPaid = paidCountRef.current;
-      setBundle(rows);
-      paidCountRef.current = rows.paid.length;
-      if (rows.paid.length > prevPaid) setTab('paid');
-      setLoadError(null);
-    } catch (e) {
-      setLoadError((e as Error)?.message ?? t('staffKitchenMenuOrdersLoadError'));
-    }
-  }, [orgId, t]);
+    let cancelled = false;
+    void hydrateStaffKitchenMenuOrdersCache(orgId).then((cached) => {
+      if (cancelled || !cached) return;
+      setBundle(cached);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId]);
 
   useFocusEffect(
     useCallback(() => {
       if (!allowed || !orgId) {
         setLoading(false);
-        return undefined;
+        return;
+      }
+      const mem = getStaffKitchenMenuOrdersCache(orgId);
+      const age = getStaffKitchenMenuOrdersCacheAgeMs(orgId);
+      if (mem && (mem.paid.length > 0 || mem.pending.length > 0)) {
+        setBundle(mem);
+        setLoading(false);
+        if (age != null && age < STAFF_KITCHEN_ORDERS_FOCUS_REFRESH_MS) return;
+        void load({ silent: true });
+        return;
       }
       setLoading(true);
-      void load().finally(() => setLoading(false));
-      const poll = setInterval(() => {
-        void load();
-      }, 30_000);
-      return () => clearInterval(poll);
+      void load();
     }, [allowed, orgId, load])
   );
 
   useStaffKitchenMenuOrdersLive(orgId, () => {
-    void load();
+    void load({ silent: true });
   });
 
   const pendingCount = bundle.pending.length;
@@ -155,7 +198,6 @@ export function StaffKitchenMenuOrdersScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
-    setRefreshing(false);
   };
 
   const activeOrders = tab === 'paid' ? bundle.paid : bundle.pending;

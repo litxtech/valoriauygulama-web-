@@ -12,7 +12,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { useFocusEffect } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
@@ -32,6 +31,12 @@ import {
   StaffSalaryDetailSheet,
   type SalaryDetailPayload,
 } from '@/components/staff/StaffSalaryDetailSheet';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type SalaryHistoryCache = {
+  rows: StaffSalaryPayment[];
+  baseSalary: number | null;
+};
 
 type StatusKey = 'approved' | 'rejected' | 'pending_approval' | 'other';
 
@@ -126,17 +131,11 @@ export default function StaffSalaryHistoryScreen() {
   const staff = useAuthStore((s) => s.staff);
   const [rows, setRows] = useState<StaffSalaryPayment[]>([]);
   const [baseSalary, setBaseSalary] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [detailPayload, setDetailPayload] = useState<SalaryDetailPayload | null>(null);
 
-  const load = useCallback(async () => {
-    if (!staff?.id) {
-      setRows([]);
-      setBaseSalary(null);
-      return;
-    }
+  const fetchData = useCallback(async (): Promise<SalaryHistoryCache | null> => {
+    if (!staff?.id) return null;
     const [{ data, error }, staffRes] = await Promise.all([
       supabase
         .from('salary_payments')
@@ -150,29 +149,32 @@ export default function StaffSalaryHistoryScreen() {
       supabase.from('staff').select('salary').eq('id', staff.id).maybeSingle(),
     ]);
     if (error) throw error;
-    setRows((data ?? []) as StaffSalaryPayment[]);
-    setBaseSalary(staffRes.data?.salary != null ? Number(staffRes.data.salary) : null);
+    return {
+      rows: (data ?? []) as StaffSalaryPayment[],
+      baseSalary: staffRes.data?.salary != null ? Number(staffRes.data.salary) : null,
+    };
   }, [staff?.id]);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        await load();
-      } catch (e) {
-        Alert.alert(t('error'), (e as Error)?.message ?? t('recordError'));
-        setRows([]);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [load, t]);
+  const { data: cached, reload, refresh, refreshing, showContent } = useCachedFocusLoad({
+    cacheKey: staff?.id ? `staff-salary-history:${staff.id}` : 'staff-salary-history:none',
+    enabled: !!staff?.id,
+    fetchData,
+  });
 
-  useFocusEffect(
-    useCallback(() => {
-      load().catch(() => {});
-    }, [load])
-  );
+  useEffect(() => {
+    if (!cached) return;
+    setRows(cached.rows);
+    setBaseSalary(cached.baseSalary);
+  }, [cached]);
+
+  const load = useCallback(async () => {
+    try {
+      await reload();
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('recordError'));
+      setRows([]);
+    }
+  }, [reload, t]);
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -191,16 +193,7 @@ export default function StaffSalaryHistoryScreen() {
     };
   }, [staff?.id, load]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await load();
-    } catch (e) {
-      Alert.alert(t('error'), (e as Error)?.message ?? t('recordError'));
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  const onRefresh = refresh;
 
   const summary = useMemo(() => buildStaffSalarySummary(rows, baseSalary), [rows, baseSalary]);
   const entryKinds = useMemo(() => classifySalaryPaymentKinds(rows), [rows]);
@@ -296,7 +289,7 @@ export default function StaffSalaryHistoryScreen() {
 
   return (
     <View style={[styles.screen, { paddingBottom: insets.bottom }]}>
-      {loading ? (
+      {!showContent && rows.length === 0 ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>

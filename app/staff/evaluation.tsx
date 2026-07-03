@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { View, ScrollView, ActivityIndicator, StyleSheet, Alert } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/lib/supabase';
@@ -16,6 +16,7 @@ import { resolveStaffEvaluation } from '@/lib/staffEvaluation';
 import type { StaffManagementEvaluationRow } from '@/lib/managementEvaluation';
 import { formatDateShort } from '@/lib/date';
 import { theme } from '@/constants/theme';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type ReviewRow = { id: string; rating: number; comment: string | null; created_at: string };
 
@@ -32,41 +33,71 @@ type EvalProfile = {
   total_reviews?: number | null;
 };
 
+type EvaluationScreenCache = {
+  profile: EvalProfile | null;
+  reviews: ReviewRow[];
+  mgmtRows: StaffManagementEvaluationRow[];
+  evaluatorNames: Record<string, string | null>;
+};
+
 export default function StaffEvaluationScreen() {
   const { t } = useTranslation();
   const staffId = useAuthStore((s) => s.staff?.id);
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<EvalProfile | null>(null);
-  const [reviews, setReviews] = useState<ReviewRow[]>([]);
   const [reviewsModalVisible, setReviewsModalVisible] = useState(false);
-  const [mgmtRows, setMgmtRows] = useState<StaffManagementEvaluationRow[]>([]);
-  const [evaluatorNames, setEvaluatorNames] = useState<Record<string, string | null>>({});
   const [ackId, setAckId] = useState<string | null>(null);
+
+  const loadMgmtInto = useCallback(async (sid: string) => {
+    const { data: evs, error } = await supabase
+      .from('staff_management_evaluations')
+      .select('*')
+      .eq('staff_id', sid)
+      .order('created_at', { ascending: false });
+    if (error) return { mgmtRows: [] as StaffManagementEvaluationRow[], evaluatorNames: {} as Record<string, string | null> };
+    const list = (evs ?? []) as StaffManagementEvaluationRow[];
+    const eids = [...new Set(list.map((r) => r.evaluator_staff_id))];
+    if (!eids.length) return { mgmtRows: list, evaluatorNames: {} };
+    const { data: names } = await supabase.from('staff').select('id, full_name').in('id', eids);
+    const map: Record<string, string | null> = {};
+    for (const row of names ?? []) {
+      const r = row as { id: string; full_name: string | null };
+      map[r.id] = r.full_name;
+    }
+    return { mgmtRows: list, evaluatorNames: map };
+  }, []);
+
+  const fetchData = useCallback(async (): Promise<EvaluationScreenCache | null> => {
+    if (!staffId) return null;
+    const res = await loadStaffProfileSelf(staffId);
+    const { data: r } = await supabase
+      .from('staff_reviews')
+      .select('id, rating, comment, created_at')
+      .eq('staff_id', staffId)
+      .order('created_at', { ascending: false });
+    const mgmt = await loadMgmtInto(staffId);
+    return {
+      profile: (res.data as EvalProfile) ?? null,
+      reviews: (r ?? []) as ReviewRow[],
+      mgmtRows: mgmt.mgmtRows,
+      evaluatorNames: mgmt.evaluatorNames,
+    };
+  }, [staffId, loadMgmtInto]);
+
+  const { data, reload, showContent } = useCachedFocusLoad({
+    cacheKey: staffId ? `staff-evaluation:${staffId}` : 'staff-evaluation:none',
+    enabled: !!staffId,
+    fetchData,
+  });
+
+  const profile = data?.profile ?? null;
+  const reviews = data?.reviews ?? [];
+  const mgmtRows = data?.mgmtRows ?? [];
+  const evaluatorNames = data?.evaluatorNames ?? {};
 
   const loadMgmt = useCallback(
     async (sid: string) => {
-      const { data: evs, error } = await supabase
-        .from('staff_management_evaluations')
-        .select('*')
-        .eq('staff_id', sid)
-        .order('created_at', { ascending: false });
-      if (error) return;
-      const list = (evs ?? []) as StaffManagementEvaluationRow[];
-      setMgmtRows(list);
-      const eids = [...new Set(list.map((r) => r.evaluator_staff_id))];
-      if (eids.length) {
-        const { data: names } = await supabase.from('staff').select('id, full_name').in('id', eids);
-        const map: Record<string, string | null> = {};
-        for (const row of names ?? []) {
-          const r = row as { id: string; full_name: string | null };
-          map[r.id] = r.full_name;
-        }
-        setEvaluatorNames(map);
-      } else {
-        setEvaluatorNames({});
-      }
+      await reload();
     },
-    []
+    [reload]
   );
 
   const onAcknowledge = useCallback(
@@ -86,30 +117,6 @@ export default function StaffEvaluationScreen() {
     [staffId, loadMgmt, t]
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!staffId) return;
-      let cancelled = false;
-      setLoading(true);
-      (async () => {
-        const res = await loadStaffProfileSelf(staffId);
-        const { data: r } = await supabase
-          .from('staff_reviews')
-          .select('id, rating, comment, created_at')
-          .eq('staff_id', staffId)
-          .order('created_at', { ascending: false });
-        await loadMgmt(staffId);
-        if (cancelled) return;
-        setProfile((res.data as EvalProfile) ?? null);
-        setReviews((r ?? []) as ReviewRow[]);
-        setLoading(false);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [staffId, loadMgmt])
-  );
-
   if (!staffId) {
     return (
       <>
@@ -119,7 +126,7 @@ export default function StaffEvaluationScreen() {
     );
   }
 
-  if (loading || !profile) {
+  if (!showContent && !profile) {
     return (
       <>
         <Stack.Screen options={{ title: t('evaluationHubTitle'), headerBackTitle: t('back') }} />

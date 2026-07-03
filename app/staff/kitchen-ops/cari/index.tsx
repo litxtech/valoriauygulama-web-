@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Alert, TextInput } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -9,32 +9,44 @@ import { KITCHEN_CARI_DIRECTIONS } from '@/lib/kitchenOps/constants';
 import { KitchenChipSelect, KitchenSaveButton } from '@/components/kitchenOps/KitchenUi';
 import { KitchenCariPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 import { formatDateShort } from '@/lib/date';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type LedgerRow = { id: string; direction: string; amount: number; description: string | null; entry_date: string; category: string | null };
 
+type CariCache = {
+  net: number;
+  rows: LedgerRow[];
+  cariLimit: number;
+};
+
 export default function KitchenCariScreen() {
   const staff = useAuthStore((s) => s.staff);
-  const [net, setNet] = useState(0);
-  const [rows, setRows] = useState<LedgerRow[]>([]);
   const [direction, setDirection] = useState<(typeof KITCHEN_CARI_DIRECTIONS)[number]['value'] | ''>('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
-  const [cariLimit, setCariLimit] = useState(50000);
   const [saving, setSaving] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchData = useCallback(async (): Promise<CariCache | null> => {
     const [balance, { data: ledger }, { data: settings }] = await Promise.all([
       fetchCariNetBalance(),
       supabase.from('kitchen_cari_ledger').select('id, direction, amount, description, entry_date, category').order('entry_date', { ascending: false }).limit(30),
       supabase.from('kitchen_ops_settings').select('cari_debt_limit').maybeSingle(),
     ]);
-    setNet(balance);
-    setRows((ledger ?? []) as LedgerRow[]);
-    if (settings?.cari_debt_limit) setCariLimit(Number(settings.cari_debt_limit));
+    return {
+      net: balance,
+      rows: (ledger ?? []) as LedgerRow[],
+      cariLimit: settings?.cari_debt_limit ? Number(settings.cari_debt_limit) : 50000,
+    };
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const { data, refreshing, refresh, reload } = useCachedFocusLoad<CariCache>({
+    cacheKey: 'kitchen-cari-ledger',
+    fetchData,
+  });
+
+  const net = data?.net ?? 0;
+  const rows = data?.rows ?? [];
+  const cariLimit = data?.cariLimit ?? 50000;
 
   const kitchenOwes = rows.filter((r) => r.direction === 'kitchen_owes_hotel').reduce((s, r) => s + Number(r.amount), 0);
   const hotelOwes = rows.filter((r) => r.direction === 'hotel_owes_kitchen').reduce((s, r) => s + Number(r.amount), 0);
@@ -60,7 +72,7 @@ export default function KitchenCariScreen() {
       if (error) throw error;
       setAmount('');
       setDescription('');
-      await load();
+      await reload();
     } catch (e) {
       Alert.alert('Hata', (e as Error).message);
     } finally {
@@ -69,7 +81,7 @@ export default function KitchenCariScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
       <KitchenCariPrintBar defaultOpen />
       <View style={styles.hero}>
         <Text style={styles.heroLabel}>Net cari durum</Text>

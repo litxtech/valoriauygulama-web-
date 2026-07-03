@@ -169,7 +169,6 @@ function AdminNotesIndexScreen() {
               setLoading(false);
               void load({ silent: true });
             } else {
-              setLoading(true);
               void load();
             }
           }}

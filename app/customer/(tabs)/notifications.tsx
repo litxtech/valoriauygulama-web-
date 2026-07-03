@@ -26,6 +26,14 @@ import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
+import {
+  getListCacheAgeMs,
+  getListCacheRaw,
+  hydrateListCache,
+  setListCache,
+} from '@/lib/listCache';
+
+const NOTIF_LIST_TTL_MS = 60_000;
 
 type NotifRow = {
   id: string;
@@ -55,6 +63,22 @@ export default function CustomerNotificationsScreen() {
   const listMaxCreatedRef = useRef<string | null>(null);
   const lastNotifTokenRef = useRef<string | null>(null);
   const pushPermCheckedRef = useRef(false);
+  const lastLoadAtRef = useRef(0);
+  const notifCacheKeyRef = useRef('customer-notifications:pending');
+
+  useEffect(() => {
+    let cancelled = false;
+    void hydrateListCache<NotifRow>(notifCacheKeyRef.current).then((cached) => {
+      if (cancelled || !cached?.length) return;
+      setList(cached);
+      setLoading(false);
+      const maxAt = cached.reduce((a, b) => (a > b.created_at ? a : b.created_at), cached[0].created_at);
+      listMaxCreatedRef.current = maxAt;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     listRef.current = list;
@@ -109,7 +133,15 @@ export default function CustomerNotificationsScreen() {
       return;
     }
 
-    const cached = listRef.current;
+    const cacheKey = `customer-notifications:${notifToken}`;
+    notifCacheKeyRef.current = cacheKey;
+    const memCached = getListCacheRaw<NotifRow>(cacheKey);
+    if (memCached?.length && !force) {
+      setList(memCached);
+      setLoading(false);
+    }
+
+    const cached = listRef.current.length ? listRef.current : memCached ?? [];
     const hadList = cached.length > 0;
 
     if (force) {
@@ -119,6 +151,12 @@ export default function CustomerNotificationsScreen() {
     }
 
     if (!force && hadList) {
+      const age = getListCacheAgeMs(cacheKey);
+      if (age != null && age < NOTIF_LIST_TTL_MS) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
       const { data: sumData, error: sumErr } = await supabase.rpc('get_guest_notification_summary', {
         p_app_token: notifToken,
       });
@@ -158,7 +196,10 @@ export default function CustomerNotificationsScreen() {
     }
 
     const now = new Date().toISOString();
-    setList(rows.map((n) => ({ ...n, read_at: n.read_at ?? now })));
+    const nextList = rows.map((n) => ({ ...n, read_at: n.read_at ?? now }));
+    setList(nextList);
+    setListCache(cacheKey, nextList);
+    lastLoadAtRef.current = Date.now();
     if (rows.length) {
       const maxAt = rows.reduce((a, b) => (a > b.created_at ? a : b.created_at), rows[0].created_at);
       listMaxCreatedRef.current = maxAt;
@@ -174,7 +215,15 @@ export default function CustomerNotificationsScreen() {
     useCallback(() => {
       setUnreadCount(0);
       setNotificationsScreenFocused(true);
-      void load();
+      const hadList = listRef.current.length > 0;
+      const cacheKey = notifCacheKeyRef.current;
+      const age = getListCacheAgeMs(cacheKey);
+      const stale = !hadList || age == null || age >= NOTIF_LIST_TTL_MS || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
+      if (stale) {
+        void load({ force: !hadList });
+      } else if (hadList) {
+        setLoading(false);
+      }
       return () => setNotificationsScreenFocused(false);
     }, [setUnreadCount, setNotificationsScreenFocused, load])
   );

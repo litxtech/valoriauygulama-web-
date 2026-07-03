@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   Alert,
   TextInput,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
@@ -34,6 +33,7 @@ import {
   GUEST_COMPLAINT_ADMIN_PRESETS,
   type GuestComplaintAdminPreset,
 } from '@/lib/complaintsI18n';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type ComplaintRow = AdminGuestComplaintRow & {
   status:
@@ -51,46 +51,37 @@ export default function AdminComplaintsIndex() {
   const loc = complaintsLocaleTag();
   const { staff } = useAuthStore();
   const { orgScoped, canUseAll } = useAdminOrganizationQueryScope();
-  const [list, setList] = useState<ComplaintRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | ComplaintRow['status']>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [noteById, setNoteById] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
+  const cacheKey = useMemo(
+    () => `admin-complaints:${filter}:${orgScoped ?? 'all'}`,
+    [filter, orgScoped]
+  );
+
+  const fetchItems = useCallback(async () => {
     const { rows, error } = await fetchAdminGuestComplaints({
       statusFilter: filter,
       orgScoped,
     });
     if (error) {
-      // Geçici hatada mevcut listeyi silme (boş ekran flaşını / "veri kayboldu" hissini önle).
       Alert.alert(complaintsText('error'), error);
-      return;
+      throw new Error(error);
     }
     const typed = rows as ComplaintRow[];
-    setList(typed);
     const initialNotes: Record<string, string> = {};
     typed.forEach((row) => {
       initialNotes[row.id] = row.admin_note ?? '';
     });
     setNoteById(initialNotes);
+    return typed;
   }, [filter, orgScoped]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setLoading(true);
-    await load();
-    setLoading(false);
-  }, [load]);
+  const { items: list, loading, refreshing, refresh, load } = useCachedList<ComplaintRow>({
+    cacheKey,
+    fetchItems,
+  });
 
   const updateStatus = async (
     item: ComplaintRow,
@@ -141,7 +132,7 @@ export default function AdminComplaintsIndex() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={adminTheme.colors.accent} />}
     >
       <AdminOrganizationPicker
         canUseAll={canUseAll}

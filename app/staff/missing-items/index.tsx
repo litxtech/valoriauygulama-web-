@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, ScrollView, ActivityIndicator } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,8 +11,15 @@ import {
   getMissingAreaMeta,
   type MissingItemArea,
 } from '@/lib/missingItemsCatalog';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const AREAS: MissingItemArea[] = ['kitchen', 'hotel'];
+
+type MissingAreaCountRow = {
+  area: MissingItemArea;
+  open: number;
+  resolved: number;
+};
 
 export default function MissingItemsHubScreen() {
   const { t } = useTranslation();
@@ -20,38 +27,44 @@ export default function MissingItemsHubScreen() {
   const pathname = usePathname();
   const missingBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const staff = useAuthStore((s) => s.staff);
-  const [counts, setCounts] = useState<Record<MissingItemArea, { open: number; resolved: number }>>({
-    kitchen: { open: 0, resolved: 0 },
-    hotel: { open: 0, resolved: 0 },
-  });
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const suggested = defaultMissingAreaForDepartment(staff?.department);
-
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     const res = await getMissingAreaCounts();
-    if (res.data) setCounts(res.data);
-    setLoading(false);
-    setRefreshing(false);
+    const data = res.data ?? { kitchen: { open: 0, resolved: 0 }, hotel: { open: 0, resolved: 0 } };
+    return AREAS.map((area) => ({
+      area,
+      open: data[area].open,
+      resolved: data[area].resolved,
+    }));
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { items: countRows, loading, refreshing, refresh } = useCachedList<MissingAreaCountRow>({
+    cacheKey: pathname?.startsWith('/admin') ? 'admin-missing-items-hub' : 'staff-missing-items-hub',
+    fetchItems,
+  });
+
+  const counts = useMemo(() => {
+    const base = { kitchen: { open: 0, resolved: 0 }, hotel: { open: 0, resolved: 0 } };
+    for (const row of countRows) {
+      base[row.area] = { open: row.open, resolved: row.resolved };
+    }
+    return base;
+  }, [countRows]);
+
+  const suggested = defaultMissingAreaForDepartment(staff?.department);
 
   return (
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.colors.primary} />
+        <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />
       }
     >
       <Text style={styles.introTitle}>{t('missingItemsHubTitle')}</Text>
       <Text style={styles.introText}>{t('missingItemsHubIntro')}</Text>
 
-      {loading ? (
+      {loading && countRows.length === 0 ? (
         <ActivityIndicator style={{ marginTop: 32 }} color={theme.colors.primary} />
       ) : (
         AREAS.map((area) => {
@@ -107,7 +120,7 @@ export default function MissingItemsHubScreen() {
         <View style={styles.historyBody}>
           <Text style={styles.historyTitle}>{t('missingItemsHistoryTitle')}</Text>
           <Text style={styles.historySub}>{t('missingItemsHistorySub')}</Text>
-          {!loading ? (
+          {!loading || countRows.length > 0 ? (
             <Text style={styles.historyMeta}>
               {t('missingItemsHistoryMeta', { count: counts.kitchen.resolved + counts.hotel.resolved })}
             </Text>

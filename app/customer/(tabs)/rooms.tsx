@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, RefreshControl, TouchableOpacity, StyleSheet } from 'react-native';
+import { useCallback } from 'react';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, ActivityIndicator } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { roomStatusLabel } from '@/lib/i18nLookup';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type Room = {
   id: string;
@@ -16,29 +17,33 @@ type Room = {
 
 export default function CustomerRooms() {
   const { t } = useTranslation();
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    const { data } = await supabase.from('rooms').select('id, room_number, floor, view_type, status, price_per_night').order('room_number');
-    setRooms(data ?? []);
+  const fetchItems = useCallback(async () => {
+    const { data } = await supabase
+      .from('rooms')
+      .select('id, room_number, floor, view_type, status, price_per_night')
+      .order('room_number');
+    return (data ?? []) as Room[];
   }, []);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const { items: rooms, loading, refreshing, refresh } = useCachedList<Room>({
+    cacheKey: 'customer-rooms-list',
+    fetchItems,
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  if (loading && !refreshing && rooms.length === 0) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.listContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
     >
       {rooms.map((r) => (
         <View key={r.id} style={styles.card}>
@@ -63,6 +68,7 @@ export default function CustomerRooms() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   listContent: { paddingTop: 8, paddingBottom: 24 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {
     backgroundColor: theme.colors.surface,
     margin: 16,

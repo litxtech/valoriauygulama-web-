@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useCachedList } from '@/hooks/useCachedList';
 import {
   View,
   Text,
@@ -32,12 +33,9 @@ export default function LocalAreaGuideListScreen() {
   const { width } = useWindowDimensions();
   const { t } = useTranslation();
   const basePath = segments[0] === 'staff' ? '/staff/local-area-guide' : '/customer/local-area-guide';
-  const [rows, setRows] = useState<LocalAreaGuideListRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     const { data, error } = await supabase
       .from('local_area_guide_entries')
       .select('id, title, image_urls, updated_at')
@@ -45,32 +43,29 @@ export default function LocalAreaGuideListScreen() {
       .order('sort_order', { ascending: false })
       .order('updated_at', { ascending: false })
       .limit(80);
-    if (error) {
-      setRows([]);
-      return;
-    }
+    if (error) return [];
     const list = (data ?? []) as LocalAreaGuideListRow[];
-    setRows(list);
     prefetchImageUrls(
       list.map((r) => r.image_urls?.[0] ?? null),
       20
     );
+    return list;
   }, []);
+
+  const { items: rows, loading, refreshing, refresh, load } = useCachedList<LocalAreaGuideListRow>({
+    cacheKey: `${basePath}-list`,
+    fetchItems,
+  });
 
   const scheduleReload = useCallback(() => {
     if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
     reloadDebounceRef.current = setTimeout(() => {
       reloadDebounceRef.current = null;
-      load();
+      void load({ silent: true });
     }, 300);
   }, [load]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    load().finally(() => {
-      if (!cancelled) setLoading(false);
-    });
     const ch = supabase
       .channel('local-area-guide-list')
       .on(
@@ -82,17 +77,10 @@ export default function LocalAreaGuideListScreen() {
       )
       .subscribe();
     return () => {
-      cancelled = true;
       if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
       supabase.removeChannel(ch);
     };
-  }, [load, scheduleReload]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  }, [scheduleReload]);
 
   const PAD = 16;
   const GAP = 14;
@@ -172,7 +160,7 @@ export default function LocalAreaGuideListScreen() {
         ListHeaderComponent={
           <Text style={styles.intro}>{t('localAreaGuideListIntro')}</Text>
         }
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         ListEmptyComponent={
           loading ? (
             <View style={styles.emptyWrap}>

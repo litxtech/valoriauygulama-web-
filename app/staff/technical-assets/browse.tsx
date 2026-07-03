@@ -16,6 +16,7 @@ import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { Ionicons } from '@expo/vector-icons';
 import { criticalityLabel, techAssetHasUsageGuide, type TechCriticality } from '@/lib/technicalAssets';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type Row = {
   id: string;
@@ -36,16 +37,15 @@ const CRITS = ['low', 'medium', 'high', 'critical'] as const;
 export default function TechnicalAssetsBrowseScreen() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [rawRows, setRawRows] = useState<Row[]>([]);
   const [buildings, setBuildings] = useState<BuildingChip[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [buildingId, setBuildingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [critFilter, setCritFilter] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const cacheKey = `tech-assets-browse:${buildingId ?? 'all'}:${statusFilter ?? 'all'}:${critFilter ?? 'all'}`;
+
+  const fetchItems = useCallback(async () => {
     let q = supabase
       .from('tech_assets')
       .select('id, name, asset_code, criticality, status, building_id, usage_guide_text, usage_guide_video_url')
@@ -55,8 +55,14 @@ export default function TechnicalAssetsBrowseScreen() {
     if (statusFilter) q = q.eq('status', statusFilter);
     if (critFilter) q = q.eq('criticality', critFilter);
     const { data, error } = await q;
-    setRawRows(((error ? [] : data) ?? []) as Row[]);
+    return ((error ? [] : data) ?? []) as Row[];
   }, [buildingId, critFilter, statusFilter]);
+
+  const { items: rawRows, refreshing, refresh, showList } = useCachedList({
+    cacheKey,
+    enabled: hasTechnicalAssetsStaffAccess(staff),
+    fetchItems,
+  });
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -74,24 +80,11 @@ export default function TechnicalAssetsBrowseScreen() {
     });
   }, [router, staff]);
 
-  useEffect(() => {
-    if (!hasTechnicalAssetsStaffAccess(staff)) return;
-    (async () => {
-      setLoading(true);
-      await load();
-      setLoading(false);
-    })();
-  }, [load, staff]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const onRefresh = refresh;
 
   if (!hasTechnicalAssetsStaffAccess(staff)) return null;
 
-  if (loading) {
+  if (!showList && rawRows.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#1a365d" />

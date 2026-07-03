@@ -24,43 +24,61 @@ import {
   type GuestExtraOrderRow,
 } from '@/lib/guestExtraCharges';
 import { EXTRA_CATEGORY_LABELS } from '@/lib/guestExtraChargesAdmin';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type CartLine = { item: HotelExtraCatalogItem; quantity: number };
 
 export default function CustomerGuestExtrasScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [catalog, setCatalog] = useState<HotelExtraCatalogItem[]>([]);
-  const [orders, setOrders] = useState<GuestExtraOrderRow[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [paying, setPaying] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchCatalog = useCallback(async () => {
     try {
-      const [cat, ord] = await Promise.all([fetchGuestExtraCatalog(), fetchMyGuestExtraOrders()]);
-      setCatalog(cat);
-      setOrders(ord);
+      return await fetchGuestExtraCatalog();
     } catch {
-      setCatalog([]);
-      setOrders([]);
+      return [];
     }
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
+  const fetchOrders = useCallback(async () => {
+    try {
+      return await fetchMyGuestExtraOrders();
+    } catch {
+      return [];
+    }
+  }, []);
 
-  useEffect(() => subscribeGuestExtraCatalog(() => void load()), [load]);
+  const {
+    items: catalog,
+    loading: catalogLoading,
+    refreshing: catalogRefreshing,
+    refresh: refreshCatalog,
+    load: reloadCatalog,
+  } = useCachedList<HotelExtraCatalogItem>({
+    cacheKey: 'customer-guest-extras-catalog',
+    fetchItems: fetchCatalog,
+  });
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const {
+    items: orders,
+    refreshing: ordersRefreshing,
+    refresh: refreshOrders,
+  } = useCachedList<GuestExtraOrderRow>({
+    cacheKey: 'customer-guest-extras-orders',
+    fetchItems: fetchOrders,
+  });
+
+  const loading = catalogLoading;
+  const refreshing = catalogRefreshing || ordersRefreshing;
+  const refresh = useCallback(() => {
+    refreshCatalog();
+    refreshOrders();
+  }, [refreshCatalog, refreshOrders]);
+
+  useEffect(() => subscribeGuestExtraCatalog(() => void reloadCatalog({ silent: true })), [reloadCatalog]);
 
   const addToCart = (item: HotelExtraCatalogItem) => {
     setCart((prev) => {
@@ -147,12 +165,12 @@ export default function CustomerGuestExtrasScreen() {
         Battaniye, su ve diğer ekstralar otel tarafından güncellenir. Ödeme sonrası resepsiyon bilgilendirilir.
       </Text>
 
-      {loading ? (
+      {loading && catalog.length === 0 ? (
         <ActivityIndicator style={{ marginTop: 48 }} color={theme.colors.primary} />
       ) : (
         <ScrollView
           contentContainerStyle={[styles.scroll, cart.length > 0 && { paddingBottom: 120 }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         >
           {showHistory ? (
             <View style={styles.historyBlock}>

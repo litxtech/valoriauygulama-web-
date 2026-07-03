@@ -64,6 +64,14 @@ import {
   parseStaffNotificationAction,
 } from '@/lib/staffNotificationActions';
 import { StaffAnnouncementActionPanel } from '@/components/staff/StaffAnnouncementActionPanel';
+import {
+  getListCacheAgeMs,
+  getListCacheRaw,
+  hydrateListCache,
+  setListCache,
+} from '@/lib/listCache';
+
+const NOTIF_LIST_TTL_MS = 60_000;
 
 function isBreakfastBriefingNotification(n: { notification_type: string | null }): boolean {
   return n.notification_type === 'breakfast_morning_briefing';
@@ -371,7 +379,7 @@ export default function StaffNotificationsScreen() {
   const lastLoadAtRef = useRef(0);
   const pushPermCheckedRef = useRef(false);
   const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const NOTIF_LIST_TTL_MS = 60_000;
+  const notifCacheKeyRef = useRef('staff-notifications:pending');
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -398,6 +406,21 @@ export default function StaffNotificationsScreen() {
     listRef.current = list;
   }, [list]);
 
+  useEffect(() => {
+    if (!staff?.id) return;
+    let cancelled = false;
+    const cacheKey = `staff-notifications:${staff.id}`;
+    notifCacheKeyRef.current = cacheKey;
+    void hydrateListCache<NotifRow>(cacheKey).then((cached) => {
+      if (cancelled || !cached?.length) return;
+      setList(cached);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [staff?.id]);
+
   const markAllAsRead = useCallback(async () => {
     if (!staff?.id) return;
     const now = new Date().toISOString();
@@ -421,15 +444,41 @@ export default function StaffNotificationsScreen() {
     }
   }, []);
 
-  const load = useCallback(async (opts?: { scrollToTop?: boolean; background?: boolean }) => {
+  const load = useCallback(async (opts?: { scrollToTop?: boolean; background?: boolean; force?: boolean }) => {
     if (!staff?.id) {
       setLoading(false);
       return;
     }
-    const hadList = listRef.current.length > 0;
-    if (!opts?.background && !hadList) {
+    const force = opts?.force === true;
+    const cacheKey = `staff-notifications:${staff.id}`;
+    notifCacheKeyRef.current = cacheKey;
+
+    const memCached = getListCacheRaw<NotifRow>(cacheKey);
+    if (memCached?.length && !force) {
+      setList(memCached);
+      setLoading(false);
+    }
+
+    const cached = listRef.current.length ? listRef.current : memCached ?? [];
+    const hadList = cached.length > 0;
+
+    if (!opts?.background && !hadList && !force) {
       setLoading(true);
     }
+
+    if (!force && hadList) {
+      const age = getListCacheAgeMs(cacheKey);
+      if (age != null && age < NOTIF_LIST_TTL_MS) {
+        setLoading(false);
+        if (opts?.scrollToTop) {
+          requestAnimationFrame(() => {
+            scrollRef.current?.scrollToOffset({ offset: 0, animated: true });
+          });
+        }
+        return;
+      }
+    }
+
     if (!pushPermCheckedRef.current) {
       pushPermCheckedRef.current = true;
       void refreshPushPerm();
@@ -440,7 +489,9 @@ export default function StaffNotificationsScreen() {
       .eq('staff_id', staff.id)
       .order('created_at', { ascending: false })
       .limit(100);
-    setList((data as NotifRow[]) ?? []);
+    const rows = (data as NotifRow[]) ?? [];
+    setList(rows);
+    setListCache(cacheKey, rows);
     lastLoadAtRef.current = Date.now();
     setLoading(false);
     if (opts?.scrollToTop) {
@@ -462,7 +513,7 @@ export default function StaffNotificationsScreen() {
           if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
           reloadDebounceRef.current = setTimeout(() => {
             reloadDebounceRef.current = null;
-            load({ scrollToTop: true });
+            load({ scrollToTop: true, force: true });
           }, 450);
         }
       )
@@ -479,9 +530,17 @@ export default function StaffNotificationsScreen() {
       setNotificationsScreenFocused(true);
       void markAllAsRead();
       const hadList = listRef.current.length > 0;
-      const stale = !hadList || Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
+      const cacheKey = notifCacheKeyRef.current;
+      const age = getListCacheAgeMs(cacheKey);
+      const stale =
+        !hadList ||
+        age == null ||
+        age >= NOTIF_LIST_TTL_MS ||
+        Date.now() - lastLoadAtRef.current >= NOTIF_LIST_TTL_MS;
       if (stale) {
         void load({ background: hadList });
+      } else if (hadList) {
+        setLoading(false);
       }
       return () => setNotificationsScreenFocused(false);
     }, [setUnreadCount, setNotificationsScreenFocused, load, markAllAsRead])
@@ -1044,7 +1103,7 @@ export default function StaffNotificationsScreen() {
         renderItem={renderItem}
         style={[styles.container, { backgroundColor: palette.pageBg }]}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load({ force: true })} />}
         contentInsetAdjustmentBehavior="automatic"
         ListHeaderComponent={ListHeader}
         ListEmptyComponent={

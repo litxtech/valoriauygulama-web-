@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { fetchKitchenFinanceActivity, type KitchenFinanceActivityTab } from '@/l
 import { todayKitchenDateIso } from '@/lib/kitchenOps/revenueTables';
 import { useKitchenFinanceAccess } from '@/hooks/useKitchenFinanceAccess';
 import { KitchenFinancePrintBar } from '@/components/kitchenOps/KitchenPrintBar';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 const PAY_LABELS = Object.fromEntries(KITCHEN_PAYMENT_TYPES.map((p) => [p.value, p.label]));
 const PERSONNEL_LABELS = Object.fromEntries(KITCHEN_PERSONNEL_PAYMENT_TYPES.map((p) => [p.value, p.label]));
@@ -123,18 +124,19 @@ function ActivityTabButton({
   );
 }
 
+type FinanceBridgeCache = {
+  summary: KitchenDaySummary;
+  posMismatch: boolean;
+  revenues: Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['revenues'];
+  expenses: Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['expenses'];
+  payments: Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['payments'];
+  loadError: string | null;
+};
+
 export function KitchenFinanceBridge() {
   const router = useRouter();
   const { loading: accessLoading, allowed, isReception, canEnterRevenue, canEnterExpense } = useKitchenFinanceAccess();
-  const [summary, setSummary] = useState<KitchenDaySummary>({ ...EMPTY_KITCHEN_DAY_SUMMARY });
-  const [posMismatch, setPosMismatch] = useState(false);
   const [activityTab, setActivityTab] = useState<KitchenFinanceActivityTab>('revenue');
-  const [revenues, setRevenues] = useState<Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['revenues']>([]);
-  const [expenses, setExpenses] = useState<Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['expenses']>([]);
-  const [payments, setPayments] = useState<Awaited<ReturnType<typeof fetchKitchenFinanceActivity>>['payments']>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const todayLabel = new Date().toLocaleDateString('tr-TR', {
     weekday: 'long',
@@ -142,8 +144,7 @@ export function KitchenFinanceBridge() {
     month: 'long',
   });
 
-  const load = useCallback(async () => {
-    setLoadError(null);
+  const fetchData = useCallback(async (): Promise<FinanceBridgeCache | null> => {
     try {
       const date = todayKitchenDateIso();
       const [daySummary, mismatch, activity] = await Promise.all([
@@ -151,31 +152,40 @@ export function KitchenFinanceBridge() {
         checkPosMismatch(date).catch(() => false),
         fetchKitchenFinanceActivity(date),
       ]);
-      setSummary(daySummary);
-      setPosMismatch(mismatch);
-      setRevenues(activity.revenues);
-      setExpenses(activity.expenses);
-      setPayments(activity.payments);
+      return {
+        summary: daySummary,
+        posMismatch: mismatch,
+        revenues: activity.revenues,
+        expenses: activity.expenses,
+        payments: activity.payments,
+        loadError: null,
+      };
     } catch (e) {
-      setLoadError((e as Error).message);
+      return {
+        summary: { ...EMPTY_KITCHEN_DAY_SUMMARY },
+        posMismatch: false,
+        revenues: [],
+        expenses: [],
+        payments: [],
+        loadError: (e as Error).message,
+      };
     }
   }, []);
 
-  useEffect(() => {
-    if (!allowed) {
-      setLoading(false);
-      return;
-    }
-    load().finally(() => setLoading(false));
-  }, [allowed, load]);
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<FinanceBridgeCache>({
+    cacheKey: 'kitchen-finance-bridge',
+    enabled: allowed,
+    fetchData,
+  });
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const summary = data?.summary ?? EMPTY_KITCHEN_DAY_SUMMARY;
+  const posMismatch = data?.posMismatch ?? false;
+  const revenues = data?.revenues ?? [];
+  const expenses = data?.expenses ?? [];
+  const payments = data?.payments ?? [];
+  const loadError = data?.loadError ?? null;
 
-  if (accessLoading || loading) {
+  if (accessLoading || (loading && !showContent)) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -205,7 +215,7 @@ export function KitchenFinanceBridge() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
       showsVerticalScrollIndicator={false}
     >
       <LinearGradient colors={['#312e81', '#4338ca', '#4f46e5']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
@@ -228,7 +238,7 @@ export function KitchenFinanceBridge() {
       </LinearGradient>
 
       {loadError ? (
-        <Pressable style={styles.errorBox} onPress={() => void load()}>
+        <Pressable style={styles.errorBox} onPress={refresh}>
           <Ionicons name="alert-circle" size={18} color="#dc2626" />
           <Text style={styles.errorText}>{loadError} — yenilemek için dokunun</Text>
         </Pressable>

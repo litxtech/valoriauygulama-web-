@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { StockInventoryList, type StockInventoryListItem } from '@/components/stock/StockInventoryList';
 import { StockHubCompact } from '@/components/stock/StockHubCompact';
 import { buildLatestPhotoProofByProductId, resolveStockProductImageUrl } from '@/lib/stockProductImages';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type Product = {
   id: string;
@@ -48,23 +49,24 @@ type MovementRow = {
   staff: { full_name: string | null } | null;
 };
 
+type StockIndexCache = {
+  products: Product[];
+  photoByProductId: Record<string, string>;
+  recent: MovementRow[];
+};
+
 export default function StaffStockListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const listBottomPad = getFloatingTabBarTotalHeight(insets) + 24;
   const palette = usePersonelDesign();
-  const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [recent, setRecent] = useState<MovementRow[]>([]);
-  const [loadingRecent, setLoadingRecent] = useState(false);
   const [productModalProduct, setProductModalProduct] = useState<Product | null>(null);
   const [recentModalVisible, setRecentModalVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const [photoByProductId, setPhotoByProductId] = useState<Record<string, string>>({});
 
-  const load = async () => {
-    const [prodRes, photoRes] = await Promise.all([
+  const fetchData = useCallback(async (): Promise<StockIndexCache | null> => {
+    const [prodRes, photoRes, recentRes] = await Promise.all([
       supabase
         .from('stock_products')
         .select(
@@ -77,36 +79,31 @@ export default function StaffStockListScreen() {
         .not('photo_proof', 'is', null)
         .order('created_at', { ascending: false })
         .limit(500),
+      supabase
+        .from('stock_movements')
+        .select('id, movement_type, quantity, created_at, status, photo_proof, product:stock_products(name), staff:staff_id(full_name)')
+        .order('created_at', { ascending: false })
+        .limit(15),
     ]);
-    setProducts((prodRes.data ?? []) as unknown as Product[]);
-    setPhotoByProductId(
-      buildLatestPhotoProofByProductId(
+
+    return {
+      products: (prodRes.data ?? []) as unknown as Product[],
+      photoByProductId: buildLatestPhotoProofByProductId(
         (photoRes.data ?? []) as Array<{ product_id: string; photo_proof: string | null }>
-      )
-    );
-  };
-
-  const loadRecent = async () => {
-    setLoadingRecent(true);
-    const { data } = await supabase
-      .from('stock_movements')
-      .select('id, movement_type, quantity, created_at, status, photo_proof, product:stock_products(name), staff:staff_id(full_name)')
-      .order('created_at', { ascending: false })
-      .limit(15);
-    setRecent((data ?? []) as unknown as MovementRow[]);
-    setLoadingRecent(false);
-  };
-
-  useEffect(() => {
-    load();
-    loadRecent();
+      ),
+      recent: (recentRes.data ?? []) as unknown as MovementRow[],
+    };
   }, []);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await Promise.all([load(), loadRecent()]);
-    setRefreshing(false);
-  };
+  const { data, loading, refreshing, refresh, reload } = useCachedFocusLoad<StockIndexCache>({
+    cacheKey: 'staff-stock-index',
+    fetchData,
+  });
+
+  const products = data?.products ?? [];
+  const photoByProductId = data?.photoByProductId ?? {};
+  const recent = data?.recent ?? [];
+  const loadingRecent = loading && recent.length === 0;
 
   const filtered = products
     .filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
@@ -127,7 +124,7 @@ export default function StaffStockListScreen() {
 
   const openRecentModal = () => {
     setRecentModalVisible(true);
-    loadRecent();
+    void reload({ silent: true });
   };
 
   return (
@@ -135,7 +132,7 @@ export default function StaffStockListScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomPad }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >

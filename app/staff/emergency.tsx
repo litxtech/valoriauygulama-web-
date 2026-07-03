@@ -1,6 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
@@ -13,6 +12,7 @@ import {
 } from '@/lib/staffEmergency';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
+import { useCachedList } from '@/hooks/useCachedList';
 
 function createEmergencyStyles(p: PersonelDesignPalette) {
   return StyleSheet.create({
@@ -62,35 +62,33 @@ export default function StaffEmergencyScreen() {
   const palette = usePersonelDesign();
   const styles = useMemo(() => createEmergencyStyles(palette), [palette]);
   const { staff } = useAuthStore();
-  const [locations, setLocations] = useState<EmergencyLocation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState('');
-  const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+
+  const fetchItems = useCallback(async () => {
+    const res = await listEmergencyLocations(true);
+    if (res.error) {
+      Alert.alert(t('error'), res.error);
+      return [];
+    }
+    return res.data;
+  }, [t]);
+
+  const { items: locations, loading } = useCachedList<EmergencyLocation>({
+    cacheKey: 'staff-emergency-locations',
+    fetchItems,
+  });
+
+  useEffect(() => {
+    if (locations.length > 0 && !selectedId) {
+      setSelectedId(locations[0].id);
+    }
+  }, [locations, selectedId]);
 
   const selectedLocation = useMemo(
     () => locations.find((item) => item.id === selectedId) ?? null,
     [locations, selectedId]
-  );
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await listEmergencyLocations(true);
-    setLoading(false);
-    if (res.error) {
-      Alert.alert(t('error'), res.error);
-      return;
-    }
-    setLocations(res.data);
-    if (res.data.length > 0 && !selectedId) {
-      setSelectedId(res.data[0].id);
-    }
-  }, [selectedId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
   );
 
   const onSend = async () => {

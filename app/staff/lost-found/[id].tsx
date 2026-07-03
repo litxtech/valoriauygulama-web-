@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   Pressable,
   Dimensions,
 } from 'react-native';
-import { useFocusEffect, useLocalSearchParams, usePathname, useNavigation } from 'expo-router';
+import { useLocalSearchParams, usePathname, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
@@ -36,6 +36,7 @@ import {
   lostFoundValueTierLabel,
   LOST_FOUND_STATUS_COLOR,
 } from '@/lib/lostFoundCatalog';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -75,7 +76,6 @@ function LostFoundDetailScreen() {
   }, [navigation, isAdminRoute, base, t]);
 
   const [item, setItem] = useState<LostFoundItemRow | null>(null);
-  const [loading, setLoading] = useState(true);
   const [storageEdit, setStorageEdit] = useState('');
   const [savingStorage, setSavingStorage] = useState(false);
   const [returnModal, setReturnModal] = useState(false);
@@ -87,20 +87,29 @@ function LostFoundDetailScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!id) return;
+  const fetchData = useCallback(async () => {
+    if (!id) return null;
     const res = await getLostFoundItem(id);
-    setItem(res.data);
-    setStorageEdit(res.data?.storage_location ?? '');
-    setLoading(false);
+    return res.data;
   }, [id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      load();
-    }, [load])
-  );
+  const {
+    data: cachedItem,
+    loading,
+    reload,
+    showContent,
+  } = useCachedFocusLoad({
+    cacheKey: id ? `lost-found-detail:${id}` : 'lost-found-detail:none',
+    enabled: !!id,
+    fetchData,
+  });
+
+  useEffect(() => {
+    setItem(cachedItem);
+    if (cachedItem) setStorageEdit(cachedItem.storage_location ?? '');
+  }, [cachedItem]);
+
+  const load = reload;
 
   const saveStorage = async () => {
     if (!id) return;
@@ -162,10 +171,18 @@ function LostFoundDetailScreen() {
     ]);
   };
 
-  if (loading || !item) {
+  if (!showContent && !item) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
+  if (!item) {
+    return (
+      <View style={styles.centered}>
+        <Text style={{ color: theme.colors.textMuted }}>{t('error')}</Text>
       </View>
     );
   }

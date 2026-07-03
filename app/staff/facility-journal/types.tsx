@@ -1,5 +1,4 @@
 import { useCallback, useLayoutEffect, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
 import {
   View,
   Text,
@@ -23,6 +22,7 @@ import {
 import { canManageFacilityJournalTypes } from '@/lib/staffPermissions';
 import { adminTheme } from '@/constants/adminTheme';
 import { theme } from '@/constants/theme';
+import { useCachedList } from '@/hooks/useCachedList';
 
 export default function FacilityJournalTypesScreen() {
   const router = useRouter();
@@ -33,10 +33,27 @@ export default function FacilityJournalTypesScreen() {
   const base = '/admin/facility-journal';
   const allowed = canManageFacilityJournalTypes(staff);
 
-  const [types, setTypes] = useState<FacilityJournalRecordTypeRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const cacheKey = staff?.organization_id
+    ? `facility-journal-types:${staff.organization_id}`
+    : 'facility-journal-types:none';
+
+  const fetchItems = useCallback(async () => {
+    if (!staff?.organization_id) return [];
+    await seedDefaultFacilityJournalTypes(staff.organization_id, staff.id);
+    const { data } = await listFacilityJournalRecordTypes(staff.organization_id, false);
+    return (data as FacilityJournalRecordTypeRow[]) ?? [];
+  }, [staff?.organization_id, staff?.id]);
+
+  const { items: types, reload, showList } = useCachedList({
+    cacheKey,
+    enabled: !!staff?.organization_id && allowed,
+    fetchItems,
+  });
+
+  const load = reload;
 
   useLayoutEffect(() => {
     if (!allowed) {
@@ -46,22 +63,7 @@ export default function FacilityJournalTypesScreen() {
     navigation.setOptions({
       headerLeft: () => <AdminStackBackButton accessibilityLabel="Geri" fallback={base as never} />,
     });
-  }, [navigation, allowed, router, isAdminRoute]);
-
-  const load = useCallback(async () => {
-    if (!staff?.organization_id) return;
-    setLoading(true);
-    await seedDefaultFacilityJournalTypes(staff.organization_id, staff.id);
-    const { data } = await listFacilityJournalRecordTypes(staff.organization_id, false);
-    setTypes((data as FacilityJournalRecordTypeRow[]) ?? []);
-    setLoading(false);
-  }, [staff?.organization_id, staff?.id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+  }, [navigation, allowed, router, isAdminRoute, base]);
 
   const addType = async () => {
     if (!staff?.organization_id || !newName.trim()) {
@@ -117,7 +119,7 @@ export default function FacilityJournalTypesScreen() {
         </TouchableOpacity>
       </View>
 
-      {loading ? (
+      {!showList && types.length === 0 ? (
         <ActivityIndicator style={{ marginTop: 24 }} color={theme.colors.primary} />
       ) : (
         <FlatList

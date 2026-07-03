@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Pressable,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { pds } from '@/constants/personelDesignSystem';
@@ -18,7 +17,6 @@ import {
   describePointEntry,
   fetchStaffPointsLedger,
   POINT_CATEGORY_ICONS,
-  type StaffPointsLedger,
 } from '@/lib/staffPoints';
 import { getStaffPointsTierMeta } from '@/lib/staffPointsTiers';
 import { pointsTheme } from '@/components/points';
@@ -30,6 +28,7 @@ import {
   StaffPointsRankCompact,
   StaffPointsTabBar,
 } from '@/components/points/StaffPointsExperience';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type Tab = 'status' | 'history' | 'ranking';
 
@@ -37,34 +36,25 @@ export default function StaffPointsScreen() {
   const insets = useSafeAreaInsets();
   const staff = useAuthStore((s) => s.staff);
   const [tab, setTab] = useState<Tab>('status');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [ledger, setLedger] = useState<StaffPointsLedger | null>(null);
 
-  const load = useCallback(async () => {
-    if (!staff?.id || !staff.organization_id) {
-      setLedger(null);
-      return;
-    }
-    const data = await fetchStaffPointsLedger({
+  const fetchData = useCallback(async () => {
+    if (!staff?.id || !staff.organization_id) return null;
+    return fetchStaffPointsLedger({
       organizationId: staff.organization_id,
       staffId: staff.id,
     });
-    setLedger(data);
   }, [staff?.id, staff?.organization_id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      load().finally(() => setLoading(false));
-    }, [load])
-  );
+  const cacheKey =
+    staff?.id && staff.organization_id
+      ? `staff-points-ledger:${staff.organization_id}:${staff.id}`
+      : 'staff-points-ledger:none';
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const { data: ledger, loading, refreshing, refresh, showContent } = useCachedFocusLoad({
+    cacheKey,
+    enabled: !!staff?.id && !!staff.organization_id,
+    fetchData,
+  });
 
   const total = ledger?.mySummary?.total_points ?? 0;
   const tierMeta = getStaffPointsTierMeta(total);
@@ -93,7 +83,7 @@ export default function StaffPointsScreen() {
 
   const recentHistory = ledger?.history.slice(0, 5) ?? [];
 
-  if (loading && !ledger) {
+  if (!showContent && !ledger) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={pointsTheme.gold} />
@@ -105,7 +95,7 @@ export default function StaffPointsScreen() {
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={pointsTheme.gold} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={pointsTheme.gold} />}
         showsVerticalScrollIndicator={false}
       >
         <StaffPointsLiveHeader

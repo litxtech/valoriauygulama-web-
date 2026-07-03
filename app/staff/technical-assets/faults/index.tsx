@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,48 +13,48 @@ import { supabase } from '@/lib/supabase';
 import type { TechFaultReportRow } from '@/lib/technicalAssets';
 import { hasTechnicalAssetsStaffAccess } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
+import { useCachedList } from '@/hooks/useCachedList';
+
+const TECH_FAULTS_CACHE_KEY = 'tech-fault-reports-all';
 
 export default function TechnicalFaultsListScreen() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const [tab, setTab] = useState<'open' | 'all'>('open');
-  const [rows, setRows] = useState<TechFaultReportRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase.from('tech_fault_reports').select('*').order('created_at', { ascending: false }).limit(200);
-    if (error) {
-      setRows([]);
-      return;
-    }
-    const list = (data ?? []) as TechFaultReportRow[];
-    setRows(
-      tab === 'open' ? list.filter((r) => r.status === 'open' || r.status === 'in_progress') : list
-    );
-  }, [tab]);
+  const fetchItems = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('tech_fault_reports')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) return [];
+    return (data ?? []) as TechFaultReportRow[];
+  }, []);
+
+  const { items: allRows, refreshing, refresh, showList } = useCachedList({
+    cacheKey: TECH_FAULTS_CACHE_KEY,
+    enabled: hasTechnicalAssetsStaffAccess(staff),
+    fetchItems,
+  });
+
+  const rows = useMemo(
+    () =>
+      tab === 'open'
+        ? allRows.filter((r) => r.status === 'open' || r.status === 'in_progress')
+        : allRows,
+    [allRows, tab]
+  );
 
   useEffect(() => {
     if (!hasTechnicalAssetsStaffAccess(staff)) {
       router.replace('/staff/technical-assets');
-      return;
     }
-    (async () => {
-      setLoading(true);
-      await load();
-      setLoading(false);
-    })();
-  }, [load, router, staff]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  }, [router, staff]);
 
   if (!hasTechnicalAssetsStaffAccess(staff)) return null;
 
-  if (loading) {
+  if (!showList && rows.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#1a365d" />
@@ -78,7 +78,7 @@ export default function TechnicalFaultsListScreen() {
       <FlatList
         data={rows}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         contentContainerStyle={styles.list}
         ListEmptyComponent={<Text style={styles.empty}>Kayıt yok.</Text>}
         renderItem={({ item }) => (

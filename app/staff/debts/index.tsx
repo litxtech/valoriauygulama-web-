@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import {
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
 import { useTranslation } from 'react-i18next';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type Row = {
   id: string;
@@ -42,13 +43,10 @@ export default function StaffDebtsIndex() {
   const { t } = useTranslation();
   const router = useRouter();
   const me = useAuthStore((s) => s.staff);
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const cacheKey = me?.id ? `staff-debts:${me.id}` : 'staff-debts:none';
 
-  const load = useCallback(async () => {
-    if (!me?.id) return;
-    setLoading(true);
+  const fetchItems = useCallback(async () => {
+    if (!me?.id) return [];
     const { data, error } = await supabase
       .from('staff_debt_entries')
       .select(
@@ -69,21 +67,17 @@ export default function StaffDebtsIndex() {
       )
       .or(`borrower_staff_id.eq.${me.id},lender_staff_id.eq.${me.id}`)
       .order('created_at', { ascending: false });
-    if (error) setRows([]);
-    else setRows((((data ?? []) as unknown) as Row[]) ?? []);
-    setLoading(false);
+    if (error) return [];
+    return (((data ?? []) as unknown) as Row[]) ?? [];
   }, [me?.id]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { items: rows, loading, refreshing, refresh } = useCachedList<Row>({
+    cacheKey,
+    enabled: !!me?.id,
+    fetchItems,
+  });
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load().finally(() => setRefreshing(false));
-  }, [load]);
-
-  if (loading && !refreshing) {
+  if (loading && !refreshing && rows.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -95,7 +89,7 @@ export default function StaffDebtsIndex() {
     <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
       >
         <TouchableOpacity style={styles.newBtn} onPress={() => router.push('/staff/debts/new')} activeOpacity={0.9}>
           <Ionicons name="add-circle-outline" size={22} color="#fff" />

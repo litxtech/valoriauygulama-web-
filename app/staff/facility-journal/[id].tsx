@@ -1,5 +1,4 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -34,6 +33,15 @@ import { canAccessFacilityJournal } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type FacilityJournalDetailCache = {
+  record: FacilityJournalRecordRow;
+  access: FacilityJournalAccessRow[];
+  viewerStaffIds: string[];
+  viewerGuestIds: string[];
+  guestAccess: FacilityJournalGuestAccessRow[];
+};
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -53,9 +61,44 @@ function FacilityJournalDetailScreen() {
   const [viewerStaffIds, setViewerStaffIds] = useState<string[]>([]);
   const [viewerGuestIds, setViewerGuestIds] = useState<string[]>([]);
   const [guestAccess, setGuestAccess] = useState<FacilityJournalGuestAccessRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [savingAccess, setSavingAccess] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const fetchData = useCallback(async (): Promise<FacilityJournalDetailCache | null> => {
+    if (!id) return null;
+    const [recRes, accRes, guestAccRes] = await Promise.all([
+      getFacilityJournalRecord(id),
+      listFacilityJournalAccess(id),
+      listFacilityJournalGuestAccess(id),
+    ]);
+    if (!recRes.data) return null;
+    const acc = (accRes.data as FacilityJournalAccessRow[]) ?? [];
+    const gAcc = (guestAccRes.data as FacilityJournalGuestAccessRow[]) ?? [];
+    return {
+      record: recRes.data as FacilityJournalRecordRow,
+      access: acc,
+      viewerStaffIds: acc.map((a) => a.staff_id),
+      viewerGuestIds: gAcc.map((a) => a.guest_id),
+      guestAccess: gAcc,
+    };
+  }, [id]);
+
+  const { data: cached, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `facility-journal-detail:${id}` : 'facility-journal-detail:none',
+    enabled: !!id,
+    fetchData,
+  });
+
+  useEffect(() => {
+    if (!cached) return;
+    setRecord(cached.record);
+    setAccess(cached.access);
+    setViewerStaffIds(cached.viewerStaffIds);
+    setViewerGuestIds(cached.viewerGuestIds);
+    setGuestAccess(cached.guestAccess);
+  }, [cached]);
+
+  const load = reload;
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -67,30 +110,6 @@ function FacilityJournalDetailScreen() {
         ),
     });
   }, [navigation, isAdminRoute, base]);
-
-  const load = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
-    const [recRes, accRes, guestAccRes] = await Promise.all([
-      getFacilityJournalRecord(id),
-      listFacilityJournalAccess(id),
-      listFacilityJournalGuestAccess(id),
-    ]);
-    if (recRes.data) setRecord(recRes.data as FacilityJournalRecordRow);
-    const acc = (accRes.data as FacilityJournalAccessRow[]) ?? [];
-    setAccess(acc);
-    setViewerStaffIds(acc.map((a) => a.staff_id));
-    const gAcc = (guestAccRes.data as FacilityJournalGuestAccessRow[]) ?? [];
-    setGuestAccess(gAcc);
-    setViewerGuestIds(gAcc.map((a) => a.guest_id));
-    setLoading(false);
-  }, [id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
 
   const toggleViewerStaff = (sid: string) => {
     setViewerStaffIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]));
@@ -148,7 +167,7 @@ function FacilityJournalDetailScreen() {
     );
   };
 
-  if (loading || !record) {
+  if (!showContent && !record) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={theme.colors.primary} />

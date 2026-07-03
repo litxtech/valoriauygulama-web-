@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '@/stores/authStore';
@@ -19,10 +18,14 @@ import {
   formatPaymentAmount,
   isPaymentActiveForList,
   isPaymentHistoryForList,
-  type PaymentRequestRow,
 } from '@/lib/payments';
-import { fetchPaymentQrStands, type PaymentQrStandRow } from '@/lib/paymentQrStands';
+import { fetchPaymentQrStands } from '@/lib/paymentQrStands';
 import { paymentKindLabel, paymentStatusLabel, paymentText } from '@/lib/paymentsI18n';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+import {
+  staffPaymentsIndexCacheKey,
+  type StaffPaymentsIndexCache,
+} from '@/lib/staffPaymentsIndexCache';
 
 const STATUS_COLOR = {
   pending: '#f59e0b',
@@ -35,54 +38,53 @@ const STATUS_COLOR = {
 export default function StaffPaymentsIndex() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [rows, setRows] = useState<PaymentRequestRow[]>([]);
-  const [stands, setStands] = useState<PaymentQrStandRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [allRows, setAllRows] = useState<PaymentRequestRow[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const orgId = staff?.organization_id ?? null;
+  const cacheKey = staffPaymentsIndexCacheKey(orgId);
 
-  const load = useCallback(async () => {
-    setLoadError(null);
+  const fetchData = useCallback(async (): Promise<StaffPaymentsIndexCache | null> => {
     try {
-      const orgId = staff?.organization_id ?? null;
       const [paymentsResult, qrStandsResult] = await Promise.allSettled([
         fetchPaymentRequests(orgId),
         fetchPaymentQrStands(orgId),
       ]);
 
+      let allRows: StaffPaymentsIndexCache['allRows'] = [];
+      let loadError: string | null = null;
       if (paymentsResult.status === 'fulfilled') {
-        setAllRows(paymentsResult.value);
-        setRows(paymentsResult.value.filter(isPaymentActiveForList));
+        allRows = paymentsResult.value;
       } else {
-        setAllRows([]);
-        setRows([]);
-        setLoadError((paymentsResult.reason as Error)?.message ?? 'Ödemeler yüklenemedi');
+        loadError = (paymentsResult.reason as Error)?.message ?? 'Ödemeler yüklenemedi';
       }
 
-      if (qrStandsResult.status === 'fulfilled') {
-        setStands(qrStandsResult.value);
-      } else {
-        setStands([]);
-      }
+      const stands =
+        qrStandsResult.status === 'fulfilled' ? qrStandsResult.value : [];
+
+      return {
+        allRows,
+        activeRows: allRows.filter(isPaymentActiveForList),
+        stands,
+        loadError,
+      };
     } catch (e) {
-      setAllRows([]);
-      setRows([]);
-      setStands([]);
-      setLoadError((e as Error).message || 'Yüklenemedi');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      return {
+        allRows: [],
+        activeRows: [],
+        stands: [],
+        loadError: (e as Error).message || 'Yüklenemedi',
+      };
     }
-  }, [staff?.organization_id]);
+  }, [orgId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad({
+    cacheKey,
+    enabled: !!orgId,
+    fetchData,
+  });
 
+  const rows = data?.activeRows ?? [];
+  const stands = data?.stands ?? [];
+  const allRows = data?.allRows ?? [];
+  const loadError = data?.loadError ?? null;
   const historyCount = allRows.filter(isPaymentHistoryForList).length;
 
   return (
@@ -108,7 +110,7 @@ export default function StaffPaymentsIndex() {
         </TouchableOpacity>
       ) : null}
 
-      {loading && rows.length === 0 && stands.length === 0 ? (
+      {!showContent && rows.length === 0 && stands.length === 0 ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
@@ -117,7 +119,7 @@ export default function StaffPaymentsIndex() {
           data={rows}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListHeaderComponent={
             <>
               {loadError ? <Text style={styles.loadError}>{loadError}</Text> : null}

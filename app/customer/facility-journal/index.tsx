@@ -7,44 +7,32 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { FacilityJournalListCard } from '@/components/facilityJournal/FacilityJournalListCard';
 import { listFacilityJournalRecordsForGuest, type FacilityJournalRecordRow } from '@/lib/facilityJournal';
 import { theme } from '@/constants/theme';
+import { useCachedList } from '@/hooks/useCachedList';
 
 export default function CustomerFacilityJournalIndex() {
   const { t } = useTranslation();
   const router = useRouter();
-  const [items, setItems] = useState<FacilityJournalRecordRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     const { data, error: err } = await listFacilityJournalRecordsForGuest();
     if (err) {
       setError(err.message ?? t('customerFacilityJournalListError'));
-      setItems([]);
-    } else {
-      setError(null);
-      setItems(data ?? []);
+      return [];
     }
-    setLoading(false);
-    setRefreshing(false);
+    setError(null);
+    return (data ?? []) as FacilityJournalRecordRow[];
   }, [t]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading((prev) => (items.length ? prev : true));
-      void load();
-    }, [load, items.length])
-  );
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    void load();
-  };
+  const { items, loading, refreshing, refresh } = useCachedList<FacilityJournalRecordRow>({
+    cacheKey: 'customer-facility-journal-list',
+    fetchItems,
+  });
 
   const openRecord = useCallback(
     (id: string) => {
@@ -67,7 +55,7 @@ export default function CustomerFacilityJournalIndex() {
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         contentContainerStyle={items.length === 0 ? styles.emptyList : styles.list}
         renderItem={({ item }) => <FacilityJournalListCard item={item} onPress={openRecord} />}
         ListEmptyComponent={

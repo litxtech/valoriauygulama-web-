@@ -1,13 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  RefreshControl,
-  TouchableOpacity,
-  ActivityIndicator,
-} from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
@@ -18,6 +10,7 @@ import {
   SMART_OPS_CRITICAL_LABELS,
   type SmartOpsTaskRow,
 } from '@/lib/smartOps';
+import { useCachedList } from '@/hooks/useCachedList';
 
 function statusColor(status: string) {
   if (status.startsWith('overdue')) return theme.colors.error;
@@ -28,32 +21,28 @@ function statusColor(status: string) {
 export default function StaffOperationsList() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [list, setList] = useState<SmartOpsTaskRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey =
+    staff?.id && staff.organization_id
+      ? `smart-ops:${staff.organization_id}:${staff.id}`
+      : 'smart-ops:none';
 
-  const load = useCallback(async () => {
-    if (!staff?.id || !staff.organization_id) {
-      setList([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+  const fetchItems = useCallback(async () => {
+    if (!staff?.id || !staff.organization_id) return [];
     try {
-      setList(
-        await fetchMySmartOpsTasks(staff.id, staff.organization_id, {
-          role: staff.role,
-          department: staff.department,
-        })
-      );
+      return await fetchMySmartOpsTasks(staff.id, staff.organization_id, {
+        role: staff.role,
+        department: staff.department,
+      });
     } catch {
-      setList([]);
+      return [];
     }
-    setLoading(false);
-  }, [staff?.id, staff?.organization_id]);
+  }, [staff?.id, staff?.organization_id, staff?.role, staff?.department]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { items: list, loading, refreshing, refresh, showList } = useCachedList({
+    cacheKey,
+    enabled: !!staff?.id && !!staff.organization_id,
+    fetchItems,
+  });
 
   return (
     <View style={styles.container}>
@@ -61,7 +50,7 @@ export default function StaffOperationsList() {
         data={list}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={styles.title}>Operasyon Görevleri</Text>
@@ -69,7 +58,7 @@ export default function StaffOperationsList() {
           </View>
         }
         ListEmptyComponent={
-          loading ? (
+          !showList ? (
             <ActivityIndicator style={{ marginTop: 40 }} color={theme.colors.primary} />
           ) : (
             <Text style={styles.empty}>Bekleyen operasyon görevi yok.</Text>

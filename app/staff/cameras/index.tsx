@@ -8,7 +8,7 @@ import {
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
@@ -17,6 +17,7 @@ import { CameraStreamView } from '@/components/CameraStreamView';
 import type { Camera, CameraLog } from '@/lib/cameras';
 import { format, parseISO } from 'date-fns';
 import { tr } from 'date-fns/locale';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const COLS = 2;
 const GAP = 12;
@@ -62,37 +63,26 @@ export default function StaffCamerasScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { staff } = useAuthStore();
-  const [cameras, setCameras] = useState<Camera[]>([]);
   const [myLogs, setMyLogs] = useState<CameraLog[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const cacheKey = staff?.id ? `staff-cameras:${staff.id}` : 'staff-cameras:none';
 
-  const cardWidth = (width - PAD * 2 - GAP) / COLS;
-
-  const load = useCallback(async () => {
-    if (!staff?.id) return;
-    const [cams, logs] = await Promise.all([
-      listCamerasForStaff(staff.id),
-      listCameraLogs({ staffId: staff.id, limit: 10 }),
-    ]);
-    setCameras(cams);
-    setMyLogs(logs);
-    setRefreshing(false);
+  const fetchItems = useCallback(async () => {
+    if (!staff?.id) return [];
+    return listCamerasForStaff(staff.id);
   }, [staff?.id]);
 
+  const { items: cameras, refreshing, refresh } = useCachedList<Camera>({
+    cacheKey,
+    enabled: !!staff?.id,
+    fetchItems,
+  });
+
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!staff?.id) return;
+    void listCameraLogs({ staffId: staff.id, limit: 10 }).then(setMyLogs);
+  }, [staff?.id, cameras.length]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    load();
-  };
+  const cardWidth = (width - PAD * 2 - GAP) / COLS;
 
   const formatDuration = (sec: number | null) => {
     if (sec == null) return '';
@@ -121,7 +111,7 @@ export default function StaffCamerasScreen() {
         columnWrapperStyle={[styles.row, { gap: GAP }]}
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />
         }
         ListHeaderComponent={
           cameras.length === 0 ? null : (

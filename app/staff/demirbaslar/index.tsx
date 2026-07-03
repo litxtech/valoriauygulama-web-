@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useCachedList } from '@/hooks/useCachedList';
 import { FlatList, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,34 +29,27 @@ const PREVIEW_HEIGHT = 168;
 export default function StaffFixedAssetsListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [assets, setAssets] = useState<AssetRow[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>('all');
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await supabase
-        .from('fixed_assets')
-        .select(
-          'id, category, name, location, status, quantity, created_at, updated_at, added_by, adder:added_by(full_name), photos:fixed_asset_photos(photo_url)'
-        )
-        .order('updated_at', { ascending: false })
-        .order('created_at', { foreignTable: 'photos', ascending: false })
-        .limit(120)
-        .limit(1, { foreignTable: 'photos' });
-      setAssets((data ?? []) as AssetRow[]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
+  const fetchItems = useCallback(async () => {
+    const { data } = await supabase
+      .from('fixed_assets')
+      .select(
+        'id, category, name, location, status, quantity, created_at, updated_at, added_by, adder:added_by(full_name), photos:fixed_asset_photos(photo_url)'
+      )
+      .order('updated_at', { ascending: false })
+      .order('created_at', { foreignTable: 'photos', ascending: false })
+      .limit(120)
+      .limit(1, { foreignTable: 'photos' });
+    return ((data ?? []) as AssetRow[]) ?? [];
   }, []);
+
+  const { items: assets, loading, refreshing, refresh } = useCachedList<AssetRow>({
+    cacheKey: 'staff-fixed-assets-list',
+    fetchItems,
+  });
 
   const filtered = useMemo(
     () =>
@@ -71,12 +65,6 @@ export default function StaffFixedAssetsListScreen() {
       }),
     [assets, search, status]
   );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
 
   const fabBottom = 16 + Math.max(insets.bottom, 8);
 
@@ -130,7 +118,7 @@ export default function StaffFixedAssetsListScreen() {
         maxToRenderPerBatch={8}
         windowSize={7}
         removeClippedSubviews
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: asset }) => {
           const thumb = asset.photos?.[0]?.photo_url;

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessDocumentManagement } from '@/lib/staffPermissions';
 import { supabase } from '@/lib/supabase';
@@ -65,23 +65,25 @@ function HubRow({
   );
 }
 
+type DocHubCache = {
+  counts: Counts;
+  recent: Array<{ id: string; title: string; updated_at: string; status: string | null }>;
+};
+
+const EMPTY_COUNTS: Counts = {
+  totalActive: 0,
+  pendingApprovals: 0,
+  expiringSoon: 0,
+  expired: 0,
+  archived: 0,
+};
+
 export function DocumentManagementHub({ basePath, showRecent = false }: Props) {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [loading, setLoading] = useState(true);
-  const [counts, setCounts] = useState<Counts>({
-    totalActive: 0,
-    pendingApprovals: 0,
-    expiringSoon: 0,
-    expired: 0,
-    archived: 0,
-  });
-  const [recent, setRecent] = useState<Array<{ id: string; title: string; updated_at: string; status: string | null }>>(
-    []
-  );
+  const cacheKey = `doc-hub:${basePath}:${showRecent ? 'recent' : 'basic'}`;
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (): Promise<DocHubCache | null> => {
     const today = new Date();
     const todayStr = today.toISOString().slice(0, 10);
     const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -110,32 +112,38 @@ export function DocumentManagementHub({ basePath, showRecent = false }: Props) {
         ...queries,
         supabase.from('documents').select('id, title, updated_at, status').order('updated_at', { ascending: false }).limit(5),
       ]);
-      setCounts({
-        totalActive: totalActiveRes.count ?? 0,
-        pendingApprovals: pendingRes.count ?? 0,
-        expiringSoon: expiringRes.count ?? 0,
-        expired: expiredRes.count ?? 0,
-        archived: archivedRes.count ?? 0,
-      });
-      if (!recentRes.error && recentRes.data) setRecent(recentRes.data as typeof recent);
-    } else {
-      const [totalActiveRes, pendingRes, expiringRes, expiredRes, archivedRes] = await Promise.all(queries);
-      setCounts({
-        totalActive: totalActiveRes.count ?? 0,
-        pendingApprovals: pendingRes.count ?? 0,
-        expiringSoon: expiringRes.count ?? 0,
-        expired: expiredRes.count ?? 0,
-        archived: archivedRes.count ?? 0,
-      });
+      return {
+        counts: {
+          totalActive: totalActiveRes.count ?? 0,
+          pendingApprovals: pendingRes.count ?? 0,
+          expiringSoon: expiringRes.count ?? 0,
+          expired: expiredRes.count ?? 0,
+          archived: archivedRes.count ?? 0,
+        },
+        recent: !recentRes.error && recentRes.data ? (recentRes.data as DocHubCache['recent']) : [],
+      };
     }
-    setLoading(false);
+
+    const [totalActiveRes, pendingRes, expiringRes, expiredRes, archivedRes] = await Promise.all(queries);
+    return {
+      counts: {
+        totalActive: totalActiveRes.count ?? 0,
+        pendingApprovals: pendingRes.count ?? 0,
+        expiringSoon: expiringRes.count ?? 0,
+        expired: expiredRes.count ?? 0,
+        archived: archivedRes.count ?? 0,
+      },
+      recent: [],
+    };
   }, [showRecent]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load])
-  );
+  const { data, loading, refresh } = useCachedFocusLoad<DocHubCache>({
+    cacheKey,
+    fetchData,
+  });
+
+  const counts = data?.counts ?? EMPTY_COUNTS;
+  const recent = data?.recent ?? [];
 
   const urgentTotal = useMemo(
     () => counts.pendingApprovals + counts.expiringSoon + counts.expired,
@@ -167,7 +175,7 @@ export function DocumentManagementHub({ basePath, showRecent = false }: Props) {
             <Ionicons name="cloud-upload-outline" size={20} color="#fff" />
             <Text style={styles.primaryBtnText}>Belge yükle</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.refreshBtn} activeOpacity={0.85} onPress={() => void load()}>
+          <TouchableOpacity style={styles.refreshBtn} activeOpacity={0.85} onPress={refresh}>
             {loading ? (
               <ActivityIndicator color={docTheme.accent} size="small" />
             ) : (

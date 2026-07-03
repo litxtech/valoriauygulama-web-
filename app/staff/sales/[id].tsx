@@ -7,6 +7,7 @@ import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessReservationSales } from '@/lib/staffPermissions';
 import { useTranslation } from 'react-i18next';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type SaleDetail = {
   id: string;
@@ -72,12 +73,11 @@ export default function SaleDetailScreen() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
   const canUse = canAccessReservationSales(staff);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sale, setSale] = useState<SaleDetail | null>(null);
 
-  const load = useCallback(async () => {
-    if (!id || !canUse) return;
+  const fetchData = useCallback(async (): Promise<SaleDetail | null> => {
+    if (!id || !canUse) return null;
     const { data, error } = await supabase
       .from('reservation_sales')
       .select(
@@ -97,15 +97,26 @@ export default function SaleDetailScreen() {
       .eq('id', id)
       .single();
     if (error) throw error;
-    setSale((data as unknown as SaleDetail) ?? null);
+    return (data as unknown as SaleDetail) ?? null;
   }, [id, canUse]);
 
+  const { data: cachedSale, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `staff-sale-detail:${id}` : 'staff-sale-detail:none',
+    enabled: !!id && canUse,
+    fetchData,
+  });
+
   useEffect(() => {
-    setLoading(true);
-    load()
-      .catch((e) => Alert.alert(t('error'), (e as Error)?.message ?? t('recordError')))
-      .finally(() => setLoading(false));
-  }, [load]);
+    setSale(cachedSale);
+  }, [cachedSale]);
+
+  const load = useCallback(async () => {
+    try {
+      await reload();
+    } catch (e) {
+      Alert.alert(t('error'), (e as Error)?.message ?? t('recordError'));
+    }
+  }, [reload, t]);
 
   const canEditCommissionStatus = useMemo(() => {
     if (!sale || !staff?.id) return false;
@@ -147,7 +158,7 @@ export default function SaleDetailScreen() {
     );
   }
 
-  if (loading) {
+  if (!showContent && !sale) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={theme.colors.primary} />

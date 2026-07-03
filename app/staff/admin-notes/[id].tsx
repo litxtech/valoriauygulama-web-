@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AdminNotesAccessGate } from '@/components/adminNotes/AdminNotesAccessGate';
 import { AdminNoteDetailCard } from '@/components/adminNotes/AdminNoteDetailCard';
 import { AdminNoteMediaViewer } from '@/components/adminNotes/AdminNoteMediaViewer';
@@ -14,6 +14,7 @@ import { shareQuickNoteWithOptions } from '@/lib/adminQuickNoteShare';
 import { canEditQuickNote } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { notesTheme } from '@/constants/adminNotesTheme';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 function AdminNoteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,30 +25,27 @@ function AdminNoteDetailScreen() {
   const base = isAdminRoute ? '/admin/notes' : '/staff/admin-notes';
 
   const [note, setNote] = useState<AdminQuickNoteRow | null>(null);
-  const [loading, setLoading] = useState(true);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
-  const hasNoteRef = useRef(false);
-  hasNoteRef.current = !!note;
 
-  const load = useCallback(async () => {
-    if (!id) return;
+  const fetchData = useCallback(async () => {
+    if (!id) return null;
     const { data, error } = await getAdminQuickNote(id);
     if (error) Alert.alert('Hata', error);
-    setNote(data);
-    setLoading(false);
+    return data;
   }, [id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (hasNoteRef.current) {
-        void load();
-        return;
-      }
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { data: cachedNote, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `admin-quick-note:${id}` : 'admin-quick-note:none',
+    enabled: !!id,
+    fetchData,
+  });
+
+  useEffect(() => {
+    setNote(cachedNote);
+  }, [cachedNote]);
+
+  const load = reload;
 
   const openViewer = (index: number) => {
     setViewerIndex(index);
@@ -87,7 +85,7 @@ function AdminNoteDetailScreen() {
     ]);
   };
 
-  if (loading && !note) {
+  if (!showContent && !note) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={notesTheme.accent} size="large" />

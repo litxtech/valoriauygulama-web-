@@ -84,9 +84,9 @@ function StaffProfileBackToHome() {
 }
 
 const HEADER_CTRL = 34;
-const BADGE_REFRESH_MIN_GAP_MS = 90_000;
+const BADGE_REFRESH_MIN_GAP_MS = 120_000;
 const ANDROID_REALTIME_DEFER_MS = 3500;
-const ANDROID_BADGE_HEAVY_DEFER_MS = 2800;
+const TAB_BADGE_HEAVY_DEFER_MS = 2800;
 const IS_ANDROID = Platform.OS === 'android';
 
 const boardReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -214,11 +214,7 @@ function StaffMainTabsLayout() {
     if (!staff?.id) return;
     const runInitial = () => {
       void refreshTabBadgesLite();
-      if (IS_ANDROID) {
-        runAfterUiReady(() => void refreshTabBadgesHeavy(), { delayMs: ANDROID_BADGE_HEAVY_DEFER_MS });
-        return;
-      }
-      void refreshTabBadgesHeavy();
+      runAfterUiReady(() => void refreshTabBadgesHeavy(), { delayMs: TAB_BADGE_HEAVY_DEFER_MS });
     };
     const task = runAfterUiReady(runInitial);
     return () => task.cancel();

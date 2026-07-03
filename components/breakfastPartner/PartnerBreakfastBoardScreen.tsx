@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import {
   View,
   Text,
@@ -43,40 +44,26 @@ export function PartnerBreakfastBoardScreen() {
   const canView = canViewPartnerBreakfastBoard(staff);
 
   const [boardDate, setBoardDate] = useState(() => resolvePartnerKitchenBoardDate());
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [board, setBoard] = useState<Awaited<ReturnType<typeof fetchPartnerBreakfastBoard>>>(null);
 
   const todayIso = todayIstanbulDate();
   const tomorrowIso = tomorrowIstanbulDate();
 
-  const load = useCallback(async () => {
-    if (!canView) {
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
-    try {
-      const data = await fetchPartnerBreakfastBoard(boardDate);
-      setBoard(data);
-    } catch {
-      setBoard(null);
-    }
-    setLoading(false);
-    setRefreshing(false);
+  const fetchData = useCallback(async () => {
+    if (!canView) return null;
+    return await fetchPartnerBreakfastBoard(boardDate);
   }, [canView, boardDate]);
+
+  const { data: board, loading, refreshing, refresh } = useCachedFocusLoad({
+    cacheKey: `partner-breakfast-board:${boardDate}`,
+    enabled: canView,
+    fetchData,
+  });
 
   useFocusEffect(
     useCallback(() => {
       setBoardDate(resolvePartnerKitchenBoardDate());
-      setLoading(true);
     }, [])
   );
-
-  useEffect(() => {
-    if (!canView) return;
-    void load();
-  }, [canView, load]);
 
   if (!canView) {
     return (
@@ -104,7 +91,7 @@ export function PartnerBreakfastBoardScreen() {
             <Text style={styles.title}>Partner kahvaltı panosu</Text>
             <Text style={styles.subtitle}>{formatPartnerDateTurkish(recordDate, { weekday: true })}</Text>
           </View>
-          <TouchableOpacity onPress={() => { setRefreshing(true); void load(); }} style={styles.iconBtn}>
+          <TouchableOpacity onPress={() => refresh()} style={styles.iconBtn}>
             <Ionicons name="refresh" size={20} color={partnerTheme.accent} />
           </TouchableOpacity>
         </View>
@@ -155,7 +142,7 @@ export function PartnerBreakfastBoardScreen() {
           keyExtractor={(item) => item.hotelId}
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={partnerTheme.accent} />
+            <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={partnerTheme.accent} />
           }
           ListEmptyComponent={<Text style={styles.empty}>Aktif partner otel yok.</Text>}
           renderItem={({ item }) => {

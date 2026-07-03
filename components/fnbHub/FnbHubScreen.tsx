@@ -31,6 +31,21 @@ import { supabase } from '@/lib/supabase';
 import { fetchOrganizationSlugById } from '@/lib/publicKitchenMenu';
 import { buildPublicKitchenMenuUrl } from '@/lib/appPublicUrl';
 import { PressableScale } from '@/components/premium/PressableScale';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type FnbHubCache = {
+  kitchenRevenue: number;
+  salesCount: number;
+  menuCount: number;
+  publicMenuUrl: string | null;
+};
+
+const EMPTY_FNB: FnbHubCache = {
+  kitchenRevenue: 0,
+  salesCount: 0,
+  menuCount: 0,
+  publicMenuUrl: null,
+};
 
 type Props = {
   variant?: 'staff' | 'admin';
@@ -63,12 +78,62 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
   const [financeStaffIds, setFinanceStaffIds] = useState<string[]>([]);
   const canUse = canAccessFnbHub(staff, financeStaffIds);
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [kitchenRevenue, setKitchenRevenue] = useState(0);
-  const [salesCount, setSalesCount] = useState(0);
-  const [menuCount, setMenuCount] = useState(0);
-  const [publicMenuUrl, setPublicMenuUrl] = useState<string | null>(null);
+  const cacheKey = `fnb-hub:${variant}:${staff?.id ?? 'none'}`;
+
+  const fetchData = useCallback(async (): Promise<FnbHubCache | null> => {
+    if (!staff?.id || !canUse) return EMPTY_FNB;
+
+    const next: FnbHubCache = { ...EMPTY_FNB };
+
+    await Promise.all([
+      canAccessKitchenFinance(staff, financeStaffIds)
+        ? fetchDaySummary()
+            .then((s) => {
+              next.kitchenRevenue = Number(s.total_revenue ?? 0);
+            })
+            .catch(() => {})
+        : Promise.resolve(),
+      canAccessReservationSales(staff)
+        ? supabase
+            .rpc('my_sales_commission_summary', { p_from: null, p_to: null })
+            .then(({ data }) => {
+              const row = (Array.isArray(data) ? data[0] : data) as { sales_count?: number } | null;
+              next.salesCount = Number(row?.sales_count ?? 0);
+            })
+            .catch(() => {})
+        : Promise.resolve(),
+      canManageHotelKitchenMenu(staff) && staff.organization_id
+        ? Promise.all([
+            supabase
+              .from('hotel_kitchen_menu_items')
+              .select('id', { count: 'exact', head: true })
+              .eq('organization_id', staff.organization_id)
+              .then(({ count }) => {
+                next.menuCount = count ?? 0;
+              })
+              .catch(() => {}),
+            fetchOrganizationSlugById(staff.organization_id)
+              .then((slug) => {
+                next.publicMenuUrl = slug ? buildPublicKitchenMenuUrl(slug) : null;
+              })
+              .catch(() => {}),
+          ])
+        : Promise.resolve(),
+    ]);
+
+    return next;
+  }, [canUse, staff, financeStaffIds]);
+
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<FnbHubCache>({
+    cacheKey,
+    enabled: canUse,
+    fetchData,
+  });
+
+  const kitchenRevenue = data?.kitchenRevenue ?? 0;
+  const salesCount = data?.salesCount ?? 0;
+  const menuCount = data?.menuCount ?? 0;
+  const publicMenuUrl = data?.publicMenuUrl ?? null;
 
   const palette = variant === 'admin' ? adminTheme.colors : { primary: theme.colors.primary, textMuted: theme.colors.textSecondary };
 
@@ -88,61 +153,6 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
     }
     void fetchKitchenFinanceStaffIds(staff.organization_id).then(setFinanceStaffIds);
   }, [staff?.organization_id]);
-
-  const load = useCallback(async () => {
-    if (!staff?.id || !canUse) return;
-
-    const tasks: Promise<void>[] = [];
-
-    if (canAccessKitchenFinance(staff, financeStaffIds)) {
-      tasks.push(
-        fetchDaySummary()
-          .then((s) => setKitchenRevenue(Number(s.total_revenue ?? 0)))
-          .catch(() => setKitchenRevenue(0))
-      );
-    }
-
-    if (canAccessReservationSales(staff)) {
-      tasks.push(
-        supabase
-          .rpc('my_sales_commission_summary', { p_from: null, p_to: null })
-          .then(({ data }) => {
-            const row = (Array.isArray(data) ? data[0] : data) as { sales_count?: number } | null;
-            setSalesCount(Number(row?.sales_count ?? 0));
-          })
-          .catch(() => setSalesCount(0))
-      );
-    }
-
-    if (canManageHotelKitchenMenu(staff) && staff.organization_id) {
-      tasks.push(
-        supabase
-          .from('hotel_kitchen_menu_items')
-          .select('id', { count: 'exact', head: true })
-          .eq('organization_id', staff.organization_id)
-          .then(({ count }) => setMenuCount(count ?? 0))
-          .catch(() => setMenuCount(0))
-      );
-      tasks.push(
-        fetchOrganizationSlugById(staff.organization_id)
-          .then((slug) => setPublicMenuUrl(slug ? buildPublicKitchenMenuUrl(slug) : null))
-          .catch(() => setPublicMenuUrl(null))
-      );
-    }
-
-    await Promise.all(tasks);
-  }, [canUse, staff]);
-
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
 
   const openExternal = (url: string) => {
     if (Platform.OS === 'web') window.open(url, '_blank');
@@ -169,7 +179,7 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
     );
   }
 
-  if (loading) {
+  if (loading && !showContent) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={palette.primary} />
@@ -181,7 +191,7 @@ export function FnbHubScreen({ variant = 'staff' }: Props) {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={palette.primary} />}
     >
       <LinearGradient colors={['#ea580c', '#c2410c', '#9a3412']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroTop}>

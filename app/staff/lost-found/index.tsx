@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, usePathname, useRouter, useNavigation } from 'expo-router';
+import { usePathname, useRouter, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
@@ -17,6 +17,7 @@ import { StaffStackBackButton } from '@/lib/staffStackBack';
 import { LostFoundAccessGate } from '@/components/staff/LostFoundAccessGate';
 import { CachedImage } from '@/components/CachedImage';
 import { daysUntilRetention, getLostFoundCounts, listLostFoundItems, type LostFoundItemRow } from '@/lib/lostFound';
+import { useCachedList } from '@/hooks/useCachedList';
 import {
   LOST_FOUND_STATUSES,
   lostFoundCategoryLabel,
@@ -63,25 +64,33 @@ function LostFoundIndexScreen() {
   }, [navigation, isAdminRoute, base, t]);
 
   const [tab, setTab] = useState<TabKey>('stored');
-  const [items, setItems] = useState<LostFoundItemRow[]>([]);
+  const cacheKey = `lost-found:${tab}`;
   const [counts, setCounts] = useState<Record<LostFoundStatus, number>>({ stored: 0, returned: 0, disposed: 0 });
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    const [listRes, countRes] = await Promise.all([listLostFoundItems(tab), getLostFoundCounts()]);
-    setItems(listRes.data);
+  const fetchItems = useCallback(async () => {
+    const [listRes, countRes] = await Promise.all([
+      listLostFoundItems(tab),
+      getLostFoundCounts(),
+    ]);
     if (countRes.data) setCounts(countRes.data);
-    setLoading(false);
-    setRefreshing(false);
+    return listRes.data;
   }, [tab]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      load();
-    }, [load])
-  );
+  const {
+    items,
+    loading,
+    load,
+  } = useCachedList<LostFoundItemRow>({
+    cacheKey,
+    fetchItems,
+  });
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
 
   const tabLabels = useMemo(
     () =>
@@ -163,7 +172,6 @@ function LostFoundIndexScreen() {
             style={[styles.tab, tab === s && styles.tabActive]}
             onPress={() => {
               setTab(s);
-              setLoading(true);
             }}
           >
             <Text style={[styles.tabText, tab === s && styles.tabTextActive]}>{tabLabels[s]}</Text>
@@ -176,7 +184,7 @@ function LostFoundIndexScreen() {
         ))}
       </View>
 
-      {loading ? (
+      {loading && items.length === 0 ? (
         <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
       ) : (
         <FlatList
@@ -187,10 +195,7 @@ function LostFoundIndexScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                load();
-              }}
+              onRefresh={onRefresh}
               tintColor={theme.colors.primary}
             />
           }

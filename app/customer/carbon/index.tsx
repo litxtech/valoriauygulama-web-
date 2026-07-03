@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import {
   View,
   Text,
@@ -60,30 +61,18 @@ function fmtNum(n: number, max = 2): string {
 
 export default function CustomerCarbonScreen() {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [row, setRow] = useState<CarbonRow | null>(null);
   const [methodologyOpen, setMethodologyOpen] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchData = useCallback(async (): Promise<CarbonRow | null> => {
     const { data, error } = await supabase.rpc('get_my_latest_stay_carbon');
-    if (error || !data?.length) {
-      setRow(null);
-      return;
-    }
-    setRow((data[0] as CarbonRow) ?? null);
+    if (error || !data?.length) return null;
+    return (data[0] as CarbonRow) ?? null;
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const { data: row, loading, refreshing, refresh, showContent } = useCachedFocusLoad<CarbonRow>({
+    cacheKey: 'customer-carbon:latest-stay',
+    fetchData,
+  });
 
   const treeCount = useMemo(() => {
     if (!row?.total_kg_co2) return 0;
@@ -110,7 +99,7 @@ export default function CustomerCarbonScreen() {
     );
   };
 
-  if (loading) {
+  if (!showContent && loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -122,7 +111,7 @@ export default function CustomerCarbonScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[theme.colors.primary]} />}
     >
       <View style={styles.header}>
         <Ionicons name="leaf-outline" size={24} color={theme.colors.primary} />

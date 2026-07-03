@@ -81,6 +81,8 @@ const HOTEL_LON = typeof process.env.EXPO_PUBLIC_HOTEL_LON !== 'undefined' ? Num
 
 const POI_TYPES: PoiType[] = ['restaurant', 'cafe', 'hotel', 'pharmacy', 'hospital', 'police'];
 
+const MARKER_FOCUS_TTL_MS = 45_000;
+
 export default function CustomerMapScreen() {
   const { t, i18n } = useTranslation();
   const appLang = (i18n.language || 'tr').split('-')[0];
@@ -112,6 +114,15 @@ export default function CustomerMapScreen() {
   const [diningMapMarkers, setDiningMapMarkers] = useState<MapDiningMarker[]>([]);
   const [transferTourMapMarkers, setTransferTourMapMarkers] = useState<MapTransferTourMarker[]>([]);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedPostsLoadedAtRef = useRef<number | null>(null);
+  const diningMarkersLoadedAtRef = useRef<number | null>(null);
+  const transferMarkersLoadedAtRef = useRef<number | null>(null);
+  const mapPostsRef = useRef(mapPosts);
+  const diningMapMarkersRef = useRef(diningMapMarkers);
+  const transferTourMapMarkersRef = useRef(transferTourMapMarkers);
+  mapPostsRef.current = mapPosts;
+  diningMapMarkersRef.current = diningMapMarkers;
+  transferTourMapMarkersRef.current = transferTourMapMarkers;
 
   const stopLiveNavigation = useCallback(() => {
     setNavigationActive(false);
@@ -133,7 +144,16 @@ export default function CustomerMapScreen() {
     };
   }, []);
 
-  const loadFeedPostsWithLocation = useCallback(async () => {
+  const loadFeedPostsWithLocation = useCallback(async (opts?: { force?: boolean }) => {
+    const loadedAt = feedPostsLoadedAtRef.current;
+    if (
+      !opts?.force &&
+      mapPostsRef.current.length > 0 &&
+      loadedAt != null &&
+      Date.now() - loadedAt < MARKER_FOCUS_TTL_MS
+    ) {
+      return;
+    }
     const { data } = await supabase
       .from('feed_posts')
       .select('id, lat, lng, staff_id, guest_id, media_type, thumbnail_url, media_url, staff:staff_id(full_name, profile_image), guest:guest_id(full_name, photo_url)')
@@ -154,9 +174,19 @@ export default function CustomerMapScreen() {
       return { id: r.id, lat: r.lat, lng: r.lng, authorName, authorAvatarUrl, postPreviewUrl, staffId: r.staff_id ?? null, guestId: r.guest_id ?? null };
     });
     setMapPosts(posts);
+    feedPostsLoadedAtRef.current = Date.now();
   }, []);
 
-  const loadDiningMapMarkers = useCallback(async () => {
+  const loadDiningMapMarkers = useCallback(async (opts?: { force?: boolean }) => {
+    const loadedAt = diningMarkersLoadedAtRef.current;
+    if (
+      !opts?.force &&
+      diningMapMarkersRef.current.length > 0 &&
+      loadedAt != null &&
+      Date.now() - loadedAt < MARKER_FOCUS_TTL_MS
+    ) {
+      return;
+    }
     if (!user && !staff) {
       setDiningMapMarkers([]);
       return;
@@ -196,6 +226,7 @@ export default function CustomerMapScreen() {
       };
     });
     setDiningMapMarkers(list.filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng)));
+    diningMarkersLoadedAtRef.current = Date.now();
   }, [user, staff]);
 
   const onDiningVenueMapPress = useCallback(
@@ -209,7 +240,16 @@ export default function CustomerMapScreen() {
     [pathname, router]
   );
 
-  const loadTransferTourMapMarkers = useCallback(async () => {
+  const loadTransferTourMapMarkers = useCallback(async (opts?: { force?: boolean }) => {
+    const loadedAt = transferMarkersLoadedAtRef.current;
+    if (
+      !opts?.force &&
+      transferTourMapMarkersRef.current.length > 0 &&
+      loadedAt != null &&
+      Date.now() - loadedAt < MARKER_FOCUS_TTL_MS
+    ) {
+      return;
+    }
     if (!user && !staff) {
       setTransferTourMapMarkers([]);
       return;
@@ -238,6 +278,7 @@ export default function CustomerMapScreen() {
       };
     });
     setTransferTourMapMarkers(list.filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng)));
+    transferMarkersLoadedAtRef.current = Date.now();
   }, [user, staff, appLang, t]);
 
   const onTransferTourMapPress = useCallback(
@@ -381,7 +422,7 @@ export default function CustomerMapScreen() {
     const ch = supabase
       .channel('map_dining_venues')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'dining_venues' }, () => {
-        void loadDiningMapMarkers();
+        void loadDiningMapMarkers({ force: true });
       })
       .subscribe();
     return () => {
@@ -393,7 +434,7 @@ export default function CustomerMapScreen() {
     const ch = supabase
       .channel('map_transfer_services')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transfer_services' }, () => {
-        void loadTransferTourMapMarkers();
+        void loadTransferTourMapMarkers({ force: true });
       })
       .subscribe();
     return () => {
@@ -826,7 +867,7 @@ export default function CustomerMapScreen() {
         visible={shareSheetVisible}
         onClose={() => setShareSheetVisible(false)}
         location={userLocation ?? poiCenter}
-        onSuccess={loadFeedPostsWithLocation}
+        onSuccess={() => loadFeedPostsWithLocation({ force: true })}
       />
 
       <MapPostDetailSheet
@@ -835,7 +876,7 @@ export default function CustomerMapScreen() {
         onClose={() => setSelectedPostId(null)}
         onPostDeleted={() => {
           setSelectedPostId(null);
-          loadFeedPostsWithLocation();
+          loadFeedPostsWithLocation({ force: true });
         }}
         onPostUnavailable={clearMapPostPin}
       />

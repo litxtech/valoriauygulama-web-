@@ -1,37 +1,31 @@
 import { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { adminTheme } from '@/constants/adminTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { listStaffDepartmentRules } from '@/lib/departmentRules';
 import { DepartmentRuleListItem } from '@/components/departmentRules/DepartmentRuleListItem';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type Tab = 'all' | 'unread' | 'pending_ack' | 'archive';
 
 export default function StaffDepartmentRulesScreen() {
   const router = useRouter();
   const { staff } = useAuthStore();
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof listStaffDepartmentRules>>['data']>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>('all');
+  const cacheKey = staff?.id ? `dept-rules:${staff.id}` : 'dept-rules:none';
 
-  const load = useCallback(async () => {
-    if (!staff?.id || !staff.organization_id) return;
-    setLoading(true);
+  const fetchItems = useCallback(async () => {
+    if (!staff?.id || !staff.organization_id) return [];
     const res = await listStaffDepartmentRules(staff.id, staff.organization_id, staff.department ?? null);
-    setRows(res.data);
-    setLoading(false);
+    return res.data;
   }, [staff?.id, staff?.organization_id, staff?.department]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const { items: rows, loading, refreshing, refresh } = useCachedList({
+    cacheKey,
+    enabled: !!staff?.id && !!staff.organization_id,
+    fetchItems,
+  });
 
   const filtered = useMemo(() => {
     if (tab === 'unread') return rows.filter((r) => !r.readStatus || r.readStatus === 'unread');
@@ -62,7 +56,7 @@ export default function StaffDepartmentRulesScreen() {
         data={filtered}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={adminTheme.colors.accent} />}
         ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Yükleniyor…' : 'Görüntülenecek kural yok'}</Text>}
         renderItem={({ item }) => (
           <DepartmentRuleListItem

@@ -11,7 +11,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
@@ -28,6 +28,13 @@ import {
 } from '@/lib/finance';
 import { formatDateShort } from '@/lib/date';
 import { useTranslation } from 'react-i18next';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type DebtDetailCache = {
+  debt: DebtRow;
+  payments: PayRow[];
+  checks: { id: string; counterparty_name: string; amount: number }[];
+};
 
 type DebtRow = {
   id: string;
@@ -65,7 +72,6 @@ export default function StaffDebtDetail() {
   const [debt, setDebt] = useState<DebtRow | null>(null);
   const [payments, setPayments] = useState<PayRow[]>([]);
   const [checks, setChecks] = useState<{ id: string; counterparty_name: string; amount: number }[]>([]);
-  const [loading, setLoading] = useState(true);
   const [payOpen, setPayOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState<DebtPaymentMethod>('cash');
@@ -73,9 +79,8 @@ export default function StaffDebtDetail() {
   const [payCheckId, setPayCheckId] = useState<string | null>(null);
   const [savingPay, setSavingPay] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
+  const fetchData = useCallback(async (): Promise<DebtDetailCache | null> => {
+    if (!id) return null;
     const { data: d, error: e1 } = await supabase
       .from('staff_debt_entries')
       .select(
@@ -100,44 +105,47 @@ export default function StaffDebtDetail() {
       .eq('id', id)
       .single();
     if (e1 || !d) {
-      setDebt(null);
-      setLoading(false);
       Alert.alert(t('staffDebtsRecordLabel'), t('staffDebtsAccessDenied'));
-      return;
+      return null;
     }
-    setDebt(d as unknown as DebtRow);
-
-    const { data: p } = await supabase
-      .from('staff_debt_payments')
-      .select('id, amount, payment_method, paid_at, notes, finance_check_id')
-      .eq('debt_entry_id', id)
-      .order('paid_at', { ascending: false });
-    setPayments((p as PayRow[]) ?? []);
-
     const dr = d as DebtRow;
-    const { data: c } = await supabase
-      .from('finance_checks')
-      .select('id, counterparty_name, amount')
-      .eq('organization_id', dr.organization_id)
-      .not('status', 'eq', 'paid')
-      .not('status', 'eq', 'bounced')
-      .not('status', 'eq', 'cancelled')
-      .order('created_at', { ascending: false })
-      .limit(40);
-    setChecks(((c ?? []) as { id: string; counterparty_name: string; amount: number }[]) ?? []);
+    const [{ data: p }, { data: c }] = await Promise.all([
+      supabase
+        .from('staff_debt_payments')
+        .select('id, amount, payment_method, paid_at, notes, finance_check_id')
+        .eq('debt_entry_id', id)
+        .order('paid_at', { ascending: false }),
+      supabase
+        .from('finance_checks')
+        .select('id, counterparty_name, amount')
+        .eq('organization_id', dr.organization_id)
+        .not('status', 'eq', 'paid')
+        .not('status', 'eq', 'bounced')
+        .not('status', 'eq', 'cancelled')
+        .order('created_at', { ascending: false })
+        .limit(40),
+    ]);
+    return {
+      debt: dr,
+      payments: (p as PayRow[]) ?? [],
+      checks: ((c ?? []) as { id: string; counterparty_name: string; amount: number }[]) ?? [],
+    };
+  }, [id, t]);
 
-    setLoading(false);
-  }, [id]);
+  const { data: cached, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `staff-debt-detail:${id}` : 'staff-debt-detail:none',
+    enabled: !!id,
+    fetchData,
+  });
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!cached) return;
+    setDebt(cached.debt);
+    setPayments(cached.payments);
+    setChecks(cached.checks);
+  }, [cached]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load]),
-  );
+  const load = reload;
 
   const submitPayment = async () => {
     if (!id || !me?.id || !debt) return;
@@ -179,7 +187,7 @@ export default function StaffDebtDetail() {
     await load();
   };
 
-  if (loading || !debt) {
+  if (!showContent && !debt) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />

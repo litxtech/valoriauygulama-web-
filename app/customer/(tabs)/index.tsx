@@ -659,121 +659,124 @@ export default function CustomerHome() {
     setFeedPosts(postsWithMedia);
     const facilities = facilitiesRes.data ?? [];
     setFacilities(facilities);
-    try {
-      const groups = await loadActiveStaffStories(undefined, false);
-      setStoryGroups(groups);
-    } catch {
-      setStoryGroups([]);
-    }
-    const guestId = guestIdForState;
-    const ids = postsWithMedia.map((p) => p.id);
-    let likeCount: Record<string, number> = {};
-    let commentCount: Record<string, number> = {};
-    let myLikeIds: string[] = [];
-    if (ids.length > 0) {
-      const [reactionsRes, commentsRes, myReactionsRes] = await Promise.all([
-        supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-        supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
-        guestId ? supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('guest_id', guestId) : Promise.resolve({ data: [] as { post_id: string }[] }),
-      ]);
-      const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
-      const comments = (commentsRes.data ?? []) as { post_id: string }[];
-      const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
-      likeCount = {};
-      reactions.forEach((r) => { likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1; });
-      commentCount = {};
-      comments.forEach((c) => {
-        commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
-      });
-      myLikeIds = myReactions.map((r) => r.post_id);
-      setLikeCounts(likeCount);
-      setCommentCounts(commentCount);
-      setMyLikes(new Set(myLikeIds));
-      setCommentsByPost({});
-      if (guestId) {
-        void recordGuestFeedPostViews(ids, guestId);
-        const myPostIds = postsWithMedia.filter((p) => p.guest_id === guestId).map((p) => p.id);
-        if (myPostIds.length > 0) {
-          setMyGuestViewCounts(await getMyGuestFeedPostViewCounts(myPostIds));
+    setLoading(false);
+
+    void (async () => {
+      try {
+        const groups = await loadActiveStaffStories(undefined, false);
+        setStoryGroups(groups);
+      } catch {
+        setStoryGroups([]);
+      }
+      const guestId = guestIdForState;
+      const ids = postsWithMedia.map((p) => p.id);
+      let likeCount: Record<string, number> = {};
+      let commentCount: Record<string, number> = {};
+      let myLikeIds: string[] = [];
+      if (ids.length > 0) {
+        const [reactionsRes, commentsRes, myReactionsRes] = await Promise.all([
+          supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
+          supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
+          guestId ? supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('guest_id', guestId) : Promise.resolve({ data: [] as { post_id: string }[] }),
+        ]);
+        const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
+        const comments = (commentsRes.data ?? []) as { post_id: string }[];
+        const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
+        likeCount = {};
+        reactions.forEach((r) => { likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1; });
+        commentCount = {};
+        comments.forEach((c) => {
+          commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
+        });
+        myLikeIds = myReactions.map((r) => r.post_id);
+        setLikeCounts(likeCount);
+        setCommentCounts(commentCount);
+        setMyLikes(new Set(myLikeIds));
+        setCommentsByPost({});
+        if (guestId) {
+          void recordGuestFeedPostViews(ids, guestId);
+          const myPostIds = postsWithMedia.filter((p) => p.guest_id === guestId).map((p) => p.id);
+          if (myPostIds.length > 0) {
+            setMyGuestViewCounts(await getMyGuestFeedPostViewCounts(myPostIds));
+          } else {
+            setMyGuestViewCounts({});
+          }
         } else {
           setMyGuestViewCounts({});
         }
       } else {
+        setLikeCounts({});
+        setCommentCounts({});
+        setMyLikes(new Set());
+        setCommentsByPost({});
         setMyGuestViewCounts({});
       }
-    } else {
-      setLikeCounts({});
-      setCommentCounts({});
-      setMyLikes(new Set());
-      setCommentsByPost({});
-      setMyGuestViewCounts({});
-    }
 
-    prefetchImageUrls(
-      [
-        ...collectFeedPostPrefetchUrls(posts),
-        ...posts.map((p) =>
-          resolveFeedAuthorAvatarUrl({
-            staff: p.staff,
-            guest: p.guest,
-            staffId: p.staff_id,
-            staffAvatarById: buildStaffAvatarLookup(activeStaffFiltered),
-          })
-        ),
-        ...activeStaffFiltered.map((s) => s.profile_image),
-      ],
-      CUSTOMER_IMAGE_PREFETCH_CAP
-    );
+      prefetchImageUrls(
+        [
+          ...collectFeedPostPrefetchUrls(posts),
+          ...posts.map((p) =>
+            resolveFeedAuthorAvatarUrl({
+              staff: p.staff,
+              guest: p.guest,
+              staffId: p.staff_id,
+              staffAvatarById: buildStaffAvatarLookup(activeStaffFiltered),
+            })
+          ),
+          ...activeStaffFiltered.map((s) => s.profile_image),
+        ],
+        CUSTOMER_IMAGE_PREFETCH_CAP
+      );
 
-    let myRoomValue: MyRoom | null = null;
-    if (user?.email) {
-      const { data: guest } = await supabase
-        .from('guests')
-        .select('room_id')
-        .eq('email', user.email)
-        .eq('status', 'checked_in')
-        .order('check_in_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (guest?.room_id) {
-        const { data: room } = await supabase
-          .from('rooms')
-          .select('room_number, view_type')
-          .eq('id', guest.room_id)
-          .single();
-        const { data: g } = await supabase
+      let myRoomValue: MyRoom | null = null;
+      if (user?.email) {
+        const { data: guest } = await supabase
           .from('guests')
-          .select('check_in_at, check_out_at')
-          .eq('room_id', guest.room_id)
+          .select('room_id')
+          .eq('email', user.email)
           .eq('status', 'checked_in')
+          .order('check_in_at', { ascending: false })
           .limit(1)
-          .single();
-        if (room && g) {
-          myRoomValue = {
-            room_number: room.room_number,
-            view_type: room.view_type,
-            check_in_at: g.check_in_at,
-            check_out_at: g.check_out_at,
-          };
+          .maybeSingle();
+        if (guest?.room_id) {
+          const { data: room } = await supabase
+            .from('rooms')
+            .select('room_number, view_type')
+            .eq('id', guest.room_id)
+            .single();
+          const { data: g } = await supabase
+            .from('guests')
+            .select('check_in_at, check_out_at')
+            .eq('room_id', guest.room_id)
+            .eq('status', 'checked_in')
+            .limit(1)
+            .single();
+          if (room && g) {
+            myRoomValue = {
+              room_number: room.room_number,
+              view_type: room.view_type,
+              check_in_at: g.check_in_at,
+              check_out_at: g.check_out_at,
+            };
+          }
         }
       }
-    }
-    setMyRoom(myRoomValue);
+      setMyRoom(myRoomValue);
 
-    // Son başarılı sonucu cache'le (bir sonraki açılışta anında gösterilecek)
-    AsyncStorage.setItem(
-      CUSTOMER_HOME_CACHE_KEY,
-      JSON.stringify({
-        activeStaff: activeStaffFiltered,
-        hotelInfo: hotel,
-        feedPosts: postsWithMedia,
-        facilities,
-        likeCounts: likeCount,
-        commentCounts: commentCount,
-        myLikePostIds: myLikeIds,
-        cachedAt: Date.now(),
-      })
-    ).catch(() => {});
+      AsyncStorage.setItem(
+        CUSTOMER_HOME_CACHE_KEY,
+        JSON.stringify({
+          activeStaff: activeStaffFiltered,
+          hotelInfo: hotel,
+          feedPosts: postsWithMedia,
+          facilities,
+          likeCounts: likeCount,
+          commentCounts: commentCount,
+          myLikePostIds: myLikeIds,
+          cachedAt: Date.now(),
+        })
+      ).catch(() => {});
+    })();
   }, [user?.email, user]);
 
   const onRefresh = useCallback(async () => {

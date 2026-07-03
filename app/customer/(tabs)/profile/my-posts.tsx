@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,9 @@ import {
   ActivityIndicator,
   Platform,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
@@ -19,6 +20,7 @@ import { removeFeedMediaObjectsForPostUrls } from '@/lib/feedMediaStorageDelete'
 import { CachedImage } from '@/components/CachedImage';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type MyFeedPost = {
   id: string;
@@ -40,39 +42,33 @@ export default function CustomerMyPostsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { width: windowW } = useWindowDimensions();
-  const [myPosts, setMyPosts] = useState<MyFeedPost[]>([]);
-  const [loading, setLoading] = useState(true);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   const horizontalPad = theme.spacing.lg * 2;
   const previewWidth = useMemo(() => Math.max(0, windowW - horizontalPad), [windowW]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const guest = await getOrCreateGuestForCurrentSession();
-      if (!guest?.guest_id) {
-        setMyPosts([]);
-        return;
-      }
-      const { data } = await supabase
-        .from('feed_posts')
-        .select('id, title, created_at, media_type, media_url, thumbnail_url')
-        .eq('guest_id', guest.guest_id)
-        .order('created_at', { ascending: false })
-        .limit(120);
-      setMyPosts((data ?? []) as MyFeedPost[]);
-    } finally {
-      setLoading(false);
-    }
+  const fetchItems = useCallback(async () => {
+    const guest = await getOrCreateGuestForCurrentSession();
+    if (!guest?.guest_id) return [];
+    const { data } = await supabase
+      .from('feed_posts')
+      .select('id, title, created_at, media_type, media_url, thumbnail_url')
+      .eq('guest_id', guest.guest_id)
+      .order('created_at', { ascending: false })
+      .limit(120);
+    return (data ?? []) as MyFeedPost[];
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-      return () => {};
-    }, [load])
-  );
+  const {
+    items: myPosts,
+    setItems: setMyPosts,
+    loading,
+    refreshing,
+    refresh,
+  } = useCachedList<MyFeedPost>({
+    cacheKey: 'customer-my-posts',
+    fetchItems,
+  });
 
   const deletePost = (post: MyFeedPost) => {
     Alert.alert(t('deletePostTitle'), t('deletePostMessage'), [
@@ -112,6 +108,7 @@ export default function CustomerMyPostsScreen() {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
       contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'never' : undefined}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
     >
       {myPosts.length === 0 ? (
         <Text style={styles.emptyText}>{t('myPostsEmpty')}</Text>

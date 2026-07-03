@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ import {
   venueAvatarUrl,
 } from '@/lib/diningVenues';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type TypeFilter = 'all' | VenueType;
 type PriceFilter = 'all' | 1 | 2 | 3;
@@ -52,9 +53,25 @@ export default function CustomerDiningVenuesList({ guestDetailStack = 'customer'
       ? ('/staff/dining-venues/guest/[id]' as const)
       : ('/customer/dining-venues/[id]' as const);
 
-  const [items, setItems] = useState<DiningVenueRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const cacheKey =
+    guestDetailStack === 'staff' ? 'staff-dining-venues-guest-list' : 'customer-dining-venues-list';
+
+  const fetchItems = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('dining_venues')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return (data ?? []).map((r) => venueRowFromDb(r as Record<string, unknown>));
+  }, []);
+
+  const { items, loading, refreshing, refresh } = useCachedList<DiningVenueRow>({
+    cacheKey,
+    fetchItems,
+  });
+
   const [q, setQ] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [priceFilter, setPriceFilter] = useState<PriceFilter>('all');
@@ -64,37 +81,6 @@ export default function CustomerDiningVenuesList({ guestDetailStack = 'customer'
   const [userPos, setUserPos] = useState<{ lat: number; lng: number } | null>(null);
   const [locLoading, setLocLoading] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
-
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('dining_venues')
-      .select('*')
-      .eq('is_active', true)
-      .order('sort_order', { ascending: false })
-      .order('created_at', { ascending: false });
-    if (error) {
-      setItems([]);
-      return;
-    }
-    setItems((data ?? []).map((r) => venueRowFromDb(r as Record<string, unknown>)));
-  }, []);
-
-  useEffect(() => {
-    let c = true;
-    setLoading(true);
-    load().finally(() => {
-      if (c) setLoading(false);
-    });
-    return () => {
-      c = false;
-    };
-  }, [load]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
 
   const requestLocation = useCallback(async (): Promise<boolean> => {
     setLocLoading(true);
@@ -270,7 +256,7 @@ export default function CustomerDiningVenuesList({ guestDetailStack = 'customer'
           </View>
         }
         contentContainerStyle={{ paddingBottom: insets.bottom + 28, paddingTop: 0 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         ListEmptyComponent={
           !loading ? <Text style={styles.muted}>{t('diningVenuesNoResults')}</Text> : null
         }

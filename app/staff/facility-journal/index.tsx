@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,24 +9,18 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { useFocusEffect, useNavigation, usePathname, useRouter } from 'expo-router';
+import { useNavigation, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AdminStackBackButton } from '@/lib/adminStackBack';
 import { StaffStackBackButton } from '@/lib/staffStackBack';
 import { FacilityJournalAccessGate } from '@/components/staff/FacilityJournalAccessGate';
 import { FacilityJournalListCard } from '@/components/facilityJournal/FacilityJournalListCard';
 import { listFacilityJournalRecords, type FacilityJournalRecordRow } from '@/lib/facilityJournal';
-import {
-  FACILITY_JOURNAL_FOCUS_REFRESH_MS,
-  getFacilityJournalListCache,
-  getFacilityJournalListCacheAgeMs,
-  hydrateFacilityJournalListCache,
-  setFacilityJournalListCache,
-} from '@/lib/facilityJournalCache';
 import { useAuthStore } from '@/stores/authStore';
 import { canManageFacilityJournalTypes } from '@/lib/staffPermissions';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
+import { useCachedList } from '@/hooks/useCachedList';
 
 function FacilityJournalIndexScreen() {
   const { t } = useTranslation();
@@ -37,6 +31,8 @@ function FacilityJournalIndexScreen() {
   const isAdminRoute = pathname?.startsWith('/admin') ?? false;
   const base = isAdminRoute ? '/admin/facility-journal' : '/staff/facility-journal';
   const canManageTypes = canManageFacilityJournalTypes(staff);
+  const cacheKey = isAdminRoute ? 'admin-facility-journal-list' : 'staff-facility-journal-list';
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -55,62 +51,26 @@ function FacilityJournalIndexScreen() {
     });
   }, [navigation, isAdminRoute, base, canManageTypes, router]);
 
-  const [items, setItems] = useState<FacilityJournalRecordRow[]>(() => getFacilityJournalListCache() ?? []);
-  const [loading, setLoading] = useState(() => !getFacilityJournalListCache()?.length);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const loadInFlightRef = useRef(false);
-
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (loadInFlightRef.current) return;
-    loadInFlightRef.current = true;
-    try {
-      const { data, error } = await listFacilityJournalRecords();
-      if (error) {
-        if (!opts?.silent) {
-          setLoadError(error.message ?? t('staffFjListLoadFailed'));
-        }
-        if (!getFacilityJournalListCache()?.length) setItems([]);
-      } else {
-        const rows = (data as FacilityJournalRecordRow[]) ?? [];
-        setLoadError(null);
-        setItems(rows);
-        setFacilityJournalListCache(rows);
-      }
-    } finally {
-      loadInFlightRef.current = false;
-      setLoading(false);
-      setRefreshing(false);
+  const fetchItems = useCallback(async () => {
+    const { data, error } = await listFacilityJournalRecords();
+    if (error) {
+      setLoadError(error.message ?? t('staffFjListLoadFailed'));
+      return [];
     }
+    setLoadError(null);
+    return ((data as FacilityJournalRecordRow[]) ?? []) as FacilityJournalRecordRow[];
   }, [t]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void hydrateFacilityJournalListCache().then((cached) => {
-      if (cancelled || !cached?.length) return;
-      setItems(cached);
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      const mem = getFacilityJournalListCache();
-      const age = getFacilityJournalListCacheAgeMs();
-      if (mem?.length) {
-        setItems(mem);
-        setLoading(false);
-        if (age != null && age < FACILITY_JOURNAL_FOCUS_REFRESH_MS) return;
-        void load({ silent: true });
-        return;
-      }
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const {
+    items,
+    loading,
+    refreshing,
+    refresh,
+    showList,
+  } = useCachedList<FacilityJournalRecordRow>({
+    cacheKey,
+    fetchItems,
+  });
 
   const emptyHint = useMemo(
     () => (staff?.role === 'admin' ? t('staffFjEmptyAdmin') : t('staffFjEmptyStaff')),
@@ -130,8 +90,6 @@ function FacilityJournalIndexScreen() {
     ),
     [openRecord]
   );
-
-  const showList = !loading || items.length > 0;
 
   return (
     <View style={styles.container}>
@@ -154,15 +112,7 @@ function FacilityJournalIndexScreen() {
           windowSize={7}
           removeClippedSubviews={Platform.OS === 'android'}
           contentContainerStyle={items.length ? styles.list : styles.listEmpty}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void load();
-              }}
-            />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListEmptyComponent={
             loadError ? (
               <Text style={styles.error}>{loadError}</Text>

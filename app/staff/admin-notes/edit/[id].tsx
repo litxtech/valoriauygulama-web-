@@ -1,12 +1,13 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AdminNotesAccessGate } from '@/components/adminNotes/AdminNotesAccessGate';
 import { AdminNoteComposer } from '@/components/adminNotes/AdminNoteComposer';
 import { getAdminQuickNote, type AdminQuickNoteRow } from '@/lib/adminQuickNotes';
 import { canEditQuickNote } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 function AdminNotesEditScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,30 +18,25 @@ function AdminNotesEditScreen() {
   const base = isAdminRoute ? '/admin/notes' : '/staff/admin-notes';
 
   const [note, setNote] = useState<AdminQuickNoteRow | null>(null);
-  const [loading, setLoading] = useState(true);
-  const hasNoteRef = useRef(false);
-  hasNoteRef.current = !!note;
 
-  const load = useCallback(async () => {
-    if (!id) return;
+  const fetchData = useCallback(async () => {
+    if (!id) return null;
     const { data, error } = await getAdminQuickNote(id);
     if (error) Alert.alert('Hata', error);
-    setNote(data);
-    setLoading(false);
+    return data;
   }, [id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (hasNoteRef.current) {
-        void load();
-        return;
-      }
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { data: cachedNote, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `admin-quick-note:${id}` : 'admin-quick-note:none',
+    enabled: !!id,
+    fetchData,
+  });
 
-  if (loading && !note) {
+  useEffect(() => {
+    setNote(cachedNote);
+  }, [cachedNote]);
+
+  if (!showContent && !note) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color="#6366F1" />

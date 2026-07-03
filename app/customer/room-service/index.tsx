@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import {
   View,
   Text,
@@ -31,32 +32,37 @@ type MenuItem = {
 
 type CartItem = { item: MenuItem; quantity: number };
 
+type RoomServiceCache = { categories: Category[]; items: MenuItem[] };
+
 export default function RoomServiceScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { user } = useAuthStore();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [items, setItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      const [catRes, itemRes] = await Promise.all([
-        supabase.from('room_service_categories').select('id, name, sort_order').order('sort_order'),
-        supabase
-          .from('room_service_menu_items')
-          .select('id, category_id, name, description, price, image_url, is_available, sort_order')
-          .eq('is_available', true)
-          .order('sort_order'),
-      ]);
-      setCategories((catRes.data as Category[]) ?? []);
-      setItems((itemRes.data as MenuItem[]) ?? []);
-      setLoading(false);
+  const fetchData = useCallback(async (): Promise<RoomServiceCache | null> => {
+    const [catRes, itemRes] = await Promise.all([
+      supabase.from('room_service_categories').select('id, name, sort_order').order('sort_order'),
+      supabase
+        .from('room_service_menu_items')
+        .select('id, category_id, name, description, price, image_url, is_available, sort_order')
+        .eq('is_available', true)
+        .order('sort_order'),
+    ]);
+    return {
+      categories: (catRes.data as Category[]) ?? [],
+      items: (itemRes.data as MenuItem[]) ?? [],
     };
-    load();
   }, []);
+
+  const { data, loading, showContent } = useCachedFocusLoad<RoomServiceCache>({
+    cacheKey: 'customer-room-service:menu',
+    fetchData,
+  });
+
+  const categories = data?.categories ?? [];
+  const items = data?.items ?? [];
 
   const addToCart = (item: MenuItem) => {
     setCart((prev) => {
@@ -170,7 +176,7 @@ export default function RoomServiceScreen() {
     items: items.filter((i) => i.category_id === cat.id),
   }));
 
-  if (loading) {
+  if (!showContent && loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />

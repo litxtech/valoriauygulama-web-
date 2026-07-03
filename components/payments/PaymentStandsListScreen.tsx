@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,8 @@ import {
   RefreshControl,
   Platform,
 } from 'react-native';
-import { useFocusEffect, useRouter, type Href } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
+import { useCachedList } from '@/hooks/useCachedList';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
@@ -26,29 +27,21 @@ type Props = {
 export function PaymentStandsListScreen({ basePath }: Props) {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [rows, setRows] = useState<PaymentQrStandRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const orgId = basePath.startsWith('/staff') ? staff?.organization_id ?? null : null;
+  const cacheKey = useMemo(() => `payment-stands:${basePath}:${orgId ?? 'all'}`, [basePath, orgId]);
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     try {
-      const orgId = basePath.startsWith('/staff') ? staff?.organization_id ?? null : null;
-      const data = await fetchPaymentQrStands(orgId, 100);
-      setRows(data);
+      return await fetchPaymentQrStands(orgId, 100);
     } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      return [];
     }
-  }, [basePath, staff?.organization_id]);
+  }, [orgId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { items: rows, loading, refreshing, refresh } = useCachedList<PaymentQrStandRow>({
+    cacheKey,
+    fetchItems,
+  });
 
   if (loading && rows.length === 0) {
     return (
@@ -64,16 +57,7 @@ export function PaymentStandsListScreen({ basePath }: Props) {
         data={rows}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void load();
-            }}
-            tintColor="#635bff"
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#635bff" />}
         ListHeaderComponent={
           <View>
             <Text style={styles.intro}>

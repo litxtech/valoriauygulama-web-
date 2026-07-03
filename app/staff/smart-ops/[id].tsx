@@ -24,12 +24,22 @@ import {
   type SmartOpsChecklistItem,
 } from '@/lib/smartOps';
 import { uploadSmartOpsTaskPhoto } from '@/lib/smartOpsPhoto';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type SmartOpsDetailCache = {
+  title: string;
+  body: string;
+  status: string;
+  requirePhoto: string;
+  checklist: SmartOpsChecklistItem[];
+  existingPhoto: string | null;
+  prefilledNote: string;
+};
 
 export default function StaffSmartOpsTaskScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -40,34 +50,50 @@ export default function StaffSmartOpsTaskScreen() {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [existingPhoto, setExistingPhoto] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
+  const fetchData = useCallback(async (): Promise<SmartOpsDetailCache | null> => {
+    if (!id) return null;
     try {
       const { task, checklist: items } = await fetchSmartOpsTaskDetail(id);
       if (!task) {
         Alert.alert('Hata', 'Görev bulunamadı');
         router.back();
-        return;
+        return null;
       }
-      setTitle(task.title);
-      setBody(task.body);
-      setStatus(task.status);
-      setRequirePhoto(task.require_photo);
-      setChecklist(items);
-      setExistingPhoto(task.photo_url);
-      if (['completed', 'partial', 'issue_reported'].includes(task.status)) {
-        setNote(task.note ?? task.issue_text ?? '');
-      }
+      return {
+        title: task.title,
+        body: task.body,
+        status: task.status,
+        requirePhoto: task.require_photo,
+        checklist: items,
+        existingPhoto: task.photo_url,
+        prefilledNote: ['completed', 'partial', 'issue_reported'].includes(task.status)
+          ? (task.note ?? task.issue_text ?? '')
+          : '',
+      };
     } catch (e) {
       Alert.alert('Hata', (e as Error).message);
+      return null;
     }
-    setLoading(false);
   }, [id, router]);
 
+  const { data: cached, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id ? `smart-ops-detail:${id}` : 'smart-ops-detail:none',
+    enabled: !!id,
+    fetchData,
+  });
+
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!cached) return;
+    setTitle(cached.title);
+    setBody(cached.body);
+    setStatus(cached.status);
+    setRequirePhoto(cached.requirePhoto);
+    setChecklist(cached.checklist);
+    setExistingPhoto(cached.existingPhoto);
+    setNote(cached.prefilledNote);
+  }, [cached]);
+
+  const load = reload;
 
   const toggleCheck = (itemId: string, checked: boolean) => {
     setChecklist((prev) => prev.map((c) => (c.id === itemId ? { ...c, checked } : c)));
@@ -131,7 +157,7 @@ export default function StaffSmartOpsTaskScreen() {
     setSaving(false);
   };
 
-  if (loading) {
+  if (!showContent && !title) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />

@@ -20,12 +20,8 @@ import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { guestDisplayName } from '@/lib/guestDisplayName';
 import { formatDateTime } from '@/lib/date';
-import {
-  peekStaffGuestsListMemory,
-  readStaffGuestsListCache,
-  writeStaffGuestsListCache,
-  type StaffGuestListItem,
-} from '@/lib/staffGuestsListCache';
+import { type StaffGuestListItem } from '@/lib/staffGuestsListCache';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const LIST_ROW_HEIGHT = 84;
 const INITIAL_LIMIT = 64;
@@ -181,76 +177,72 @@ function SkeletonRows() {
 export default function StaffGuestsIndexScreen() {
   const router = useRouter();
   const { t } = useTranslation();
-  const [guests, setGuests] = useState<StaffGuestListItem[]>(() => peekStaffGuestsListMemory() ?? []);
   const [search, setSearch] = useState('');
   const [searching, setSearching] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(() => guests.length === 0);
+  const [searchGuests, setSearchGuests] = useState<StaffGuestListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const searchSkipInitial = useRef(true);
 
-  const fetchGuests = useCallback(async (searchQuery?: string, opts?: { background?: boolean }) => {
-    const q = searchQuery?.trim() ?? '';
-    const isSearch = q.length >= 2;
-    if (!opts?.background) setLoading(true);
-
-    let request = supabase
+  const fetchItems = useCallback(async (): Promise<StaffGuestListItem[]> => {
+    const { data, error } = await supabase
       .from('guests')
       .select('id, full_name, photo_url, banned_until, phone, email, room_id, created_at, status')
       .is('deleted_at', null)
-      .order('updated_at', { ascending: false });
-
-    if (isSearch) {
-      const pattern = `%${escapeIlike(q)}%`;
-      request = request.or(`full_name.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`);
-    }
-
-    const { data, error } = await request.limit(isSearch ? SEARCH_LIMIT : INITIAL_LIMIT);
-
-    if (error) {
-      setLoadError(error.message || 'Misafirler yüklenemedi.');
-      if (!isSearch) setGuests((prev) => (prev.length === 0 ? [] : prev));
-      setLoading(false);
-      return;
-    }
-
+      .order('updated_at', { ascending: false })
+      .limit(INITIAL_LIMIT);
+    if (error) throw new Error(error.message || 'Misafirler yüklenemedi.');
     const rows = (data ?? []) as GuestRowRaw[];
     const roomById = await attachRoomNumbers(rows);
-    const mapped = mapGuestRows(rows, roomById);
-
-    setLoadError(null);
-    setGuests(mapped);
-    if (!isSearch) void writeStaffGuestsListCache(mapped);
-    setLoading(false);
+    return mapGuestRows(rows, roomById);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const cached = await readStaffGuestsListCache();
-      if (cancelled) return;
-      if (cached?.length) {
-        setGuests(cached);
-        setLoading(false);
-      }
-      await fetchGuests(undefined, { background: Boolean(cached?.length) });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchGuests]);
+  const {
+    items: baseGuests,
+    loading,
+    refreshing,
+    refresh,
+    load,
+  } = useCachedList<StaffGuestListItem>({
+    cacheKey: 'staff-guests-list',
+    fetchItems,
+  });
+
+  const fetchSearchGuests = useCallback(async (searchQuery: string) => {
+    const q = searchQuery.trim();
+    if (q.length < 2) return;
+    const pattern = `%${escapeIlike(q)}%`;
+    const { data, error } = await supabase
+      .from('guests')
+      .select('id, full_name, photo_url, banned_until, phone, email, room_id, created_at, status')
+      .is('deleted_at', null)
+      .or(`full_name.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`)
+      .order('updated_at', { ascending: false })
+      .limit(SEARCH_LIMIT);
+    if (error) {
+      setLoadError(error.message || 'Misafirler yüklenemedi.');
+      return;
+    }
+    setLoadError(null);
+    const rows = (data ?? []) as GuestRowRaw[];
+    const roomById = await attachRoomNumbers(rows);
+    setSearchGuests(mapGuestRows(rows, roomById));
+  }, []);
+
+  const isSearchMode = search.trim().length >= 2;
+  const guests = isSearchMode ? (searchGuests ?? []) : baseGuests;
 
   useEffect(() => {
     const channel = supabase
       .channel('staff-guests-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, () => {
-        fetchGuests(search.trim().length >= 2 ? search : undefined, { background: true });
+        if (isSearchMode) void fetchSearchGuests(search);
+        else void load({ silent: true });
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchGuests, search]);
+  }, [fetchSearchGuests, isSearchMode, load, search]);
 
   useEffect(() => {
     if (searchSkipInitial.current) {
@@ -259,19 +251,19 @@ export default function StaffGuestsIndexScreen() {
     }
     const q = search.trim();
     if (q.length < 2) {
-      fetchGuests();
+      setSearchGuests(null);
       return;
     }
     setSearching(true);
     const timer = setTimeout(async () => {
-      await fetchGuests(q, { background: true });
+      await fetchSearchGuests(q);
       setSearching(false);
     }, 320);
     return () => {
       clearTimeout(timer);
       setSearching(false);
     };
-  }, [search, fetchGuests]);
+  }, [search, fetchSearchGuests]);
 
   const filteredGuests = useMemo(() => {
     const q = search.trim().toLocaleLowerCase('tr-TR');
@@ -288,9 +280,11 @@ export default function StaffGuestsIndexScreen() {
   const profileMeta = t('staffGuestsProfileMeta', { defaultValue: 'Misafir profili' });
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchGuests(search.trim().length >= 2 ? search : undefined);
-    setRefreshing(false);
+    if (isSearchMode) {
+      await fetchSearchGuests(search);
+      return;
+    }
+    refresh();
   };
 
   const listHeader = (

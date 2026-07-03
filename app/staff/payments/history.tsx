@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,6 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import {
@@ -20,6 +18,7 @@ import {
   type PaymentRequestRow,
 } from '@/lib/payments';
 import { paymentKindLabel, paymentStatusLabel, paymentText } from '@/lib/paymentsI18n';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const STATUS_COLOR = {
   pending: '#f59e0b',
@@ -33,29 +32,23 @@ const STATUS_COLOR = {
 export default function StaffPaymentsHistoryScreen() {
   const router = useRouter();
   const staff = useAuthStore((s) => s.staff);
-  const [rows, setRows] = useState<PaymentRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const cacheKey = staff?.organization_id ? `payments-history:${staff.organization_id}` : 'payments-history:none';
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     try {
       const orgId = staff?.organization_id ?? null;
       const payments = await fetchPaymentRequests(orgId);
-      setRows(payments.filter(isPaymentHistoryForList));
+      return payments.filter(isPaymentHistoryForList);
     } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      return [];
     }
   }, [staff?.organization_id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
+  const { items: rows, loading, refreshing, refresh, showList } = useCachedList<PaymentRequestRow>({
+    cacheKey,
+    enabled: !!staff?.organization_id,
+    fetchItems,
+  });
 
   return (
     <View style={styles.container}>
@@ -63,14 +56,13 @@ export default function StaffPaymentsHistoryScreen() {
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      ) : (
+      ) : null}
+      {showList ? (
         <FlatList
           data={rows}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListHeaderComponent={
             <Text style={styles.intro}>{paymentText('paymentsHistorySub')}</Text>
           }
@@ -99,7 +91,7 @@ export default function StaffPaymentsHistoryScreen() {
             </TouchableOpacity>
           )}
         />
-      )}
+      ) : null}
     </View>
   );
 }

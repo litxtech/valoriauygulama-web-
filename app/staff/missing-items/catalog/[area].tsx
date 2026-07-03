@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useCachedList } from '@/hooks/useCachedList';
 import {
   View,
   Text,
@@ -9,7 +10,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
@@ -43,30 +44,26 @@ export default function MissingItemsCatalogEditorScreen() {
   const meta = area ? getMissingAreaMeta(area) : null;
   const canManage = canManageMissingItemsCatalog(staff);
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [categories, setCategories] = useState<MissingCatalogEditorCategory[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const [newCatTitle, setNewCatTitle] = useState('');
   const [newCatIcon, setNewCatIcon] = useState<(typeof ICON_OPTIONS)[number]>('cube');
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
-    if (!area) return;
-    setLoading(true);
+  const fetchItems = useCallback(async () => {
+    if (!area) return [];
     await seedMissingItemCatalogFromDefaults(area);
     const res = await fetchMissingItemCatalogForEditor(area);
-    setCategories(res.data);
     if (res.error) Alert.alert(t('error'), res.error);
-    setLoading(false);
+    return res.data;
   }, [area, t]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-    }, [load])
-  );
+  const { items: categories, loading, load } = useCachedList<MissingCatalogEditorCategory>({
+    cacheKey: area ? `missing-items-catalog:${area}` : 'missing-items-catalog:none',
+    enabled: !!area && canManage,
+    fetchItems,
+  });
 
   if (!area || !meta) {
     return (

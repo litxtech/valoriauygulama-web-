@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -25,41 +25,42 @@ import {
   todayKitchenDateIso,
   type KitchenRevenueRow,
 } from '@/lib/kitchenOps/revenueTables';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 const PAY_LABELS = Object.fromEntries(KITCHEN_PAYMENT_TYPES.map((p) => [p.value, p.label]));
+
+type RevenueCache = {
+  rows: KitchenRevenueRow[];
+  dayTotal: number;
+};
 
 export default function KitchenRevenueListScreen() {
   const router = useRouter();
   const [date, setDate] = useState(todayKitchenDateIso);
-  const [rows, setRows] = useState<KitchenRevenueRow[]>([]);
-  const [dayTotal, setDayTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const stats = useMemo(() => summarizeKitchenRevenues(rows), [rows]);
-  const isToday = date === todayKitchenDateIso();
-
-  const load = useCallback(async () => {
+  const fetchData = useCallback(async (): Promise<RevenueCache | null> => {
     const [revenueRows, summary] = await Promise.all([
       fetchKitchenRevenuesByDate(date),
       fetchDaySummary(date).catch(() => ({ total_revenue: 0 })),
     ]);
-    setRows(revenueRows);
-    setDayTotal(Number(summary.total_revenue ?? 0));
+    return {
+      rows: revenueRows,
+      dayTotal: Number(summary.total_revenue ?? 0),
+    };
   }, [date]);
 
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<RevenueCache>({
+    cacheKey: `kitchen-revenue:${date}`,
+    fetchData,
+  });
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const rows = data?.rows ?? [];
+  const dayTotal = data?.dayTotal ?? 0;
 
-  if (loading) {
+  const stats = useMemo(() => summarizeKitchenRevenues(rows), [rows]);
+  const isToday = date === todayKitchenDateIso();
+
+  if (loading && !showContent) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -73,7 +74,7 @@ export default function KitchenRevenueListScreen() {
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#059669" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#059669" />}
         ListHeaderComponent={
           <>
             <LinearGradient colors={['#059669', '#047857', '#065f46']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>

@@ -9,7 +9,6 @@ import {
   Alert,
 } from 'react-native';
 import { Stack, useRouter, type Href } from 'expo-router';
-import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
@@ -22,12 +21,12 @@ import {
   fetchMonthlyReportData,
   fetchPerformanceDashboard,
   pillarLabel,
-  type PerformanceDashboard,
 } from '@/lib/performanceDashboard';
 import { exportAuditMonthlyReportPdf } from '@/lib/auditMonthlyReportPdf';
 import { monthKey } from '@/lib/financeLedger';
 import { monthName } from '@/lib/i18nLookup';
 import { canAccessAdminShell } from '@/lib/staffPermissions';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import { performanceTheme } from '@/components/performance';
 import {
   PerformanceHeroCard,
@@ -45,11 +44,21 @@ export default function PerformanceDashboardScreen() {
   const insets = useSafeAreaInsets();
   const staff = useAuthStore((s) => s.staff);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [dash, setDash] = useState<PerformanceDashboard | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [ackId, setAckId] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    if (!staff?.id) return null;
+    const { data, error } = await fetchPerformanceDashboard(staff.id);
+    if (error) Alert.alert(t('perfLoadFailed'), error);
+    return data;
+  }, [staff?.id, t]);
+
+  const { data: dash, loading, refreshing, refresh, reload, showContent } = useCachedFocusLoad({
+    cacheKey: staff?.id ? `staff-performance-dash:${staff.id}` : 'staff-performance-dash:none',
+    enabled: !!staff?.id,
+    fetchData,
+  });
 
   const isAdmin = canAccessAdminShell(staff);
   const orgId = useMemo(() => {
@@ -61,25 +70,10 @@ export default function PerformanceDashboardScreen() {
     return staff?.organization_id ?? null;
   }, [staff, selectedOrganizationId]);
 
-  const load = useCallback(async () => {
-    if (!staff?.id) return;
-    const { data, error } = await fetchPerformanceDashboard(staff.id);
-    if (error) Alert.alert(t('perfLoadFailed'), error);
-    setDash(data);
-    setLoading(false);
-  }, [staff?.id, t]);
+  const load = reload;
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      load();
-    }, [load])
-  );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
+  const onRefresh = () => {
+    void refresh();
   };
 
   const onAck = async (noticeId: string) => {
@@ -197,7 +191,7 @@ export default function PerformanceDashboardScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {loading ? (
+        {!showContent && !dash ? (
           <ActivityIndicator size="large" color={performanceTheme.accent} style={styles.loader} />
         ) : !dash ? (
           <Text style={styles.muted}>{t('perfDashLoadFailed')}</Text>

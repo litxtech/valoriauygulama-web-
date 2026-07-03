@@ -21,6 +21,17 @@ import { CachedImage } from '@/components/CachedImage';
 import { ExpenseReceiptThumbnail } from '@/components/expenses/ExpenseReceiptThumbnail';
 import { expenseReceiptPreviewModalStyle } from '@/lib/expenseReceiptPreviewStyles';
 import { formatDateShort } from '@/lib/date';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type ExpensesCache = {
+  expenses: ExpenseRow[];
+  summary: {
+    thisMonth: number;
+    lastMonth: number;
+    pendingCount: number;
+    pendingAmount: number;
+  };
+};
 
 type CategoryRow = { id: string; name: string; icon: string | null };
 type ExpenseRow = {
@@ -41,19 +52,12 @@ function fmtMoney(n: number): string {
 export default function StaffExpensesScreen() {
   const router = useRouter();
   const { staff } = useAuthStore();
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState<{
-    thisMonth: number;
-    lastMonth: number;
-    pendingCount: number;
-    pendingAmount: number;
-  }>({ thisMonth: 0, lastMonth: 0, pendingCount: 0, pendingAmount: 0 });
   const [receiptModal, setReceiptModal] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!staff?.id) return;
+  const cacheKey = staff?.id ? `staff-expenses:${staff.id}` : 'staff-expenses:none';
+
+  const fetchData = useCallback(async (): Promise<ExpensesCache | null> => {
+    if (!staff?.id) return null;
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
@@ -67,7 +71,6 @@ export default function StaffExpensesScreen() {
       .order('created_at', { ascending: false })
       .limit(100);
     const rows = (list ?? []) as unknown as ExpenseRow[];
-    setExpenses(rows);
 
     const thisMonth = rows
       .filter((e) => e.expense_date >= thisMonthStart && e.status === 'approved')
@@ -77,36 +80,43 @@ export default function StaffExpensesScreen() {
       .reduce((s, e) => s + Number(e.amount), 0);
     const pending = rows.filter((e) => e.status === 'pending');
     const pendingAmount = pending.reduce((s, e) => s + Number(e.amount), 0);
-    setSummary({
-      thisMonth,
-      lastMonth,
-      pendingCount: pending.length,
-      pendingAmount,
-    });
-    setLoading(false);
+
+    return {
+      expenses: rows,
+      summary: {
+        thisMonth,
+        lastMonth,
+        pendingCount: pending.length,
+        pendingAmount,
+      },
+    };
   }, [staff?.id]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, loading, refreshing, refresh, reload } = useCachedFocusLoad<ExpensesCache>({
+    cacheKey,
+    enabled: !!staff?.id,
+    fetchData,
+  });
+
+  const expenses = data?.expenses ?? [];
+  const summary = data?.summary ?? { thisMonth: 0, lastMonth: 0, pendingCount: 0, pendingAmount: 0 };
 
   useEffect(() => {
     if (!staff?.id) return;
     const channel = supabase
       .channel('staff-expenses-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_expenses', filter: `staff_id=eq.${staff.id}` }, () => {
-        load();
+        void reload({ silent: true });
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [staff?.id, load]);
+  }, [staff?.id, reload]);
 
   const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load().finally(() => setRefreshing(false));
-  }, [load]);
+    refresh();
+  }, [refresh]);
 
   const exportCsv = useCallback(() => {
     const headers = 'Tarih,Kategori,Açıklama,Tutar,Durum\n';
@@ -161,7 +171,7 @@ export default function StaffExpensesScreen() {
         </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>Harcamalarım</Text>
-        {loading ? (
+        {loading && expenses.length === 0 ? (
           <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loader} />
         ) : expenses.length === 0 ? (
           <View style={styles.empty}>

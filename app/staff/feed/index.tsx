@@ -171,6 +171,9 @@ type StaffAvatarRow = {
   work_status?: string | null;
 };
 
+const STAFF_LIST_CACHE_TTL_MS = 10 * 60_000;
+let staffListMemoryCache: { orgKey: string; rows: StaffAvatarRow[]; updatedAt: number } | null = null;
+
 type StoryPlayerState = {
   groupIndex: number;
   storyIndex: number;
@@ -434,6 +437,16 @@ export default function StaffHomeScreen() {
   }, [params.openPostId, router]);
 
   const loadStaffList = useCallback(async (hiddenStaffIds?: Set<string>): Promise<StaffAvatarRow[]> => {
+    const orgKey = staff?.organization_id ?? staff?.id ?? 'staff';
+    if (
+      staffListMemoryCache &&
+      staffListMemoryCache.orgKey === orgKey &&
+      Date.now() - staffListMemoryCache.updatedAt < STAFF_LIST_CACHE_TTL_MS
+    ) {
+      const visible = staffListMemoryCache.rows.filter((s) => !hiddenStaffIds?.has(s.id));
+      setStaffList(visible);
+      return visible;
+    }
     const { data } = await supabase
       .from('staff')
       .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, work_status, organization:organization_id(name, kind)')
@@ -465,9 +478,10 @@ export default function StaffHomeScreen() {
     const sorted = sortStaffAdminFirst(visible, (a, b) =>
       (a.full_name || '').localeCompare(b.full_name || '', 'tr')
     );
+    staffListMemoryCache = { orgKey, rows: sorted, updatedAt: Date.now() };
     setStaffList(sorted);
     return sorted;
-  }, []);
+  }, [staff?.organization_id, staff?.id]);
 
   const loadFeed = useCallback(async () => {
     if (!staff) return;
@@ -514,84 +528,87 @@ export default function StaffHomeScreen() {
     const listWithMedia = list.map((p) => ({ ...p, media_items: mediaItemsByPost[p.id] ?? [] }));
     setPosts(listWithMedia);
     setPlayingPreviewId(null);
+    setLoading(false);
 
-    if (ids.length === 0) {
-      setLikeCounts({});
-      setCommentCounts({});
-      setViewCounts({});
-      setMyLikes(new Set());
-      setNotificationPrefs(new Set());
+    const staffListRowsForEngagement = staffListRows;
+    const applyEngagement = async () => {
+      if (!mountedRef.current) return;
+      if (ids.length === 0) {
+        setLikeCounts({});
+        setCommentCounts({});
+        setViewCounts({});
+        setMyLikes(new Set());
+        setNotificationPrefs(new Set());
+        setCommentsByPost({});
+        AsyncStorage.setItem(
+          STAFF_FEED_CACHE_KEY,
+          JSON.stringify({
+            posts: listWithMedia,
+            staffList: staffListRowsForEngagement,
+            likeCounts: {},
+            commentCounts: {},
+            viewCounts: {},
+            myLikePostIds: [],
+            notificationPostIds: [],
+            commentsByPost: {},
+            cachedAt: Date.now(),
+          })
+        ).catch(() => {});
+        return;
+      }
+      const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
+        supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
+        supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
+        supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('staff_id', staff.id),
+        supabase.rpc('get_feed_post_view_counts', { post_ids: ids }),
+        supabase.from('feed_post_notification_prefs').select('post_id').eq('staff_id', staff.id).in('post_id', ids),
+      ]);
+      if (!mountedRef.current) return;
+      const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
+      const comments = (commentsRes.data ?? []) as { post_id: string }[];
+      const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
+      if (viewCountsRes.error) {
+        log.warn('get_feed_post_view_counts RPC error', viewCountsRes.error);
+      }
+      const viewCountRows = (viewCountsRes.data ?? []) as { post_id: string; view_count: number }[];
+      const notifPrefs = (notifPrefsRes.data ?? []) as { post_id: string }[];
+      const likeCount: Record<string, number> = {};
+      reactions.forEach((r) => {
+        likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1;
+      });
+      const viewCount: Record<string, number> = {};
+      viewCountRows.forEach((row: { post_id: string; view_count?: number; viewCount?: number }) => {
+        const pid = row.post_id != null ? String(row.post_id) : '';
+        const cnt = row.view_count ?? row.viewCount ?? 0;
+        if (pid) viewCount[pid] = Number(cnt) || 0;
+      });
+      const commentCount: Record<string, number> = {};
+      comments.forEach((c) => {
+        commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
+      });
+      setLikeCounts(likeCount);
+      setCommentCounts(commentCount);
+      setViewCounts(viewCount);
+      const myLikePostIds = myReactions.map((r) => r.post_id);
+      const notificationPostIds = notifPrefs.map((n) => n.post_id);
+      setMyLikes(new Set(myLikePostIds));
+      setNotificationPrefs(new Set(notificationPostIds));
       setCommentsByPost({});
       AsyncStorage.setItem(
         STAFF_FEED_CACHE_KEY,
         JSON.stringify({
           posts: listWithMedia,
-          staffList: staffListRows,
-          likeCounts: {},
-          commentCounts: {},
-          viewCounts: {},
-          myLikePostIds: [],
-          notificationPostIds: [],
-          commentsByPost: {},
+          staffList: staffListRowsForEngagement,
+          likeCounts: likeCount,
+          commentCounts: commentCount,
+          viewCounts: viewCount,
+          myLikePostIds,
+          notificationPostIds,
           cachedAt: Date.now(),
         })
       ).catch(() => {});
-      setLoading(false);
-      prefetchImageUrls(staffListRows.map((s) => s.profile_image), FEED_IMAGE_PREFETCH_CAP);
-      return;
-    }
-    const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
-      supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
-      supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
-      supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('staff_id', staff.id),
-      supabase.rpc('get_feed_post_view_counts', { post_ids: ids }),
-      supabase.from('feed_post_notification_prefs').select('post_id').eq('staff_id', staff.id).in('post_id', ids),
-    ]);
-    if (!mountedRef.current) return;
-    const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
-    const comments = (commentsRes.data ?? []) as { post_id: string }[];
-    const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
-    if (viewCountsRes.error) {
-      log.warn('get_feed_post_view_counts RPC error', viewCountsRes.error);
-    }
-    const viewCountRows = (viewCountsRes.data ?? []) as { post_id: string; view_count: number }[];
-    const notifPrefs = (notifPrefsRes.data ?? []) as { post_id: string }[];
-    const likeCount: Record<string, number> = {};
-    reactions.forEach((r) => {
-      likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1;
-    });
-    const viewCount: Record<string, number> = {};
-    viewCountRows.forEach((row: { post_id: string; view_count?: number; viewCount?: number }) => {
-      const pid = row.post_id != null ? String(row.post_id) : '';
-      const cnt = row.view_count ?? row.viewCount ?? 0;
-      if (pid) viewCount[pid] = Number(cnt) || 0;
-    });
-    const commentCount: Record<string, number> = {};
-    comments.forEach((c) => {
-      commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
-    });
-    setLikeCounts(likeCount);
-    setCommentCounts(commentCount);
-    setViewCounts(viewCount);
-    const myLikePostIds = myReactions.map((r) => r.post_id);
-    const notificationPostIds = notifPrefs.map((n) => n.post_id);
-    setMyLikes(new Set(myLikePostIds));
-    setNotificationPrefs(new Set(notificationPostIds));
-    setCommentsByPost({});
-    AsyncStorage.setItem(
-      STAFF_FEED_CACHE_KEY,
-      JSON.stringify({
-        posts: listWithMedia,
-        staffList: staffListRows,
-        likeCounts: likeCount,
-        commentCounts: commentCount,
-        viewCounts: viewCount,
-        myLikePostIds,
-        notificationPostIds,
-        cachedAt: Date.now(),
-      })
-    ).catch(() => {});
-    setLoading(false);
+    };
+
     const avatarLookup = buildStaffAvatarLookup(staffListRows);
     InteractionManager.runAfterInteractions(() => {
       if (!mountedRef.current) return;
@@ -613,6 +630,7 @@ export default function StaffHomeScreen() {
       if (shouldRunOptionalSupabaseWork()) {
         void recordStaffFeedPostViews(ids, staff.id);
       }
+      void applyEngagement();
     });
   }, [staff?.id, loadStaffList]);
 
@@ -703,7 +721,7 @@ export default function StaffHomeScreen() {
   const loadFeedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadStoriesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFeedNetworkLoadAtRef = useRef(0);
-  const FEED_MIN_RELOAD_MS = 8_000;
+  const FEED_MIN_RELOAD_MS = 12_000;
   const scheduleLoadFeedFromRealtime = useCallback(() => {
     if (!shouldRunOptionalSupabaseWork()) return;
     if (Date.now() - lastFeedNetworkLoadAtRef.current < FEED_MIN_RELOAD_MS) return;

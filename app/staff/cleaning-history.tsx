@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type DoneRoomRow = {
   id: string;
@@ -16,6 +17,13 @@ type DoneRoomRow = {
 type RoomRow = { id: string; room_number: string };
 type StaffRow = { id: string; full_name: string | null };
 type PlanRow = { id: string; target_date: string };
+
+type CleaningHistoryCache = {
+  rows: DoneRoomRow[];
+  roomNumbers: Record<string, string>;
+  staffNames: Record<string, string>;
+  planDates: Record<string, string>;
+};
 
 function monthKeyFromIso(iso: string): string {
   const d = new Date(iso);
@@ -36,60 +44,61 @@ function dayTitle(dayKey: string): string {
 }
 
 export default function StaffCleaningHistoryScreen() {
-  const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<DoneRoomRow[]>([]);
   const [roomNumbers, setRoomNumbers] = useState<Record<string, string>>({});
   const [staffNames, setStaffNames] = useState<Record<string, string>>({});
   const [planDates, setPlanDates] = useState<Record<string, string>>({});
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('room_cleaning_plan_rooms')
-        .select('id, plan_id, room_id, done_at, done_by_staff_id, is_done')
-        .eq('is_done', true)
-        .not('done_at', 'is', null)
-        .order('done_at', { ascending: false });
-      if (error) {
-        setLoading(false);
-        return;
-      }
-      const doneRows = (data as DoneRoomRow[] | null) ?? [];
-      setRows(doneRows);
-
-      const roomIds = [...new Set(doneRows.map((x) => x.room_id))];
-      const staffIds = [...new Set(doneRows.map((x) => x.done_by_staff_id).filter(Boolean) as string[])];
-      const planIds = [...new Set(doneRows.map((x) => x.plan_id))];
-
-      const [roomsRes, staffRes, plansRes] = await Promise.all([
-        roomIds.length ? supabase.from('rooms').select('id, room_number').in('id', roomIds) : Promise.resolve({ data: [] as RoomRow[] }),
-        staffIds.length ? supabase.from('staff').select('id, full_name').in('id', staffIds) : Promise.resolve({ data: [] as StaffRow[] }),
-        planIds.length ? supabase.from('room_cleaning_plans').select('id, target_date').in('id', planIds) : Promise.resolve({ data: [] as PlanRow[] }),
-      ]);
-
-      const rn: Record<string, string> = {};
-      ((roomsRes.data as RoomRow[] | null) ?? []).forEach((r) => {
-        rn[r.id] = r.room_number;
-      });
-      setRoomNumbers(rn);
-
-      const sn: Record<string, string> = {};
-      ((staffRes.data as StaffRow[] | null) ?? []).forEach((s) => {
-        sn[s.id] = s.full_name || 'Bilinmiyor';
-      });
-      setStaffNames(sn);
-
-      const pd: Record<string, string> = {};
-      ((plansRes.data as PlanRow[] | null) ?? []).forEach((p) => {
-        pd[p.id] = p.target_date;
-      });
-      setPlanDates(pd);
-      setLoading(false);
+  const fetchData = useCallback(async (): Promise<CleaningHistoryCache | null> => {
+    const { data, error } = await supabase
+      .from('room_cleaning_plan_rooms')
+      .select('id, plan_id, room_id, done_at, done_by_staff_id, is_done')
+      .eq('is_done', true)
+      .not('done_at', 'is', null)
+      .order('done_at', { ascending: false });
+    if (error) return null;
+    const doneRows = (data as DoneRoomRow[] | null) ?? [];
+    const roomIds = [...new Set(doneRows.map((x) => x.room_id))];
+    const staffIds = [...new Set(doneRows.map((x) => x.done_by_staff_id).filter(Boolean) as string[])];
+    const planIds = [...new Set(doneRows.map((x) => x.plan_id))];
+    const [roomsRes, staffRes, plansRes] = await Promise.all([
+      roomIds.length ? supabase.from('rooms').select('id, room_number').in('id', roomIds) : Promise.resolve({ data: [] as RoomRow[] }),
+      staffIds.length ? supabase.from('staff').select('id, full_name').in('id', staffIds) : Promise.resolve({ data: [] as StaffRow[] }),
+      planIds.length ? supabase.from('room_cleaning_plans').select('id, target_date').in('id', planIds) : Promise.resolve({ data: [] as PlanRow[] }),
+    ]);
+    const roomNumbersMap: Record<string, string> = {};
+    ((roomsRes.data as RoomRow[] | null) ?? []).forEach((r) => {
+      roomNumbersMap[r.id] = r.room_number;
+    });
+    const staffNamesMap: Record<string, string> = {};
+    ((staffRes.data as StaffRow[] | null) ?? []).forEach((s) => {
+      staffNamesMap[s.id] = s.full_name || 'Bilinmiyor';
+    });
+    const planDatesMap: Record<string, string> = {};
+    ((plansRes.data as PlanRow[] | null) ?? []).forEach((p) => {
+      planDatesMap[p.id] = p.target_date;
+    });
+    return {
+      rows: doneRows,
+      roomNumbers: roomNumbersMap,
+      staffNames: staffNamesMap,
+      planDates: planDatesMap,
     };
-    void load();
   }, []);
+
+  const { data: cached, showContent } = useCachedFocusLoad({
+    cacheKey: 'staff-cleaning-history',
+    fetchData,
+  });
+
+  useEffect(() => {
+    if (!cached) return;
+    setRows(cached.rows);
+    setRoomNumbers(cached.roomNumbers);
+    setStaffNames(cached.staffNames);
+    setPlanDates(cached.planDates);
+  }, [cached]);
 
   const grouped = useMemo(() => {
     const byMonth: Record<string, Record<string, DoneRoomRow[]>> = {};
@@ -106,7 +115,7 @@ export default function StaffCleaningHistoryScreen() {
 
   const monthKeys = useMemo(() => Object.keys(grouped).sort((a, b) => b.localeCompare(a)), [grouped]);
 
-  if (loading) {
+  if (!showContent && rows.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />

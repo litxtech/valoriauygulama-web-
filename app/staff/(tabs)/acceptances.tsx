@@ -17,7 +17,8 @@ import {
   Pressable,
   Dimensions,
 } from 'react-native';
-import { Redirect, useFocusEffect } from 'expo-router';
+import { Redirect } from 'expo-router';
+import { useCachedList } from '@/hooks/useCachedList';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -207,9 +208,6 @@ export function StaffAcceptancesPanel() {
   const staffId = useAuthStore((s) => s.staff?.id);
   const palette = usePersonelDesign();
   const styles = useMemo(() => createAcceptancesStyles(palette), [palette]);
-  const [rows, setRows] = useState<AcceptanceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [roomModalVisible, setRoomModalVisible] = useState(false);
   const [assignTarget, setAssignTarget] = useState<AcceptanceRow | null>(null);
@@ -219,20 +217,8 @@ export function StaffAcceptancesPanel() {
   const [assigning, setAssigning] = useState(false);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
 
-  const stayPreview = useMemo(() => {
-    if (!selectedRoomId) return null;
-    const raw = priceInput.replace(/\s/g, '').replace(',', '.');
-    const price = raw === '' ? NaN : parseFloat(raw);
-    const nightsRaw = nightsInput.trim();
-    const nights = nightsRaw === '' ? NaN : parseInt(nightsRaw, 10);
-    if (!Number.isFinite(price) || price < 0 || !Number.isFinite(nights) || nights < 1) return null;
-    const { totalNet, vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
-    const grandTotal = Math.round((totalNet + vatAmount + accommodationTaxAmount) * 100) / 100;
-    return { totalNet, vatAmount, accommodationTaxAmount, grandTotal };
-  }, [selectedRoomId, priceInput, nightsInput]);
-
-  const load = useCallback(async () => {
-    if (!staffId) return;
+  const fetchItems = useCallback(async (): Promise<AcceptanceRow[]> => {
+    if (!staffId) return [];
     const { data: list } = await supabase
       .from('contract_acceptances')
       .select('id, token, room_id, contract_lang, accepted_at, guest_id, guests(full_name)')
@@ -247,21 +233,44 @@ export function StaffAcceptancesPanel() {
       roomNumbers = (roomsData ?? []).reduce((acc, r) => ({ ...acc, [r.id]: r.room_number }), {} as Record<string, string>);
     }
 
-    setRows(
-      (list ?? []).map((r) => {
-        const guests = r.guests as { full_name: string | null } | { full_name: string | null }[] | null;
-        const guestObj = Array.isArray(guests) ? guests[0] : guests;
-        return {
-          ...r,
-          room_number: r.room_id ? roomNumbers[r.room_id] ?? '—' : null,
-          signer_name: guestObj?.full_name ?? null,
-        };
-      })
-    );
+    return (list ?? []).map((r) => {
+      const guests = r.guests as { full_name: string | null } | { full_name: string | null }[] | null;
+      const guestObj = Array.isArray(guests) ? guests[0] : guests;
+      return {
+        ...r,
+        room_number: r.room_id ? roomNumbers[r.room_id] ?? '—' : null,
+        signer_name: guestObj?.full_name ?? null,
+      };
+    });
   }, [staffId]);
+
+  const cacheKey = staffId ? `staff-acceptances:${staffId}` : 'staff-acceptances:none';
+  const {
+    items: rows,
+    loading,
+    refreshing,
+    refresh,
+    load,
+  } = useCachedList<AcceptanceRow>({
+    cacheKey,
+    enabled: !!staffId,
+    fetchItems,
+  });
 
   const loadRef = useRef(load);
   loadRef.current = load;
+
+  const stayPreview = useMemo(() => {
+    if (!selectedRoomId) return null;
+    const raw = priceInput.replace(/\s/g, '').replace(',', '.');
+    const price = raw === '' ? NaN : parseFloat(raw);
+    const nightsRaw = nightsInput.trim();
+    const nights = nightsRaw === '' ? NaN : parseInt(nightsRaw, 10);
+    if (!Number.isFinite(price) || price < 0 || !Number.isFinite(nights) || nights < 1) return null;
+    const { totalNet, vatAmount, accommodationTaxAmount } = computeStayAmounts(price, nights);
+    const grandTotal = Math.round((totalNet + vatAmount + accommodationTaxAmount) * 100) / 100;
+    return { totalNet, vatAmount, accommodationTaxAmount, grandTotal };
+  }, [selectedRoomId, priceInput, nightsInput]);
 
   useEffect(() => {
     if (!staffId) return;
@@ -280,7 +289,7 @@ export function StaffAcceptancesPanel() {
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => {
             debounce = null;
-            loadRef.current();
+            loadRef.current({ silent: true });
           }, 250);
         }
       )
@@ -293,24 +302,10 @@ export function StaffAcceptancesPanel() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && staffId) loadRef.current();
+      if (next === 'active' && staffId) loadRef.current({ silent: true });
     });
     return () => sub.remove();
   }, [staffId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!staffId) return;
-      let cancelled = false;
-      void (async () => {
-        await load();
-        if (!cancelled) setLoading(false);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [staffId, load])
-  );
 
   useEffect(() => {
     if (roomModalVisible) {
@@ -321,12 +316,6 @@ export function StaffAcceptancesPanel() {
         .then(({ data }) => setRooms(data ?? []));
     }
   }, [roomModalVisible]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
 
   const openRoomModal = (item: AcceptanceRow) => {
     setAssignTarget(item);
@@ -498,7 +487,7 @@ export function StaffAcceptancesPanel() {
 
   if (!staffId) return null;
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -529,7 +518,7 @@ export function StaffAcceptancesPanel() {
           keyExtractor={(r) => r.id}
           contentContainerStyle={styles.list}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />
+            <RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[theme.colors.primary]} />
           }
           renderItem={({ item }) => (
             <View style={styles.card}>

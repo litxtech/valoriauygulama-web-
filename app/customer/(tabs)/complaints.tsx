@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
@@ -27,7 +27,7 @@ import {
   complaintCategoryLabel,
   complaintsLocaleTag,
 } from '@/lib/complaintsI18n';
-import { runAfterUiReady } from '@/lib/runAfterUiReady';
+import { useCachedList } from '@/hooks/useCachedList';
 
 type ComplaintRow = {
   id: string;
@@ -114,21 +114,14 @@ export default function CustomerComplaintsTab() {
   const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
   const styles = useMemo(() => createComplaintsStyles(palette, isNight), [palette, isNight]);
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [list, setList] = useState<ComplaintRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!staffCheckComplete) return;
+  const fetchItems = useCallback(async (): Promise<ComplaintRow[]> => {
+    if (!staffCheckComplete) return [];
     setLoadError(null);
     const session = await getSessionOrRefreshOnce();
     const guest = await getOrCreateGuestForCurrentSession();
-    if (!guest?.guest_id) {
-      // Misafir kimliği bir an için çözülemediyse (yavaş RPC / odak yenilemesi) mevcut
-      // listeyi SİLME; aksi halde liste kaybolur sonra geri gelir.
-      return;
-    }
+    if (!guest?.guest_id) return [];
     const guestIds = new Set<string>([guest.guest_id]);
     if (session?.user?.id) {
       const { data: linkedGuests } = await supabase
@@ -146,31 +139,22 @@ export default function CustomerComplaintsTab() {
       .order('created_at', { ascending: false })
       .limit(30);
     if (error) {
-      // Geçici sorgu hatasında mevcut listeyi koru (boş ekran flaşını önle).
       setLoadError(error.message);
-      return;
+      throw error;
     }
-    setList((data as ComplaintRow[]) ?? []);
+    return (data as ComplaintRow[]) ?? [];
   }, [staffCheckComplete]);
 
-  useEffect(() => {
-    if (!staffCheckComplete) return;
-    load().finally(() => setLoading(false));
-  }, [load, staffCheckComplete]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!staffCheckComplete) return;
-      const task = runAfterUiReady(() => void load(), { androidOnly: false });
-      return () => task.cancel();
-    }, [load, staffCheckComplete])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const {
+    items: list,
+    loading,
+    refreshing,
+    refresh,
+  } = useCachedList<ComplaintRow>({
+    cacheKey: 'customer-complaints',
+    enabled: staffCheckComplete,
+    fetchItems,
+  });
 
   const activeCount = useMemo(
     () => list.filter((item) => isActiveStatus(item.status)).length,
@@ -189,7 +173,7 @@ export default function CustomerComplaintsTab() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={onRefresh}
+          onRefresh={refresh}
           tintColor={premium.accent ?? '#7C5CFF'}
         />
       }

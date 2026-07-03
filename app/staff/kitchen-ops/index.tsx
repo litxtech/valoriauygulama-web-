@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,23 @@ import { KitchenOpsHub } from '@/components/kitchenOps/KitchenOpsHub';
 import { fetchCariNetBalance, fetchDaySummary, fetchUnresolvedAlertCount } from '@/lib/kitchenOps/api';
 import { canAccessKitchenOps, canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 import { useKitchenFinanceAccess } from '@/hooks/useKitchenFinanceAccess';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type KitchenOpsHomeCache = {
+  alertCount: number;
+  netRemaining: number;
+  cariNet: number;
+  todayRevenue: number;
+  todayExpenses: number;
+};
+
+const EMPTY: KitchenOpsHomeCache = {
+  alertCount: 0,
+  netRemaining: 0,
+  cariNet: 0,
+  todayRevenue: 0,
+  todayExpenses: 0,
+};
 
 export default function KitchenOpsHome() {
   const router = useRouter();
@@ -16,33 +33,37 @@ export default function KitchenOpsHome() {
   const canKitchen = canAccessKitchenOps(staff);
   const canReception = canAccessKitchenReceptionAccounting(staff);
   const allowed = canKitchen || canReception || financeAllowed;
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [alertCount, setAlertCount] = useState(0);
-  const [netRemaining, setNetRemaining] = useState(0);
-  const [cariNet, setCariNet] = useState(0);
-  const [todayRevenue, setTodayRevenue] = useState(0);
-  const [todayExpenses, setTodayExpenses] = useState(0);
 
-  const load = useCallback(async () => {
+  const cacheKey = `kitchen-ops-home:${staff?.id ?? 'none'}:${financeAllowed ? 'fin' : 'basic'}`;
+
+  const fetchData = useCallback(async (): Promise<KitchenOpsHomeCache | null> => {
     const alerts = await fetchUnresolvedAlertCount().catch(() => 0);
-    setAlertCount(alerts);
-
-    if (financeAllowed) {
-      const [summary, cari] = await Promise.all([
-        fetchDaySummary().catch(() => ({ net_remaining: 0, total_revenue: 0, total_expenses: 0 })),
-        fetchCariNetBalance().catch(() => 0),
-      ]);
-      setNetRemaining(Number(summary.net_remaining ?? 0));
-      setTodayRevenue(Number(summary.total_revenue ?? 0));
-      setTodayExpenses(Number(summary.total_expenses ?? 0));
-      setCariNet(Number(cari));
+    if (!financeAllowed) {
+      return { ...EMPTY, alertCount: alerts };
     }
+    const [summary, cari] = await Promise.all([
+      fetchDaySummary().catch(() => ({ net_remaining: 0, total_revenue: 0, total_expenses: 0 })),
+      fetchCariNetBalance().catch(() => 0),
+    ]);
+    return {
+      alertCount: alerts,
+      netRemaining: Number(summary.net_remaining ?? 0),
+      todayRevenue: Number(summary.total_revenue ?? 0),
+      todayExpenses: Number(summary.total_expenses ?? 0),
+      cariNet: Number(cari),
+    };
   }, [financeAllowed]);
+
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<KitchenOpsHomeCache>({
+    cacheKey,
+    enabled: canKitchen && !financeAccessLoading,
+    fetchData,
+  });
+
+  const metrics = data ?? EMPTY;
 
   useEffect(() => {
     if (financeAccessLoading) return;
-
     if (!canKitchen && financeAllowed) {
       router.replace('/staff/kitchen-ops/finance-bridge');
       return;
@@ -51,16 +72,7 @@ export default function KitchenOpsHome() {
       router.replace('/staff/kitchen-ops/reception');
       return;
     }
-    if (!canKitchen) return;
-
-    load().finally(() => setLoading(false));
-  }, [canKitchen, canReception, financeAllowed, financeAccessLoading, load, router]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  }, [canKitchen, canReception, financeAllowed, financeAccessLoading, router]);
 
   if (financeAccessLoading) {
     return (
@@ -88,7 +100,7 @@ export default function KitchenOpsHome() {
     );
   }
 
-  if (loading) {
+  if (loading && !showContent) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -101,15 +113,15 @@ export default function KitchenOpsHome() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
       showsVerticalScrollIndicator={false}
     >
       <KitchenOpsHub
-        alertCount={alertCount}
-        netRemaining={netRemaining}
-        cariNet={cariNet}
-        todayRevenue={todayRevenue}
-        todayExpenses={todayExpenses}
+        alertCount={metrics.alertCount}
+        netRemaining={metrics.netRemaining}
+        cariNet={metrics.cariNet}
+        todayRevenue={metrics.todayRevenue}
+        todayExpenses={metrics.todayExpenses}
         staffName={staff?.full_name}
         showFinance={financeAllowed}
         showFinanceBridge={financeAllowed || canReception}

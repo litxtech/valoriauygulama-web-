@@ -15,9 +15,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
+import { useCachedList } from '@/hooks/useCachedList';
 import {
   fetchStaffTipsReceived,
   sendStaffTipThankYou,
@@ -36,31 +36,25 @@ export default function StaffTipsScreen() {
   const insets = useSafeAreaInsets();
   const { i18n } = useTranslation();
   const locale = staffTipLang();
-  const [rows, setRows] = useState<StaffTipRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const {
+    items: rows,
+    setItems: setRows,
+    loading,
+    refreshing,
+    refresh,
+  } = useCachedList<StaffTipRow>({
+    cacheKey: 'staff-tips-received',
+    fetchItems: async () => {
+      try {
+        return await fetchStaffTipsReceived();
+      } catch {
+        return [];
+      }
+    },
+  });
   const [selectedTip, setSelectedTip] = useState<StaffTipRow | null>(null);
   const [thankMessage, setThankMessage] = useState('');
   const [sending, setSending] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const data = await fetchStaffTipsReceived();
-      setRows(data);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
 
   const openThankYou = (row: StaffTipRow) => {
     if (row.thank_you_at) {
@@ -119,10 +113,7 @@ export default function StaffTipsScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void load();
-              }}
+              onRefresh={refresh}
             />
           }
         >

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Alert, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
@@ -10,6 +10,7 @@ import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 import { KitchenMoneyStat, KitchenSaveButton } from '@/components/kitchenOps/KitchenUi';
 import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 import { Ionicons } from '@expo/vector-icons';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 type Checklist = {
   has_revenue: boolean;
@@ -19,6 +20,16 @@ type Checklist = {
   cash_handover: boolean;
   no_open_credit: boolean;
   no_critical_stock: boolean;
+};
+
+const DEFAULT_CHECKLIST: Checklist = {
+  has_revenue: false,
+  has_expenses: false,
+  pos_ok: false,
+  personnel_ok: false,
+  cash_handover: false,
+  no_open_credit: true,
+  no_critical_stock: true,
 };
 
 const CHECK_ITEMS: { key: keyof Checklist; label: string }[] = [
@@ -31,53 +42,64 @@ const CHECK_ITEMS: { key: keyof Checklist; label: string }[] = [
   { key: 'no_critical_stock', label: 'Kritik stok var mı?' },
 ];
 
+type DayCloseCache = {
+  summary: KitchenDaySummary;
+  posMismatch: boolean;
+  criticalCount: number;
+  loadError: string | null;
+};
+
 export default function KitchenDayCloseScreen() {
   const staff = useAuthStore((s) => s.staff);
   const today = new Date().toISOString().slice(0, 10);
-  const [summary, setSummary] = useState<KitchenDaySummary>(EMPTY_KITCHEN_DAY_SUMMARY);
-  const [checklist, setChecklist] = useState<Checklist>({
-    has_revenue: false,
-    has_expenses: false,
-    pos_ok: false,
-    personnel_ok: false,
-    cash_handover: false,
-    no_open_credit: true,
-    no_critical_stock: true,
-  });
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [checklist, setChecklist] = useState<Checklist>(DEFAULT_CHECKLIST);
   const [saving, setSaving] = useState(false);
-  const [posMismatch, setPosMismatch] = useState(false);
-  const [criticalCount, setCriticalCount] = useState(0);
 
-  const load = useCallback(async () => {
-    setLoadError(null);
+  const fetchData = useCallback(async (): Promise<DayCloseCache | null> => {
     try {
       const [s, mismatch, alerts] = await Promise.all([
         fetchDaySummary(today),
         checkPosMismatch(today).catch(() => false),
         fetchUnresolvedAlertCount().catch(() => 0),
       ]);
-      setSummary(s);
-      setPosMismatch(mismatch);
-      setCriticalCount(alerts);
-      setChecklist((c) => ({
-        ...c,
-        has_revenue: Number(s.total_revenue) > 0,
-        has_expenses: Number(s.total_expenses) > 0,
-        pos_ok: !mismatch,
-        personnel_ok: Number(s.personnel_expenses) >= 0,
-        no_critical_stock: alerts === 0,
-      }));
+      return {
+        summary: s,
+        posMismatch: mismatch,
+        criticalCount: alerts,
+        loadError: null,
+      };
     } catch (e) {
-      setSummary(EMPTY_KITCHEN_DAY_SUMMARY);
-      setPosMismatch(false);
-      setCriticalCount(0);
-      setLoadError(e instanceof Error ? e.message : 'Gün özeti alınamadı');
+      return {
+        summary: EMPTY_KITCHEN_DAY_SUMMARY,
+        posMismatch: false,
+        criticalCount: 0,
+        loadError: e instanceof Error ? e.message : 'Gün özeti alınamadı',
+      };
     }
   }, [today]);
 
-  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<DayCloseCache>({
+    cacheKey: `kitchen-day-close:${today}`,
+    fetchData,
+  });
+
+  const summary = data?.summary ?? EMPTY_KITCHEN_DAY_SUMMARY;
+  const posMismatch = data?.posMismatch ?? false;
+  const criticalCount = data?.criticalCount ?? 0;
+  const loadError = data?.loadError ?? null;
+
+  useEffect(() => {
+    if (!data) return;
+    const s = data.summary;
+    setChecklist((c) => ({
+      ...c,
+      has_revenue: Number(s.total_revenue) > 0,
+      has_expenses: Number(s.total_expenses) > 0,
+      pos_ok: !data.posMismatch,
+      personnel_ok: Number(s.personnel_expenses) >= 0,
+      no_critical_stock: data.criticalCount === 0,
+    }));
+  }, [data]);
 
   const toggleCheck = (key: keyof Checklist) => {
     setChecklist((c) => ({ ...c, [key]: !c[key] }));
@@ -129,14 +151,18 @@ export default function KitchenDayCloseScreen() {
     }
   };
 
-  if (loading) {
+  if (loading && !showContent) {
     return <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>;
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+    >
       {loadError ? (
-        <Pressable style={styles.errorBox} onPress={() => void load()}>
+        <Pressable style={styles.errorBox} onPress={refresh}>
           <Text style={styles.errorText}>{loadError}</Text>
           <Text style={styles.errorRetry}>Yeniden dene</Text>
         </Pressable>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import {
   type I18nJson,
 } from '@/lib/transferTour';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const TYPE_FILTER: (TransferServiceType | 'all')[] = ['all', 'transfer', 'tour', 'vip', 'custom_route'];
 const SIZE_FILTER: (VehicleSize | 'all')[] = ['all', 'small', 'medium', 'large', 'vip'];
@@ -47,42 +48,30 @@ export default function CustomerTransferTourList({ guestDetailStack = 'customer'
       ? ('/staff/transfer-tour/guest/[id]' as const)
       : ('/customer/transfer-tour/[id]' as const);
 
-  const [items, setItems] = useState<TransferServiceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [q, setQ] = useState('');
-  const [typeFilter, setTypeFilter] = useState<TransferServiceType | 'all'>('all');
-  const [sizeFilter, setSizeFilter] = useState<VehicleSize | 'all'>('all');
+  const cacheKey =
+    guestDetailStack === 'staff' ? 'staff-transfer-tour-guest-list' : 'customer-transfer-tour-list';
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase.from('transfer_services').select('*').eq('is_active', true).order('created_at', { ascending: false });
-    if (error) {
-      setItems([]);
-      return;
-    }
-    const rows = (data ?? []).map((r) => {
+  const fetchItems = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('transfer_services')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return (data ?? []).map((r) => {
       const o = r as Record<string, unknown>;
       return serviceRowFromDb({ ...o, routes: parseRoutes(o.routes) });
     });
-    setItems(rows);
   }, []);
 
-  useEffect(() => {
-    let c = true;
-    setLoading(true);
-    load().finally(() => {
-      if (c) setLoading(false);
-    });
-    return () => {
-      c = false;
-    };
-  }, [load]);
+  const { items, loading, refreshing, refresh } = useCachedList<TransferServiceRow>({
+    cacheKey,
+    fetchItems,
+  });
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const [q, setQ] = useState('');
+  const [typeFilter, setTypeFilter] = useState<TransferServiceType | 'all'>('all');
+  const [sizeFilter, setSizeFilter] = useState<VehicleSize | 'all'>('all');
 
   const filtered = useMemo(() => {
     return items.filter((s) => {
@@ -215,7 +204,7 @@ export default function CustomerTransferTourList({ guestDetailStack = 'customer'
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListEmptyComponent={<Text style={styles.muted}>{t('transferTourNoResults')}</Text>}
           renderItem={({ item: s }) => {
             const title = pickLocalizedString(s.title as I18nJson, lang, t('transferTourNavTitle'));

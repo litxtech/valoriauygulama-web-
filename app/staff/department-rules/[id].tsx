@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
 import { adminTheme } from '@/constants/adminTheme';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,6 +22,13 @@ import {
 import { departmentLabel, ruleTypeLabel } from '@/lib/departmentRules/constants';
 import { buildDepartmentRulePdfHtml, printDepartmentRulePdf } from '@/lib/departmentRules/pdf';
 import type { DepartmentRuleDetail } from '@/lib/departmentRules/types';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type DepartmentRuleDetailCache = {
+  detail: DepartmentRuleDetail;
+  readStatus: string;
+  orgName: string;
+};
 
 export default function StaffDepartmentRuleDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,33 +36,41 @@ export default function StaffDepartmentRuleDetailScreen() {
   const [detail, setDetail] = useState<DepartmentRuleDetail | null>(null);
   const [readStatus, setReadStatus] = useState<string>('unread');
   const [orgName, setOrgName] = useState('VALORIA HOTEL');
-  const [loading, setLoading] = useState(true);
   const [ackWorking, setAckWorking] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!id || !staff?.id) return;
-    setLoading(true);
+  const fetchData = useCallback(async (): Promise<DepartmentRuleDetailCache | null> => {
+    if (!id || !staff?.id) return null;
     const res = await getDepartmentRuleDetail(id);
     if (res.error || !res.data) {
       Alert.alert('Hata', res.error?.message ?? 'Kural bulunamadı');
-      setLoading(false);
-      return;
+      return null;
     }
-    setDetail(res.data);
     const read = await getStaffRuleReadStatus(id, staff.id);
-    setReadStatus(read?.status ?? 'unread');
-
+    let nextReadStatus = read?.status ?? 'unread';
     if (staff.organization_id && res.data.rule.status === 'published') {
       await markRuleRead(id, staff.id, staff.organization_id);
-      if (!read?.read_at) setReadStatus('read');
+      if (!read?.read_at) nextReadStatus = 'read';
     }
-
+    let nextOrgName = 'VALORIA HOTEL';
     const { data: org } = await supabase.from('organizations').select('name').eq('id', res.data.rule.organization_id).maybeSingle();
-    if (org?.name) setOrgName(String(org.name));
-    setLoading(false);
+    if (org?.name) nextOrgName = String(org.name);
+    return { detail: res.data, readStatus: nextReadStatus, orgName: nextOrgName };
   }, [id, staff?.id, staff?.organization_id]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const { data: cached, reload, showContent } = useCachedFocusLoad({
+    cacheKey: id && staff?.id ? `dept-rule-detail:${id}:${staff.id}` : 'dept-rule-detail:none',
+    enabled: !!id && !!staff?.id,
+    fetchData,
+  });
+
+  useEffect(() => {
+    if (!cached) return;
+    setDetail(cached.detail);
+    setReadStatus(cached.readStatus);
+    setOrgName(cached.orgName);
+  }, [cached]);
+
+  const load = reload;
 
   const handleAcknowledge = async () => {
     if (!detail || !staff?.id || !staff.organization_id) return;
@@ -88,7 +102,7 @@ export default function StaffDepartmentRuleDetailScreen() {
     await printDepartmentRulePdf(html, detail.rule.title);
   };
 
-  if (loading || !detail) {
+  if (!showContent && !detail) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={adminTheme.colors.accent} />

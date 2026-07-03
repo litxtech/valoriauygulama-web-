@@ -1,40 +1,30 @@
 import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { adminTheme } from '@/constants/adminTheme';
 import { listManagedContracts } from '@/lib/managedContracts';
 import { ManagedContractListItem } from '@/components/contracts/ManagedContractListItem';
 import { useAuthStore } from '@/stores/authStore';
+import { useCachedList } from '@/hooks/useCachedList';
 
 export default function StaffManagedContractsScreen() {
   const router = useRouter();
   const { staff } = useAuthStore();
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof listManagedContracts>>['data']>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const cacheKey = staff?.organization_id ? `managed-contracts:${staff.organization_id}` : 'managed-contracts:none';
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const fetchItems = useCallback(async () => {
     const res = await listManagedContracts({
       organizationId: staff?.organization_id ?? undefined,
       status: ['active', 'pending', 'expired'],
     });
-    setRows(res.data);
-    setLoading(false);
+    return res.data;
   }, [staff?.organization_id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
+  const { items: rows, loading, refreshing, refresh } = useCachedList({
+    cacheKey,
+    enabled: !!staff?.organization_id,
+    fetchItems,
+  });
 
   return (
     <View style={styles.container}>
@@ -44,7 +34,7 @@ export default function StaffManagedContractsScreen() {
         data={rows}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={adminTheme.colors.accent} />}
         ListEmptyComponent={<Text style={styles.empty}>{loading ? 'Yükleniyor…' : 'Görüntülenecek sözleşme yok'}</Text>}
         renderItem={({ item }) => (
           <ManagedContractListItem item={item} onPress={() => router.push(`/staff/managed-contracts/${item.id}` as never)} />

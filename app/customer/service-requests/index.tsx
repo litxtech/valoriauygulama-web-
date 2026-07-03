@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { fetchMyGuestServiceRequests, type GuestServiceRequestRow } from '@/lib/guestServiceRequests';
@@ -19,6 +19,7 @@ import {
   type GuestServiceRequestType,
 } from '@/lib/guestServiceRequestsI18n';
 import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
+import { useCachedList } from '@/hooks/useCachedList';
 
 const TYPE_ICON: Record<GuestServiceRequestType, keyof typeof Ionicons.glyphMap> = {
   room_cleaning: 'sparkles-outline',
@@ -40,31 +41,19 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function CustomerServiceRequestsScreen() {
   const router = useRouter();
-  const [rows, setRows] = useState<GuestServiceRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchItems = useCallback(async () => {
     try {
-      const list = await fetchMyGuestServiceRequests();
-      setRows(list);
+      return await fetchMyGuestServiceRequests();
     } catch {
-      setRows([]);
+      return [];
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load().finally(() => setLoading(false));
-    }, [load])
-  );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  const { items: rows, loading, refreshing, refresh } = useCachedList<GuestServiceRequestRow>({
+    cacheKey: 'customer-service-requests',
+    fetchItems,
+  });
 
   const activeCount = useMemo(
     () => rows.filter((r) => r.status === 'pending' || r.status === 'in_progress').length,
@@ -92,12 +81,12 @@ export default function CustomerServiceRequestsScreen() {
         <Text style={styles.newBtnText}>{guestServiceText('screenNew')}</Text>
       </TouchableOpacity>
 
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
       ) : (
         <ScrollView
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         >
           {rows.length === 0 ? (
             <Text style={styles.empty}>{guestServiceText('emptyList')}</Text>

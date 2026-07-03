@@ -8,7 +8,7 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { MissingItemsChecklistSheet } from '@/components/MissingItemsChecklistSheet';
@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { canManageMissingItemsCatalog } from '@/lib/staffPermissions';
 import { cacheMissingItemReport } from '@/lib/missingItemsCache';
 import { formatDateShort, formatTime } from '@/lib/date';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 const AREA = 'kitchen' as const;
 const ACCENT = '#E67E22';
@@ -56,17 +57,36 @@ function formatWhen(iso: string | null | undefined): string {
   return `${formatDateShort(iso)} ${formatTime(iso)}`;
 }
 
+type ShortagesCache = {
+  reports: MissingItemReportRow[];
+  legacy: MissingItemRow[];
+};
+
 export function KitchenShortagesScreen() {
   const router = useRouter();
   const { staff } = useAuthStore();
   const canEditCatalog = canManageMissingItemsCatalog(staff);
   const [tab, setTab] = useState<TabKey>('open');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [reports, setReports] = useState<MissingItemReportRow[]>([]);
-  const [legacy, setLegacy] = useState<MissingItemRow[]>([]);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const fetchData = useCallback(async (): Promise<ShortagesCache | null> => {
+    const [repRes, legRes] = await Promise.all([
+      listMissingItemReports(AREA, tab),
+      listLegacyMissingItems(AREA, tab),
+    ]);
+    if (repRes.error) Alert.alert('Hata', repRes.error);
+    if (legRes.error) Alert.alert('Hata', legRes.error);
+    return { reports: repRes.data, legacy: legRes.data };
+  }, [tab]);
+
+  const { data, loading, refreshing, refresh, reload } = useCachedFocusLoad<ShortagesCache>({
+    cacheKey: `kitchen-shortages:${tab}`,
+    fetchData,
+  });
+
+  const reports = data?.reports ?? [];
+  const legacy = data?.legacy ?? [];
 
   const entries = useMemo((): ListEntry[] => {
     const reportEntries: ListEntry[] = reports.map((r) => ({ kind: 'report' as const, data: r }));
@@ -74,28 +94,8 @@ export function KitchenShortagesScreen() {
     return [...reportEntries, ...legacyEntries];
   }, [reports, legacy]);
 
-  const loadAll = useCallback(async () => {
-    const [repRes, legRes] = await Promise.all([
-      listMissingItemReports(AREA, tab),
-      listLegacyMissingItems(AREA, tab),
-    ]);
-    if (repRes.error) Alert.alert('Hata', repRes.error);
-    if (legRes.error) Alert.alert('Hata', legRes.error);
-    setReports(repRes.data);
-    setLegacy(legRes.data);
-    setLoading(false);
-    setRefreshing(false);
-  }, [tab]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadAll();
-    }, [loadAll])
-  );
-
   const onRefresh = () => {
-    setRefreshing(true);
-    loadAll();
+    refresh();
   };
 
   const onSubmitReport = async (payload: {
@@ -112,7 +112,7 @@ export function KitchenShortagesScreen() {
     }
     setSheetVisible(false);
     setTab('open');
-    loadAll();
+    void reload();
     if (isMissingReportNotifyOnlyError(result.error)) {
       Alert.alert('Eksik listesi onaylandı', 'Kayıt alındı. Anlık bildirim gönderilemedi; ekip uygulama içinden görebilir.');
     } else {
@@ -131,7 +131,7 @@ export function KitchenShortagesScreen() {
         onPress: async () => {
           const result = await resolveMissingItemReport(id);
           if (result.error) Alert.alert('Hata', result.error);
-          else loadAll();
+          else void reload();
         },
       },
     ]);
@@ -216,7 +216,7 @@ export function KitchenShortagesScreen() {
         <Text style={styles.metaText}>{formatWhen(item.created_at)} · Eski kayıt</Text>
       </TouchableOpacity>
       {item.status === 'open' ? (
-        <TouchableOpacity style={styles.resolveBtn} onPress={() => resolveLegacyMissingItem(item.id).then(loadAll)}>
+        <TouchableOpacity style={styles.resolveBtn} onPress={() => resolveLegacyMissingItem(item.id).then(() => reload())}>
           <Text style={styles.resolveBtnText}>Giderildi</Text>
         </TouchableOpacity>
       ) : null}

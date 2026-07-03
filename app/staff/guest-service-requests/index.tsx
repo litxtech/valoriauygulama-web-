@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,10 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
+import { useCachedList } from '@/hooks/useCachedList';
 import {
   fetchStaffGuestServiceRequests,
   updateGuestServiceRequestStatus,
@@ -46,45 +46,57 @@ const NEXT_STATUS: Partial<Record<GuestServiceRequestStatus, GuestServiceRequest
 
 export default function StaffGuestServiceRequestsScreen() {
   const { staff } = useAuthStore();
-  const [rows, setRows] = useState<GuestServiceRequestRow[]>([]);
+  const orgId = staff?.organization_id ?? null;
+  const cacheKey = orgId ? `guest-service-requests:${orgId}` : 'guest-service-requests:none';
+
+  const fetchItems = useCallback(async () => {
+    try {
+      return await fetchStaffGuestServiceRequests(orgId);
+    } catch {
+      return [];
+    }
+  }, [orgId]);
+
+  const {
+    items: rows,
+    setItems: setRows,
+    loading,
+    refreshing,
+    refresh,
+    load,
+  } = useCachedList<GuestServiceRequestRow>({
+    cacheKey,
+    enabled: !!orgId,
+    fetchItems,
+  });
+
   const [guestNames, setGuestNames] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const orgId = staff?.organization_id ?? null;
-
-  const load = useCallback(async () => {
-    try {
-      const list = await fetchStaffGuestServiceRequests(orgId);
-      setRows(list);
-      const guestIds = [...new Set(list.map((r) => r.guest_id))];
-      if (guestIds.length > 0) {
-        const { data } = await supabase.from('guests').select('id, full_name').in('id', guestIds);
+  useEffect(() => {
+    const guestIds = [...new Set(rows.map((r) => r.guest_id))];
+    if (guestIds.length === 0) {
+      setGuestNames({});
+      return;
+    }
+    let cancelled = false;
+    void supabase
+      .from('guests')
+      .select('id, full_name')
+      .in('id', guestIds)
+      .then(({ data }) => {
+        if (cancelled) return;
         const map: Record<string, string> = {};
         for (const g of data ?? []) {
           const row = g as { id: string; full_name: string | null };
           map[row.id] = guestDisplayName(row.full_name) || 'Misafir';
         }
         setGuestNames(map);
-      }
-    } catch {
-      setRows([]);
-    }
-  }, [orgId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load().finally(() => setLoading(false));
-    }, [load])
-  );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
 
   const advanceStatus = async (row: GuestServiceRequestRow) => {
     const next = NEXT_STATUS[row.status];
@@ -96,7 +108,7 @@ export default function StaffGuestServiceRequestsScreen() {
         status: next,
         staffId: staff?.id ?? null,
       });
-      await load();
+      await load({ silent: true });
     } catch (e: unknown) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Güncellenemedi');
     } finally {
@@ -118,12 +130,12 @@ export default function StaffGuestServiceRequestsScreen() {
         ) : null}
       </View>
 
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
       ) : (
         <ScrollView
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         >
           {rows.length === 0 ? (
             <Text style={styles.empty}>Kayıt yok</Text>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import {
   View,
   Text,
@@ -12,7 +13,6 @@ import {
 } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { AdminOrganizationPicker } from '@/components/admin';
@@ -44,6 +44,12 @@ function parseCount(raw: string): number | null {
   return n;
 }
 
+type BriefingCache = {
+  row: BreakfastMorningBriefing | null;
+  savedTargets: BreakfastBriefingTarget[];
+  suggested: number | null;
+};
+
 export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -62,59 +68,52 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
   }, [canUseAll, selectedOrganizationId, staff?.organization_id]);
 
   const recordDate = todayIstanbulDate();
-  const [briefing, setBriefing] = useState<BreakfastMorningBriefing | null>(null);
   const [breakfastCount, setBreakfastCount] = useState('');
   const [hotelCount, setHotelCount] = useState('');
   const [note, setNote] = useState('');
   const [targets, setTargets] = useState<BreakfastBriefingTarget[]>(['kitchen']);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [prefilledHotel, setPrefilledHotel] = useState(false);
 
-  const load = useCallback(
-    async (forceSuggest = false) => {
-      if (!orgScoped || !canView) {
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-      const [row, savedTargets, suggested] = await Promise.all([
-        fetchBreakfastBriefingForDate(orgScoped, recordDate),
-        loadSavedBriefingTargets(),
-        forceSuggest || !prefilledHotel ? suggestHotelGuestCount(orgScoped) : Promise.resolve(null),
-      ]);
+  const fetchData = useCallback(async (): Promise<BriefingCache | null> => {
+    if (!orgScoped || !canView) return null;
+    const [row, savedTargets, suggested] = await Promise.all([
+      fetchBreakfastBriefingForDate(orgScoped, recordDate),
+      loadSavedBriefingTargets(),
+      suggestHotelGuestCount(orgScoped),
+    ]);
+    return { row, savedTargets, suggested };
+  }, [canView, orgScoped, recordDate]);
 
-      setBriefing(row);
-      if (row) {
-        setBreakfastCount(String(row.breakfast_guest_count));
-        setHotelCount(String(row.hotel_guest_count));
-        setNote(row.note ?? '');
-        setTargets(row.notify_targets.length ? row.notify_targets : savedTargets);
-      } else {
-        setTargets(savedTargets);
-        if (suggested != null && (forceSuggest || !prefilledHotel)) {
-          setHotelCount(String(suggested));
-          setPrefilledHotel(true);
-        }
-      }
-      setLoading(false);
-      setRefreshing(false);
-    },
-    [canView, orgScoped, prefilledHotel, recordDate]
-  );
+  const {
+    data,
+    loading,
+    refreshing,
+    refresh,
+    reload,
+  } = useCachedFocusLoad<BriefingCache>({
+    cacheKey: orgScoped ? `breakfast-briefing:${orgScoped}:${recordDate}` : 'breakfast-briefing:none',
+    enabled: !!orgScoped && canView,
+    fetchData,
+  });
 
-  useFocusEffect(
-    useCallback(() => {
-      void load(true);
-    }, [load])
-  );
+  const briefing = data?.row ?? null;
 
   useEffect(() => {
-    if (!orgScoped) return;
-    setLoading(true);
-    void load(true);
-  }, [orgScoped]);
+    if (!data) return;
+    if (data.row) {
+      setBreakfastCount(String(data.row.breakfast_guest_count));
+      setHotelCount(String(data.row.hotel_guest_count));
+      setNote(data.row.note ?? '');
+      setTargets(data.row.notify_targets.length ? data.row.notify_targets : data.savedTargets);
+    } else {
+      setTargets(data.savedTargets);
+      if (data.suggested != null && !prefilledHotel) {
+        setHotelCount(String(data.suggested));
+        setPrefilledHotel(true);
+      }
+    }
+  }, [data, prefilledHotel]);
 
   const toggleTarget = (id: BreakfastBriefingTarget) => {
     if (!canEdit) return;
@@ -128,8 +127,7 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
   };
 
   const onRefresh = () => {
-    setRefreshing(true);
-    void load(true);
+    refresh();
   };
 
   const onSubmit = async () => {
@@ -166,7 +164,7 @@ export function BreakfastMorningBriefingScreen({ mode: modeProp }: Props) {
       return;
     }
 
-    setBriefing(res.briefing);
+    void reload();
     Alert.alert(
       'Gönderildi',
       res.notifiedCount > 0

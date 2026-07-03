@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,22 +6,19 @@ import { theme } from '@/constants/theme';
 import { formatDateShort } from '@/lib/date';
 import { fetchKitchenHandovers, type KitchenHandoverListRow } from '@/lib/kitchenOps/handover';
 import { KitchenPrintBar } from '@/components/kitchenOps/KitchenPrintBar';
+import { useCachedList } from '@/hooks/useCachedList';
 
 export default function KitchenHandoversListScreen() {
   const router = useRouter();
-  const [rows, setRows] = useState<KitchenHandoverListRow[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    const data = await fetchKitchenHandovers();
-    setRows(data);
-  }, []);
+  const fetchItems = useCallback(async () => fetchKitchenHandovers(), []);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  const { items: rows, loading, refreshing, refresh } = useCachedList<KitchenHandoverListRow>({
+    cacheKey: 'kitchen-handovers-list',
+    fetchItems,
+  });
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -42,7 +39,7 @@ export default function KitchenHandoversListScreen() {
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.card}

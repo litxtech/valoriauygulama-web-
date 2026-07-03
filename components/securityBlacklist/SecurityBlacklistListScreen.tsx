@@ -10,7 +10,8 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
-import { useFocusEffect, usePathname, useRouter } from 'expo-router';
+import { useCachedList } from '@/hooks/useCachedList';
+import { usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,19 +31,22 @@ export function SecurityBlacklistListScreen() {
   const base = isAdminRoute ? '/admin/blacklist' : '/staff/blacklist';
   const canManage = canAccessSecurityBlacklist(staff);
 
-  const [items, setItems] = useState<Awaited<ReturnType<typeof listSecurityBlacklistEntries>>['data']>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [showRemoved, setShowRemoved] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<SecurityBlacklistScopeFilter>('all');
 
-  const load = useCallback(async () => {
+  type BlacklistItem = Awaited<ReturnType<typeof listSecurityBlacklistEntries>>['data'][number];
+
+  const fetchItems = useCallback(async () => {
     const { data, error } = await listSecurityBlacklistEntries({ includeRemoved: showRemoved });
-    if (!error) setItems(data);
-    setLoading(false);
-    setRefreshing(false);
+    if (error) return [];
+    return data;
   }, [showRemoved]);
+
+  const { items, loading, refreshing, refresh } = useCachedList<BlacklistItem>({
+    cacheKey: `security-blacklist:${showRemoved ? 'all' : 'active'}`,
+    fetchItems,
+  });
 
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -63,13 +67,6 @@ export function SecurityBlacklistListScreen() {
   }, [items, search, scopeFilter]);
 
   const activeCount = useMemo(() => items.filter((i) => !i.is_removed).length, [items]);
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void load();
-    }, [load])
-  );
 
   const listHeader = (
     <View>
@@ -154,10 +151,7 @@ export function SecurityBlacklistListScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void load();
-            }}
+            onRefresh={refresh}
             tintColor={blacklistTheme.accent}
           />
         }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, ActivityIndicator, Text, Pressable } from 'react-native';
 import { theme } from '@/constants/theme';
 import { fetchDaySummary, fetchCariNetBalance } from '@/lib/kitchenOps/api';
@@ -8,35 +8,41 @@ import { KitchenMoneyStat } from '@/components/kitchenOps/KitchenUi';
 import { fmtKitchenMoney } from '@/lib/kitchenOps/stockStatus';
 import { KitchenFinancePrintBar } from '@/components/kitchenOps/KitchenPrintBar';
 import { KitchenFinanceAccessGate } from '@/components/kitchenOps/KitchenFinanceAccessGate';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
+
+type FinanceCache = {
+  summary: KitchenDaySummary;
+  cariNet: number;
+  loadError: string | null;
+};
 
 export default function KitchenFinanceScreen() {
-  const [summary, setSummary] = useState<KitchenDaySummary>(EMPTY_KITCHEN_DAY_SUMMARY);
-  const [cariNet, setCariNet] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoadError(null);
+  const fetchData = useCallback(async (): Promise<FinanceCache | null> => {
     try {
       const [s, c] = await Promise.all([
         fetchDaySummary(),
         fetchCariNetBalance().catch(() => 0),
       ]);
-      setSummary(s);
-      setCariNet(c);
+      return { summary: s, cariNet: c, loadError: null };
     } catch (e) {
-      setSummary(EMPTY_KITCHEN_DAY_SUMMARY);
-      setCariNet(0);
-      setLoadError(e instanceof Error ? e.message : 'Finans özeti alınamadı');
+      return {
+        summary: EMPTY_KITCHEN_DAY_SUMMARY,
+        cariNet: 0,
+        loadError: e instanceof Error ? e.message : 'Finans özeti alınamadı',
+      };
     }
   }, []);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  const { data, loading, refreshing, refresh, showContent } = useCachedFocusLoad<FinanceCache>({
+    cacheKey: 'kitchen-finance-summary',
+    fetchData,
+  });
 
-  if (loading) {
+  const summary = data?.summary ?? EMPTY_KITCHEN_DAY_SUMMARY;
+  const cariNet = data?.cariNet ?? 0;
+  const loadError = data?.loadError ?? null;
+
+  if (loading && !showContent) {
     return (
       <KitchenFinanceAccessGate>
         <View style={styles.center}><ActivityIndicator size="large" color={theme.colors.primary} /></View>
@@ -49,19 +55,10 @@ export default function KitchenFinanceScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={async () => {
-            setRefreshing(true);
-            await load();
-            setRefreshing(false);
-          }}
-        />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       {loadError ? (
-        <Pressable style={styles.errorBox} onPress={() => void load()}>
+        <Pressable style={styles.errorBox} onPress={refresh}>
           <Text style={styles.errorText}>{loadError}</Text>
           <Text style={styles.errorRetry}>Yeniden dene</Text>
         </Pressable>

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 import {
   View,
   Text,
@@ -8,7 +9,7 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -69,6 +70,8 @@ type ListEntry =
   | { kind: 'report'; data: MissingItemReportRow }
   | { kind: 'legacy'; data: MissingItemRow };
 
+type AreaListCache = { reports: MissingItemReportRow[]; legacy: MissingItemRow[] };
+
 export default function MissingItemsAreaScreen() {
   const { t, i18n } = useTranslation();
   const dateLocale = (i18n.language || 'tr').split('-')[0];
@@ -92,10 +95,6 @@ export default function MissingItemsAreaScreen() {
   const area = parseArea(areaParam);
 
   const [tab, setTab] = useState<TabKey>('open');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [reports, setReports] = useState<MissingItemReportRow[]>([]);
-  const [legacy, setLegacy] = useState<MissingItemRow[]>([]);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -123,30 +122,31 @@ export default function MissingItemsAreaScreen() {
     return [...reportEntries, ...legacyEntries];
   }, [reports, legacy]);
 
-  const loadAll = useCallback(async () => {
-    if (!area) return;
+  const fetchData = useCallback(async (): Promise<AreaListCache | null> => {
+    if (!area) return null;
     const [repRes, legRes] = await Promise.all([
       listMissingItemReports(area, tab),
       listLegacyMissingItems(area, tab),
     ]);
     if (repRes.error) Alert.alert(t('error'), repRes.error);
     if (legRes.error) Alert.alert(t('error'), legRes.error);
-    setReports(repRes.data);
-    setLegacy(legRes.data);
-    setLoading(false);
-    setRefreshing(false);
-  }, [area, tab]);
+    return { reports: repRes.data, legacy: legRes.data };
+  }, [area, tab, t]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadAll();
-    }, [loadAll])
-  );
+  const {
+    data,
+    loading,
+    refreshing,
+    refresh,
+    reload,
+  } = useCachedFocusLoad<AreaListCache>({
+    cacheKey: area ? `missing-items:${area}:${tab}` : 'missing-items:none',
+    enabled: !!area,
+    fetchData,
+  });
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    loadAll();
-  };
+  const reports = data?.reports ?? [];
+  const legacy = data?.legacy ?? [];
 
   const onSubmitReport = async (payload: {
     items: { key?: string; label: string }[];
@@ -163,7 +163,7 @@ export default function MissingItemsAreaScreen() {
     }
     setSheetVisible(false);
     setTab('open');
-    loadAll();
+    void reload();
     if (isMissingReportNotifyOnlyError(result.error)) {
       Alert.alert(t('missingItemsSubmitSuccess'), t('missingItemsSubmitNotifyWarning'));
     } else {
@@ -179,7 +179,7 @@ export default function MissingItemsAreaScreen() {
         onPress: async () => {
           const result = await resolveMissingItemReport(id);
           if (result.error) Alert.alert(t('error'), result.error);
-          else loadAll();
+          else void reload();
         },
       },
     ]);
@@ -193,7 +193,7 @@ export default function MissingItemsAreaScreen() {
         onPress: async () => {
           const result = await resolveLegacyMissingItem(id);
           if (result.error) Alert.alert(t('error'), result.error);
-          else loadAll();
+          else void reload();
         },
       },
     ]);
@@ -362,7 +362,7 @@ export default function MissingItemsAreaScreen() {
       <FlatList
         data={entries}
         keyExtractor={(e) => (e.kind === 'report' ? `r-${e.data.id}` : `l-${e.data.id}`)}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={meta.color} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={meta.color} />}
         contentContainerStyle={[styles.listContent, { paddingBottom: listBottomPad }]}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
