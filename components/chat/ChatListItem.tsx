@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -22,9 +22,11 @@ export type ChatListItemProps = {
   lastMessageByMe?: boolean;
   isRead?: boolean;
   isDelivered?: boolean;
+  /** Parent’tan verilirse satırda useChatTheme çağrılmaz (liste kaydırması daha akıcı). */
+  chatPalette?: ChatThemePalette;
 };
 
-export function ChatListItem({
+export const ChatListItem = memo(function ChatListItem({
   item,
   selected,
   selectionMode,
@@ -34,9 +36,11 @@ export function ChatListItem({
   displayName,
   lastMessageByMe,
   isRead,
+  chatPalette,
 }: ChatListItemProps) {
   const { t } = useTranslation();
-  const chat = useChatTheme();
+  const themeFromHook = useChatTheme();
+  const chat = chatPalette ?? themeFromHook;
   const styles = useMemo(() => createStyles(chat), [chat]);
 
   const unread = item.unread_count ?? 0;
@@ -125,7 +129,7 @@ export function ChatListItem({
       </View>
     </Pressable>
   );
-}
+});
 
 function createStyles(chat: ChatThemePalette) {
   return StyleSheet.create({

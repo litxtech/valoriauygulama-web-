@@ -1,9 +1,8 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
@@ -12,6 +11,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { FlashList } from '@shopify/flash-list';
 import {
   useGuestMessagingStore,
   GUEST_CUSTOMER_MESSAGES_LIST_CACHE_KEY,
@@ -39,8 +39,9 @@ import { useChatTheme } from '@/hooks/useScreenTheme';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 
-const LIST_CACHE_TTL_MS = 45_000;
-const MIN_LOAD_INTERVAL_MS = 2_500;
+const LIST_CACHE_TTL_MS = 90_000;
+const MIN_LOAD_INTERVAL_MS = 5_000;
+const CUSTOMER_MESSAGES_ROW_HEIGHT = 78;
 let conversationListCache: ConversationWithMeta[] = [];
 let conversationListCacheUpdatedAt = 0;
 
@@ -51,6 +52,56 @@ function chatAvatarChar(name: string | null | undefined, chatFallback: string): 
   const first = n.charAt(0).toUpperCase();
   return first || '💬';
 }
+
+type CustomerMessageRowProps = {
+  item: ConversationWithMeta;
+  styles: ReturnType<typeof createCustomerMessagesStyles>;
+  chatFallback: string;
+  onPress: (item: ConversationWithMeta) => void;
+  onDelete: (item: ConversationWithMeta) => void;
+};
+
+const CustomerMessageRow = memo(function CustomerMessageRow({
+  item,
+  styles,
+  chatFallback,
+  onPress,
+  onDelete,
+}: CustomerMessageRowProps) {
+  const name = item.name || chatFallback;
+  const unread = item.unread_count ?? 0;
+  return (
+    <SwipeToDelete onSwipeDelete={() => onDelete(item)}>
+      <TouchableOpacity style={styles.card} onPress={() => onPress(item)} activeOpacity={0.7}>
+        <View style={styles.avatar}>
+          {item.avatar ? (
+            <CachedImage uri={item.avatar} style={styles.avatarImg} contentFit="cover" />
+          ) : (
+            <Text style={styles.avatarText}>{chatAvatarChar(name, chatFallback)}</Text>
+          )}
+        </View>
+        <View style={styles.cardBody}>
+          <Text style={styles.cardName} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text style={styles.cardPreview} numberOfLines={1}>
+            {item.last_message_preview || '—'}
+          </Text>
+        </View>
+        <View style={styles.cardMeta}>
+          <Text style={styles.cardTime}>
+            {item.last_message_at ? formatRelative(item.last_message_at) : '—'}
+          </Text>
+          {unread > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
+            </View>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    </SwipeToDelete>
+  );
+});
 
 export default function CustomerMessagesScreen() {
   const { t } = useTranslation();
@@ -232,30 +283,59 @@ export default function CustomerMessagesScreen() {
     }, [appToken, authChecked, loadConversations, applyIncomingInboxMessage])
   );
 
-  const handleDeleteConversation = (item: ConversationWithMeta) => {
-    if (!appToken) return;
-    const name = item.name || t('chatConversationFallback');
-    Alert.alert(t('customerChatDeleteTitle'), t('customerChatDeleteMessage', { name }), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          const ok = await guestDeleteConversation(appToken, item.id);
-          if (!ok) {
-            Alert.alert(t('error'), t('customerChatDeleteFailed'));
-            return;
-          }
-          setConversations((prev) => {
-            const next = prev.filter((c) => c.id !== item.id);
-            conversationListCache = next;
-            conversationListCacheUpdatedAt = Date.now();
-            return next;
-          });
+  const handleDeleteConversation = useCallback(
+    (item: ConversationWithMeta) => {
+      if (!appToken) return;
+      const name = item.name || t('chatConversationFallback');
+      Alert.alert(t('customerChatDeleteTitle'), t('customerChatDeleteMessage', { name }), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('delete'),
+          style: 'destructive',
+          onPress: async () => {
+            const ok = await guestDeleteConversation(appToken, item.id);
+            if (!ok) {
+              Alert.alert(t('error'), t('customerChatDeleteFailed'));
+              return;
+            }
+            setConversations((prev) => {
+              const next = prev.filter((c) => c.id !== item.id);
+              conversationListCache = next;
+              conversationListCacheUpdatedAt = Date.now();
+              return next;
+            });
+          },
         },
-      },
-    ]);
-  };
+      ]);
+    },
+    [appToken, t]
+  );
+
+  const openConversation = useCallback(
+    (item: ConversationWithMeta) => {
+      const name = item.name || t('chatConversationFallback');
+      router.push({
+        pathname: '/customer/chat/[id]',
+        params: { id: item.id, name },
+      });
+    },
+    [router, t]
+  );
+
+  const chatFallback = t('chatConversationFallback');
+
+  const renderRow = useCallback(
+    ({ item }: { item: ConversationWithMeta }) => (
+      <CustomerMessageRow
+        item={item}
+        styles={styles}
+        chatFallback={chatFallback}
+        onPress={openConversation}
+        onDelete={handleDeleteConversation}
+      />
+    ),
+    [styles, chatFallback, openConversation, handleDeleteConversation]
+  );
 
   if (authChecked && !appToken) {
     if (!hasSession) {
@@ -304,9 +384,12 @@ export default function CustomerMessagesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
-      <FlatList
+      <FlashList
         data={conversations}
+        estimatedItemSize={CUSTOMER_MESSAGES_ROW_HEIGHT}
+        drawDistance={280}
         keyExtractor={(item) => item.id}
+        renderItem={renderRow}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -320,48 +403,7 @@ export default function CustomerMessagesScreen() {
           </View>
         }
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => {
-          const name = item.name || t('chatConversationFallback');
-          const unread = item.unread_count ?? 0;
-          return (
-            <SwipeToDelete onSwipeDelete={() => handleDeleteConversation(item)}>
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() =>
-                  router.push({
-                    pathname: '/customer/chat/[id]',
-                    params: { id: item.id, name },
-                  })
-                }
-                activeOpacity={0.7}
-              >
-                <View style={styles.avatar}>
-                  {item.avatar ? (
-                    <CachedImage uri={item.avatar} style={styles.avatarImg} contentFit="cover" />
-                  ) : (
-                    <Text style={styles.avatarText}>{chatAvatarChar(name, t('chatConversationFallback'))}</Text>
-                  )}
-                </View>
-                <View style={styles.cardBody}>
-                  <Text style={styles.cardName} numberOfLines={1}>{name}</Text>
-                  <Text style={styles.cardPreview} numberOfLines={1}>
-                    {item.last_message_preview || '—'}
-                  </Text>
-                </View>
-                <View style={styles.cardMeta}>
-                  <Text style={styles.cardTime}>
-                    {item.last_message_at ? formatRelative(item.last_message_at) : '—'}
-                  </Text>
-                  {unread > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            </SwipeToDelete>
-          );
-        }}
+        showsVerticalScrollIndicator={false}
       />
     </View>
   );

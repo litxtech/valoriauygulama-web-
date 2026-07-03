@@ -1,9 +1,8 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TextInput,
   TouchableOpacity,
   Pressable,
@@ -15,6 +14,7 @@ import {
   Modal,
   useWindowDimensions,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useGuestMessagingStore } from '@/stores/guestMessagingStore';
@@ -43,12 +43,8 @@ import {
   MESSAGING_COLORS,
   type Message,
 } from '@/lib/messaging';
-import {
-  CHAT_LIST_INVERTED_CONTENT_STYLE,
-  scrollChatListToLatest,
-  useInvertedChatListItems,
-} from '@/lib/chatListScroll';
-import { CHAT_FLAT_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
+import { scrollChatListToEnd, type ChatListRef } from '@/lib/chatListScroll';
+import { CHAT_FLASH_LIST_PROPS, useChatHeavyMediaReady } from '@/lib/chatListPerf';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -126,7 +122,7 @@ type CustomerChatCacheEntry = {
 };
 const customerChatMemoryCache: Record<string, CustomerChatCacheEntry> = {};
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   msg,
   isOwn,
   onImagePress,
@@ -270,7 +266,7 @@ function MessageBubble({
       </View>
     </Pressable>
   );
-}
+});
 
 function routeParamFirst(v: string | string[] | undefined): string | undefined {
   const s = Array.isArray(v) ? v[0] : v;
@@ -305,7 +301,7 @@ export default function CustomerChatScreen() {
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
   const [conversationType, setConversationType] = useState<string>('direct');
   const [guestDisplayName, setGuestDisplayName] = useState(() => t('guestDefaultName'));
-  const listRef = useRef<FlatList>(null);
+  const listRef = useRef<ChatListRef>(null);
   const sendInFlightRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<typeof subscribeToMessages> | null>(null);
   const typingPresenceRef = useRef<ReturnType<typeof subscribeToTypingPresence> | null>(null);
@@ -322,7 +318,7 @@ export default function CustomerChatScreen() {
     () => messages.some((m) => m.message_type === 'video'),
     [messages]
   );
-  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading, {
+  const heavyMediaReady = useChatHeavyMediaReady(conversationId, loading && messages.length === 0, {
     hasVideos: chatHasVideosEarly,
   });
 
@@ -543,7 +539,7 @@ export default function CustomerChatScreen() {
         if (newMsg.message_type === 'text' && newMsg.sender_type !== 'guest' && (newMsg.content ?? '').trim()) {
           prefetchTranslations([(newMsg.content ?? '').trim()]);
         }
-        setTimeout(() => scrollChatListToLatest(listRef, true), 150);
+        setTimeout(() => scrollChatListToEnd(listRef, true), 150);
       },
       {
         onMessageDeleted: (messageId) => {
@@ -600,7 +596,7 @@ export default function CustomerChatScreen() {
       const list = await guestGetMessages(appToken, conversationId, 80, undefined, after);
       if (list.length === 0) return;
       setMessages((prev) => mergeChatMessagesCapped(list, prev));
-    }, 45_000);
+    }, 60_000);
     return () => clearInterval(id);
   }, [appToken, conversationId, loading]);
 
@@ -610,8 +606,7 @@ export default function CustomerChatScreen() {
     [messages]
   );
   const chatListItems = useMemo(() => buildChatListDisplayItems(sortedMessages), [sortedMessages]);
-  const invertedChatListItems = useInvertedChatListItems(chatListItems);
-  useChatVoiceQueueSync(sortedMessages, invertedChatListItems, listRef);
+  useChatVoiceQueueSync(sortedMessages, chatListItems, listRef);
   const isGroup = conversationType === 'group';
   const screenshotPushBody = useMemo(
     () => t('chatScreenshotNotice', { name: guestDisplayName }),
@@ -645,7 +640,7 @@ export default function CustomerChatScreen() {
       pushBody: screenshotPushBody,
       onLocalMessage: (msg: Message) => {
         setMessages((prev) => upsertIncomingChatMessage(prev, msg, { ownSenderType: 'guest' }));
-        setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+        setTimeout(() => scrollChatListToEnd(listRef, true), 100);
       },
       reloadStaffMessages: () => guestGetMessages(appToken, conversationId, 50),
     };
@@ -744,7 +739,7 @@ export default function CustomerChatScreen() {
       mentions: mentions.length ? mentions : [],
     };
     setMessages((prev) => [...prev, optimistic]);
-    setTimeout(() => scrollChatListToLatest(listRef, true), 50);
+    setTimeout(() => scrollChatListToEnd(listRef, true), 50);
     try {
     const { messageId, conversationId: nextConversationId, error: sendError } = await guestSendMessage(
       token,
@@ -787,7 +782,7 @@ export default function CustomerChatScreen() {
         router.replace({ pathname: '/customer/chat/[id]', params: { id: nextConversationId, name: headerName } });
         return;
       }
-      setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 100);
     } else {
       setInput(text);
       setPendingMentions(mentions);
@@ -842,7 +837,7 @@ export default function CustomerChatScreen() {
       await notifyGuestPhotos(token, convId);
       const list = await guestGetMessages(token, convId, 50);
       setMessages(list);
-      setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 100);
       if (failed > 0) Alert.alert(t('error'), t('chatMediaPartialFail', { count: failed }));
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
@@ -873,7 +868,7 @@ export default function CustomerChatScreen() {
       if (!failed) await notifyGuestPhotos(token, convId);
       const list = await guestGetMessages(token, convId, 50);
       setMessages(list);
-      setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 100);
       if (failed) Alert.alert(t('error'), t('imageSendFailed'));
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('imageSendFailed'));
@@ -918,7 +913,7 @@ export default function CustomerChatScreen() {
     });
     try {
       await sendChatVideoFromPickerWithSession(actor, source, handlers);
-      setTimeout(() => scrollChatListToLatest(listRef, true), 80);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 80);
     } catch (e) {
       Alert.alert(t('error'), (e as Error)?.message ?? t('chatVideoSendFailed'));
     }
@@ -963,7 +958,7 @@ export default function CustomerChatScreen() {
           durationSec,
         }),
       ]);
-      setTimeout(() => scrollChatListToLatest(listRef, true), 50);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 50);
 
       const { message, error, conversationId: convId } = await sendGuestVoiceMessage(
         { kind: 'guest', appToken: token, conversationId },
@@ -1003,7 +998,7 @@ export default function CustomerChatScreen() {
         router.replace({ pathname: '/customer/chat/[id]', params: { id: convId, name: headerName } });
         return;
       }
-      setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+      setTimeout(() => scrollChatListToEnd(listRef, true), 100);
     },
     [conversationId, guestDisplayName, headerName, router, t]
   );
@@ -1082,48 +1077,99 @@ export default function CustomerChatScreen() {
     ]);
   };
 
-  const toggleSelectedMessage = (msg: Message) => {
+  const toggleSelectedMessage = useCallback((msg: Message) => {
     if (msg.sender_type !== 'guest') return;
     setSelectedMessageIds((prev) =>
       prev.includes(msg.id) ? prev.filter((id) => id !== msg.id) : [...prev, msg.id]
     );
-  };
+  }, []);
 
-  const handleDeleteMessage = (msg: Message) => {
-    if (msg.sender_type !== 'guest') return;
-    if (selectionMode) {
-      toggleSelectedMessage(msg);
-      return;
-    }
-    const editable = isChatMessageEditable(msg, { ownSenderType: 'guest' });
-    Alert.alert(t('chatMessageActionTitle'), undefined, [
-      ...(editable
-        ? [{ text: t('chatMessageActionEdit'), onPress: () => beginMessageEdit(msg) }]
-        : []),
-      {
-        text: t('chatMultiSelect'),
-        onPress: () => {
-          setSelectionMode(true);
-          setSelectedMessageIds([msg.id]);
+  const handleDeleteMessage = useCallback(
+    (msg: Message) => {
+      if (msg.sender_type !== 'guest') return;
+      if (selectionMode) {
+        toggleSelectedMessage(msg);
+        return;
+      }
+      const editable = isChatMessageEditable(msg, { ownSenderType: 'guest' });
+      Alert.alert(t('chatMessageActionTitle'), undefined, [
+        ...(editable
+          ? [{ text: t('chatMessageActionEdit'), onPress: () => beginMessageEdit(msg) }]
+          : []),
+        {
+          text: t('chatMultiSelect'),
+          onPress: () => {
+            setSelectionMode(true);
+            setSelectedMessageIds([msg.id]);
+          },
         },
-      },
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          const token = (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
-          if (!token) return;
-          const ok = await guestDeleteMessage(token, msg.id);
-          if (!ok) {
-            Alert.alert(t('error'), t('messageDeleteFailed'));
-            return;
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('delete'),
+          style: 'destructive',
+          onPress: async () => {
+            const token =
+              (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+            if (!token) return;
+            const ok = await guestDeleteMessage(token, msg.id);
+            if (!ok) {
+              Alert.alert(t('error'), t('messageDeleteFailed'));
+              return;
+            }
+            setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+          },
+        },
+      ]);
+    },
+    [selectionMode, t, toggleSelectedMessage]
+  );
+
+  const renderChatItem = useCallback(
+    ({ item }: { item: (typeof chatListItems)[number] }) => {
+      const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
+      if (msg.message_type === 'screenshot_notice') {
+        return <ChatScreenshotNotice message={msg} />;
+      }
+      const isOwn = msg.sender_type === 'guest';
+      const bubbleColor = isOwn ? myBubbleColor : BUBBLE_OTHER_DIRECT;
+      const resolveVideoUpload = (m: Message) =>
+        videoUploads[m.id] ?? Object.values(videoUploads).find((s) => s.messageId === m.id);
+      const upload = resolveVideoUpload(msg);
+      return (
+        <MessageBubble
+          msg={msg}
+          isOwn={isOwn}
+          imageAlbum={item.kind === 'image_album' ? item.messages : undefined}
+          videoAlbum={item.kind === 'video_album' ? item.messages : undefined}
+          videoUploads={videoUploads}
+          onImagePress={setFullscreenImageUri}
+          onDelete={handleDeleteMessage}
+          onToggleSelect={toggleSelectedMessage}
+          selected={selectedMessageIds.includes(msg.id)}
+          selectionMode={selectionMode}
+          bubbleColor={bubbleColor}
+          videoUpload={upload}
+          onVideoRetry={
+            upload?.phase === 'failed' ? () => void retryVideoUpload(upload) : undefined
           }
-          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
-        },
-      },
-    ]);
-  };
+          onVideoRetryForMessage={(m) => {
+            const st = resolveVideoUpload(m);
+            if (st?.phase === 'failed') void retryVideoUpload(st);
+          }}
+          mediaPreloadReady={heavyMediaReady}
+        />
+      );
+    },
+    [
+      myBubbleColor,
+      videoUploads,
+      selectedMessageIds,
+      selectionMode,
+      heavyMediaReady,
+      handleDeleteMessage,
+      toggleSelectedMessage,
+    ]
+  );
 
   if (!appToken) {
     return (
@@ -1135,7 +1181,7 @@ export default function CustomerChatScreen() {
     );
   }
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={MESSAGING_COLORS.primary} />
@@ -1155,58 +1201,34 @@ export default function CustomerChatScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <FlatList
+      <View style={styles.messageListHost}>
+      <FlashList
         keyboardShouldPersistTaps="handled"
         ref={listRef}
-        data={invertedChatListItems}
-        keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
-        contentContainerStyle={[CHAT_LIST_INVERTED_CONTENT_STYLE, styles.listContent]}
-        {...CHAT_FLAT_LIST_PROPS}
-        renderItem={({ item }) => {
-          const msg = item.kind === 'message' ? item.message : item.messages[item.messages.length - 1];
-          if (msg.message_type === 'screenshot_notice') {
-            return <ChatScreenshotNotice message={msg} />;
-          }
-          const isOwn = msg.sender_type === 'guest';
-          const bubbleColor = isOwn ? myBubbleColor : BUBBLE_OTHER_DIRECT;
-          const resolveVideoUpload = (m: Message) =>
-            videoUploads[m.id] ?? Object.values(videoUploads).find((s) => s.messageId === m.id);
-          return (
-            <MessageBubble
-              msg={msg}
-              isOwn={isOwn}
-              imageAlbum={item.kind === 'image_album' ? item.messages : undefined}
-              videoAlbum={item.kind === 'video_album' ? item.messages : undefined}
-              videoUploads={videoUploads}
-              onImagePress={setFullscreenImageUri}
-              onDelete={handleDeleteMessage}
-              onToggleSelect={toggleSelectedMessage}
-              selected={selectedMessageIds.includes(msg.id)}
-              selectionMode={selectionMode}
-              bubbleColor={bubbleColor}
-              videoUpload={resolveVideoUpload(msg)}
-              onVideoRetry={
-                resolveVideoUpload(msg)?.phase === 'failed'
-                  ? () => {
-                      const st = resolveVideoUpload(msg);
-                      if (st) void retryVideoUpload(st);
-                    }
-                  : undefined
-              }
-              onVideoRetryForMessage={(m) => {
-                const st = resolveVideoUpload(m);
-                if (st?.phase === 'failed') void retryVideoUpload(st);
-              }}
-              mediaPreloadReady={heavyMediaReady}
-            />
-          );
+        style={styles.messageList}
+        data={chatListItems}
+        extraData={{
+          messageCount: messages.length,
+          lastMessageId: messages[messages.length - 1]?.id ?? '',
+          myBubbleColor,
+          videoUploads,
+          selectionMode,
+          selectedMessageIds,
+          heavyMediaReady,
         }}
+        keyExtractor={(item) => (item.kind === 'message' ? item.message.id : item.key)}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        drawDistance={CHAT_FLASH_LIST_PROPS.drawDistance}
+        maintainVisibleContentPosition={CHAT_FLASH_LIST_PROPS.maintainVisibleContentPosition}
+        renderItem={renderChatItem}
         ListEmptyComponent={
-          <View style={styles.emptyInverted}>
+          <View style={styles.emptyWrap}>
             <Text style={styles.empty}>{t('chatEmptyGuestInvite')}</Text>
           </View>
         }
       />
+      </View>
       {typingNames.length > 0 ? (
         <View style={styles.typingRow}>
           {typingNames.length === 1 ? (
@@ -1315,8 +1337,11 @@ export default function CustomerChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f9fafb' },
+  messageListHost: { flex: 1 },
+  messageList: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   placeholder: { color: MESSAGING_COLORS.textSecondary },
+  emptyWrap: { paddingTop: 48, alignItems: 'center' },
   headerOnline: { fontSize: 13, color: MESSAGING_COLORS.success, fontWeight: '600', marginRight: 12 },
   headerTitleRow: {
     flexDirection: 'row',

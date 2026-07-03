@@ -63,9 +63,9 @@ import {
   scheduleGuestMessagingUnreadRefresh,
   scheduleStaffMessagingUnreadRefresh,
   showMessagePushToastFromNotification,
-  subscribeLiveMessagePushToasts,
 } from '@/lib/messagingUnreadSync';
-import { getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
+import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
+import { LiveMessageToastHost } from '@/components/notifications/LiveMessageToastHost';
 import { ValoriaMessagePushToast } from '@/components/notifications/ValoriaMessagePushToast';
 import { useStaffBoardStore } from '@/stores/staffBoardStore';
 import {
@@ -185,11 +185,13 @@ function AppIconBadgeSync() {
         pushBadgeFromStores();
       });
     };
+    const deferMs = 2000;
     if (Platform.OS === 'android') {
-      const task = runAfterUiReady(run, { delayMs: 900 });
+      const task = runAfterUiReady(run, { delayMs: deferMs });
       return () => task.cancel();
     }
-    run();
+    const timer = setTimeout(run, deferMs);
+    return () => clearTimeout(timer);
   }, [staff?.id]);
 
   useEffect(() => {
@@ -215,9 +217,6 @@ function AppIconBadgeSync() {
 function RootLayoutInner() {
   const { t } = useTranslation();
   const router = useRouter();
-  const pathname = usePathname();
-  const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
   const setQR = useGuestFlowStore((s) => s.setQR);
   const staff = useAuthStore((s) => s.staff);
   const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
@@ -401,14 +400,19 @@ function RootLayoutInner() {
   useEffect(() => {
     if (!partner?.partnerUserId || !partnerCheckComplete || !partnerSurfaceHydrated) return;
     if (partnerSurface !== 'portal') return;
-    const run = () => {
+    let lastPushSaveAt = 0;
+    const PUSH_SAVE_MIN_GAP_MS = 10 * 60_000;
+    const run = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastPushSaveAt < PUSH_SAVE_MIN_GAP_MS) return;
+      lastPushSaveAt = now;
       savePushTokenForPartner(partner.partnerUserId).catch((e) =>
         log.warn('RootLayout', 'partner push token kayıt', e)
       );
     };
-    const bootDelay = setTimeout(run, 1500);
+    const bootDelay = setTimeout(() => run(true), 1500);
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') run();
+      if (state === 'active') run(false);
     });
     return () => {
       clearTimeout(bootDelay);
@@ -480,62 +484,6 @@ function RootLayoutInner() {
     });
     return remove;
   }, [router]);
-
-  // Canlı mesaj toast — Supabase realtime (ön plan); push ile aynı mesaj dedup edilir.
-  useEffect(() => {
-    if (Platform.OS === 'web' || isExpoGo) return;
-    const getPathname = () => pathnameRef.current;
-    let unsub: (() => void) | null = null;
-    let cancelled = false;
-
-    const startStaff = (staffId: string) => {
-      if (cancelled) return;
-      unsub = subscribeLiveMessagePushToasts(
-        {
-          kind: 'staff',
-          staffId,
-          buildChatUrl: (id) => `/staff/chat/${id}`,
-        },
-        { getPathname }
-      );
-    };
-
-    const startGuest = async () => {
-      const row = await getOrCreateGuestForCurrentSession();
-      if (cancelled || !row?.guest_id) return;
-      unsub = subscribeLiveMessagePushToasts(
-        {
-          kind: 'guest',
-          guestId: row.guest_id,
-          buildChatUrl: (id) => `/customer/chat/${id}`,
-        },
-        { getPathname }
-      );
-    };
-
-    const run = () => {
-      const { staff: s } = useAuthStore.getState();
-      if (s?.id) {
-        startStaff(s.id);
-        return;
-      }
-      void startGuest();
-    };
-
-    if (Platform.OS === 'android') {
-      const task = runAfterUiReady(run, { delayMs: 900 });
-      return () => {
-        cancelled = true;
-        task.cancel();
-        unsub?.();
-      };
-    }
-    run();
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
-  }, [staff?.id, staffCheckComplete]);
 
   // Uygulama öndeyken bildirim gelince badge güncellensin (mesaj push'u yalnızca sohbet sayacını artırır).
   useEffect(() => {
@@ -812,6 +760,7 @@ function RootLayoutInner() {
       <WebPublicRouteRedirect />
       <StatusBar style="auto" />
       <LastRouteTracker />
+      <LiveMessageToastHost />
       <AppIconBadgeSync />
       <OfflineBanner />
       <AppScreenshotPolicyProvider />

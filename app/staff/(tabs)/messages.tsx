@@ -372,65 +372,82 @@ export default function StaffMessagesTabScreen() {
     });
   }, [navigation, selectionMode, staff?.role, editableGroupConv?.id]);
 
-  if (!staff) return null;
-
-  const handleSwipeAction = (item: ConversationWithMeta, action: ChatListSwipeAction) => {
-    if (!staff?.id) return;
-    if (action === 'mute') {
-      const next = !(item.is_muted ?? false);
-      void staffSetConversationMuted(item.id, staff.id, next).then(({ error }) => {
-        if (error) Alert.alert(t('error'), error);
-        else {
-          setConversations((prev) =>
-            prev.map((c) => (c.id === item.id ? { ...c, is_muted: next } : c))
-          );
-        }
-      });
-      return;
-    }
-    if (action === 'archive') {
-      void staffSetConversationArchived(item.id, staff.id, true).then(({ error }) => {
-        if (error) Alert.alert(t('error'), error);
-        else setConversations((prev) => prev.filter((c) => c.id !== item.id));
-      });
-      return;
-    }
-    handleDeleteConversation(item);
-  };
-
-  const renderRow = ({ item }: { item: ConversationWithMeta }) => (
-    <ChatListSwipeRow
-      enabled={!selectionMode}
-      isMuted={item.is_muted}
-      onAction={(action) => handleSwipeAction(item, action)}
-    >
-      <ChatListItem
-        item={item}
-        displayName={getDisplayName(item)}
-        timeLabel={formatTime(item.last_message_at ?? null, i18n.language)}
-        selected={isSelected(item.id)}
-        selectionMode={selectionMode}
-        onPress={() => {
-          if (selectionMode) {
-            toggle(item.id);
-            return;
-          }
-          router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } });
-        }}
-        onLongPress={() => {
-          if (!selectionMode) enterSelection(item.id);
-          else toggle(item.id);
-        }}
-      />
-    </ChatListSwipeRow>
-  );
-
   const openChat = useCallback(
     (item: ConversationWithMeta) => {
       router.push({ pathname: '/staff/chat/[id]', params: { id: item.id } });
     },
     [router]
   );
+
+  const onSwipeAction = useCallback(
+    (item: ConversationWithMeta, action: ChatListSwipeAction) => {
+      if (!staff?.id) return;
+      if (action === 'mute') {
+        const next = !(item.is_muted ?? false);
+        void staffSetConversationMuted(item.id, staff.id, next).then(({ error }) => {
+          if (error) Alert.alert(t('error'), error);
+          else {
+            setConversations((prev) =>
+              prev.map((c) => (c.id === item.id ? { ...c, is_muted: next } : c))
+            );
+          }
+        });
+        return;
+      }
+      if (action === 'archive') {
+        void staffSetConversationArchived(item.id, staff.id, true).then(({ error }) => {
+          if (error) Alert.alert(t('error'), error);
+          else setConversations((prev) => prev.filter((c) => c.id !== item.id));
+        });
+        return;
+      }
+      handleDeleteConversation(item);
+    },
+    [staff?.id, t]
+  );
+
+  const renderRow = useCallback(
+    ({ item }: { item: ConversationWithMeta }) => (
+      <ChatListSwipeRow
+        enabled={!selectionMode}
+        isMuted={item.is_muted}
+        onAction={(action) => onSwipeAction(item, action)}
+      >
+        <ChatListItem
+          item={item}
+          chatPalette={chat}
+          displayName={getDisplayName(item)}
+          timeLabel={formatTime(item.last_message_at ?? null, i18n.language)}
+          selected={isSelected(item.id)}
+          selectionMode={selectionMode}
+          onPress={() => {
+            if (selectionMode) {
+              toggle(item.id);
+              return;
+            }
+            openChat(item);
+          }}
+          onLongPress={() => {
+            if (!selectionMode) enterSelection(item.id);
+            else toggle(item.id);
+          }}
+        />
+      </ChatListSwipeRow>
+    ),
+    [
+      selectionMode,
+      chat,
+      getDisplayName,
+      i18n.language,
+      isSelected,
+      toggle,
+      enterSelection,
+      openChat,
+      onSwipeAction,
+    ]
+  );
+
+  if (!staff) return null;
 
   const listHeader = selectionMode ? null : (
     <MessagesListHeader
@@ -492,13 +509,15 @@ export default function StaffMessagesTabScreen() {
           style={styles.list}
           data={displayConversations}
           estimatedItemSize={chatLayout.listRowHeight}
+          drawDistance={280}
           keyExtractor={(item) => item.id}
           renderItem={renderRow}
           ListHeaderComponent={listHeader}
+          extraData={`${selectionMode}:${selectedCount}:${activeFilter}`}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => load({ showRefreshing: true })}
+              onRefresh={() => load({ showRefreshing: true, force: true })}
               colors={[chat.accent]}
               tintColor={chat.accent}
             />
