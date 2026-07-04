@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { canAccessQuickNotes } from '@/lib/staffPermissions';
-import { notesTheme } from '@/constants/adminNotesTheme';
+import { pds } from '@/constants/personelDesignSystem';
 
 export function AdminNotesAccessGate({ children }: { children: ReactNode }) {
   const staff = useAuthStore((s) => s.staff);
@@ -13,7 +13,9 @@ export function AdminNotesAccessGate({ children }: { children: ReactNode }) {
   if (!canAccessQuickNotes(staff)) {
     return (
       <View style={styles.denied}>
-        <Ionicons name="lock-closed-outline" size={40} color={notesTheme.textMuted} />
+        <View style={styles.deniedIcon}>
+          <Ionicons name="lock-closed-outline" size={32} color={pds.indigo} />
+        </View>
         <Text style={styles.deniedTitle}>Not Al</Text>
         <Text style={styles.deniedText}>
           Bu özellik için yönetici tarafından «Not Al» yetkisi verilmesi gerekir.
@@ -35,9 +37,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 32,
     gap: 10,
-    backgroundColor: notesTheme.bg,
+    backgroundColor: pds.pageBg,
   },
-  deniedTitle: { fontSize: 18, fontWeight: '800', color: notesTheme.text },
-  deniedText: { fontSize: 14, color: notesTheme.textMuted, textAlign: 'center', lineHeight: 20 },
-  deniedLink: { marginTop: 8, fontSize: 15, fontWeight: '700', color: notesTheme.accent },
+  deniedIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  deniedTitle: { fontSize: 18, fontWeight: '800', color: pds.text },
+  deniedText: { fontSize: 14, color: pds.subtext, textAlign: 'center', lineHeight: 20 },
+  deniedLink: { marginTop: 8, fontSize: 15, fontWeight: '700', color: pds.indigo },
 });

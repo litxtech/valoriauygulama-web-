@@ -13,7 +13,7 @@ import {
 import { shareQuickNoteWithOptions } from '@/lib/adminQuickNoteShare';
 import { canEditQuickNote } from '@/lib/staffPermissions';
 import { useAuthStore } from '@/stores/authStore';
-import { notesTheme } from '@/constants/adminNotesTheme';
+import { pds } from '@/constants/personelDesignSystem';
 import { useCachedFocusLoad } from '@/hooks/useCachedFocusLoad';
 
 function AdminNoteDetailScreen() {
@@ -88,7 +88,7 @@ function AdminNoteDetailScreen() {
   if (!showContent && !note) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator color={notesTheme.accent} size="large" />
+        <ActivityIndicator color={pds.indigo} size="large" />
       </View>
     );
   }
@@ -109,6 +109,7 @@ function AdminNoteDetailScreen() {
       <AdminNoteDetailCard
         note={note}
         canEdit={canEdit}
+        viewerStaffId={staff?.id}
         onEdit={() => router.push(`${base}/edit/${note.id}` as never)}
         onShare={() => void shareQuickNoteWithOptions(note)}
         onOpenMedia={openViewer}
@@ -137,7 +138,7 @@ export default function AdminNoteDetail() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: notesTheme.bg },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: notesTheme.bg },
-  missing: { color: notesTheme.textMuted, fontSize: 15 },
+  screen: { flex: 1, backgroundColor: pds.pageBg },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: pds.pageBg },
+  missing: { color: pds.subtext, fontSize: 15 },
 });

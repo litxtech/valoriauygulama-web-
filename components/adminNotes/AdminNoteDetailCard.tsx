@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { notesTheme } from '@/constants/adminNotesTheme';
+import { pds } from '@/constants/personelDesignSystem';
 import {
   ADMIN_NOTE_TAG_LABELS,
   quickNoteAuthorLabel,
@@ -12,6 +13,8 @@ import { AdminNoteMediaGrid } from '@/components/adminNotes/AdminNoteMediaGrid';
 type Props = {
   note: AdminQuickNoteRow;
   canEdit: boolean;
+  /** Kendi notunda yazar satırını gizle */
+  viewerStaffId?: string | null;
   onEdit: () => void;
   onShare: () => void;
   onOpenMedia: (index: number) => void;
@@ -73,6 +76,7 @@ function ToolButton({ btn }: { btn: ToolBtn }) {
 export function AdminNoteDetailCard({
   note,
   canEdit,
+  viewerStaffId,
   onEdit,
   onShare,
   onOpenMedia,
@@ -85,6 +89,7 @@ export function AdminNoteDetailCard({
   const updatedWhen =
     note.updated_at && note.updated_at !== note.created_at ? formatWhen(note.updated_at) : null;
   const media = [...(note.media ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+  const showAuthor = !viewerStaffId || note.created_by_staff_id !== viewerStaffId;
 
   const tools: ToolBtn[] = [
     ...(canEdit
@@ -94,18 +99,20 @@ export function AdminNoteDetailCard({
     {
       key: 'pin',
       icon: note.is_pinned ? 'pin' : 'pin-outline',
-      label: note.is_pinned ? 'Sabiti kaldır' : 'Sabitle',
+      label: note.is_pinned ? 'Sabitli' : 'Sabit',
       onPress: onPin,
       variant: note.is_pinned ? 'active' : 'default',
     },
     {
       key: 'archive',
       icon: note.is_archived ? 'archive' : 'archive-outline',
-      label: note.is_archived ? 'Geri al' : 'Arşivle',
+      label: note.is_archived ? 'Geri al' : 'Arşiv',
       onPress: onArchive,
       variant: note.is_archived ? 'active' : 'default',
     },
-    { key: 'delete', icon: 'trash-outline', label: 'Sil', onPress: onDelete, variant: 'danger' },
+    ...(canEdit
+      ? [{ key: 'delete', icon: 'trash-outline' as const, label: 'Sil', onPress: onDelete, variant: 'danger' as const }]
+      : []),
   ];
 
   return (
@@ -140,15 +147,17 @@ export function AdminNoteDetailCard({
 
         <View style={styles.divider} />
 
-        <Text style={styles.title}>
-          {note.title?.trim() || 'Başlıksız not'}
-        </Text>
+        {note.title?.trim() ? <Text style={styles.title}>{note.title.trim()}</Text> : null}
 
         <View style={styles.metaGrid}>
-          <View style={styles.metaCell}>
-            <Ionicons name="person-outline" size={14} color={notesTheme.accent} />
-            <Text style={styles.metaValue}>{quickNoteAuthorLabel(note)}</Text>
-          </View>
+          {showAuthor ? (
+            <View style={styles.metaCell}>
+              <Ionicons name="person-outline" size={14} color={notesTheme.accent} />
+              <Text style={styles.metaValue} numberOfLines={1}>
+                {quickNoteAuthorLabel(note)}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.metaCell}>
             <Ionicons name="time-outline" size={14} color={notesTheme.accent} />
             <Text style={styles.metaValue}>{when}</Text>
@@ -252,6 +261,7 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     paddingHorizontal: 18,
     paddingTop: 16,
+    paddingBottom: 2,
   },
   metaGrid: {
     paddingHorizontal: 18,
@@ -264,8 +274,9 @@ const styles = StyleSheet.create({
   metaMuted: { color: notesTheme.textSoft, fontSize: 12 },
   bodyBlock: {
     marginHorizontal: 18,
-    marginTop: 14,
+    marginTop: 12,
     marginBottom: 18,
+    paddingVertical: 4,
     paddingLeft: 14,
     borderLeftWidth: 3,
     borderLeftColor: notesTheme.accent,
@@ -275,9 +286,9 @@ const styles = StyleSheet.create({
   toolbar: {
     paddingTop: 8,
     paddingHorizontal: 16,
-    backgroundColor: notesTheme.bg,
+    backgroundColor: pds.pageBg,
     borderTopWidth: 1,
-    borderTopColor: notesTheme.border,
+    borderTopColor: pds.cardBorder,
   },
   toolbarInner: {
     flexDirection: 'row',
@@ -304,7 +315,7 @@ const styles = StyleSheet.create({
   },
   toolIconActive: { backgroundColor: notesTheme.accentSoft },
   toolIconDanger: { backgroundColor: notesTheme.dangerSoft },
-  toolLabel: { fontSize: 9, fontWeight: '700', color: notesTheme.textMuted, textAlign: 'center' },
+  toolLabel: { fontSize: 10, fontWeight: '700', color: notesTheme.textMuted, textAlign: 'center' },
   toolLabelActive: { color: notesTheme.accentDark },
   toolLabelDanger: { color: notesTheme.danger },
 });

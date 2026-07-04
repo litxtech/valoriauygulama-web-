@@ -9,7 +9,9 @@ import {
   TextInput,
   Pressable,
   Platform,
+  InteractionManager,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,12 +25,15 @@ import {
   getAdminQuickNotesListCache,
   getAdminQuickNotesListCacheAgeMs,
   hydrateAdminQuickNotesListCache,
+  invalidateAdminQuickNotesListCache,
   setAdminQuickNotesListCache,
 } from '@/lib/adminQuickNotesCache';
+import { ADMIN_LIST_PERF } from '@/lib/adminPerf';
 import { PressableScale } from '@/components/premium/PressableScale';
-import { notesTheme } from '@/constants/adminNotesTheme';
+import { pds } from '@/constants/personelDesignSystem';
 
 type AdminFilter = 'all' | 'staff' | 'mine';
+type ListTab = 'active' | 'archived';
 
 function AdminNotesIndexScreen() {
   const router = useRouter();
@@ -39,27 +44,42 @@ function AdminNotesIndexScreen() {
   const isAdminRoute = pathname?.startsWith('/admin') ?? false;
   const base = isAdminRoute ? '/admin/notes' : '/staff/admin-notes';
 
-  const [showArchived, setShowArchived] = useState(false);
+  const staffId = staff?.id ?? null;
+  const [listTab, setListTab] = useState<ListTab>('active');
+  const showArchived = listTab === 'archived';
   const [allItems, setAllItems] = useState<AdminQuickNoteRow[]>(
-    () => getAdminQuickNotesListCache(showArchived) ?? []
+    () => getAdminQuickNotesListCache(showArchived, staffId) ?? []
   );
-  const [loading, setLoading] = useState(() => !getAdminQuickNotesListCache(showArchived)?.length);
+  const [loading, setLoading] = useState(
+    () => !getAdminQuickNotesListCache(showArchived, staffId)?.length
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [adminFilter, setAdminFilter] = useState<AdminFilter>('all');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadInFlightRef = useRef(false);
 
   const load = useCallback(
-    async (opts?: { silent?: boolean }) => {
+    async (opts?: { silent?: boolean; force?: boolean; includeArchived?: boolean }) => {
       if (loadInFlightRef.current) return;
       loadInFlightRef.current = true;
+      const archived = opts?.includeArchived ?? showArchived;
       try {
-        const { data, error } = await listAdminQuickNotes({ includeArchived: showArchived });
+        if (opts?.force) invalidateAdminQuickNotesListCache();
+        // Liste: medya yok — tek RPC, hızlı ilk boyama
+        const { data, error } = await listAdminQuickNotes({
+          includeArchived: archived,
+          includeMedia: false,
+        });
         if (!error) {
+          setLoadError(null);
           setAllItems(data);
-          setAdminQuickNotesListCache(data, showArchived);
-        } else if (!getAdminQuickNotesListCache(showArchived)?.length) {
-          setAllItems([]);
+          setAdminQuickNotesListCache(data, archived, staffId);
+        } else {
+          setLoadError(error);
+          if (!getAdminQuickNotesListCache(archived, staffId)?.length) {
+            setAllItems([]);
+          }
         }
       } finally {
         loadInFlightRef.current = false;
@@ -67,12 +87,12 @@ function AdminNotesIndexScreen() {
         setRefreshing(false);
       }
     },
-    [showArchived]
+    [showArchived, staffId]
   );
 
   useEffect(() => {
     let cancelled = false;
-    void hydrateAdminQuickNotesListCache(showArchived).then((cached) => {
+    void hydrateAdminQuickNotesListCache(showArchived, staffId).then((cached) => {
       if (cancelled || !cached?.length) return;
       setAllItems(cached);
       setLoading(false);
@@ -80,28 +100,58 @@ function AdminNotesIndexScreen() {
     return () => {
       cancelled = true;
     };
-  }, [showArchived]);
+  }, [showArchived, staffId]);
 
   useFocusEffect(
     useCallback(() => {
-      const mem = getAdminQuickNotesListCache(showArchived);
-      const age = getAdminQuickNotesListCacheAgeMs(showArchived);
+      const mem = getAdminQuickNotesListCache(showArchived, staffId);
+      const age = getAdminQuickNotesListCacheAgeMs(showArchived, staffId);
       if (mem?.length) {
         setAllItems(mem);
         setLoading(false);
+        if (isAdminViewer) {
+          InteractionManager.runAfterInteractions(() => {
+            void load({ silent: true, force: true });
+          });
+          return;
+        }
         if (age != null && age < ADMIN_QUICK_NOTES_FOCUS_REFRESH_MS) return;
-        void load({ silent: true });
+        InteractionManager.runAfterInteractions(() => {
+          void load({ silent: true });
+        });
         return;
       }
       setLoading(true);
       void load();
-    }, [load, showArchived])
+    }, [isAdminViewer, load, showArchived, staffId])
+  );
+
+  const switchTab = useCallback(
+    (tab: ListTab) => {
+      if (tab === listTab) return;
+      setListTab(tab);
+      setSearch('');
+      const archived = tab === 'archived';
+      const cached = getAdminQuickNotesListCache(archived, staffId);
+      if (cached?.length) {
+        setAllItems(cached);
+        setLoading(false);
+        void load({ silent: true, includeArchived: archived });
+      } else {
+        setAllItems([]);
+        setLoading(true);
+        void load({ includeArchived: archived });
+      }
+    },
+    [listTab, load, staffId]
   );
 
   const items = useMemo(() => {
     let rows = allItems;
     if (isAdminViewer) {
-      if (adminFilter === 'staff') rows = rows.filter(isStaffAuthoredQuickNote);
+      if (adminFilter === 'staff') {
+        rows = rows.filter((n) => isStaffAuthoredQuickNote(n, staff?.id));
+      }
       if (adminFilter === 'mine') rows = rows.filter((n) => n.created_by_staff_id === staff?.id);
     }
     const term = search.trim().toLowerCase();
@@ -118,10 +168,10 @@ function AdminNotesIndexScreen() {
 
   const pinnedCount = useMemo(() => items.filter((n) => n.is_pinned).length, [items]);
 
-  const onRefresh = () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void load();
-  };
+    void load({ force: true });
+  }, [load]);
 
   const openNote = useCallback(
     (id: string) => {
@@ -130,6 +180,10 @@ function AdminNotesIndexScreen() {
     [router, base]
   );
 
+  const openNew = useCallback(() => {
+    router.push(`${base}/new` as never);
+  }, [router, base]);
+
   const renderItem = useCallback(
     ({ item }: { item: AdminQuickNoteRow }) => (
       <AdminNoteListCard note={item} showAuthor={isAdminViewer} onPress={openNote} />
@@ -137,127 +191,179 @@ function AdminNotesIndexScreen() {
     [isAdminViewer, openNote]
   );
 
-  const showList = !loading || items.length > 0;
+  const listHeader = useMemo(
+    () => (
+      <View style={styles.headerBlock}>
+        <LinearGradient
+          colors={pds.gradientPrimary}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.hero}
+        >
+          <View style={styles.heroTop}>
+            <View style={styles.heroTextCol}>
+              <Text style={styles.heroKicker}>{isAdminViewer ? 'YÖNETİM' : 'NOTLARIM'}</Text>
+              <Text style={styles.heroTitle}>{showArchived ? 'Arşiv' : 'Not Al'}</Text>
+              <Text style={styles.heroSub}>
+                {loading && !items.length
+                  ? 'Yükleniyor…'
+                  : showArchived
+                    ? `${items.length} arşiv kaydı`
+                    : pinnedCount > 0
+                      ? `${items.length} not · ${pinnedCount} sabitli`
+                      : `${items.length} not`}
+              </Text>
+            </View>
+            <PressableScale style={styles.heroCta} onPress={openNew}>
+              <Ionicons name="add" size={22} color={pds.indigo} />
+              <Text style={styles.heroCtaText}>Yeni</Text>
+            </PressableScale>
+          </View>
+        </LinearGradient>
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.topBar}>
+        <View style={styles.segment}>
+          {(
+            [
+              { key: 'active' as const, label: 'Aktif', icon: 'document-text-outline' as const },
+              { key: 'archived' as const, label: 'Arşiv', icon: 'archive-outline' as const },
+            ] as const
+          ).map((t) => {
+            const on = listTab === t.key;
+            return (
+              <Pressable
+                key={t.key}
+                style={[styles.segmentBtn, on && styles.segmentBtnOn]}
+                onPress={() => switchTab(t.key)}
+              >
+                <Ionicons name={t.icon} size={16} color={on ? '#fff' : pds.subtext} />
+                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{t.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color={notesTheme.textSoft} />
+          <Ionicons name="search" size={18} color={pds.muted} />
           <TextInput
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Ara…"
-            placeholderTextColor={notesTheme.textSoft}
+            placeholder="Notlarda ara…"
+            placeholderTextColor={pds.muted}
             returnKeyType="search"
+            clearButtonMode="while-editing"
           />
           {search ? (
             <Pressable onPress={() => setSearch('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={18} color={notesTheme.textSoft} />
+              <Ionicons name="close-circle" size={18} color={pds.muted} />
             </Pressable>
           ) : null}
         </View>
-        <Pressable
-          style={[styles.iconBtn, showArchived && styles.iconBtnOn]}
-          onPress={() => {
-            const next = !showArchived;
-            setShowArchived(next);
-            const cached = getAdminQuickNotesListCache(next);
-            if (cached?.length) {
-              setAllItems(cached);
-              setLoading(false);
-              void load({ silent: true });
-            } else {
-              void load();
-            }
-          }}
-          accessibilityLabel={showArchived ? 'Aktif notlar' : 'Arşiv'}
-        >
-          <Ionicons
-            name={showArchived ? 'folder-open' : 'folder-outline'}
-            size={20}
-            color={showArchived ? notesTheme.accentDark : notesTheme.textSecondary}
-          />
-        </Pressable>
-      </View>
 
-      <View style={styles.statsRow}>
-        <View style={styles.stat}>
-          <Text style={styles.statVal}>{items.length}</Text>
-          <Text style={styles.statLbl}>{showArchived ? 'Arşiv' : 'Not'}</Text>
-        </View>
-        {pinnedCount > 0 ? (
-          <View style={styles.stat}>
-            <Text style={[styles.statVal, { color: notesTheme.pinned }]}>{pinnedCount}</Text>
-            <Text style={styles.statLbl}>Sabit</Text>
+        {isAdminViewer ? (
+          <View style={styles.filterRow}>
+            {(
+              [
+                { key: 'all', label: 'Tümü' },
+                { key: 'staff', label: 'Personel' },
+                { key: 'mine', label: 'Benim' },
+              ] as const
+            ).map((f) => (
+              <Pressable
+                key={f.key}
+                style={[styles.filterChip, adminFilter === f.key && styles.filterChipOn]}
+                onPress={() => setAdminFilter(f.key)}
+              >
+                <Text style={[styles.filterText, adminFilter === f.key && styles.filterTextOn]}>
+                  {f.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         ) : null}
       </View>
+    ),
+    [
+      adminFilter,
+      isAdminViewer,
+      items.length,
+      listTab,
+      loading,
+      openNew,
+      pinnedCount,
+      search,
+      showArchived,
+      switchTab,
+    ]
+  );
 
-      {isAdminViewer ? (
-        <View style={styles.filterRow}>
-          {(
-            [
-              { key: 'all', label: 'Tümü' },
-              { key: 'staff', label: 'Personel' },
-              { key: 'mine', label: 'Benim' },
-            ] as const
-          ).map((f) => (
-            <Pressable
-              key={f.key}
-              style={[styles.filterChip, adminFilter === f.key && styles.filterChipOn]}
-              onPress={() => setAdminFilter(f.key)}
-            >
-              <Text style={[styles.filterText, adminFilter === f.key && styles.filterTextOn]}>
-                {f.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.staffHint}>Yalnızca kendi notlarınız listelenir.</Text>
-      )}
-
-      {loading && !items.length ? (
-        <ActivityIndicator style={styles.loader} color={notesTheme.accent} />
-      ) : null}
-
-      {showList ? (
-        <FlatList
-          data={items}
-          keyExtractor={(i) => i.id}
-          renderItem={renderItem}
-          initialNumToRender={10}
-          maxToRenderPerBatch={6}
-          windowSize={8}
-          removeClippedSubviews={Platform.OS === 'android'}
-          contentContainerStyle={items.length ? styles.list : styles.listEmpty}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={notesTheme.accent} />
-          }
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons name="journal-outline" size={32} color={notesTheme.accent} />
-              </View>
-              <Text style={styles.emptyTitle}>Henüz not yok</Text>
-              <Text style={styles.emptySub}>
-                Anlık not almak için aşağıdaki butona dokunun. Numara otomatik verilir.
-              </Text>
+  const listEmpty = useMemo(
+    () => (
+      <View style={styles.empty}>
+        {loading ? (
+          <ActivityIndicator color={pds.indigo} size="large" />
+        ) : (
+          <>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name={loadError ? 'warning-outline' : showArchived ? 'archive-outline' : 'create-outline'}
+                size={30}
+                color={loadError ? '#DC2626' : pds.indigo}
+              />
             </View>
-          }
-        />
-      ) : null}
+            <Text style={styles.emptyTitle}>
+              {loadError ? 'Liste yüklenemedi' : showArchived ? 'Arşiv boş' : 'Henüz not yok'}
+            </Text>
+            <Text style={styles.emptySub}>
+              {loadError
+                ? loadError
+                : showArchived
+                  ? 'Arşivlediğiniz notlar burada görünür.'
+                  : isAdminViewer
+                    ? 'Personel ve sizin notlarınız burada listelenir.'
+                    : 'Hızlı not almak için Yeni butonuna dokunun.'}
+            </Text>
+            {loadError ? (
+              <Pressable style={styles.retryBtn} onPress={() => void load({ force: true })}>
+                <Text style={styles.retryText}>Tekrar dene</Text>
+              </Pressable>
+            ) : !showArchived ? (
+              <PressableScale style={styles.emptyCta} onPress={openNew}>
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.emptyCtaText}>İlk notu yaz</Text>
+              </PressableScale>
+            ) : null}
+          </>
+        )}
+      </View>
+    ),
+    [isAdminViewer, load, loadError, loading, openNew, showArchived]
+  );
 
-      <PressableScale
-        style={[styles.fab, { bottom: 16 + insets.bottom }]}
-        onPress={() => router.push(`${base}/new` as never)}
-      >
-        <View style={styles.fabInner}>
-          <Ionicons name="add" size={26} color="#fff" />
-        </View>
-      </PressableScale>
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={items}
+        keyExtractor={(i) => i.id}
+        renderItem={renderItem}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        initialNumToRender={ADMIN_LIST_PERF.initialNumToRender}
+        maxToRenderPerBatch={ADMIN_LIST_PERF.maxToRenderPerBatch}
+        windowSize={ADMIN_LIST_PERF.windowSize}
+        updateCellsBatchingPeriod={ADMIN_LIST_PERF.updateCellsBatchingPeriod}
+        removeClippedSubviews={ADMIN_LIST_PERF.removeClippedSubviews}
+        contentContainerStyle={[
+          styles.list,
+          { paddingBottom: 28 + insets.bottom },
+          items.length === 0 && styles.listEmpty,
+        ]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={pds.indigo} />
+        }
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      />
     </View>
   );
 }
@@ -271,107 +377,106 @@ export default function AdminNotesIndex() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: notesTheme.bg },
-  topBar: {
+  container: { flex: 1, backgroundColor: pds.pageBg },
+  list: { paddingHorizontal: 16 },
+  listEmpty: { flexGrow: 1 },
+  headerBlock: { paddingTop: 8, marginBottom: 4 },
+  hero: {
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 14,
+    ...pds.shadowCard,
+  },
+  heroTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  heroTextCol: { flex: 1, minWidth: 0 },
+  heroKicker: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.75)',
+    letterSpacing: 1.1,
+    marginBottom: 4,
+  },
+  heroTitle: { fontSize: 26, fontWeight: '800', color: '#fff', letterSpacing: -0.3 },
+  heroSub: { marginTop: 4, fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.85)' },
+  heroCta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    gap: 4,
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
   },
-  searchBox: {
+  heroCtaText: { fontSize: 14, fontWeight: '800', color: pds.indigo },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: pds.cardBg,
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: pds.cardBorder,
+  },
+  segmentBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 11 : 9,
-    backgroundColor: notesTheme.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: notesTheme.border,
-  },
-  searchInput: { flex: 1, fontSize: 15, color: notesTheme.text, padding: 0 },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: notesTheme.card,
-    borderWidth: 1,
-    borderColor: notesTheme.border,
-  },
-  iconBtnOn: { backgroundColor: notesTheme.accentSoft, borderColor: notesTheme.borderFocus },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  stat: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: notesTheme.card,
-    borderWidth: 1,
-    borderColor: notesTheme.border,
-    flexDirection: 'row',
-    alignItems: 'baseline',
     gap: 6,
+    paddingVertical: 10,
+    borderRadius: 11,
   },
-  statVal: { fontSize: 16, fontWeight: '800', color: notesTheme.text },
-  statLbl: { fontSize: 12, color: notesTheme.textMuted, fontWeight: '600' },
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 10 },
+  segmentBtnOn: { backgroundColor: pds.indigo },
+  segmentText: { fontSize: 13, fontWeight: '700', color: pds.subtext },
+  segmentTextOn: { color: '#fff' },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 10,
+    backgroundColor: pds.cardBg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: pds.cardBorder,
+    marginBottom: 12,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: pds.text, padding: 0 },
+  filterRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   filterChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: notesTheme.card,
+    borderRadius: 999,
+    backgroundColor: pds.cardBg,
     borderWidth: 1,
-    borderColor: notesTheme.border,
+    borderColor: pds.cardBorder,
   },
-  filterChipOn: { backgroundColor: notesTheme.accentGhost, borderColor: notesTheme.accent },
-  filterText: { fontSize: 13, fontWeight: '600', color: notesTheme.textMuted },
-  filterTextOn: { color: notesTheme.accentDark, fontWeight: '700' },
-  staffHint: {
-    fontSize: 12,
-    color: notesTheme.textMuted,
-    marginHorizontal: 16,
-    marginBottom: 10,
-  },
-  loader: { marginTop: 48 },
-  list: { paddingHorizontal: 16, paddingBottom: 96 },
-  listEmpty: { flexGrow: 1, paddingHorizontal: 16, paddingBottom: 96 },
-  empty: { alignItems: 'center', paddingTop: 56, gap: 10, paddingHorizontal: 32 },
+  filterChipOn: { backgroundColor: '#EEF2FF', borderColor: pds.indigo },
+  filterText: { fontSize: 13, fontWeight: '600', color: pds.subtext },
+  filterTextOn: { color: pds.indigo, fontWeight: '700' },
+  empty: { alignItems: 'center', paddingTop: 40, gap: 10, paddingHorizontal: 28 },
   emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: notesTheme.accentGhost,
+    width: 68,
+    height: 68,
+    borderRadius: 22,
+    backgroundColor: '#EEF2FF',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
-  emptyTitle: { fontSize: 17, fontWeight: '700', color: notesTheme.text },
-  emptySub: { fontSize: 14, color: notesTheme.textMuted, textAlign: 'center', lineHeight: 21 },
-  fab: {
-    position: 'absolute',
-    right: 16,
-    borderRadius: 16,
-    shadowColor: notesTheme.accentDark,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  fabInner: {
-    width: 54,
-    height: 54,
-    borderRadius: 16,
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: pds.text },
+  emptySub: { fontSize: 14, color: pds.subtext, textAlign: 'center', lineHeight: 21 },
+  retryBtn: { marginTop: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  retryText: { color: pds.indigo, fontWeight: '700', fontSize: 15 },
+  emptyCta: {
+    marginTop: 10,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: notesTheme.accent,
+    gap: 6,
+    backgroundColor: pds.indigo,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 14,
   },
+  emptyCtaText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

@@ -319,10 +319,46 @@ export default function StaffLayout() {
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="points/index" options={{ title: 'Alınan puanlarım', headerBackTitle: t('back') }} />
-      <Stack.Screen name="admin-notes/index" options={{ title: 'Not Al', headerBackTitle: t('back') }} />
-      <Stack.Screen name="admin-notes/new" options={{ title: 'Yeni not', headerBackTitle: t('back') }} />
-      <Stack.Screen name="admin-notes/[id]" options={{ title: 'Not detayı', headerBackTitle: t('back') }} />
-      <Stack.Screen name="admin-notes/edit/[id]" options={{ title: 'Notu düzenle', headerBackTitle: t('back') }} />
+      <Stack.Screen
+        name="admin-notes/index"
+        options={{
+          title: 'Not Al',
+          headerBackTitle: t('back'),
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: '#F9FAFB' },
+          contentStyle: { backgroundColor: '#F9FAFB' },
+        }}
+      />
+      <Stack.Screen
+        name="admin-notes/new"
+        options={{
+          title: 'Yeni not',
+          headerBackTitle: t('back'),
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: '#F9FAFB' },
+          contentStyle: { backgroundColor: '#F9FAFB' },
+        }}
+      />
+      <Stack.Screen
+        name="admin-notes/[id]"
+        options={{
+          title: 'Not',
+          headerBackTitle: t('back'),
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: '#F9FAFB' },
+          contentStyle: { backgroundColor: '#F9FAFB' },
+        }}
+      />
+      <Stack.Screen
+        name="admin-notes/edit/[id]"
+        options={{
+          title: 'Düzenle',
+          headerBackTitle: t('back'),
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: '#F9FAFB' },
+          contentStyle: { backgroundColor: '#F9FAFB' },
+        }}
+      />
       <Stack.Screen name="documents/index" options={{ title: t('screenDocumentManagement'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/all" options={{ title: feedSharedText('staffStackDocAll'), headerBackTitle: t('back') }} />
       <Stack.Screen name="documents/categories" options={{ title: t('adminDocumentsCategories'), headerBackTitle: t('back') }} />

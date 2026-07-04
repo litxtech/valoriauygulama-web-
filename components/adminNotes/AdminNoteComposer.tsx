@@ -35,6 +35,7 @@ import { buildEarlyVideoPreview } from '@/lib/chatVideoThumbnail';
 import { CachedImage } from '@/components/CachedImage';
 import { PressableScale } from '@/components/premium/PressableScale';
 import { notesTheme } from '@/constants/adminNotesTheme';
+import { pds } from '@/constants/personelDesignSystem';
 
 type PendingMedia = {
   uri: string;
@@ -344,7 +345,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
               <View style={styles.thumbGrid}>
                 {allThumbs.map((t) => (
                   <View key={t.key} style={styles.thumbWrap}>
-                    <CachedImage uri={t.uri} style={styles.thumb} />
+                    <CachedImage uri={t.uri} style={styles.thumb} contentFit="cover" />
                     {t.preparing ? (
                       <View style={styles.thumbOverlay}>
                         <ActivityIndicator color="#fff" size="small" />
@@ -401,7 +402,7 @@ export function AdminNoteComposer({ onSaved, onCancel, editNote }: Props) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: notesTheme.bg },
+  wrap: { flex: 1, backgroundColor: pds.pageBg },
   flex: { flex: 1 },
   scroll: { padding: 16 },
   lead: { fontSize: 14, color: notesTheme.textMuted, lineHeight: 20, marginBottom: 16 },

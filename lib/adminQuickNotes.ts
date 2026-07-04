@@ -158,10 +158,46 @@ function attachListCoverMedia(
   });
 }
 
-/** Notlar + kapak medyası (gömülü join yerine iki sorgu — liste ekranı hızlı açılır). */
-export async function listAdminQuickNotes(params?: {
+type AdminListQuickNoteRpcRow = {
+  id: string;
+  organization_id: string;
+  note_number: string;
+  title: string | null;
+  body_text: string;
+  tag: AdminNoteTag;
+  room_label: string | null;
+  is_pinned: boolean;
+  is_archived: boolean;
+  created_by_staff_id: string;
+  created_at: string;
+  updated_at: string;
+  creator_full_name: string | null;
+  creator_role: string | null;
+};
+
+function mapRpcListRows(rows: AdminListQuickNoteRpcRow[]): AdminQuickNoteRow[] {
+  return rows.map((r) => ({
+    id: r.id,
+    organization_id: r.organization_id,
+    note_number: r.note_number,
+    title: r.title,
+    body_text: r.body_text,
+    tag: r.tag,
+    room_label: r.room_label,
+    is_pinned: r.is_pinned,
+    is_archived: r.is_archived,
+    created_by_staff_id: r.created_by_staff_id,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    creator:
+      r.creator_full_name != null || r.creator_role != null
+        ? { full_name: r.creator_full_name, role: r.creator_role }
+        : null,
+  }));
+}
+
+async function listAdminQuickNotesViaTable(params?: {
   includeArchived?: boolean;
-  search?: string;
 }): Promise<{ data: AdminQuickNoteRow[]; error: string | null }> {
   let q = supabase
     .from('admin_quick_notes')
@@ -176,18 +212,62 @@ export async function listAdminQuickNotes(params?: {
 
   const { data, error } = await q;
   if (error) return { data: [], error: error.message };
+  return { data: (data ?? []) as AdminQuickNoteRow[], error: null };
+}
 
-  const rows = (data ?? []) as AdminQuickNoteRow[];
-  if (rows.length === 0) return { data: [], error: null };
+function isMissingListRpcError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === 'PGRST202') return true;
+  const m = (error.message ?? '').toLowerCase();
+  return m.includes('admin_list_quick_notes') || m.includes('could not find the function');
+}
 
-  const ids = rows.map((n) => n.id);
-  const { data: media, error: mediaErr } = await supabase
-    .from('admin_quick_note_media')
-    .select(LIST_MEDIA_SELECT)
-    .in('note_id', ids)
-    .order('sort_order', { ascending: true });
+/** Notlar. `includeMedia: false` listeyi hızlandırır (kapak medyası yok). */
+export async function listAdminQuickNotes(params?: {
+  includeArchived?: boolean;
+  search?: string;
+  /** Varsayılan true. Liste ekranında false kullanın. */
+  includeMedia?: boolean;
+}): Promise<{ data: AdminQuickNoteRow[]; error: string | null }> {
+  const includeArchived = params?.includeArchived === true;
+  const includeMedia = params?.includeMedia !== false;
+  let rows: AdminQuickNoteRow[] = [];
+  let listError: string | null = null;
 
-  let withMedia = attachListCoverMedia(rows, mediaErr ? null : ((media ?? []) as ListNoteMediaRow[]));
+  const rpc = await supabase.rpc('admin_list_quick_notes', {
+    p_include_archived: includeArchived,
+  });
+
+  if (!rpc.error && Array.isArray(rpc.data)) {
+    rows = mapRpcListRows(rpc.data as AdminListQuickNoteRpcRow[]);
+  } else {
+    // RPC yoksa / hata: tablo + RLS (admin personel notlarını göremeyebilir — migration 511 gerekir)
+    const fallback = await listAdminQuickNotesViaTable({ includeArchived });
+    rows = fallback.data;
+    if (fallback.error) {
+      listError = fallback.error;
+    } else if (rpc.error && !isMissingListRpcError(rpc.error)) {
+      listError = rpc.error.message;
+    } else {
+      listError = null;
+    }
+  }
+
+  if (rows.length === 0) return { data: [], error: listError };
+
+  let withMedia = rows;
+  let mediaErrMsg: string | null = null;
+  if (includeMedia) {
+    const ids = rows.map((n) => n.id);
+    const { data: media, error: mediaErr } = await supabase
+      .from('admin_quick_note_media')
+      .select(LIST_MEDIA_SELECT)
+      .in('note_id', ids)
+      .order('sort_order', { ascending: true })
+      .limit(Math.min(ids.length * 2, 80));
+    mediaErrMsg = mediaErr?.message ?? null;
+    withMedia = attachListCoverMedia(rows, mediaErr ? null : ((media ?? []) as ListNoteMediaRow[]));
+  }
 
   const term = params?.search?.trim().toLowerCase();
   if (term) {
@@ -200,7 +280,7 @@ export async function listAdminQuickNotes(params?: {
         (n.creator?.full_name ?? '').toLowerCase().includes(term)
     );
   }
-  return { data: withMedia, error: mediaErr?.message ?? null };
+  return { data: withMedia, error: mediaErrMsg ?? listError };
 }
 
 export async function getAdminQuickNote(id: string): Promise<{ data: AdminQuickNoteRow | null; error: string | null }> {
@@ -341,8 +421,15 @@ export function adminNotePreview(body: string, max = 120): string {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
-export function isStaffAuthoredQuickNote(note: AdminQuickNoteRow): boolean {
-  return note.creator?.role != null && note.creator.role !== 'admin';
+/** Personel (admin olmayan) tarafından yazılmış not mu? creator join yoksa viewer id ile ayır. */
+export function isStaffAuthoredQuickNote(
+  note: AdminQuickNoteRow,
+  viewerStaffId?: string | null
+): boolean {
+  if (note.creator?.role === 'admin') return false;
+  if (note.creator?.role != null) return note.creator.role !== 'admin';
+  if (viewerStaffId && note.created_by_staff_id === viewerStaffId) return false;
+  return true;
 }
 
 export function quickNoteAuthorLabel(note: AdminQuickNoteRow): string {
