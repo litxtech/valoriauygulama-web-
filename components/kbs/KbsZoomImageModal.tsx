@@ -30,8 +30,11 @@ type Props = {
 
 const { width: WIN_W, height: WIN_H } = Dimensions.get('window');
 const MIN_SCALE = 1;
-const MAX_SCALE = 8;
-const DOUBLE_TAP_SCALE = 3.5;
+const MAX_SCALE = 12;
+const DOUBLE_TAP_SCALE = 4.5;
+/** Butonla yakınlaştırma — kimlik yazısı okunacak kadar hızlı adım. */
+const BUTTON_ZOOM_STEP = 1.85;
+const DOUBLE_TAP_MS = 320;
 
 function touchDistance(touches: { pageX: number; pageY: number }[]): number {
   if (touches.length < 2) return 0;
@@ -55,10 +58,12 @@ function PinchZoomImage({
   uri,
   pageH,
   onZoomChange,
+  bottomInset,
 }: {
   uri: string;
   pageH: number;
   onZoomChange?: (zoomed: boolean) => void;
+  bottomInset: number;
 }) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -73,10 +78,11 @@ function PinchZoomImage({
   const lastTouch = useRef({ x: 0, y: 0 });
   const panActive = useRef(false);
   const lastTapAt = useRef(0);
+  const lastTapPos = useRef({ x: 0, y: 0 });
   const pendingDoubleTap = useRef(false);
   const wasZoomed = useRef(false);
+  const [scaleLabel, setScaleLabel] = useState('1×');
 
-  // Görsel konteynerinin merkezi tam ekranın merkezindedir.
   const centerX = WIN_W / 2;
   const centerY = WIN_H / 2;
 
@@ -89,6 +95,8 @@ function PinchZoomImage({
 
   const reportZoom = useCallback(
     (s: number) => {
+      const rounded = Math.round(s * 10) / 10;
+      setScaleLabel(rounded <= 1.05 ? '1×' : `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)}×`);
       const zoomed = s > MIN_SCALE + 0.02;
       if (zoomed !== wasZoomed.current) {
         wasZoomed.current = zoomed;
@@ -110,67 +118,97 @@ function PinchZoomImage({
     [pageH, translateX, translateY, savedTx, savedTy]
   );
 
+  const applyScaleAtFocal = useCallback(
+    (next: number, focalX: number, focalY: number, animated: boolean) => {
+      const s0 = Math.max(savedScale.value, MIN_SCALE);
+      const s1 = clampScale(next);
+      const contentX = (focalX - savedTx.value) / s0;
+      const contentY = (focalY - savedTy.value) / s0;
+      const tx = clampX(focalX - s1 * contentX, s1);
+      const ty = clampY(focalY - s1 * contentY, s1);
+
+      if (animated) {
+        scale.value = withSpring(s1, { damping: 18, stiffness: 220 });
+        translateX.value = withSpring(tx, { damping: 18, stiffness: 220 });
+        translateY.value = withSpring(ty, { damping: 18, stiffness: 220 });
+      } else {
+        scale.value = s1;
+        translateX.value = tx;
+        translateY.value = ty;
+      }
+      savedScale.value = s1;
+      savedTx.value = tx;
+      savedTy.value = ty;
+      reportZoom(s1);
+    },
+    [scale, savedScale, translateX, translateY, savedTx, savedTy, reportZoom]
+  );
+
   const resetZoom = useCallback(() => {
-    scale.value = withSpring(1);
+    scale.value = withSpring(1, { damping: 18, stiffness: 220 });
     savedScale.value = 1;
-    translateX.value = withSpring(0);
-    translateY.value = withSpring(0);
+    translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+    translateY.value = withSpring(0, { damping: 18, stiffness: 220 });
     savedTx.value = 0;
     savedTy.value = 0;
     reportZoom(1);
   }, [scale, savedScale, translateX, translateY, savedTx, savedTy, reportZoom]);
 
   const zoomIn = useCallback(() => {
-    const next = clampScale(savedScale.value * 1.35);
-    scale.value = next;
-    savedScale.value = next;
-    reportZoom(next);
-  }, [scale, savedScale, reportZoom]);
+    const next = clampScale(savedScale.value * BUTTON_ZOOM_STEP);
+    applyScaleAtFocal(next, 0, 0, true);
+  }, [savedScale, applyScaleAtFocal]);
 
   const zoomOut = useCallback(() => {
-    const next = clampScale(savedScale.value / 1.35);
-    scale.value = next;
-    savedScale.value = next;
+    const next = clampScale(savedScale.value / BUTTON_ZOOM_STEP);
     if (next <= MIN_SCALE + 0.02) {
-      translateX.value = 0;
-      translateY.value = 0;
-      savedTx.value = 0;
-      savedTy.value = 0;
-    } else {
-      clampTranslate(next);
+      resetZoom();
+      return;
     }
-    reportZoom(next);
-  }, [scale, savedScale, translateX, translateY, savedTx, savedTy, clampTranslate, reportZoom]);
+    applyScaleAtFocal(next, 0, 0, true);
+  }, [savedScale, applyScaleAtFocal, resetZoom]);
+
+  const wantsPinch = (touches: { length: number }) => touches.length >= 2;
+  const isZoomed = () => savedScale.value > MIN_SCALE + 0.05;
 
   const panResponder = useRef(
     PanResponder.create({
+      // İki parmak veya yakınlaştırılmış tek parmak — FlatList’ten önce yakala.
+      onStartShouldSetPanResponderCapture: (evt) =>
+        wantsPinch(evt.nativeEvent.touches) || isZoomed(),
+      onMoveShouldSetPanResponderCapture: (evt) => {
+        if (wantsPinch(evt.nativeEvent.touches)) return true;
+        if (!isZoomed()) return false;
+        const { dx, dy } = evt.nativeEvent;
+        return Math.abs(dx) > 2 || Math.abs(dy) > 2;
+      },
       onStartShouldSetPanResponder: (evt) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length >= 2) return true;
+        if (wantsPinch(touches)) return true;
+        if (isZoomed()) return true;
+
         const now = Date.now();
-        // İkinci dokunuş kısa süre içinde geldiyse: çift dokunma
-        if (now - lastTapAt.current < 280) {
+        const x = evt.nativeEvent.pageX;
+        const y = evt.nativeEvent.pageY;
+        const nearPrev =
+          Math.hypot(x - lastTapPos.current.x, y - lastTapPos.current.y) < 48;
+        if (now - lastTapAt.current < DOUBLE_TAP_MS && nearPrev) {
           pendingDoubleTap.current = true;
           return true;
         }
         lastTapAt.current = now;
+        lastTapPos.current = { x, y };
         pendingDoubleTap.current = false;
         return false;
       },
       onMoveShouldSetPanResponder: (evt) => {
-        if (evt.nativeEvent.touches.length >= 2) return true;
-        return savedScale.value > MIN_SCALE + 0.05;
-      },
-      // Yakınlaştırılmışken hareketi dış galeri kaydırmasından önce yakala.
-      onMoveShouldSetPanResponderCapture: (evt) => {
-        if (evt.nativeEvent.touches.length >= 2) return true;
-        return savedScale.value > MIN_SCALE + 0.05;
+        if (wantsPinch(evt.nativeEvent.touches)) return true;
+        return isZoomed();
       },
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
 
-        // Çift dokunma: dokunulan noktaya yakınlaş / sıfırla
         if (pendingDoubleTap.current && touches.length < 2) {
           pendingDoubleTap.current = false;
           lastTapAt.current = 0;
@@ -182,51 +220,45 @@ function PinchZoomImage({
               centerX,
               centerY
             );
-            const next = DOUBLE_TAP_SCALE;
-            // Dokunulan içerik noktasını parmağın altında tut
-            const tx = clampX(focal.x * (1 - next), next);
-            const ty = clampY(focal.y * (1 - next), next);
-            scale.value = withSpring(next);
-            savedScale.value = next;
-            translateX.value = withSpring(tx);
-            translateY.value = withSpring(ty);
-            savedTx.value = tx;
-            savedTy.value = ty;
-            reportZoom(next);
+            applyScaleAtFocal(DOUBLE_TAP_SCALE, focal.x, focal.y, true);
           }
           return;
         }
 
         if (touches.length >= 2) {
           pinchStartDist.current = touchDistance(touches);
-          pinchStartScale.current = savedScale.value;
+          pinchStartScale.current = Math.max(savedScale.value, MIN_SCALE);
           pinchFocal0.current = touchMidpointRelCenter(touches, centerX, centerY);
           pinchT0.current = { x: savedTx.value, y: savedTy.value };
           panActive.current = false;
+          onZoomChange?.(true);
         } else {
-          // Tek parmak kaydırması artımlı çalışır; ilk harekette tohumlanır.
           panActive.current = false;
         }
       },
       onPanResponderMove: (evt) => {
         const touches = evt.nativeEvent.touches;
 
-        // İki parmak: odak noktasına göre yakınlaştır (parmakların ortası sabit kalır)
-        if (touches.length >= 2 && pinchStartDist.current > 8) {
+        if (touches.length >= 2) {
           const d = touchDistance(touches);
+          if (pinchStartDist.current < 8) {
+            pinchStartDist.current = d;
+            pinchStartScale.current = Math.max(savedScale.value, MIN_SCALE);
+            pinchFocal0.current = touchMidpointRelCenter(touches, centerX, centerY);
+            pinchT0.current = { x: savedTx.value, y: savedTy.value };
+            return;
+          }
           const s1 = clampScale(pinchStartScale.current * (d / pinchStartDist.current));
           const focalNow = touchMidpointRelCenter(touches, centerX, centerY);
-          // Başlangıçta odak altındaki içerik noktası
           const cX = (pinchFocal0.current.x - pinchT0.current.x) / pinchStartScale.current;
           const cY = (pinchFocal0.current.y - pinchT0.current.y) / pinchStartScale.current;
           scale.value = s1;
           translateX.value = clampX(focalNow.x - s1 * cX, s1);
           translateY.value = clampY(focalNow.y - s1 * cY, s1);
-          panActive.current = false; // tek parmağa geçişte yeniden tohumla
+          panActive.current = false;
           return;
         }
 
-        // Tek parmak: yakınlaştırılmışken görseli artımlı sürükle
         if (scale.value > MIN_SCALE + 0.02 && touches.length === 1) {
           const t = touches[0];
           if (!panActive.current) {
@@ -249,16 +281,21 @@ function PinchZoomImage({
         pinchStartDist.current = 0;
         pendingDoubleTap.current = false;
         panActive.current = false;
-        if (scale.value < MIN_SCALE) {
+        if (scale.value < MIN_SCALE + 0.05) {
           resetZoom();
         } else {
+          clampTranslate(scale.value);
           reportZoom(scale.value);
         }
       },
       onPanResponderTerminate: () => {
+        savedScale.value = scale.value;
+        savedTx.value = translateX.value;
+        savedTy.value = translateY.value;
         pinchStartDist.current = 0;
         pendingDoubleTap.current = false;
         panActive.current = false;
+        reportZoom(scale.value);
       },
     })
   ).current;
@@ -278,15 +315,40 @@ function PinchZoomImage({
           <Image source={{ uri }} style={{ width: WIN_W, height: pageH }} contentFit="contain" />
         </Animated.View>
       </View>
-      <View style={styles.zoomControls} pointerEvents="box-none">
-        <TouchableOpacity style={styles.zoomBtn} onPress={zoomOut} accessibilityLabel="Uzaklaştır">
-          <Ionicons name="remove" size={22} color="#fff" />
+
+      <View
+        style={[styles.zoomControls, { bottom: Math.max(bottomInset, 12) + 52 }]}
+        pointerEvents="box-none"
+      >
+        <TouchableOpacity
+          style={styles.zoomBtn}
+          onPress={zoomIn}
+          accessibilityLabel="Yakınlaştır"
+          activeOpacity={0.75}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="add" size={28} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.zoomBtn} onPress={resetZoom} accessibilityLabel="Sıfırla">
-          <Ionicons name="scan-outline" size={20} color="#fff" />
+        <View style={styles.scalePill}>
+          <Text style={styles.scalePillText}>{scaleLabel}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.zoomBtn}
+          onPress={zoomOut}
+          accessibilityLabel="Uzaklaştır"
+          activeOpacity={0.75}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="remove" size={28} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.zoomBtn} onPress={zoomIn} accessibilityLabel="Yakınlaştır">
-          <Ionicons name="add" size={22} color="#fff" />
+        <TouchableOpacity
+          style={[styles.zoomBtn, styles.zoomBtnSecondary]}
+          onPress={resetZoom}
+          accessibilityLabel="Sıfırla"
+          activeOpacity={0.75}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="scan-outline" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>
@@ -298,16 +360,23 @@ const GalleryPage = memo(function GalleryPage({
   pageW,
   pageH,
   onZoomChange,
+  bottomInset,
 }: {
   item: KbsCaptureGalleryItem;
   pageW: number;
   pageH: number;
   onZoomChange?: (zoomed: boolean) => void;
+  bottomInset: number;
 }) {
   return (
     <View style={{ width: pageW, height: pageH }}>
-      <PinchZoomImage uri={item.uri} pageH={pageH} onZoomChange={onZoomChange} />
-      <View style={styles.imageOverlay} pointerEvents="none">
+      <PinchZoomImage
+        uri={item.uri}
+        pageH={pageH}
+        onZoomChange={onZoomChange}
+        bottomInset={bottomInset}
+      />
+      <View style={[styles.imageOverlay, { bottom: Math.max(bottomInset, 12) + 120 }]} pointerEvents="none">
         <View style={styles.roomBadge}>
           <Ionicons name="bed-outline" size={16} color="#fff" />
           <Text style={styles.roomBadgeText}>Oda {item.roomNumber?.trim() || '—'}</Text>
@@ -388,9 +457,15 @@ export function KbsZoomImageModal({ uri, items, initialIndex = 0, visible, onClo
 
   const renderItem: ListRenderItem<KbsCaptureGalleryItem> = useCallback(
     ({ item }) => (
-      <GalleryPage item={item} pageW={pageW} pageH={pageH} onZoomChange={handleZoomChange} />
+      <GalleryPage
+        item={item}
+        pageW={pageW}
+        pageH={pageH}
+        onZoomChange={handleZoomChange}
+        bottomInset={insets.bottom}
+      />
     ),
-    [pageH, pageW, handleZoomChange]
+    [pageH, pageW, handleZoomChange, insets.bottom]
   );
 
   if (!isOpen || list.length === 0) return null;
@@ -422,7 +497,13 @@ export function KbsZoomImageModal({ uri, items, initialIndex = 0, visible, onClo
           />
         ) : current ? (
           <View style={StyleSheet.absoluteFill}>
-            <GalleryPage item={current} pageW={pageW} pageH={pageH} onZoomChange={handleZoomChange} />
+            <GalleryPage
+              item={current}
+              pageW={pageW}
+              pageH={pageH}
+              onZoomChange={handleZoomChange}
+              bottomInset={insets.bottom}
+            />
           </View>
         ) : null}
 
@@ -441,10 +522,10 @@ export function KbsZoomImageModal({ uri, items, initialIndex = 0, visible, onClo
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.hint, { paddingBottom: Math.max(insets.bottom, 16) }]} pointerEvents="none">
+        <Text style={[styles.hint, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="none">
           {list.length > 1
-            ? 'Yana kaydırarak diğer kimliklere geçin · İki parmakla yakınlaştırın · Çift dokun: sıfırla'
-            : 'İki parmakla yakınlaştırın / uzaklaştırın · Çift dokun: sıfırla'}
+            ? 'Sağdaki + ile yakınlaştırın · Çift dokun · İki parmak · Yana kaydır'
+            : 'Sağdaki + ile yakınlaştırın · Çift dokun veya iki parmak'}
         </Text>
       </View>
     </Modal>
@@ -478,24 +559,42 @@ const styles = StyleSheet.create({
   imageWrap: { justifyContent: 'center', alignItems: 'center' },
   zoomControls: {
     position: 'absolute',
-    bottom: 48,
-    flexDirection: 'row',
-    gap: 12,
-    alignSelf: 'center',
+    right: 14,
+    flexDirection: 'column',
+    gap: 10,
+    alignItems: 'center',
+    zIndex: 12,
   },
   zoomBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(13, 148, 136, 0.92)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  zoomBtnSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  scalePill: {
+    minWidth: 44,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+  },
+  scalePillText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
   },
   imageOverlay: {
     position: 'absolute',
     left: 16,
-    right: 16,
-    bottom: 108,
+    right: 80,
     gap: 6,
   },
   roomBadge: {
@@ -531,11 +630,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     left: 0,
-    right: 0,
+    right: 72,
     color: 'rgba(255,255,255,0.65)',
     fontSize: 12,
-    textAlign: 'center',
-    paddingHorizontal: 20,
+    textAlign: 'left',
+    paddingHorizontal: 16,
     paddingTop: 8,
   },
 });

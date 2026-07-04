@@ -137,7 +137,11 @@ export default function AdminLayout() {
       <Ionicons name="arrow-back" size={24} color={adminTheme.colors.text} />
     </TouchableOpacity>
   );
-  const { staff, loading } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
+  const user = useAuthStore((s) => s.user);
+  const loading = useAuthStore((s) => s.loading);
+  const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
+  const staffCheckUnavailable = useAuthStore((s) => s.staffCheckUnavailable);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
 
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
@@ -233,6 +237,10 @@ export default function AdminLayout() {
   useEffect(() => {
     if (!navigationReady) return;
     if (loading) return;
+    // Personel satırı henüz gelmediyse panele atma — giriş yarışında / 'ye düşüp hata gibi görünüyordu.
+    if (user && !staff && (!staffCheckComplete || staffCheckUnavailable)) {
+      return;
+    }
     const canEnterAdmin =
       canAccessManagedContractsAdminRoutes(staff) ||
       canCreateDepartmentRules(staff) ||
@@ -245,7 +253,7 @@ export default function AdminLayout() {
       safeRouterReplace(router, '/');
       return;
     }
-  }, [navigationReady, loading, staff, router]);
+  }, [navigationReady, loading, user, staff, staffCheckComplete, staffCheckUnavailable, router]);
 
   /** Tam panel yetkisi olmayan; yalnızca bölüm kuralı oluşturma yetkisi — sadece ilgili rotalar */
   useEffect(() => {
@@ -310,6 +318,8 @@ export default function AdminLayout() {
           ...adminStackGestureForNavigation(nav),
           headerBackVisible: false,
           headerLeft: renderSubScreenBack,
+          /** Arka plandaki admin ekranlarını dondur — bellek ve JS yükünü düşürür */
+          freezeOnBlur: true,
         })}
       >
         <Stack.Screen

@@ -11,6 +11,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  InteractionManager,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,17 @@ import { useAuthStore } from '@/stores/authStore';
 import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { adminTheme } from '@/constants/adminTheme';
+import {
+  ADMIN_LIST_PERF,
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  getAdminScreenCache,
+  invalidateAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
+
+const STAFF_LIST_CACHE_KEY = 'admin-staff-list:v1';
+const GUESTS_LIST_CACHE_KEY = 'admin-staff-guests:v1';
+const RISKY_DEVICES_CACHE_KEY = 'admin-staff-risky-devices:v1';
 
 type StaffRow = {
   id: string;
@@ -57,6 +69,10 @@ type GuestRow = {
   photo_url?: string | null;
 };
 
+type StaffListCache = { staff: StaffRow[] };
+type GuestsListCache = { guests: GuestRow[] };
+type RiskyDevicesCache = { ids: string[] };
+
 const BAN_DURATIONS = [
   { label: '1 saat', hours: 1 },
   { label: '24 saat', hours: 24 },
@@ -78,10 +94,17 @@ export default function StaffListScreen() {
   const router = useRouter();
   const currentStaffId = useAuthStore((s) => s.staff?.id);
   const [tab, setTab] = useState<'staff' | 'guests'>('staff');
-  const [staffList, setStaffList] = useState<StaffRow[]>([]);
-  const [guestList, setGuestList] = useState<GuestRow[]>([]);
-  const [riskyDeviceIds, setRiskyDeviceIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const initialStaff = getAdminScreenCache<StaffListCache>(STAFF_LIST_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+  const initialRisky = getAdminScreenCache<RiskyDevicesCache>(RISKY_DEVICES_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+  const [staffList, setStaffList] = useState<StaffRow[]>(initialStaff?.staff ?? []);
+  const [guestList, setGuestList] = useState<GuestRow[]>(() => {
+    const hit = getAdminScreenCache<GuestsListCache>(GUESTS_LIST_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+    return hit?.guests ?? [];
+  });
+  const [riskyDeviceIds, setRiskyDeviceIds] = useState<Set<string>>(
+    () => new Set(initialRisky?.ids ?? [])
+  );
+  const [loading, setLoading] = useState(!(initialStaff?.staff?.length));
   const [refreshing, setRefreshing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<StaffRow | GuestRow | null>(null);
   const [adminReason, setAdminReason] = useState('');
@@ -97,13 +120,20 @@ export default function StaffListScreen() {
   const [staffLoadError, setStaffLoadError] = useState<string | null>(null);
   const [guestsLoaded, setGuestsLoaded] = useState(false);
 
-  const loadRiskyDevices = useCallback(async () => {
+  const loadRiskyDevices = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<RiskyDevicesCache>(RISKY_DEVICES_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit) {
+        setRiskyDeviceIds(new Set(hit.ids));
+        return;
+      }
+    }
     const now = new Date().toISOString();
     const [staffDeleted, staffBanned, guestsDeleted, guestsBanned] = await Promise.all([
-      supabase.from('staff').select('last_login_device_id').not('deleted_at', 'is', null),
-      supabase.from('staff').select('last_login_device_id').gt('banned_until', now),
-      supabase.from('guests').select('last_login_device_id').not('deleted_at', 'is', null),
-      supabase.from('guests').select('last_login_device_id').gt('banned_until', now),
+      supabase.from('staff').select('last_login_device_id').not('deleted_at', 'is', null).limit(200),
+      supabase.from('staff').select('last_login_device_id').gt('banned_until', now).limit(200),
+      supabase.from('guests').select('last_login_device_id').not('deleted_at', 'is', null).limit(200),
+      supabase.from('guests').select('last_login_device_id').gt('banned_until', now).limit(200),
     ]);
     const ids = new Set<string>();
     for (const r of [...(staffDeleted.data ?? []), ...(staffBanned.data ?? []), ...(guestsDeleted.data ?? []), ...(guestsBanned.data ?? [])]) {
@@ -111,9 +141,18 @@ export default function StaffListScreen() {
       if (d && String(d).trim()) ids.add(String(d).trim());
     }
     setRiskyDeviceIds(ids);
+    setAdminScreenCache(RISKY_DEVICES_CACHE_KEY, { ids: [...ids] } satisfies RiskyDevicesCache);
   }, []);
 
-  const loadStaff = useCallback(async () => {
+  const loadStaff = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<StaffListCache>(STAFF_LIST_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.staff?.length) {
+        setStaffList(hit.staff);
+        setStaffLoadError(null);
+        return;
+      }
+    }
     setStaffLoadError(null);
     const staffRes = await supabase
       .from('staff')
@@ -134,34 +173,62 @@ export default function StaffListScreen() {
         setStaffList([]);
         return;
       }
-      setStaffList((fallback.data ?? []) as unknown as StaffRow[]);
+      const rows = (fallback.data ?? []) as unknown as StaffRow[];
+      setStaffList(rows);
+      setAdminScreenCache(STAFF_LIST_CACHE_KEY, { staff: rows } satisfies StaffListCache);
       return;
     }
-    setStaffList((staffRes.data ?? []) as unknown as StaffRow[]);
+    const rows = (staffRes.data ?? []) as unknown as StaffRow[];
+    setStaffList(rows);
+    setAdminScreenCache(STAFF_LIST_CACHE_KEY, { staff: rows } satisfies StaffListCache);
   }, []);
 
-  const loadGuests = useCallback(async () => {
+  const loadGuests = useCallback(async (opts?: { force?: boolean }) => {
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<GuestsListCache>(GUESTS_LIST_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.guests) {
+        setGuestList(hit.guests);
+        setGuestLoadError(null);
+        setGuestsLoaded(true);
+        return;
+      }
+    }
     setGuestLoadError(null);
     const guestsRes = await supabase.rpc('admin_list_guests', { p_filter: 'all' });
     if (guestsRes.error) {
       setGuestLoadError(guestsRes.error.message || 'Misafir listesi yüklenemedi');
       setGuestList([]);
     } else {
-      setGuestList((guestsRes.data ?? []) as GuestRow[]);
+      const rows = (guestsRes.data ?? []) as GuestRow[];
+      setGuestList(rows);
+      setAdminScreenCache(GUESTS_LIST_CACHE_KEY, { guests: rows } satisfies GuestsListCache);
     }
     setGuestsLoaded(true);
   }, []);
 
-  const load = useCallback(async () => {
-    const tasks: Promise<unknown>[] = [loadStaff(), loadRiskyDevices()];
-    if (tab === 'guests') tasks.push(loadGuests());
+  const load = useCallback(async (opts?: { force?: boolean }) => {
+    if (opts?.force) {
+      invalidateAdminScreenCache('admin-staff-');
+    }
+    const tasks: Promise<unknown>[] = [loadStaff(opts), loadRiskyDevices(opts)];
+    if (tab === 'guests') tasks.push(loadGuests(opts));
     await Promise.all(tasks);
   }, [loadGuests, loadRiskyDevices, loadStaff, tab]);
 
   useEffect(() => {
-    void loadStaff()
-      .then(() => loadRiskyDevices())
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    void (async () => {
+      await loadStaff();
+      if (cancelled) return;
+      setLoading(false);
+      // Risk cihaz sorguları ağır — liste göründükten sonra
+      InteractionManager.runAfterInteractions(() => {
+        if (!cancelled) void loadRiskyDevices();
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadRiskyDevices, loadStaff]);
 
   useEffect(() => {
@@ -171,7 +238,7 @@ export default function StaffListScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await load();
+    await load({ force: true });
     setRefreshing(false);
   }, [load]);
 
@@ -190,7 +257,7 @@ export default function StaffListScreen() {
       setBanTarget(null);
       setBanReason('');
       setBanHours(24);
-      await load();
+      await load({ force: true });
       Alert.alert('Başarılı', 'Kullanıcı banlandı.');
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Ban uygulanamadı.');
@@ -207,7 +274,7 @@ export default function StaffListScreen() {
           .from(isStaff ? 'staff' : 'guests')
           .update({ banned_until: null, banned_by: null, ban_reason: null })
           .eq('id', row.id);
-        await load();
+        await load({ force: true });
       } catch (e) {
         Alert.alert('Hata', (e as Error)?.message ?? 'Ban kaldırılamadı.');
       }
@@ -291,7 +358,7 @@ export default function StaffListScreen() {
       }
       setDeleteTarget(null);
       setAdminReason('');
-      await load();
+      await load({ force: true });
       Alert.alert('Başarılı', 'Hesap silindi. Kullanıcı uygulama açtığında "Hesabınız silindi" görüp lobiye dönecek.');
     } catch (e) {
       const msg = await getEdgeFunctionErrorMessage(e);
@@ -580,10 +647,11 @@ export default function StaffListScreen() {
         }
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
-        initialNumToRender={14}
-        maxToRenderPerBatch={10}
-        windowSize={7}
-        removeClippedSubviews={Platform.OS === 'android'}
+        initialNumToRender={ADMIN_LIST_PERF.initialNumToRender}
+        maxToRenderPerBatch={ADMIN_LIST_PERF.maxToRenderPerBatch}
+        windowSize={ADMIN_LIST_PERF.windowSize}
+        updateCellsBatchingPeriod={ADMIN_LIST_PERF.updateCellsBatchingPeriod}
+        removeClippedSubviews={ADMIN_LIST_PERF.removeClippedSubviews}
         renderItem={renderItem}
         extraData={tab}
       />

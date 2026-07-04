@@ -14,7 +14,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { safeRouterReplace } from '@/lib/safeRouter';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
+import { completeSignIn, useAuthStore } from '@/stores/authStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { log } from '@/lib/logger';
@@ -57,18 +57,15 @@ export default function AuthPasswordScreen() {
         const { data, error } = await supabase.auth.signInWithPassword({ email: e, password });
         if (error) throw error;
         if (data.user) {
-          await useAuthStore.getState().loadSession();
+          await completeSignIn(data.user);
           const { user, staff } = useAuthStore.getState();
           const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
-          if (staff) {
-            safeRouterReplace(router, '/');
-          } else {
-            if (pendingRoom && user?.email) {
-              await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
-              clearPendingRoom();
-            }
-            safeRouterReplace(router, '/');
+          if (!staff && pendingRoom && user?.email) {
+            await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
+            clearPendingRoom();
           }
+          // Lobi yönlendirmesi staff/partner durumuna göre doğru panele gider.
+          safeRouterReplace(router, '/');
         }
       }
     } catch (err: unknown) {

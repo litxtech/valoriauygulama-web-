@@ -23,6 +23,13 @@ import { useAuthStore } from '@/stores/authStore';
 import { CachedImage } from '@/components/CachedImage';
 import { adminTheme } from '@/constants/adminTheme';
 import { formatDateTime } from '@/lib/date';
+import {
+  ADMIN_LIST_PERF,
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  createDebouncedRunner,
+  getAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
 
 const BAN_DURATIONS = [
   { label: '1 saat', hours: 1 },
@@ -200,6 +207,7 @@ const GuestRow = memo(function GuestRow({
 function LivePulse() {
   const opacity = useRef(new Animated.Value(0.35)).current;
   useEffect(() => {
+    if (Platform.OS === 'android') return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
@@ -209,16 +217,28 @@ function LivePulse() {
     loop.start();
     return () => loop.stop();
   }, [opacity]);
+  if (Platform.OS === 'android') {
+    return <View style={[styles.liveDot, { opacity: 1 }]} />;
+  }
   return <Animated.View style={[styles.liveDot, { opacity }]} />;
 }
 
+type GuestsScreenCache = { guests: Guest[]; riskyIds: string[] };
+
 export default function GuestsList() {
   const currentStaffId = useAuthStore((s) => s.staff?.id);
-  const [guests, setGuests] = useState<Guest[]>([]);
-  const [riskyDeviceIds, setRiskyDeviceIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<'pending' | 'all'>('all');
-  const [loading, setLoading] = useState(true);
+  const guestsCacheKey = (f: 'pending' | 'all') => `admin-guests:${f}`;
+  const initialCached = getAdminScreenCache<GuestsScreenCache>(guestsCacheKey('all'), ADMIN_SCREEN_FOCUS_TTL_MS);
+  const [guests, setGuests] = useState<Guest[]>(initialCached?.guests ?? []);
+  const [riskyDeviceIds, setRiskyDeviceIds] = useState<Set<string>>(
+    () => new Set(initialCached?.riskyIds ?? [])
+  );
+  const [loading, setLoading] = useState(!(initialCached?.guests?.length));
   const [refreshing, setRefreshing] = useState(false);
+  const riskyDeviceIdsRef = useRef(riskyDeviceIds);
+  riskyDeviceIdsRef.current = riskyDeviceIds;
+  const realtimeDebounce = useRef(createDebouncedRunner(1_200)).current;
   const [deleteTarget, setDeleteTarget] = useState<Guest | null>(null);
   const [adminReason, setAdminReason] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -229,7 +249,19 @@ export default function GuestsList() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
+  const load = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+    const cacheKey = guestsCacheKey(filter);
+    if (!opts?.force && !opts?.silent) {
+      const hit = getAdminScreenCache<GuestsScreenCache>(cacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.guests) {
+        setGuests(hit.guests);
+        setRiskyDeviceIds(new Set(hit.riskyIds));
+        setLoadError(null);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+    }
     if (!opts?.silent) setLoading(true);
     const now = new Date().toISOString();
     try {
@@ -260,39 +292,50 @@ export default function GuestsList() {
         last_login_at?: string | null;
         auth_user_created_at?: string | null;
       }>;
-      setGuests(
-        list.map((row) => ({
-          id: row.id,
-          full_name: row.full_name,
-          phone: row.phone,
-          email: row.email,
-          status: row.status,
-          created_at: row.created_at,
-          room_id: row.room_id,
-          rooms: row.room_number ? { room_number: row.room_number } : null,
-          auth_user_id: row.auth_user_id,
-          banned_until: row.banned_until,
-          deleted_at: row.deleted_at,
-          last_login_device_id: row.last_login_device_id,
-          photo_url: row.photo_url,
-          last_login_platform: row.last_login_platform,
-          last_login_at: row.last_login_at,
-          auth_user_created_at: row.auth_user_created_at,
-        }))
-      );
+      const mapped: Guest[] = list.map((row) => ({
+        id: row.id,
+        full_name: row.full_name,
+        phone: row.phone,
+        email: row.email,
+        status: row.status,
+        created_at: row.created_at,
+        room_id: row.room_id,
+        rooms: row.room_number ? { room_number: row.room_number } : null,
+        auth_user_id: row.auth_user_id,
+        banned_until: row.banned_until,
+        deleted_at: row.deleted_at,
+        last_login_device_id: row.last_login_device_id,
+        photo_url: row.photo_url,
+        last_login_platform: row.last_login_platform,
+        last_login_at: row.last_login_at,
+        auth_user_created_at: row.auth_user_created_at,
+      }));
+      setGuests(mapped);
 
-      const [staffDeleted, staffBanned, guestsDeleted, guestsBanned] = await Promise.all([
-        supabase.from('staff').select('last_login_device_id').not('deleted_at', 'is', null),
-        supabase.from('staff').select('last_login_device_id').gt('banned_until', now),
-        supabase.from('guests').select('last_login_device_id').not('deleted_at', 'is', null),
-        supabase.from('guests').select('last_login_device_id').gt('banned_until', now),
-      ]);
-      const ids = new Set<string>();
-      for (const r of [...(staffDeleted.data ?? []), ...(staffBanned.data ?? []), ...(guestsDeleted.data ?? []), ...(guestsBanned.data ?? [])]) {
-        const d = (r as { last_login_device_id?: string | null }).last_login_device_id;
-        if (d && String(d).trim()) ids.add(String(d).trim());
+      // Risk cihaz sorguları ağır — yalnızca tam yükleme / pull-to-refresh
+      let riskyIds: string[] = [...riskyDeviceIdsRef.current];
+      if (!opts?.silent || opts?.force) {
+        const [staffDeleted, staffBanned, guestsDeleted, guestsBanned] = await Promise.all([
+          supabase.from('staff').select('last_login_device_id').not('deleted_at', 'is', null).limit(200),
+          supabase.from('staff').select('last_login_device_id').gt('banned_until', now).limit(200),
+          supabase.from('guests').select('last_login_device_id').not('deleted_at', 'is', null).limit(200),
+          supabase.from('guests').select('last_login_device_id').gt('banned_until', now).limit(200),
+        ]);
+        const ids = new Set<string>();
+        for (const r of [
+          ...(staffDeleted.data ?? []),
+          ...(staffBanned.data ?? []),
+          ...(guestsDeleted.data ?? []),
+          ...(guestsBanned.data ?? []),
+        ]) {
+          const d = (r as { last_login_device_id?: string | null }).last_login_device_id;
+          if (d && String(d).trim()) ids.add(String(d).trim());
+        }
+        riskyIds = [...ids];
+        setRiskyDeviceIds(ids);
       }
-      setRiskyDeviceIds(ids);
+
+      setAdminScreenCache(cacheKey, { guests: mapped, riskyIds } satisfies GuestsScreenCache);
     } catch (e) {
       setLoadError((e as Error)?.message ?? 'Liste yüklenemedi');
       setGuests([]);
@@ -303,20 +346,23 @@ export default function GuestsList() {
   }, [filter]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   useEffect(() => {
     const channel = supabase
       .channel('admin-guests-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, () => {
-        load({ silent: true });
+        realtimeDebounce.schedule(() => {
+          void load({ silent: true });
+        });
       })
       .subscribe();
     return () => {
+      realtimeDebounce.cancel();
       supabase.removeChannel(channel);
     };
-  }, [load]);
+  }, [load, realtimeDebounce]);
 
   const isRisky = useCallback(
     (g: Guest) => {
@@ -363,7 +409,7 @@ export default function GuestsList() {
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error);
       setDeleteTarget(null);
       setAdminReason('');
-      await load({ silent: true });
+      await load({ silent: true, force: true });
       Alert.alert('Başarılı', 'Hesap silindi.');
     } catch (e) {
       const msg = await getEdgeFunctionErrorMessage(e);
@@ -385,7 +431,7 @@ export default function GuestsList() {
       setBanTarget(null);
       setBanReason('');
       setBanHours(24);
-      await load({ silent: true });
+      await load({ silent: true, force: true });
       Alert.alert('Başarılı', 'Misafir banlandı.');
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Ban uygulanamadı.');
@@ -397,7 +443,7 @@ export default function GuestsList() {
   const unban = async (g: Guest) => {
     try {
       await supabase.from('guests').update({ banned_until: null, banned_by: null, ban_reason: null }).eq('id', g.id);
-      await load({ silent: true });
+      await load({ silent: true, force: true });
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Ban kaldırılamadı.');
     }
@@ -405,7 +451,7 @@ export default function GuestsList() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    load({ silent: true });
+    void load({ silent: true, force: true });
   };
 
   const listHeader = (
@@ -497,6 +543,11 @@ export default function GuestsList() {
           keyExtractor={(g) => g.id}
           contentContainerStyle={styles.list}
           ListHeaderComponent={listHeader}
+          initialNumToRender={ADMIN_LIST_PERF.initialNumToRender}
+          maxToRenderPerBatch={ADMIN_LIST_PERF.maxToRenderPerBatch}
+          windowSize={ADMIN_LIST_PERF.windowSize}
+          updateCellsBatchingPeriod={ADMIN_LIST_PERF.updateCellsBatchingPeriod}
+          removeClippedSubviews={ADMIN_LIST_PERF.removeClippedSubviews}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0891b2" colors={['#0891b2']} />
           }

@@ -29,6 +29,12 @@ import { useAuthStore } from '@/stores/authStore';
 import { StockProductCard, type StockProductCardData } from '@/components/admin/stock/StockProductCard';
 import { getStockLevel, stockTheme, type StockLevel } from '@/components/admin/stock/stockUi';
 import { buildLatestPhotoProofByProductId } from '@/lib/stockProductImages';
+import {
+  ADMIN_LIST_PERF,
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  getAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
 
 function formatShortDateTime(iso: string): string {
   const d = new Date(iso);
@@ -67,6 +73,16 @@ type RecentMovement = {
 
 type StatusFilter = 'all' | StockLevel;
 
+type StockScreenCache = {
+  products: Product[];
+  categories: Category[];
+  alerts: StockAlertRow[];
+  pendingApprovals: number;
+  lastMovementByProduct: Record<string, LastMovement>;
+  recentMovements: RecentMovement[];
+  lastPhotoByProductId: Record<string, string>;
+};
+
 const QUICK_ACTIONS = [
   { key: 'new', label: 'Yeni ürün', sub: 'Barkod tara', icon: 'scan-outline' as const, colors: ['#2563eb', '#3b82f6'] as [string, string], route: '/admin/stock/scan' },
   { key: 'in', label: 'Stok girişi', sub: 'Depoya ekle', icon: 'arrow-down-circle' as const, colors: ['#059669', '#10b981'] as [string, string], route: '/admin/stock/movement', params: { type: 'in' } },
@@ -79,8 +95,8 @@ export default function StockManagement() {
   const navigation = useNavigation();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { staff: me } = useAuthStore();
-  const { selectedOrganizationId } = useAdminOrgStore();
+  const me = useAuthStore((s) => s.staff);
+  const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [alerts, setAlerts] = useState<StockAlertRow[]>([]);
@@ -98,10 +114,30 @@ export default function StockManagement() {
   const [lastPhotoByProductId, setLastPhotoByProductId] = useState<Record<string, string>>({});
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
-  const loadData = useCallback(async () => {
+  const applyStockCache = useCallback((cached: StockScreenCache) => {
+    setProducts(cached.products);
+    setCategories(cached.categories);
+    setAlerts(cached.alerts);
+    setPendingApprovals(cached.pendingApprovals);
+    setLastMovementByProduct(cached.lastMovementByProduct);
+    setRecentMovements(cached.recentMovements);
+    setLastPhotoByProductId(cached.lastPhotoByProductId);
+    setLoadError(null);
+    setLoading(false);
+  }, []);
+
+  const loadData = useCallback(async (opts?: { force?: boolean }) => {
     setLoadError(null);
     const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
     const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    const cacheKey = `admin-stock:${orgScoped ?? 'all'}`;
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<StockScreenCache>(cacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.products) {
+        applyStockCache(hit);
+        return;
+      }
+    }
     try {
       let productsQuery = supabase
         .from('stock_products')
@@ -110,89 +146,105 @@ export default function StockManagement() {
         )
         .order('name');
       if (orgScoped) productsQuery = productsQuery.eq('organization_id', orgScoped);
-      const { data: productsData, error: productsError } = await productsQuery;
-      if (productsError) {
-        setLoadError(productsError.message || 'Ürünler yüklenemedi');
+
+      let alertsQuery = supabase
+        .from('stock_alerts')
+        .select('id, message, product_id, product:stock_products(name)')
+        .eq('is_resolved', false)
+        .limit(50);
+      if (orgScoped) alertsQuery = alertsQuery.eq('organization_id', orgScoped);
+
+      let pendingQ = supabase
+        .from('stock_movements')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending');
+      if (orgScoped) pendingQ = pendingQ.eq('organization_id', orgScoped);
+
+      // Son hareket / foto için tüm geçmişi çekme — son N kayıt yeterli
+      let movementsQuery = supabase
+        .from('stock_movements')
+        .select('product_id, created_at, staff:staff_id(full_name)')
+        .order('created_at', { ascending: false })
+        .limit(250);
+      if (orgScoped) movementsQuery = movementsQuery.eq('organization_id', orgScoped);
+
+      let recentQuery = supabase
+        .from('stock_movements')
+        .select(
+          'id, product_id, movement_type, quantity, created_at, photo_proof, product:stock_products(name), staff:staff_id(full_name)'
+        )
+        .order('created_at', { ascending: false })
+        .limit(15);
+      if (orgScoped) recentQuery = recentQuery.eq('organization_id', orgScoped);
+
+      let photoQuery = supabase
+        .from('stock_movements')
+        .select('product_id, photo_proof')
+        .not('photo_proof', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (orgScoped) photoQuery = photoQuery.eq('organization_id', orgScoped);
+
+      const [
+        productsRes,
+        categoriesRes,
+        alertsRes,
+        pendingRes,
+        movementsRes,
+        recentRes,
+        photoRes,
+      ] = await Promise.all([
+        productsQuery,
+        supabase.from('stock_categories').select('id, name').order('name'),
+        alertsQuery,
+        pendingQ,
+        movementsQuery,
+        recentQuery,
+        photoQuery,
+      ]);
+
+      if (productsRes.error) {
+        setLoadError(productsRes.error.message || 'Ürünler yüklenemedi');
         setProducts([]);
       } else {
-        setProducts((productsData ?? []) as unknown as Product[]);
+        setProducts((productsRes.data ?? []) as unknown as Product[]);
       }
+      const nextCategories = categoriesRes.data ?? [];
+      const nextAlerts = (alertsRes.data ?? []) as unknown as StockAlertRow[];
+      const nextPending = pendingRes.count ?? 0;
+      setCategories(nextCategories);
+      setAlerts(nextAlerts);
+      setPendingApprovals(nextPending);
 
-      const { data: categoriesData } = await supabase.from('stock_categories').select('id, name').order('name');
-      setCategories(categoriesData ?? []);
-
-      try {
-        let alertsQuery = supabase
-          .from('stock_alerts')
-          .select('id, message, product_id, product:stock_products(name)')
-          .eq('is_resolved', false);
-        if (orgScoped) alertsQuery = alertsQuery.eq('organization_id', orgScoped);
-        const { data: alertsData } = await alertsQuery;
-        setAlerts((alertsData ?? []) as unknown as StockAlertRow[]);
-      } catch {
-        setAlerts([]);
-      }
-
-      try {
-        let pendingQ = supabase.from('stock_movements').select('id', { count: 'exact', head: true }).eq('status', 'pending');
-        if (orgScoped) pendingQ = pendingQ.eq('organization_id', orgScoped);
-        const { count } = await pendingQ;
-        setPendingApprovals(count ?? 0);
-      } catch {
-        setPendingApprovals(0);
-      }
-
-      try {
-        let movementsQuery = supabase
-          .from('stock_movements')
-          .select('product_id, created_at, staff:staff_id(full_name)')
-          .order('created_at', { ascending: false });
-        if (orgScoped) movementsQuery = movementsQuery.eq('organization_id', orgScoped);
-        const { data: movementsData } = await movementsQuery;
-        const byProduct: Record<string, LastMovement> = {};
-        for (const m of movementsData ?? []) {
-          const pid = (m as { product_id: string }).product_id;
-          if (pid && !byProduct[pid]) {
-            const staff = (m as unknown as { staff?: { full_name: string | null } }).staff;
-            byProduct[pid] = {
-              staffName: staff?.full_name ?? '—',
-              createdAt: formatShortDateTime((m as { created_at: string }).created_at),
-            };
-          }
+      const byProduct: Record<string, LastMovement> = {};
+      for (const m of movementsRes.data ?? []) {
+        const pid = (m as { product_id: string }).product_id;
+        if (pid && !byProduct[pid]) {
+          const staff = (m as unknown as { staff?: { full_name: string | null } }).staff;
+          byProduct[pid] = {
+            staffName: staff?.full_name ?? '—',
+            createdAt: formatShortDateTime((m as { created_at: string }).created_at),
+          };
         }
-        setLastMovementByProduct(byProduct);
-      } catch {
-        setLastMovementByProduct({});
       }
+      setLastMovementByProduct(byProduct);
+      const nextRecent = (recentRes.data ?? []) as unknown as RecentMovement[];
+      const nextPhotos = buildLatestPhotoProofByProductId(
+        (photoRes.data ?? []) as Array<{ product_id: string; photo_proof: string | null }>
+      );
+      setRecentMovements(nextRecent);
+      setLastPhotoByProductId(nextPhotos);
 
-      try {
-        let recentQuery = supabase
-          .from('stock_movements')
-          .select('id, product_id, movement_type, quantity, created_at, photo_proof, product:stock_products(name), staff:staff_id(full_name)')
-          .order('created_at', { ascending: false })
-          .limit(15);
-        if (orgScoped) recentQuery = recentQuery.eq('organization_id', orgScoped);
-        const { data: recentData } = await recentQuery;
-        setRecentMovements((recentData ?? []) as unknown as RecentMovement[]);
-      } catch {
-        setRecentMovements([]);
-      }
-
-      try {
-        let photoQuery = supabase
-          .from('stock_movements')
-          .select('product_id, photo_proof')
-          .not('photo_proof', 'is', null)
-          .order('created_at', { ascending: false });
-        if (orgScoped) photoQuery = photoQuery.eq('organization_id', orgScoped);
-        const { data: photoData } = await photoQuery;
-        setLastPhotoByProductId(
-          buildLatestPhotoProofByProductId(
-            (photoData ?? []) as Array<{ product_id: string; photo_proof: string | null }>
-          )
-        );
-      } catch {
-        setLastPhotoByProductId({});
+      if (!productsRes.error) {
+        setAdminScreenCache(cacheKey, {
+          products: (productsRes.data ?? []) as unknown as Product[],
+          categories: nextCategories,
+          alerts: nextAlerts,
+          pendingApprovals: nextPending,
+          lastMovementByProduct: byProduct,
+          recentMovements: nextRecent,
+          lastPhotoByProductId: nextPhotos,
+        } satisfies StockScreenCache);
       }
     } catch (e) {
       setLoadError((e as Error)?.message ?? 'Veri yüklenirken hata oluştu');
@@ -200,16 +252,23 @@ export default function StockManagement() {
     } finally {
       setLoading(false);
     }
-  }, [canUseAllOrganizations, me?.organization_id, selectedOrganizationId]);
+  }, [applyStockCache, canUseAllOrganizations, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
+    const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    const hit = getAdminScreenCache<StockScreenCache>(`admin-stock:${orgScoped ?? 'all'}`, ADMIN_SCREEN_FOCUS_TTL_MS);
+    if (hit?.products?.length) {
+      applyStockCache(hit);
+      return;
+    }
     setLoading(true);
-    loadData();
-  }, [loadData]);
+    void loadData();
+  }, [applyStockCache, canUseAllOrganizations, loadData, me?.organization_id, selectedOrganizationId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await loadData({ force: true });
     setRefreshing(false);
   };
 
@@ -227,7 +286,7 @@ export default function StockManagement() {
             await supabase.from('stock_movements').delete().eq('product_id', p.id);
             const { error } = await supabase.from('stock_products').delete().eq('id', p.id);
             if (error) throw error;
-            await loadData();
+            await loadData({ force: true });
           } catch (e) {
             Alert.alert('Hata', (e as Error)?.message ?? 'Ürün silinemedi.');
           }
@@ -493,7 +552,7 @@ export default function StockManagement() {
             <Ionicons name="cloud-offline-outline" size={48} color={adminTheme.colors.error} />
             <Text style={styles.centerTitle}>Yüklenemedi</Text>
             <Text style={styles.centerSub}>{loadError}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); loadData(); }}>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); void loadData({ force: true }); }}>
               <Text style={styles.retryTxt}>Tekrar dene</Text>
             </TouchableOpacity>
           </View>
@@ -502,6 +561,11 @@ export default function StockManagement() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
+          initialNumToRender={ADMIN_LIST_PERF.initialNumToRender}
+          maxToRenderPerBatch={ADMIN_LIST_PERF.maxToRenderPerBatch}
+          windowSize={ADMIN_LIST_PERF.windowSize}
+          updateCellsBatchingPeriod={ADMIN_LIST_PERF.updateCellsBatchingPeriod}
+          removeClippedSubviews={ADMIN_LIST_PERF.removeClippedSubviews}
           renderItem={({ item }) => (
             <StockProductCard
               product={cardData(item)}

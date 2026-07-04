@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Animated, Platform } from 'react-native';
+import { useEffect, useState, useCallback, memo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Platform } from 'react-native';
 import { useRouter, useFocusEffect, usePathname } from 'expo-router';
 import { occupancyPathsFromPathname } from '@/lib/occupancyOpsPaths';
 import { Ionicons } from '@expo/vector-icons';
@@ -43,58 +43,43 @@ const statusColor: Record<string, string> = {
   out_of_order: adminTheme.colors.textMuted,
 };
 
-function RoomCard({ item, onPress }: { item: Room; onPress: () => void }) {
+const RoomCard = memo(function RoomCard({ item, onPress }: { item: Room; onPress: () => void }) {
   const preview = item.previewSignerName?.trim();
-  const scale = useRef(new Animated.Value(1)).current;
-  const handlePressIn = () => {
-    Animated.spring(scale, { toValue: 0.98, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
-  };
-  const handlePressOut = () => {
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 50, bounciness: 8 }).start();
-  };
 
   return (
-    <Animated.View style={{ transform: [{ scale }], marginBottom: 12 }}>
-      <TouchableOpacity
-        onPress={onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        activeOpacity={1}
-        style={styles.card}
-      >
-        <View style={styles.cardRow}>
-          <View style={styles.roomInfo}>
-            <Text style={styles.roomNum}>Oda {item.room_number}</Text>
-            {item.floor != null && (
-              <Text style={styles.meta}>Kat {item.floor}</Text>
-            )}
-          </View>
-          <View style={styles.cardRight}>
-            <View style={[styles.badge, { backgroundColor: statusColor[item.status] || adminTheme.colors.textMuted }]}>
-              <Text style={styles.badgeText}>{STATUS_LABELS[item.status] || item.status}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={adminTheme.colors.textMuted} />
-          </View>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.card, { marginBottom: 12 }]}>
+      <View style={styles.cardRow}>
+        <View style={styles.roomInfo}>
+          <Text style={styles.roomNum}>Oda {item.room_number}</Text>
+          {item.floor != null && (
+            <Text style={styles.meta}>Kat {item.floor}</Text>
+          )}
         </View>
-        {item.price_per_night != null && (
-          <Text style={styles.price}>₺{item.price_per_night} <Text style={styles.priceUnit}>/ gece</Text></Text>
-        )}
-        {preview ? (
-          <Text style={styles.previewHint} numberOfLines={2}>
-            Önizleme (sözleşme): {preview}
-          </Text>
-        ) : null}
-        {item.liveGuests && item.liveGuests.length > 0 ? (
-          <Text style={styles.liveGuests} numberOfLines={2}>
-            Odada: {item.liveGuests.join(', ')}
-          </Text>
-        ) : (
-          <Text style={styles.vacantHint}>Şu an misafir yok</Text>
-        )}
-      </TouchableOpacity>
-    </Animated.View>
+        <View style={styles.cardRight}>
+          <View style={[styles.badge, { backgroundColor: statusColor[item.status] || adminTheme.colors.textMuted }]}>
+            <Text style={styles.badgeText}>{STATUS_LABELS[item.status] || item.status}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={adminTheme.colors.textMuted} />
+        </View>
+      </View>
+      {item.price_per_night != null && (
+        <Text style={styles.price}>₺{item.price_per_night} <Text style={styles.priceUnit}>/ gece</Text></Text>
+      )}
+      {preview ? (
+        <Text style={styles.previewHint} numberOfLines={2}>
+          Önizleme (sözleşme): {preview}
+        </Text>
+      ) : null}
+      {item.liveGuests && item.liveGuests.length > 0 ? (
+        <Text style={styles.liveGuests} numberOfLines={2}>
+          Odada: {item.liveGuests.join(', ')}
+        </Text>
+      ) : (
+        <Text style={styles.vacantHint}>Şu an misafir yok</Text>
+      )}
+    </TouchableOpacity>
   );
-}
+});
 
 export default function RoomsList() {
   const router = useRouter();
@@ -206,7 +191,8 @@ export default function RoomsList() {
   useEffect(() => {
     void (async () => {
       await loadRooms({ silent: Boolean(initialCached?.length) });
-      await loadCleaningPlanLockState();
+      // Temizlik planı kilidi ikincil — oda listesi göründükten sonra
+      void loadCleaningPlanLockState();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ilk mount
   }, [loadRooms]);
@@ -216,10 +202,11 @@ export default function RoomsList() {
       const stale = getAdminRoomsListCache(true);
       if (stale?.length) setRooms(stale);
       const age = getAdminRoomsListCacheAgeMs();
-      if (age == null || age >= ADMIN_ROOMS_FOCUS_REFRESH_MS) {
+      const roomsFresh = age != null && age < ADMIN_ROOMS_FOCUS_REFRESH_MS;
+      if (!roomsFresh) {
         void loadRooms({ silent: Boolean(stale?.length) });
+        void loadCleaningPlanLockState();
       }
-      void loadCleaningPlanLockState();
     }, [loadRooms])
   );
 
@@ -275,7 +262,11 @@ export default function RoomsList() {
         data={rooms}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.list}
-        listEmptyComponent={
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === 'android'}
+        ListEmptyComponent={
           <AdminCard>
             <Text style={styles.emptyText}>Henüz oda tanımlı değil.</Text>
             {paths.scope === 'admin' ? (

@@ -102,13 +102,10 @@ function LobbyBootScreen() {
   );
 }
 
-/** Giriş sonrası anında panele yönlendir (staff kontrolü arka planda sürer). */
+/** Giriş sonrası panele yönlendir — personel ise partner bekleme. */
 async function enterAppAfterSignIn(router: ReturnType<typeof useRouter>, userId: string): Promise<void> {
-  const { staff, user } = useAuthStore.getState();
-  if (!staff && user) {
-    await usePartnerAuthStore.getState().resolvePartner(user);
-  }
-  const partner = usePartnerAuthStore.getState().partner;
+  const { staff } = useAuthStore.getState();
+  const partner = staff ? null : usePartnerAuthStore.getState().partner;
   const surface = usePartnerAppSurfaceStore.getState().surface;
   const accepted = await hasPolicyConsent(userId);
   let path = '/customer';

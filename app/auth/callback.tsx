@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'rea
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
+import { completeSignIn, useAuthStore } from '@/stores/authStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { hasPolicyConsent } from '@/lib/policyConsent';
@@ -47,13 +47,15 @@ export default function AuthCallbackScreen() {
         return;
       }
       try {
-        const { error } = await supabase.auth.setSession({
+        const { data: sessionData, error } = await supabase.auth.setSession({
           access_token,
           refresh_token,
         });
         if (error) throw error;
         if (cancelled) return;
-        await useAuthStore.getState().loadSession();
+        const sessionUser = sessionData.user ?? (await supabase.auth.getUser()).data.user;
+        if (!sessionUser) throw new Error('Oturum kullanıcısı alınamadı');
+        await completeSignIn(sessionUser);
         if (type === 'recovery') {
           log.info('AuthCallback', 'Şifre sıfırlama linki ile geldi, şifre belirleme ekranına yönlendiriliyor');
           router.replace('/auth/set-password');
@@ -63,11 +65,11 @@ export default function AuthCallbackScreen() {
         const { user, staff } = useAuthStore.getState();
         const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
         log.info('AuthCallback', 'Magic link girişi tamamlandı', { hasStaff: !!staff });
-        if (pendingRoom && user?.email) {
+        if (!staff && pendingRoom && user?.email) {
           await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
           clearPendingRoom();
         }
-        const accepted = await hasPolicyConsent();
+        const accepted = await hasPolicyConsent(sessionUser.id);
         const path = staff ? '/staff' : '/customer';
         const nextParam = staff ? 'staff' : 'customer';
         if (accepted) {

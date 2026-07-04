@@ -18,6 +18,11 @@ import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { formatDateShort } from '@/lib/date';
 import { sendNotification } from '@/lib/notificationService';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import {
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  getAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -47,14 +52,26 @@ type StaffWithSalary = StaffRow & {
   statusLabel: string;
 };
 
+type SalaryScreenCache = {
+  staffList: StaffWithSalary[];
+  summary: {
+    totalStaff: number;
+    totalSalary: number;
+    paidAmount: number;
+    paidCount: number;
+    pendingApprovalAmount: number;
+    pendingApprovalCount: number;
+  };
+};
+
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n) + ' ₺';
 }
 
 export default function AdminSalaryIndexScreen() {
   const router = useRouter();
-  const { staff: me } = useAuthStore();
-  const { selectedOrganizationId } = useAdminOrgStore();
+  const me = useAuthStore((s) => s.staff);
+  const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
   const [staffList, setStaffList] = useState<StaffWithSalary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -69,8 +86,18 @@ export default function AdminSalaryIndexScreen() {
   const [remindingId, setRemindingId] = useState<string | null>(null);
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
     const orgId = canUseAllOrganizations ? selectedOrganizationId : me?.organization_id;
+    const cacheKey = `admin-salary:${orgId && orgId !== 'all' ? orgId : 'all'}`;
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<SalaryScreenCache>(cacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.staffList) {
+        setStaffList(hit.staffList);
+        setSummary(hit.summary);
+        setLoading(false);
+        return;
+      }
+    }
     let staffQuery = supabase
       .from('staff')
       .select('id, full_name, department, organization_id')
@@ -80,18 +107,30 @@ export default function AdminSalaryIndexScreen() {
     const { data: staffData } = await staffQuery;
     const staff = (staffData ?? []) as StaffRow[];
     if (staff.length === 0) {
+      const emptySummary = {
+        totalStaff: 0,
+        totalSalary: 0,
+        paidAmount: 0,
+        paidCount: 0,
+        pendingApprovalAmount: 0,
+        pendingApprovalCount: 0,
+      };
       setStaffList([]);
-      setSummary({ totalStaff: 0, totalSalary: 0, paidAmount: 0, paidCount: 0, pendingApprovalAmount: 0, pendingApprovalCount: 0 });
+      setSummary(emptySummary);
+      setAdminScreenCache(cacheKey, { staffList: [], summary: emptySummary } satisfies SalaryScreenCache);
       setLoading(false);
       return;
     }
 
+    const yearFloor = new Date().getFullYear() - 1;
     let paymentsQuery = supabase
       .from('salary_payments')
       .select('id, staff_id, period_month, period_year, created_at, amount, payment_date, status, staff_approved_at, staff_rejected_at, rejection_reason')
+      .gte('period_year', yearFloor)
       .order('period_year', { ascending: false })
       .order('period_month', { ascending: false })
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(800);
     if (orgId && orgId !== 'all') paymentsQuery = paymentsQuery.eq('organization_id', orgId);
     const { data: paymentsData } = await paymentsQuery;
 
@@ -161,25 +200,27 @@ export default function AdminSalaryIndexScreen() {
       };
     });
 
-    setStaffList(rows);
-    setSummary({
+    const nextSummary = {
       totalStaff: staff.length,
       totalSalary,
       paidAmount,
       paidCount,
       pendingApprovalAmount,
       pendingApprovalCount,
-    });
+    };
+    setStaffList(rows);
+    setSummary(nextSummary);
+    setAdminScreenCache(cacheKey, { staffList: rows, summary: nextSummary } satisfies SalaryScreenCache);
     setLoading(false);
   }, [canUseAllOrganizations, me?.organization_id, selectedOrganizationId]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    load().finally(() => setRefreshing(false));
+    void load({ force: true }).finally(() => setRefreshing(false));
   }, [load]);
 
   const statusIcon = (row: StaffWithSalary) => {

@@ -347,31 +347,63 @@ function resetAuthPipeline(): void {
   clearStaffBootWatchdog();
 }
 
-/** Giriş sonrası anında oturum — staff kontrolü arka planda. */
+function clearPartnerStoresForStaff(): void {
+  usePartnerAuthStore.getState().setPartner(null);
+  useTradePartnerAuthStore.getState().clearPartner();
+}
+
+/** Giriş sonrası oturum — personel ise partner sorgusu yok (yavaşlık / yanlış panele düşme). */
 export async function completeSignIn(user: User): Promise<void> {
   const cur = useAuthStore.getState();
   if (cur.user?.id !== user.id) {
     clearPartnerSession();
     clearTradePartnerSession();
   }
-  if (cur.user?.id === user.id && cur.staffCheckComplete) {
+
+  // Aynı kullanıcı + personel zaten biliniyor: arka planda yenile, partner yok.
+  if (cur.user?.id === user.id && cur.staffCheckComplete && cur.staff?.auth_id === user.id) {
     void runStaffCheck(user, { background: true });
-    await usePartnerAuthStore.getState().resolvePartner(user);
-    await useTradePartnerAuthStore.getState().resolvePartner(user);
+    clearPartnerStoresForStaff();
     return;
   }
+
   resetAuthPipeline();
   const cached = await readStaffSessionCache(user.id);
+
+  if (cached) {
+    useAuthStore.setState({
+      user,
+      staff: cached,
+      loading: false,
+      staffCheckComplete: true,
+      staffCheckUnavailable: false,
+    });
+    void runStaffCheck(user, { background: true });
+    clearPartnerStoresForStaff();
+    return;
+  }
+
+  // Önbellek yok: yönlendirmeden önce personel satırını bekle (admin → müşteri paneli hatası).
   useAuthStore.setState({
     user,
-    staff: cached,
+    staff: null,
     loading: false,
-    staffCheckComplete: true,
+    staffCheckComplete: false,
     staffCheckUnavailable: false,
   });
-  void runStaffCheck(user, { background: true });
-  await usePartnerAuthStore.getState().resolvePartner(user);
-  await useTradePartnerAuthStore.getState().resolvePartner(user);
+  await runStaffCheck(user);
+
+  const staff = useAuthStore.getState().staff;
+  if (staff) {
+    clearPartnerStoresForStaff();
+    return;
+  }
+
+  // Gerçek misafir / partner hesabı
+  await Promise.all([
+    usePartnerAuthStore.getState().resolvePartner(user),
+    useTradePartnerAuthStore.getState().resolvePartner(user),
+  ]);
 }
 
 function runStaffCheck(user: User, _opts?: { background?: boolean }): Promise<void> {
@@ -427,26 +459,36 @@ async function doLoadSession(set: (p: Partial<AuthState>) => void, get: () => Au
       cachePeek?.auth_id === user.id && !cachePeek.staff.deleted_at ? cachePeek.staff : null;
     const memory = get().staff?.auth_id === user.id ? get().staff : null;
     const staff = cached ?? memory ?? null;
+    const staffAlreadyResolved = lastStaffCheckUserId === user.id;
 
+    // Personel önbelleği yokken staffCheckComplete=true yapmak admin'i müşteri paneline
+    // düşürüyordu (partner sorgusu bitince /customer). Önbellek yoksa kontrol bitene kadar bekle.
     set({
       user,
       staff,
       loading: false,
-      staffCheckComplete: true,
+      staffCheckComplete: !!staff || staffAlreadyResolved,
       staffCheckUnavailable: false,
     });
     log.info('authStore', 'loadSession bitti', { hasStaff: !!staff });
 
-    if (lastStaffCheckUserId !== user.id) {
-      void runStaffCheck(user, { background: true });
-    }
-    // Personel oturumunda partner/ticari-partner sorgusu yapma: aynı hesap hem
-    // personel hem partner olmaz ve bu sorgular (RLS personeli süzdüğü için)
-    // 4 sn timeout'a takılıp boşuna ağ turu/yavaşlık üretiyordu.
     if (staff) {
-      usePartnerAuthStore.getState().setPartner(null);
-      useTradePartnerAuthStore.getState().clearPartner();
-    } else {
+      clearPartnerStoresForStaff();
+      if (!staffAlreadyResolved) {
+        void runStaffCheck(user, { background: true });
+      }
+    } else if (!staffAlreadyResolved) {
+      void (async () => {
+        await runStaffCheck(user);
+        const resolved = get().staff;
+        if (resolved) {
+          clearPartnerStoresForStaff();
+          return;
+        }
+        void usePartnerAuthStore.getState().resolvePartner(user);
+        void useTradePartnerAuthStore.getState().resolvePartner(user);
+      })();
+    } else if (!staff) {
       void usePartnerAuthStore.getState().resolvePartner(user);
       void useTradePartnerAuthStore.getState().resolvePartner(user);
     }

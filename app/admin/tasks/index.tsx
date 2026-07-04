@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -33,6 +33,11 @@ import {
   type StaffAssignmentViewerRow,
   type StaffTasksTabViewerRow,
 } from '@/lib/staffAssignmentViews';
+import {
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  getAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
 
 type AssignmentRow = {
   id: string;
@@ -54,6 +59,12 @@ type AssignmentRow = {
 };
 
 type StaffMini = { id: string; full_name: string | null; role: string | null; department: string | null };
+
+type TasksScreenCache = {
+  rows: AssignmentRow[];
+  staffMap: Record<string, StaffMini>;
+  roomMap: Record<string, string>;
+};
 
 type FilterKey = 'all' | 'open' | 'done';
 
@@ -109,47 +120,69 @@ export default function AdminTasksIndexScreen() {
     if (viewersOpen) void loadViewers();
   }, [viewersOpen, loadViewers]);
 
-  useEffect(() => {
-    if (!isAdmin || !orgIdForViewers) {
-      setViewers([]);
-      return;
-    }
-    void fetchStaffTasksTabViewers(orgIdForViewers)
-      .then(setViewers)
-      .catch(() => setViewers([]));
-  }, [isAdmin, orgIdForViewers]);
-
-  const load = useCallback(async () => {
+  const tasksCacheKey = useMemo(() => {
     const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
     const orgId = canUseAll ? selectedOrganizationId : authStaff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : 'all';
+    return `admin-tasks:${orgScoped}`;
+  }, [authStaff?.app_permissions?.super_admin, authStaff?.organization_id, authStaff?.role, selectedOrganizationId]);
 
-    let orgStaffIds: string[] | null = null;
-    if (orgId && orgId !== 'all') {
-      const { data: orgStaffRows } = await supabase.from('staff').select('id').eq('organization_id', orgId);
-      orgStaffIds = (orgStaffRows ?? []).map((r: { id: string }) => r.id);
-      if (orgStaffIds.length === 0) {
-        setRows([]);
-        setStaffMap({});
-        setRoomMap({});
-        setLoading(false);
-        setRefreshing(false);
+  const applyTasksCache = useCallback((cached: TasksScreenCache) => {
+    setRows(cached.rows);
+    setStaffMap(cached.staffMap);
+    setRoomMap(cached.roomMap);
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  const load = useCallback(async (opts?: { force?: boolean }) => {
+    const canUseAll = authStaff?.app_permissions?.super_admin === true || authStaff?.role === 'admin';
+    const orgId = canUseAll ? selectedOrganizationId : authStaff?.organization_id;
+    const orgScoped = orgId && orgId !== 'all' ? orgId : null;
+    const cacheKey = `admin-tasks:${orgScoped ?? 'all'}`;
+
+    if (!opts?.force) {
+      const hit = getAdminScreenCache<TasksScreenCache>(cacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.rows) {
+        applyTasksCache(hit);
         return;
       }
     }
 
-    const applyOrgFilter = <T extends { in: (col: string, vals: string[]) => T }>(query: T) =>
-      orgStaffIds ? query.in('assigned_staff_id', orgStaffIds) : query;
+    const selectFull =
+      'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls, completion_proof_urls, completion_note, failure_reason, failed_at';
+    const selectLegacy =
+      'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at';
 
-    let baseQuery = applyOrgFilter(
-      supabase
+    const buildQuery = (cols: string) => {
+      if (orgScoped) {
+        return supabase
+          .from('staff_assignments')
+          .select(`${cols}, assigned_staff:assigned_staff_id!inner(organization_id)`)
+          .eq('assigned_staff.organization_id', orgScoped)
+          .order('created_at', { ascending: false })
+          .limit(80);
+      }
+      return supabase
         .from('staff_assignments')
-        .select(
-          'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at, attachment_urls, completion_proof_urls, completion_note, failure_reason, failed_at'
-        )
+        .select(cols)
         .order('created_at', { ascending: false })
-        .limit(120)
-    );
-    const { data: list, error } = await baseQuery;
+        .limit(80);
+    };
+
+    const finish = async (assignments: AssignmentRow[]) => {
+      setRows(assignments);
+      const maps = await hydrateMaps(assignments, orgId);
+      setAdminScreenCache(cacheKey, {
+        rows: assignments,
+        staffMap: maps.staffMap,
+        roomMap: maps.roomMap,
+      } satisfies TasksScreenCache);
+      setLoading(false);
+      setRefreshing(false);
+    };
+
+    const { data: list, error } = await buildQuery(selectFull);
     if (error) {
       const msg = error.message ?? '';
       if (
@@ -158,16 +191,7 @@ export default function AdminTasksIndexScreen() {
         msg.includes('failure_') ||
         error.code === 'PGRST204'
       ) {
-        let legacyQuery = applyOrgFilter(
-          supabase
-            .from('staff_assignments')
-            .select(
-              'id, title, body, task_type, priority, status, assigned_staff_id, created_by_staff_id, room_ids, due_at, created_at'
-            )
-            .order('created_at', { ascending: false })
-            .limit(120)
-        );
-        const { data: list2, error: e2 } = await legacyQuery;
+        const { data: list2, error: e2 } = await buildQuery(selectLegacy);
         if (e2) {
           setRows([]);
           setStaffMap({});
@@ -176,11 +200,7 @@ export default function AdminTasksIndexScreen() {
           setRefreshing(false);
           return;
         }
-        const assignments = (list2 ?? []) as AssignmentRow[];
-        setRows(assignments);
-        await hydrateMaps(assignments);
-        setLoading(false);
-        setRefreshing(false);
+        await finish((list2 ?? []) as AssignmentRow[]);
         return;
       }
       setRows([]);
@@ -190,14 +210,15 @@ export default function AdminTasksIndexScreen() {
       setRefreshing(false);
       return;
     }
-    const assignments = (list ?? []) as AssignmentRow[];
-    setRows(assignments);
-    await hydrateMaps(assignments, orgId);
-    setLoading(false);
-    setRefreshing(false);
-  }, [authStaff?.app_permissions?.super_admin, authStaff?.organization_id, selectedOrganizationId]);
+    await finish((list ?? []) as AssignmentRow[]);
+  }, [applyTasksCache, authStaff?.app_permissions?.super_admin, authStaff?.organization_id, authStaff?.role, selectedOrganizationId]);
 
-  async function hydrateMaps(assignments: AssignmentRow[], organizationId?: string | 'all') {
+  async function hydrateMaps(
+    assignments: AssignmentRow[],
+    organizationId?: string | 'all'
+  ): Promise<{ staffMap: Record<string, StaffMini>; roomMap: Record<string, string> }> {
+    let nextStaff: Record<string, StaffMini> = {};
+    let nextRooms: Record<string, string> = {};
     const staffIds = [
       ...new Set([
         ...assignments.map((a) => a.assigned_staff_id),
@@ -208,28 +229,39 @@ export default function AdminTasksIndexScreen() {
       let staffQuery = supabase.from('staff').select('id, full_name, role, department').in('id', staffIds);
       if (organizationId && organizationId !== 'all') staffQuery = staffQuery.eq('organization_id', organizationId);
       const { data: sm } = await staffQuery;
-      setStaffMap(Object.fromEntries((sm ?? []).map((s: StaffMini) => [s.id, s])));
-    } else setStaffMap({});
+      nextStaff = Object.fromEntries((sm ?? []).map((s: StaffMini) => [s.id, s]));
+    }
+    setStaffMap(nextStaff);
 
     const roomIds = [...new Set(assignments.flatMap((a) => a.room_ids ?? []))];
     if (roomIds.length) {
       let roomQuery = supabase.from('rooms').select('id, room_number').in('id', roomIds);
       if (organizationId && organizationId !== 'all') roomQuery = roomQuery.eq('organization_id', organizationId);
       const { data: rm } = await roomQuery;
-      setRoomMap(Object.fromEntries((rm ?? []).map((r: { id: string; room_number: string }) => [r.id, r.room_number])));
-    } else setRoomMap({});
+      nextRooms = Object.fromEntries((rm ?? []).map((r: { id: string; room_number: string }) => [r.id, r.room_number]));
+    }
+    setRoomMap(nextRooms);
+    return { staffMap: nextStaff, roomMap: nextRooms };
   }
+
+  const hasRowsRef = useRef(false);
+  hasRowsRef.current = rows.length > 0;
 
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
-      load();
-    }, [load])
+      const hit = getAdminScreenCache<TasksScreenCache>(tasksCacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (hit?.rows?.length) {
+        applyTasksCache(hit);
+        return;
+      }
+      if (!hasRowsRef.current) setLoading(true);
+      void load();
+    }, [applyTasksCache, load, tasksCacheKey])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    load();
+    void load({ force: true });
   };
 
   const cancelAssignment = (id: string) => {
@@ -241,7 +273,7 @@ export default function AdminTasksIndexScreen() {
         onPress: async () => {
           const { error } = await supabase.from('staff_assignments').update({ status: 'cancelled' }).eq('id', id);
           if (error) Alert.alert('Hata', error.message);
-          else load();
+          else void load({ force: true });
         },
       },
     ]);
