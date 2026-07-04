@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AdminNotesAccessGate } from '@/components/adminNotes/AdminNotesAccessGate';
 import { AdminNoteListCard } from '@/components/adminNotes/AdminNoteListCard';
+import { AdminNoteStaffPickerSheet } from '@/components/adminNotes/AdminNoteStaffPickerSheet';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewAllOrgQuickNotes } from '@/lib/staffPermissions';
 import { isStaffAuthoredQuickNote, listAdminQuickNotes, type AdminQuickNoteRow } from '@/lib/adminQuickNotes';
@@ -29,6 +30,7 @@ import {
   setAdminQuickNotesListCache,
 } from '@/lib/adminQuickNotesCache';
 import { ADMIN_LIST_PERF } from '@/lib/adminPerf';
+import type { OrgStaffOption } from '@/lib/notificationTemplateRecipients';
 import { PressableScale } from '@/components/premium/PressableScale';
 import { pds } from '@/constants/personelDesignSystem';
 
@@ -56,6 +58,9 @@ function AdminNotesIndexScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [adminFilter, setAdminFilter] = useState<AdminFilter>('all');
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [selectedStaffName, setSelectedStaffName] = useState<string | null>(null);
+  const [staffPickerOpen, setStaffPickerOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadInFlightRef = useRef(false);
 
@@ -131,6 +136,8 @@ function AdminNotesIndexScreen() {
       if (tab === listTab) return;
       setListTab(tab);
       setSearch('');
+      setSelectedStaffId(null);
+      setSelectedStaffName(null);
       const archived = tab === 'archived';
       const cached = getAdminQuickNotesListCache(archived, staffId);
       if (cached?.length) {
@@ -146,25 +153,57 @@ function AdminNotesIndexScreen() {
     [listTab, load, staffId]
   );
 
+  const noteCountsByStaff = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const note of allItems) {
+      const id = note.created_by_staff_id;
+      if (!id) continue;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
+  }, [allItems]);
+
   const items = useMemo(() => {
     let rows = allItems;
-    if (isAdminViewer) {
+    if (selectedStaffId) {
+      rows = rows.filter((n) => n.created_by_staff_id === selectedStaffId);
+    } else if (isAdminViewer) {
       if (adminFilter === 'staff') {
         rows = rows.filter((n) => isStaffAuthoredQuickNote(n, staff?.id));
       }
       if (adminFilter === 'mine') rows = rows.filter((n) => n.created_by_staff_id === staff?.id);
     }
-    const term = search.trim().toLowerCase();
+    const term = search.trim().toLocaleLowerCase('tr-TR');
     if (!term) return rows;
-    return rows.filter(
-      (n) =>
-        n.note_number.toLowerCase().includes(term) ||
-        (n.title ?? '').toLowerCase().includes(term) ||
-        n.body_text.toLowerCase().includes(term) ||
-        (n.room_label ?? '').toLowerCase().includes(term) ||
-        (n.creator?.full_name ?? '').toLowerCase().includes(term)
-    );
-  }, [allItems, search, isAdminViewer, adminFilter, staff?.id]);
+    return rows.filter((n) => {
+      const author = (n.creator?.full_name ?? '').toLocaleLowerCase('tr-TR');
+      return (
+        n.note_number.toLocaleLowerCase('tr-TR').includes(term) ||
+        (n.title ?? '').toLocaleLowerCase('tr-TR').includes(term) ||
+        n.body_text.toLocaleLowerCase('tr-TR').includes(term) ||
+        (n.room_label ?? '').toLocaleLowerCase('tr-TR').includes(term) ||
+        author.includes(term)
+      );
+    });
+  }, [allItems, search, isAdminViewer, adminFilter, staff?.id, selectedStaffId]);
+
+  const clearStaffFilter = useCallback(() => {
+    setSelectedStaffId(null);
+    setSelectedStaffName(null);
+  }, []);
+
+  const onStaffPicked = useCallback(
+    (picked: OrgStaffOption | null) => {
+      if (!picked) {
+        clearStaffFilter();
+        return;
+      }
+      setSelectedStaffId(picked.id);
+      setSelectedStaffName((picked.full_name ?? 'Personel').trim());
+      setAdminFilter('all');
+    },
+    [clearStaffFilter]
+  );
 
   const pinnedCount = useMemo(() => items.filter((n) => n.is_pinned).length, [items]);
 
@@ -242,25 +281,46 @@ function AdminNotesIndexScreen() {
           })}
         </View>
 
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color={pds.muted} />
-          <TextInput
-            style={styles.searchInput}
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Notlarda ara…"
-            placeholderTextColor={pds.muted}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-          />
-          {search ? (
-            <Pressable onPress={() => setSearch('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={18} color={pds.muted} />
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color={pds.muted} />
+            <TextInput
+              style={styles.searchInput}
+              value={search}
+              onChangeText={setSearch}
+              placeholder={isAdminViewer ? 'Not veya personel ara…' : 'Notlarda ara…'}
+              placeholderTextColor={pds.muted}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {search ? (
+              <Pressable onPress={() => setSearch('')} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={pds.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+          {isAdminViewer ? (
+            <Pressable
+              style={[styles.staffPickBtn, selectedStaffId && styles.staffPickBtnOn]}
+              onPress={() => setStaffPickerOpen(true)}
+              accessibilityLabel="Personel seç"
+            >
+              <Ionicons name="people" size={20} color={selectedStaffId ? '#fff' : pds.indigo} />
             </Pressable>
           ) : null}
         </View>
 
-        {isAdminViewer ? (
+        {isAdminViewer && selectedStaffName ? (
+          <Pressable style={styles.selectedStaffChip} onPress={clearStaffFilter}>
+            <Ionicons name="person" size={14} color={pds.indigo} />
+            <Text style={styles.selectedStaffText} numberOfLines={1}>
+              {selectedStaffName}
+            </Text>
+            <Ionicons name="close" size={16} color={pds.indigo} />
+          </Pressable>
+        ) : null}
+
+        {isAdminViewer && !selectedStaffId ? (
           <View style={styles.filterRow}>
             {(
               [
@@ -285,6 +345,7 @@ function AdminNotesIndexScreen() {
     ),
     [
       adminFilter,
+      clearStaffFilter,
       isAdminViewer,
       items.length,
       listTab,
@@ -292,6 +353,8 @@ function AdminNotesIndexScreen() {
       openNew,
       pinnedCount,
       search,
+      selectedStaffId,
+      selectedStaffName,
       showArchived,
       switchTab,
     ]
@@ -342,6 +405,16 @@ function AdminNotesIndexScreen() {
 
   return (
     <View style={styles.container}>
+      {isAdminViewer ? (
+        <AdminNoteStaffPickerSheet
+          visible={staffPickerOpen}
+          organizationId={staff?.organization_id ?? null}
+          selectedStaffId={selectedStaffId}
+          noteCounts={noteCountsByStaff}
+          onSelect={onStaffPicked}
+          onClose={() => setStaffPickerOpen(false)}
+        />
+      ) : null}
       <FlatList
         data={items}
         keyExtractor={(i) => i.id}
@@ -429,7 +502,9 @@ const styles = StyleSheet.create({
   segmentBtnOn: { backgroundColor: pds.indigo },
   segmentText: { fontSize: 13, fontWeight: '700', color: pds.subtext },
   segmentTextOn: { color: '#fff' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -439,9 +514,34 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: pds.cardBorder,
-    marginBottom: 12,
   },
   searchInput: { flex: 1, fontSize: 15, color: pds.text, padding: 0 },
+  staffPickBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: pds.indigo,
+  },
+  staffPickBtnOn: { backgroundColor: pds.indigo },
+  selectedStaffChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: pds.indigo,
+    marginBottom: 10,
+    maxWidth: '100%',
+  },
+  selectedStaffText: { fontSize: 13, fontWeight: '700', color: pds.indigo, flexShrink: 1 },
   filterRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   filterChip: {
     paddingHorizontal: 14,
