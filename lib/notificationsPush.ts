@@ -594,6 +594,11 @@ function notificationResponseId(response: NotificationResponsePayload | null | u
   return typeof id === 'string' ? id.trim() : '';
 }
 
+/** Oturum içi bildirim yanıtı — helper kullanımından önce tanımlanır (Hermes TDZ / Property doesn't exist). */
+function notificationResponseIdAlreadyClaimed(id: string): boolean {
+  return notificationResponseSessionIds.has(id);
+}
+
 /** Expo'da biriken son bildirim yanıtını temizler; normal açılışta stale yönlendirmeyi önler. */
 export async function clearLastNotificationResponseAsync(): Promise<void> {
   if (isExpoGo || Platform.OS === 'web') return;
@@ -632,36 +637,37 @@ export async function ensureNotificationColdStartDedupMigration(): Promise<void>
 export async function shouldNavigateFromColdStartNotification(
   response: NotificationResponsePayload | null | undefined
 ): Promise<boolean> {
-  if (isExpoGo || Platform.OS === 'web') return false;
-  if (!response?.notification) return false;
-
-  await ensureNotificationColdStartDedupMigration();
-
-  const id = notificationResponseId(response);
-  if (!id) {
-    if (Platform.OS === 'android') {
-      await clearLastNotificationResponseAsync();
-    }
-    return false;
-  }
-
-  if (notificationResponseSessionIdAlreadyClaimed(id)) return false;
-
   try {
-    const lastHandled = await AsyncStorage.getItem(LAST_HANDLED_NOTIF_RESPONSE_ID_KEY);
-    if (lastHandled === id) {
-      await clearLastNotificationResponseAsync();
+    if (isExpoGo || Platform.OS === 'web') return false;
+    if (!response?.notification) return false;
+
+    await ensureNotificationColdStartDedupMigration();
+
+    const id = notificationResponseId(response);
+    if (!id) {
+      if (Platform.OS === 'android') {
+        await clearLastNotificationResponseAsync();
+      }
       return false;
     }
-  } catch {
-    /* ignore */
+
+    if (notificationResponseSessionIds.has(id)) return false;
+
+    try {
+      const lastHandled = await AsyncStorage.getItem(LAST_HANDLED_NOTIF_RESPONSE_ID_KEY);
+      if (lastHandled === id) {
+        await clearLastNotificationResponseAsync();
+        return false;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return true;
+  } catch (e) {
+    log.warn('notificationsPush', 'shouldNavigateFromColdStartNotification', e);
+    return false;
   }
-
-  return true;
-}
-
-function notificationResponseIdAlreadyClaimed(id: string): boolean {
-  return notificationResponseSessionIds.has(id);
 }
 
 export function notificationResponseAlreadyHandledThisSession(
