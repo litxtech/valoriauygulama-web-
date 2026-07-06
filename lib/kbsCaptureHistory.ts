@@ -81,14 +81,16 @@ export async function fetchKbsCapturedDocuments(
     scannerAuthIds.length > 0
       ? supabase.from('staff').select('auth_id, full_name').in('auth_id', scannerAuthIds)
       : Promise.resolve({ data: [], error: null } as const),
-    supabase
-      .schema('ops')
-      .from('stay_assignments')
-      .select('guest_id, room_id, updated_at')
-      .eq('hotel_id', ctx.hotelId)
-      .in('guest_id', guestIds)
-      .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
-      .order('updated_at', { ascending: false }),
+    guestIds.length > 0
+      ? supabase
+          .schema('ops')
+          .from('stay_assignments')
+          .select('guest_id, updated_at, room:room_id(room_number)')
+          .eq('hotel_id', ctx.hotelId)
+          .in('guest_id', guestIds)
+          .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
+          .order('updated_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null } as const),
   ]);
 
   if (staffResult.error) throw new Error(staffResult.error.message);
@@ -99,24 +101,12 @@ export async function fetchKbsCapturedDocuments(
   const { data: stays, error: stayErr } = stayResult;
   if (stayErr) throw new Error(stayErr.message);
 
-  const roomIds = [...new Set((stays ?? []).map((s: { room_id: string }) => s.room_id))];
-  let roomById = new Map<string, string>();
-  if (roomIds.length > 0) {
-    const { data: rooms, error: roomErr } = await supabase
-      .schema('ops')
-      .from('rooms')
-      .select('id, room_number')
-      .in('id', roomIds);
-    if (roomErr) throw new Error(roomErr.message);
-    roomById = new Map((rooms ?? []).map((r) => [r.id as string, String(r.room_number)]));
-  }
-
   const roomByGuest = new Map<string, string>();
   for (const s of stays ?? []) {
     const gid = s.guest_id as string;
     if (roomByGuest.has(gid)) continue;
-    const num = roomById.get(s.room_id as string);
-    if (num) roomByGuest.set(gid, num);
+    const room = s.room as { room_number?: string | number | null } | null;
+    if (room?.room_number != null) roomByGuest.set(gid, String(room.room_number));
   }
 
   return list.map((d) => ({
@@ -139,12 +129,12 @@ export async function fetchKbsCapturedDocuments(
     mrz_batch_key: d.mrz_batch_key ?? null,
     scanned_by_user_id: d.scanned_by_user_id ?? null,
     captured_by_staff_name: d.scanned_by_user_id
-      ? nameByAuthId.get(d.scanned_by_user_id) ?? null
+      ? nameByAuthId.get(d.scanned_by_user_id) ?? 'Personel'
       : null,
   }));
 }
 
-/** Admin tüm çekimleri görür; diğer personel yalnızca kendi çekimlerini. */
+/** Kimlik çekim yetkisi olan personel tüm çekimleri görür. */
 export function filterKbsCapturesForViewer(
   rows: KbsCapturedDocumentRow[],
   staff: { role?: string | null } | null | undefined,
@@ -494,7 +484,7 @@ export async function fetchKbsCapturedDocumentById(
     supabase
       .schema('ops')
       .from('stay_assignments')
-      .select('guest_id, room_id, updated_at')
+      .select('guest_id, room:room_id(room_number)')
       .eq('hotel_id', ctx.hotelId)
       .eq('guest_id', row.guest_id)
       .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
@@ -506,20 +496,11 @@ export async function fetchKbsCapturedDocumentById(
   if (staffResult.error) throw new Error(staffResult.error.message);
   if (stayResult.error) throw new Error(stayResult.error.message);
 
-  let roomNumber: string | null = null;
-  if (stayResult.data?.room_id) {
-    const { data: room, error: roomErr } = await supabase
-      .schema('ops')
-      .from('rooms')
-      .select('room_number')
-      .eq('id', stayResult.data.room_id as string)
-      .maybeSingle();
-    if (roomErr) throw new Error(roomErr.message);
-    roomNumber = room?.room_number != null ? String(room.room_number) : null;
-  }
+  const room = stayResult.data?.room as { room_number?: string | number | null } | null;
+  const roomNumber = room?.room_number != null ? String(room.room_number) : null;
 
   const staffName = staffResult.data?.full_name
-    ? String(staffResult.data.full_name).trim() || '—'
+    ? String(staffResult.data.full_name).trim() || null
     : null;
 
   return {
@@ -541,7 +522,7 @@ export async function fetchKbsCapturedDocumentById(
     room_number: roomNumber,
     mrz_batch_key: row.mrz_batch_key ?? null,
     scanned_by_user_id: row.scanned_by_user_id ?? null,
-    captured_by_staff_name: row.scanned_by_user_id ? staffName : null,
+    captured_by_staff_name: row.scanned_by_user_id ? staffName ?? 'Personel' : null,
   };
 }
 

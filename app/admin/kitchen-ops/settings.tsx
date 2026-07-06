@@ -6,7 +6,7 @@ import { adminTheme } from '@/constants/adminTheme';
 import { KitchenSaveButton } from '@/components/kitchenOps/KitchenUi';
 
 export default function AdminKitchenOpsSettings() {
-  const orgScoped = useAdminOrganizationQueryScope();
+  const { orgScoped } = useAdminOrganizationQueryScope();
   const [cariLimit, setCariLimit] = useState('50000');
   const [receiptAbove, setReceiptAbove] = useState('1000');
   const [sktWarning, setSktWarning] = useState('3');

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { invalidateAdminQuickNotesListCache } from '@/lib/adminQuickNotesCache';
+import { notifyAdminsStaffQuickNote } from '@/lib/adminQuickNotesNotify';
 import { sleepMs } from '@/lib/supabaseTransientErrors';
 
 export type AdminNoteTag = 'general' | 'room' | 'staff' | 'guest' | 'urgent';
@@ -328,6 +329,17 @@ export async function createAdminQuickNote(params: {
     );
     if (mediaErr) return { data: null, error: mediaErr.message };
   }
+
+  void notifyAdminsStaffQuickNote({
+    organizationId: params.organizationId,
+    createdByStaffId: params.staffId,
+    noteId: note.id,
+    noteNumber: note.note_number,
+    tag: params.tag ?? 'general',
+    title: params.title,
+    bodyText: params.bodyText,
+    roomLabel: params.roomLabel,
+  });
 
   invalidateAdminQuickNotesListCache();
   return getAdminQuickNote(note.id);

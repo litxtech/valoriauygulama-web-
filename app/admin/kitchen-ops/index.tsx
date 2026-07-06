@@ -37,7 +37,7 @@ export default function AdminKitchenOpsHome() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const orgScoped = useAdminOrganizationQueryScope();
+  const { orgScoped } = useAdminOrganizationQueryScope();
   const headerPadTop = Platform.OS === 'ios' ? insets.top : insets.top + 8;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

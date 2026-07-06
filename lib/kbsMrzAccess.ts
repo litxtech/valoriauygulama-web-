@@ -32,15 +32,14 @@ export function canStaffUseIdCapture(staff: MrzStaff): boolean {
   return hasIdCapturePermission(staff.app_permissions ?? {});
 }
 
-/** Çekilen kimlik listesi / detay — admin tüm kayıtları görür. */
+/** Çekilen kimlik listesi / detay — admin veya id_capture yetkisi gerekir. */
 export function canStaffViewKbsCaptureHistory(staff: MrzStaff): boolean {
   if (!staff?.role) return false;
   if (staff.role === 'admin') return true;
   return hasIdCapturePermission(staff.app_permissions ?? {});
 }
 
-/** Admin: organizasyondaki tüm personelin çekimleri (sadece kendi değil). */
+/** Kimlik çekim yetkisi olan tüm personel organizasyondaki tüm çekimleri görür. */
 export function canStaffViewAllKbsCaptures(staff: MrzStaff): boolean {
-  if (!staff?.role) return false;
-  return staff.role === 'admin';
+  return canStaffViewKbsCaptureHistory(staff);
 }

@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 type Cat = { id: string; name: string; sort_order: number; active: boolean };
 
 export default function AdminKitchenCategoriesScreen() {
-  const orgScoped = useAdminOrganizationQueryScope();
+  const { orgScoped } = useAdminOrganizationQueryScope();
   const [cats, setCats] = useState<Cat[]>([]);
   const [newName, setNewName] = useState('');
 

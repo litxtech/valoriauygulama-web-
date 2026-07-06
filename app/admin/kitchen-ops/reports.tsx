@@ -33,7 +33,7 @@ function monthLabelFromIso(iso: string): string {
 }
 
 export default function AdminKitchenReportsScreen() {
-  const orgScoped = useAdminOrganizationQueryScope();
+  const { orgScoped } = useAdminOrganizationQueryScope();
   const { staff } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
