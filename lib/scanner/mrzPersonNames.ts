@@ -46,6 +46,32 @@ const MRZ_NAME_NOISE_WORDS = new Set([
   'FEMALE',
   'ERKEK',
   'KADIN',
+  'OF',
+  'THE',
+  'AND',
+  'FOR',
+  'UNITED',
+  'ARAB',
+  'EMIRATES',
+  'KINGDOM',
+  'SAUDI',
+  'QATAR',
+  'OMAN',
+  'KUWAIT',
+  'BAHRAIN',
+  'YEMEN',
+  'MINISTRY',
+  'FOREIGN',
+  'AFFAIRS',
+  'INTERIOR',
+  'NATIONAL',
+  'CITIZEN',
+  'CITIZENSHIP',
+  'TRAVEL',
+  'IDENTITY',
+  'RESIDENCE',
+  'PERMIT',
+  'VISA',
 ]);
 
 /** TD3 satır 1: P<SAU… — belge tipi + ülke kodu önekini soyad alanından ayır. */
@@ -60,7 +86,7 @@ export function trimMrzPersonNameTokens(
   raw: string | null | undefined,
   opts?: { maxWords?: number; role?: 'surname' | 'given' }
 ): string | null {
-  const maxWords = opts?.maxWords ?? (opts?.role === 'surname' ? 4 : 6);
+  const maxWords = opts?.maxWords ?? (opts?.role === 'surname' ? 3 : 10);
   let s = sanitizePersonName(raw);
   if (!s) return null;
   let words = s.split(/\s+/).filter(Boolean);
@@ -92,8 +118,20 @@ export function trimMrzPersonNameTokens(
 }
 
 function trimMrzGivenRaw(givenRaw: string): string {
-  const cut = givenRaw.split(/\s+(?=\d{6,})/)[0]?.trim() ?? givenRaw;
-  return cut.replace(/\s+\d{6,}.*$/, '').trim();
+  let s = givenRaw.split(/\s+(?=\d{6,})/)[0]?.trim() ?? givenRaw;
+  s = s.replace(/\s+\d{6,}.*$/, '').trim();
+  s = s.replace(/\s+[MFUX]\s*$/, '').trim();
+
+  const words = s.split(/\s+/).filter(Boolean);
+  while (words.length > 1) {
+    const w = words[words.length - 1]!;
+    if (MRZ_NAME_NOISE_WORDS.has(w) || (w.length === 3 && isKnownIcao3(w))) {
+      words.pop();
+      continue;
+    }
+    break;
+  }
+  return words.join(' ').trim();
 }
 
 const GCC_NAT = new Set([
@@ -125,11 +163,18 @@ export function isTurkishMrzDocument(
   return nat === 'TUR' || nat === 'TR' || iss === 'TUR' || iss === 'TR';
 }
 
+/** Arapça bileşik soyad öneki — AL GHAMDI, BIN SALMAN gibi soyadlar tek kelimeli adla normaldir. */
+const ARABIC_SURNAME_PARTICLES = new Set(['AL', 'EL', 'AAL', 'BIN', 'BEN', 'IBN', 'ABU', 'ABD']);
+
 /** MRZ: ad tek kelime, soyad birden fazla kelime → alanlar muhtemelen yer değiştirmiş. */
 export function mrzNamesLookSwapped(firstName: string | null, lastName: string | null): boolean {
   const fp = (firstName ?? '').trim().split(/\s+/).filter(Boolean);
   const lp = (lastName ?? '').trim().split(/\s+/).filter(Boolean);
-  return fp.length === 1 && lp.length >= 2;
+  if (fp.length !== 1 || lp.length < 2) return false;
+  // Arapça bileşik soyad (AL GHAMDI, BIN SALMAN…) tek kelimeli adla birlikte normaldir; ters sayma.
+  const head = (lp[0] ?? '').replace(/[-']+$/, '').toUpperCase();
+  if (ARABIC_SURNAME_PARTICLES.has(head)) return false;
+  return true;
 }
 
 export function mrzNamesLookValid(firstName: string | null, lastName: string | null): boolean {
@@ -150,15 +195,17 @@ export function correctSwappedMrzNames(args: {
   nationalityCode?: string | null;
   issuingCountryCode?: string | null;
 }): { firstName: string | null; lastName: string | null } {
-  let firstName = sanitizePersonName(args.firstName);
-  let lastName = sanitizePersonName(args.lastName);
-  if (mrzNamesLookSwapped(firstName, lastName)) {
-    return { firstName: lastName, lastName: firstName };
-  }
+  const firstName = sanitizePersonName(args.firstName);
+  const lastName = sanitizePersonName(args.lastName);
   const nat = (args.nationalityCode ?? '').toUpperCase();
   const iss = (args.issuingCountryCode ?? '').toUpperCase();
+  // Körfez/Arap (ör. Suudi "AL GHAMDI" soyad + "MOHAMMED" ad) ve Türk belgelerinde
+  // çok kelimeli soyad + tek kelimeli ad normaldir; kelime sayısına bakıp ters çevirme.
   if (isGccNationality(nat) || isGccNationality(iss) || isTurkishMrzDocument(nat, iss)) {
     return { firstName, lastName };
+  }
+  if (mrzNamesLookSwapped(firstName, lastName)) {
+    return { firstName: lastName, lastName: firstName };
   }
   return { firstName, lastName };
 }
@@ -244,8 +291,6 @@ export function stripSurnameFromGivenNames(
   }
   if (sharedPrefix === lnWords.length && fnWords.length > sharedPrefix) {
     fn = sanitizePersonName(fnWords.slice(sharedPrefix).join(' '));
-  } else if (sharedPrefix === 1 && fnWords.length > 1 && lnWords.length >= 1) {
-    fn = sanitizePersonName(fnWords.slice(1).join(' '));
   }
 
   if (fn && fn.toUpperCase().endsWith(` ${lnU}`)) {
@@ -287,6 +332,9 @@ export function finalizeMrzPersonNames(args: {
   const turkish = isTurkishMrzDocument(args.nationalityCode, args.issuingCountryCode);
 
   const chevron = parseChevronNamesFromMrz(args.rawMrz);
+  const hadChevronSurname = isUsablePersonName(chevron.surname);
+  const hadChevronGiven = isUsablePersonName(chevron.given);
+
   if (chevron.surname) {
     lastName = trimMrzPersonNameTokens(chevron.surname, { role: 'surname' }) ?? chevron.surname;
   }
@@ -303,14 +351,17 @@ export function finalizeMrzPersonNames(args: {
 
   ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
 
-  if ((!firstName || !lastName) && fullNameFromField) {
+  const chevronComplete = hadChevronSurname && hadChevronGiven;
+
+  if (!chevronComplete && (!firstName || !lastName) && fullNameFromField) {
     const split = splitFullNameToFirstLast(fullNameFromField);
     firstName = firstName ?? split.firstName;
     lastName = lastName ?? split.lastName;
     ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
-  if (!lastName && firstName) {
+  // Chevron verilen ad(lar)ı tek alanda tutar — son kelimeyi soyada bölme.
+  if (!hadChevronGiven && !lastName && firstName) {
     const split = splitFullNameToFirstLast(firstName);
     if (split.lastName) {
       firstName = split.firstName;
@@ -319,7 +370,7 @@ export function finalizeMrzPersonNames(args: {
     ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
-  if (!firstName && lastName && !turkish) {
+  if (!hadChevronSurname && !firstName && lastName && !turkish) {
     const split = splitFullNameToFirstLast(lastName);
     if (split.firstName) {
       firstName = split.firstName;
