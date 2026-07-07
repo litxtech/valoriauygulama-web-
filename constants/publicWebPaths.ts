@@ -6,6 +6,8 @@ export const PUBLIC_MALIYE_PATH = 'maliye';
 export const PUBLIC_PAYMENT_PATH = 'payment';
 /** Sabit ödeme QR — valoria.tr/payment/qr?t=… */
 export const PUBLIC_PAYMENT_QR_PATH = 'payment/qr';
+/** Çekilen kimlikler web paneli — valoria.tr/kbs */
+export const PUBLIC_KBS_PATH = 'kbs';
 /** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
 export const LEGACY_PAYMENT_PATH = 'odeme';
 export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';

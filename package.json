@@ -1,6 +1,6 @@
 {
   "name": "valoria-hotel",
-  "version": "2.2.22",
+  "version": "2.2.25",
   "main": "index.js",
   "scripts": {
     "start": "node scripts/start-local-or-gateway.js",
@@ -15,7 +15,7 @@
     "build": "npm --prefix railway-service ci && npm --prefix railway-service run build",
     "build:kbs-stack": "npm --prefix railway-service ci && npm --prefix railway-service run build && npm --prefix kbs-gateway-service ci && npm --prefix kbs-gateway-service run build",
     "build:hetzner-stack": "npm run build:kbs-stack",
-    "vercel-build": "expo export -p web && node scripts/bundle-maliye-portal.mjs && node scripts/bundle-payment-redirects.mjs",
+    "vercel-build": "expo export -p web && node scripts/bundle-maliye-portal.mjs && node scripts/bundle-payment-redirects.mjs && node scripts/bundle-web-kbs.mjs",
     "lint": "expo lint",
     "log:android": "node scripts/android-log.cjs",
     "build:dev:ios": "eas build --profile development --platform ios",

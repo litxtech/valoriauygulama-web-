@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   KeyboardAvoidingView,
+  Linking,
   type NativeSyntheticEvent,
   type TextInputFocusEventData,
 } from 'react-native';
@@ -29,6 +30,11 @@ import {
 } from '@/lib/kbsAdminCredentialsApi';
 import { isDnsOrUnreachableBridgeError, isPlaceholderKbsGatewayError } from '@/lib/kbsBridgeErrors';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
+import { supabase } from '@/lib/supabase';
+import { DEFAULT_PUBLIC_APP_ORIGIN } from '@/constants/appOrigin';
+import { PUBLIC_KBS_PATH } from '@/constants/publicWebPaths';
+
+const KBS_WEB_PANEL_URL = `${DEFAULT_PUBLIC_APP_ORIGIN}/${PUBLIC_KBS_PATH}`;
 import {
   KBS_DEFAULT_FACILITY_CODE,
   isValidKbsFacilityCode,
@@ -74,6 +80,10 @@ export default function AdminKbsSettingsScreen() {
   const [addingRoom, setAddingRoom] = useState(false);
   const [hasPassword, setHasPassword] = useState(false);
   const [lastTestedAt, setLastTestedAt] = useState<string | null>(null);
+
+  const [webCode, setWebCode] = useState('');
+  const [webCodeSet, setWebCodeSet] = useState(false);
+  const [webCodeBusy, setWebCodeBusy] = useState(false);
 
   const { control, handleSubmit, reset } = useForm<KbsCredentialsFormValues>({
     defaultValues: {
@@ -205,8 +215,20 @@ export default function AdminKbsSettingsScreen() {
       }
     };
 
+    const loadWebCodeStatus = async () => {
+      try {
+        const { data } = await supabase.rpc('kbs_web_access_status');
+        if (cancelled) return;
+        const req = !!(data as { required?: boolean } | null)?.required;
+        setWebCodeSet(req);
+      } catch {
+        /* RPC henüz deploy edilmemiş olabilir; sessiz geç */
+      }
+    };
+
     void loadCredentials();
     void loadOpsRooms();
+    void loadWebCodeStatus();
     return () => {
       cancelled = true;
     };
@@ -273,6 +295,59 @@ export default function AdminKbsSettingsScreen() {
       setSaving(false);
     }
   });
+
+  const onSaveWebCode = async () => {
+    const code = webCode.trim();
+    if (code.length < 4) {
+      Alert.alert('Parola', 'En az 4 karakter girin.');
+      return;
+    }
+    setWebCodeBusy(true);
+    const { error } = await supabase.rpc('set_kbs_access_code', { code });
+    setWebCodeBusy(false);
+    if (error) {
+      Alert.alert('Hata', error.message);
+      return;
+    }
+    setWebCode('');
+    setWebCodeSet(true);
+    Alert.alert('Kaydedildi', 'valoria.tr/kbs giriş parolası güncellendi. Personel bir kez girip devam edecek.');
+  };
+
+  const onOpenWebPanel = async () => {
+    try {
+      await Linking.openURL(KBS_WEB_PANEL_URL);
+    } catch {
+      Alert.alert('Açılamadı', KBS_WEB_PANEL_URL);
+    }
+  };
+
+  const onCopyWebPanelUrl = async () => {
+    await Clipboard.setStringAsync(KBS_WEB_PANEL_URL);
+    Alert.alert('Kopyalandı', KBS_WEB_PANEL_URL);
+  };
+
+  const onClearWebCode = async () => {
+    Alert.alert('Parolayı kaldır', 'valoria.tr/kbs sayfa parolası kaldırılsın mı? Kaldırılırsa ek parola sorulmaz (yine de personel Supabase hesabıyla giriş yapar).', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Kaldır',
+        style: 'destructive',
+        onPress: async () => {
+          setWebCodeBusy(true);
+          const { error } = await supabase.rpc('set_kbs_access_code', { code: '' });
+          setWebCodeBusy(false);
+          if (error) {
+            Alert.alert('Hata', error.message);
+            return;
+          }
+          setWebCode('');
+          setWebCodeSet(false);
+          Alert.alert('Kaldırıldı', 'Sayfa parolası kaldırıldı.');
+        },
+      },
+    ]);
+  };
 
   const onAddOpsRoom = async () => {
     const n = newOpsRoom.trim();
@@ -505,6 +580,88 @@ export default function AdminKbsSettingsScreen() {
       </Pressable>
 
       <View style={styles.card}>
+        <SectionHeader icon="globe-outline" title="Web paneli parolası (valoria.tr/kbs)" />
+        <View style={styles.statusRow}>
+          <View style={[styles.statusBadge, webCodeSet ? styles.statusOk : styles.statusWarn]}>
+            <Ionicons
+              name={webCodeSet ? 'lock-closed' : 'lock-open'}
+              size={16}
+              color={webCodeSet ? T.colors.success : T.colors.warning}
+            />
+            <Text style={[styles.statusBadgeText, webCodeSet ? styles.statusOkText : styles.statusWarnText]}>
+              {webCodeSet ? 'Parola tanımlı' : 'Parola tanımlı değil'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.webHint}>
+          Çekilen kimlikler web sayfası için ortak giriş parolası. Personel bu parolayı cihazında bir kez girer.
+          Değiştirdiğinizde tüm cihazlar bir kez daha sorar.
+        </Text>
+
+        <Pressable style={styles.webUrlRow} onPress={onOpenWebPanel}>
+          <Ionicons name="open-outline" size={18} color={T.colors.accent} />
+          <Text style={styles.webUrlText} numberOfLines={1}>
+            {KBS_WEB_PANEL_URL}
+          </Text>
+        </Pressable>
+        <View style={styles.webBtnRow}>
+          <AdminButton
+            title="Paneli aç"
+            onPress={onOpenWebPanel}
+            variant="secondary"
+            fullWidth
+            leftIcon={<Ionicons name="open-outline" size={18} color={T.colors.text} />}
+          />
+          <AdminButton
+            title="Bağlantıyı kopyala"
+            onPress={onCopyWebPanelUrl}
+            variant="outline"
+            fullWidth
+            leftIcon={<Ionicons name="copy-outline" size={18} color={T.colors.text} />}
+          />
+        </View>
+
+        <FieldLabel>{webCodeSet ? 'Yeni parola' : 'Parola'}</FieldLabel>
+        <TextInput
+          value={webCode}
+          onChangeText={setWebCode}
+          style={styles.input}
+          placeholder={webCodeSet ? 'Değiştirmek için yeni parola' : 'En az 4 karakter'}
+          placeholderTextColor={T.colors.textMuted}
+          secureTextEntry
+          autoCapitalize="none"
+          editable={!webCodeBusy}
+        />
+
+        <View style={styles.actionRow}>
+          <AdminButton
+            title={webCodeBusy ? t('adminSavingEllipsis') : t('save')}
+            onPress={onSaveWebCode}
+            variant="accent"
+            fullWidth
+            disabled={webCodeBusy}
+            leftIcon={
+              webCodeBusy ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Ionicons name="save-outline" size={18} color="#fff" />
+              )
+            }
+          />
+          {webCodeSet ? (
+            <AdminButton
+              title="Parolayı kaldır"
+              onPress={onClearWebCode}
+              variant="outline"
+              fullWidth
+              disabled={webCodeBusy}
+              leftIcon={<Ionicons name="trash-outline" size={18} color={T.colors.text} />}
+            />
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.card}>
         <SectionHeader icon="bed-outline" title={t('adminKbsOpsRoomsTitle')} />
 
         {opsRoomsLoading ? (
@@ -698,6 +855,20 @@ const styles = StyleSheet.create({
     borderColor: T.colors.border,
   },
   linkRowText: { flex: 1, fontSize: 15, fontWeight: '700', color: T.colors.text },
+  webHint: { fontSize: 12, lineHeight: 18, color: T.colors.textMuted, marginBottom: T.spacing.xs },
+  webUrlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.spacing.sm,
+    padding: T.spacing.md,
+    borderRadius: T.radius.md,
+    backgroundColor: T.colors.surfaceTertiary,
+    borderWidth: 1,
+    borderColor: T.colors.border,
+    marginBottom: T.spacing.sm,
+  },
+  webUrlText: { flex: 1, fontSize: 14, fontWeight: '700', color: T.colors.accent },
+  webBtnRow: { gap: T.spacing.sm, marginBottom: T.spacing.xs },
   emptyRooms: { fontSize: 14, color: T.colors.textMuted, marginBottom: T.spacing.sm },
   roomLoader: { marginVertical: T.spacing.sm },
   roomChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: T.spacing.sm },

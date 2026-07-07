@@ -6,6 +6,14 @@
   "installCommand": "npm install",
   "rewrites": [
     {
+      "source": "/kbs",
+      "destination": "/kbs/index.html"
+    },
+    {
+      "source": "/kbs/",
+      "destination": "/kbs/index.html"
+    },
+    {
       "source": "/maliye/index.html",
       "destination": "/maliye/index.html"
     },
