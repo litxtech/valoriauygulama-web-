@@ -271,6 +271,72 @@ button {
   margin: 0 auto;
 }
 
+.brand-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hotel-tag {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* ---------- Stats bar ---------- */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 92px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  transition: border-color 0.12s ease, transform 0.12s ease, background 0.12s ease;
+}
+
+.stat:hover {
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+
+.stat.active {
+  border-color: var(--primary);
+  background: linear-gradient(180deg, rgba(79, 124, 255, 0.18), var(--panel));
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.stat-num {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stats-updated {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .content-meta {
   display: flex;
   justify-content: space-between;
@@ -287,6 +353,7 @@ button {
 
 /* ---------- Card ---------- */
 .card {
+  position: relative;
   text-align: left;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -296,12 +363,25 @@ button {
   color: var(--text);
   display: flex;
   flex-direction: column;
-  transition: transform 0.12s ease, border-color 0.12s ease;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Sol kenar şeridi — otele/kayda ait renkli vurgu */
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--primary), #7aa2ff);
+  z-index: 2;
 }
 
 .card:hover {
   transform: translateY(-2px);
   border-color: var(--primary);
+  box-shadow: var(--shadow);
 }
 
 .card-thumb {
@@ -325,22 +405,43 @@ button {
   font-size: 13px;
 }
 
-.card-room {
+.card-thumb-badges {
   position: absolute;
   left: 8px;
   top: 8px;
-  background: rgba(13, 20, 38, 0.8);
-  color: #fff;
-  font-size: 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  font-size: 11px;
+  font-weight: 600;
   padding: 3px 8px;
-  border-radius: 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(13, 20, 38, 0.82);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+
+.pill-doc {
+  background: rgba(79, 124, 255, 0.9);
+}
+
+.pill-family {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  background: rgba(20, 30, 55, 0.85);
+  border: 1px solid rgba(122, 162, 255, 0.5);
 }
 
 .card-body {
-  padding: 12px 14px;
+  padding: 12px 14px 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
 }
 
 .card-head {
@@ -359,29 +460,82 @@ button {
   white-space: nowrap;
 }
 
-.card-meta {
+.card-tags {
   display: flex;
-  gap: 16px;
-  margin: 0;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.card-meta dt {
-  color: var(--muted);
-  font-size: 11px;
+.tag {
+  font-size: 12px;
+  color: var(--muted-text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 7px;
 }
 
-.card-meta dd {
-  margin: 0;
+.tag-mono {
+  font-family: 'SFMono-Regular', 'Consolas', monospace;
+  letter-spacing: 0.3px;
+}
+
+/* Kart üzerindeki müşteri numarası satırı */
+.card-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.card-phone .ico {
+  opacity: 0.85;
+}
+
+.card-phone.has {
+  color: var(--ok-text);
+}
+
+.card-phone.empty {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .card-foot {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
   border-top: 1px solid var(--line);
   padding-top: 8px;
+}
+
+.card-hotel,
+.card-staff {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.card-hotel {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.card-foot .ico {
+  opacity: 0.8;
+}
+
+.card-time {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* ---------- Badge ---------- */
@@ -519,6 +673,68 @@ button {
   background: var(--bg-soft);
 }
 
+/* Müşteri numarası düzenleme bloğu (modal) */
+.phone-block {
+  background: linear-gradient(180deg, var(--panel-2), var(--bg-soft));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.phone-block-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.phone-block-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.phone-ico {
+  font-size: 20px;
+}
+
+.phone-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.phone-row {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-input {
+  flex: 1;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 13px;
+  color: var(--text);
+  font-size: 16px;
+  outline: none;
+}
+
+.phone-input:focus {
+  border-color: var(--primary);
+}
+
+.phone-save {
+  white-space: nowrap;
+}
+
+.phone-msg {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ok-text);
+}
+
 .fields-head {
   display: flex;
   align-items: center;
@@ -599,6 +815,81 @@ button {
   font-size: 12px;
   color: var(--ok-text);
   word-break: break-all;
+}
+
+/* ---------- Family / group ---------- */
+.family-block {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+
+.family-block h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.family-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.family-list li {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.family-list li:hover {
+  border-color: var(--primary);
+}
+
+.family-list li.current {
+  border-color: var(--primary);
+  background: var(--panel-2);
+  cursor: default;
+}
+
+.family-list img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.family-noimg {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.family-name {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-room {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .muted {

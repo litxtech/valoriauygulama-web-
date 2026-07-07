@@ -35,7 +35,7 @@ export async function resolveOpsContext(): Promise<OpsContext> {
 }
 
 const SELECT_COLS = `id, guest_id, captured_at, created_at, front_image_url, back_image_url, parsed_payload,
-  scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id,
+  scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
   document_number, nationality_code, issuing_country_code, expiry_date, document_type,
   guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`;
 
@@ -73,7 +73,7 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
 
   const [staffResult, stayResult] = await Promise.all([
     scannerAuthIds.length > 0
-      ? supabase.from('staff').select('auth_id, full_name').in('auth_id', scannerAuthIds)
+      ? supabase.from('staff').select('auth_id, full_name, organization_id').in('auth_id', scannerAuthIds)
       : Promise.resolve({ data: [], error: null } as const),
     guestIds.length > 0
       ? supabase
@@ -87,12 +87,35 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
       : Promise.resolve({ data: [], error: null } as const),
   ]);
 
+  const staffRows = (staffResult.data ?? []) as Array<{
+    auth_id: string;
+    full_name: string | null;
+    organization_id: string | null;
+  }>;
+
   const nameByAuthId = new Map(
-    ((staffResult.data ?? []) as Array<{ auth_id: string; full_name: string | null }>).map((s) => [
-      String(s.auth_id),
-      String(s.full_name ?? '').trim() || '—',
-    ])
+    staffRows.map((s) => [String(s.auth_id), String(s.full_name ?? '').trim() || '—'])
   );
+
+  const orgIdByAuthId = new Map(
+    staffRows.filter((s) => s.organization_id).map((s) => [String(s.auth_id), String(s.organization_id)])
+  );
+
+  const orgIds = [...new Set([...orgIdByAuthId.values()])];
+  const hotelNameByOrgId = new Map<string, string>();
+  if (orgIds.length > 0) {
+    const { data: orgs } = await supabase.from('organizations').select('id, name').in('id', orgIds);
+    for (const o of (orgs ?? []) as Array<{ id: string; name: string | null }>) {
+      const nm = String(o.name ?? '').trim();
+      if (nm) hotelNameByOrgId.set(String(o.id), nm);
+    }
+  }
+
+  const hotelNameByAuthId = (authId: string | null): string | null => {
+    if (!authId) return null;
+    const orgId = orgIdByAuthId.get(authId);
+    return orgId ? hotelNameByOrgId.get(orgId) ?? null : null;
+  };
 
   const roomByGuest = new Map<string, string>();
   for (const s of (stayResult.data ?? []) as Array<{
@@ -122,6 +145,8 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
       captured_by_staff_name: d.scanned_by_user_id
         ? nameByAuthId.get(d.scanned_by_user_id) ?? 'Personel'
         : null,
+      captured_by_hotel_name: hotelNameByAuthId(d.scanned_by_user_id ?? null),
+      guest_phone_submitted: d.guest_phone_submitted ?? null,
       document_number: d.document_number ?? null,
       nationality_code: d.nationality_code ?? null,
       issuing_country_code: d.issuing_country_code ?? null,
@@ -130,6 +155,52 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
     };
     return { ...row, parsed: parseRow(row, guest) };
   });
+}
+
+/** Girdiyi telefon numarası olarak normalize et: rakam, +, boşluk, tire, parantez. Boşsa null. */
+export function normalizePhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/[^\d+()\s-]/g, '').trim();
+  return cleaned ? cleaned : null;
+}
+
+/**
+ * Müşteri numarasını (guest_phone_submitted) kaydeder. RLS: kimlik çekim yetkili personel.
+ * ops.guest_documents realtime yayınında olduğu için diğer cihazlara anında yansır.
+ */
+export async function updateCaptureGuestPhone(docId: string, phone: string | null): Promise<void> {
+  const value = normalizePhone(phone);
+  const { error } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .update({ guest_phone_submitted: value })
+    .eq('id', docId);
+  if (error) throw new Error(error.message);
+}
+
+/** Aynı toplu çekim (mrz_batch_key) → aile/grup üyeleri haritası. */
+export function buildFamilyIndex(items: CaptureItem[]): Map<string, CaptureItem[]> {
+  const map = new Map<string, CaptureItem[]>();
+  for (const it of items) {
+    const key = it.mrz_batch_key;
+    if (!key) continue;
+    const arr = map.get(key) ?? [];
+    arr.push(it);
+    map.set(key, arr);
+  }
+  return map;
+}
+
+/** Bir kaydın aynı aile/grup üyeleri (kendisi hariç değil, tümü). */
+export function familyMembersOf(item: CaptureItem, index: Map<string, CaptureItem[]>): CaptureItem[] {
+  if (!item.mrz_batch_key) return [];
+  const arr = index.get(item.mrz_batch_key) ?? [];
+  return arr.length > 1 ? arr : [];
+}
+
+/** Kaydın çekim zamanı (Date). */
+export function captureDate(item: CaptureItem): Date {
+  return new Date(item.captured_at ?? item.created_at);
 }
 
 /**

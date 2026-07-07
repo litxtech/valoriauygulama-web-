@@ -7,8 +7,10 @@ import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMr
 import {
   fetchKbsCapturedDocumentById,
   filterKbsCapturesForViewer,
+  updateKbsCaptureGuestPhone,
   type KbsCapturedDocumentRow,
 } from '@/lib/kbsCaptureHistory';
+import { supabase } from '@/lib/supabase';
 import { getKbsCaptureHistoryCache, setKbsCaptureHistoryCache } from '@/lib/kbsCaptureHistoryCache';
 import {
   consumeKbsCapturesJustSaved,
@@ -52,27 +54,6 @@ export default function KbsCaptureDetailScreen() {
     setGalleryIndex(idx >= 0 ? idx : 0);
   }, [galleryItems, row]);
 
-  const handleCorrect = useCallback(async () => {
-    if (!row || correctBusy) return;
-    setCorrectBusy(true);
-    try {
-      const res = await correctKbsCapturedDocument(row);
-      if (!res.ok) {
-        Alert.alert('Düzelt', res.message);
-        return;
-      }
-      await load();
-      if (!res.coreComplete) {
-        Alert.alert(
-          'Kısmi okuma',
-          'Belge yeniden tarandı. Bazı alanlar hâlâ eksik veya belirsiz olabilir; gerekirse ad/soyadı elle düzenleyin.'
-        );
-      }
-    } finally {
-      setCorrectBusy(false);
-    }
-  }, [correctBusy, load, row]);
-
   const load = useCallback(async () => {
     if (!id) return;
     const cached = getKbsCaptureHistoryCache()?.find((r) => r.id === id);
@@ -94,6 +75,27 @@ export default function KbsCaptureDetailScreen() {
     }
   }, [id, staff]);
 
+  const handleCorrect = useCallback(async () => {
+    if (!row || correctBusy) return;
+    setCorrectBusy(true);
+    try {
+      const res = await correctKbsCapturedDocument(row);
+      if (!res.ok) {
+        Alert.alert('Düzelt', res.message);
+        return;
+      }
+      await load();
+      if (!res.coreComplete) {
+        Alert.alert(
+          'Kısmi okuma',
+          'Belge yeniden tarandı. Bazı alanlar hâlâ eksik veya belirsiz olabilir; gerekirse ad/soyadı elle düzenleyin.'
+        );
+      }
+    } finally {
+      setCorrectBusy(false);
+    }
+  }, [correctBusy, load, row]);
+
   useEffect(() => {
     if (!staff?.id) return;
     void getKbsCaptureHistoryLastSeenAt(staff.id).then(setLastSeenAt);
@@ -112,6 +114,41 @@ export default function KbsCaptureDetailScreen() {
     if (!id || !staff?.auth_id) return;
     void load().finally(() => setLoading(false));
   }, [id, load, staff?.auth_id]);
+
+  // Realtime: müşteri numarası (veya OCR) başka cihazdan/web'den değişince güncelle.
+  useEffect(() => {
+    if (!id) return;
+    const channel = supabase
+      .channel(`kbs-doc-${id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'ops', table: 'guest_documents', filter: `id=eq.${id}` },
+        () => {
+          void load();
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [id, load]);
+
+  const handleSavePhone = useCallback(
+    async (phone: string | null): Promise<{ ok: boolean; message?: string }> => {
+      if (!row) return { ok: false, message: 'Kayıt bulunamadı' };
+      const res = await updateKbsCaptureGuestPhone(row.id, phone);
+      if (!res.ok) return { ok: false, message: res.message };
+      setRow((cur) => (cur ? { ...cur, guest_phone_submitted: res.phone } : cur));
+      const cache = getKbsCaptureHistoryCache();
+      if (cache) {
+        setKbsCaptureHistoryCache(
+          cache.map((r) => (r.id === row.id ? { ...r, guest_phone_submitted: res.phone } : r))
+        );
+      }
+      return { ok: true };
+    },
+    [row]
+  );
 
   if (!canStaffViewKbsCaptureHistory(staff)) {
     return <Redirect href="/staff" />;
@@ -142,6 +179,7 @@ export default function KbsCaptureDetailScreen() {
         onImagePress={openGallery}
         onCorrect={() => void handleCorrect()}
         correctBusy={correctBusy}
+        onSavePhone={handleSavePhone}
       />
       <KbsZoomImageModal
         items={galleryItems}

@@ -1,11 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -20,6 +22,7 @@ import { buildKbsCopyFields, enrichKbsParsedFromSources, isKbsOcrInProgress, kbs
 import { buildKbsCaptureSingleReportHtml } from '@/lib/kbsCaptureReportHtml';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { hapticImpactLight } from '@/lib/hapticsSafe';
+import { toInternationalPhoneNumber } from '@/constants/countryPhoneCodes';
 
 type Props = {
   row: KbsCapturedDocumentRow;
@@ -28,6 +31,8 @@ type Props = {
   onImagePress?: () => void;
   onCorrect?: () => void;
   correctBusy?: boolean;
+  /** Müşteri numarasını kaydeder. Dönüş: başarı + mesaj. */
+  onSavePhone?: (phone: string | null) => Promise<{ ok: boolean; message?: string }>;
 };
 
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
@@ -52,12 +57,68 @@ export function KbsCaptureDetailView({
   onImagePress,
   onCorrect,
   correctBusy = false,
+  onSavePhone,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const parsed = asParsed(row);
   const fields = useMemo(() => buildKbsCopyFields(parsed), [parsed]);
   const ocrInProgress = isKbsOcrInProgress(parsed);
   const badge = statusUi(parsed);
+
+  const [phone, setPhone] = useState(row.guest_phone_submitted ?? '');
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPhone(row.guest_phone_submitted ?? '');
+    setPhoneMsg(null);
+  }, [row.id, row.guest_phone_submitted]);
+
+  const savePhone = useCallback(async () => {
+    if (!onSavePhone || phoneSaving) return;
+    const next = phone.trim() ? phone.trim() : null;
+    if ((row.guest_phone_submitted ?? '') === (next ?? '')) {
+      setPhoneMsg('Değişiklik yok');
+      return;
+    }
+    setPhoneSaving(true);
+    setPhoneMsg(null);
+    try {
+      const res = await onSavePhone(next);
+      setPhoneMsg(res.ok ? 'Kaydedildi' : res.message ?? 'Kaydedilemedi');
+    } finally {
+      setPhoneSaving(false);
+    }
+  }, [onSavePhone, phone, phoneSaving, row.guest_phone_submitted]);
+
+  const savedPhone = (row.guest_phone_submitted ?? '').trim();
+  const guestCountryCode = parsed?.issuingCountryCode ?? parsed?.nationalityCode ?? null;
+
+  const callPhone = useCallback(async () => {
+    if (!savedPhone) return;
+    try {
+      await Linking.openURL(`tel:${savedPhone.replace(/\s/g, '')}`);
+    } catch {
+      Alert.alert('Arama', 'Arama başlatılamadı.');
+    }
+  }, [savedPhone]);
+
+  const openWhatsApp = useCallback(async () => {
+    const wa = toInternationalPhoneNumber(savedPhone, guestCountryCode);
+    if (!wa) return;
+    const appUrl = `whatsapp://send?phone=${wa}`;
+    const webUrl = `https://wa.me/${wa}`;
+    try {
+      const supported = await Linking.canOpenURL(appUrl);
+      await Linking.openURL(supported ? appUrl : webUrl);
+    } catch {
+      try {
+        await Linking.openURL(webUrl);
+      } catch {
+        Alert.alert('WhatsApp', 'WhatsApp açılamadı.');
+      }
+    }
+  }, [savedPhone, guestCountryCode]);
 
   const buildReportHtml = useCallback(
     () => buildKbsCaptureSingleReportHtml(row, canSeeImage),
@@ -141,6 +202,11 @@ export function KbsCaptureDetailView({
             ) : null}
           </View>
           <Text style={styles.meta}>Oda {row.room_number ?? '—'}</Text>
+          {row.captured_by_staff_name || row.scanned_by_user_id ? (
+            <Text style={styles.metaStaff}>
+              Yükleyen: {row.captured_by_staff_name?.trim() || 'Personel'}
+            </Text>
+          ) : null}
           <Text style={styles.meta}>{new Date(capturedAtTs(row)).toLocaleString('tr-TR')}</Text>
         </View>
         {badge ? (
@@ -150,6 +216,51 @@ export function KbsCaptureDetailView({
           </View>
         ) : null}
       </View>
+
+      {onSavePhone ? (
+        <View style={styles.phoneCard}>
+          <View style={styles.phoneHead}>
+            <Ionicons name="call-outline" size={18} color={theme.colors.primary} />
+            <Text style={styles.phoneTitle}>Müşteri numarası</Text>
+          </View>
+          <View style={styles.phoneRow}>
+            <TextInput
+              style={styles.phoneInput}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="Telefon numarası ekle"
+              placeholderTextColor={theme.colors.textMuted}
+              keyboardType="phone-pad"
+              returnKeyType="done"
+              onSubmitEditing={() => void savePhone()}
+            />
+            <Pressable
+              style={[styles.phoneSaveBtn, phoneSaving && styles.phoneSaveBtnDisabled]}
+              onPress={() => void savePhone()}
+              disabled={phoneSaving}
+            >
+              {phoneSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.phoneSaveText}>Kaydet</Text>
+              )}
+            </Pressable>
+          </View>
+          {phoneMsg ? <Text style={styles.phoneMsg}>{phoneMsg}</Text> : null}
+          {savedPhone ? (
+            <View style={styles.phoneActionsRow}>
+              <Pressable style={[styles.phoneActionBtn, styles.phoneCallBtn]} onPress={() => void callPhone()}>
+                <Ionicons name="call" size={18} color="#fff" />
+                <Text style={styles.phoneActionText}>Ara</Text>
+              </Pressable>
+              <Pressable style={[styles.phoneActionBtn, styles.phoneWaBtn]} onPress={() => void openWhatsApp()}>
+                <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+                <Text style={styles.phoneActionText}>WhatsApp</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
       {canSeeImage && row.front_image_url && onCorrect ? (
@@ -293,6 +404,7 @@ const styles = StyleSheet.create({
   },
   newBadgeText: { fontSize: 11, fontWeight: '800', color: '#0d9488' },
   meta: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
+  metaStaff: { fontSize: 13, color: '#0f766e', marginTop: 2, fontWeight: '700' },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,6 +415,53 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 12, fontWeight: '800' },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, marginBottom: 4, marginTop: 4 },
+  phoneCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    padding: 14,
+    marginBottom: 14,
+  },
+  phoneHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  phoneTitle: { fontSize: 14, fontWeight: '800', color: theme.colors.text },
+  phoneRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  phoneInput: {
+    flex: 1,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: theme.colors.text,
+  },
+  phoneSaveBtn: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    minWidth: 78,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phoneSaveBtnDisabled: { opacity: 0.6 },
+  phoneSaveText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  phoneMsg: { marginTop: 8, fontSize: 13, fontWeight: '600', color: '#059669' },
+  phoneActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  phoneActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 10,
+    paddingVertical: 12,
+  },
+  phoneCallBtn: { backgroundColor: theme.colors.primary },
+  phoneWaBtn: { backgroundColor: '#25D366' },
+  phoneActionText: { color: '#fff', fontWeight: '800', fontSize: 14 },
   correctBtn: {
     flexDirection: 'row',
     alignItems: 'center',

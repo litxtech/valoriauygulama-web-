@@ -34,6 +34,8 @@ export type KbsCapturedDocumentRow = {
   mrz_batch_key: string | null;
   scanned_by_user_id: string | null;
   captured_by_staff_name: string | null;
+  captured_by_hotel_name: string | null;
+  guest_phone_submitted: string | null;
   document_number: string | null;
   nationality_code: string | null;
   issuing_country_code: string | null;

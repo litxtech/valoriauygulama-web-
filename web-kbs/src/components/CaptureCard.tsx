@@ -5,16 +5,30 @@ import { StatusBadge } from './StatusBadge';
 type Props = {
   item: CaptureItem;
   onOpen: (item: CaptureItem) => void;
+  familyCount?: number;
 };
 
-export function CaptureCard({ item, onOpen }: Props) {
+const DOC_TYPE_LABEL: Record<string, string> = {
+  passport: 'Pasaport',
+  id_card: 'Kimlik',
+  residence_permit: 'İkamet',
+};
+
+export function CaptureCard({ item, onOpen, familyCount = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
   const fields = buildKbsCopyFields(parsed);
   const docNo = fields.find((f) => f.key === 'documentNumber')?.value;
   const nationality = fields.find((f) => f.key === 'nationalityCode')?.value;
-  const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR');
+  const docType = parsed?.documentType ? DOC_TYPE_LABEL[parsed.documentType] : null;
+  const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
   return (
     <button className="card" onClick={() => onOpen(item)}>
@@ -24,31 +38,44 @@ export function CaptureCard({ item, onOpen }: Props) {
         ) : (
           <div className="card-thumb-empty">Görsel yok</div>
         )}
-        {item.room_number ? <span className="card-room">Oda {item.room_number}</span> : null}
+        <div className="card-thumb-badges">
+          {item.room_number ? <span className="pill pill-room">Oda {item.room_number}</span> : null}
+          {docType ? <span className="pill pill-doc">{docType}</span> : null}
+        </div>
+        {familyCount > 1 ? (
+          <span className="pill pill-family" title="Aynı grupta çekilen kişi sayısı">
+            👪 {familyCount}
+          </span>
+        ) : null}
       </div>
+
       <div className="card-body">
         <div className="card-head">
           <h3 title={name}>{name}</h3>
           <StatusBadge status={status} />
         </div>
-        <dl className="card-meta">
-          {docNo ? (
-            <div>
-              <dt>No</dt>
-              <dd>{docNo}</dd>
-            </div>
-          ) : null}
-          {nationality ? (
-            <div>
-              <dt>Uyruk</dt>
-              <dd>{nationality}</dd>
-            </div>
-          ) : null}
-        </dl>
-        <div className="card-foot">
-          <span>{item.captured_by_staff_name ?? '—'}</span>
-          <span>{capturedAt}</span>
+
+        <div className="card-tags">
+          {nationality ? <span className="tag">{nationality}</span> : null}
+          {docNo ? <span className="tag tag-mono">{docNo}</span> : null}
         </div>
+
+        <div className={`card-phone ${item.guest_phone_submitted ? 'has' : 'empty'}`}>
+          <span className="ico">📞</span>
+          {item.guest_phone_submitted ? item.guest_phone_submitted : 'Numara ekle'}
+        </div>
+
+        <div className="card-foot">
+          <span className="card-hotel" title={item.captured_by_hotel_name ?? ''}>
+            <span className="ico">🏨</span>
+            {item.captured_by_hotel_name ?? 'Otel —'}
+          </span>
+          <span className="card-staff" title={item.captured_by_staff_name ?? ''}>
+            <span className="ico">👤</span>
+            {item.captured_by_staff_name ?? '—'}
+          </span>
+        </div>
+        <div className="card-time">{capturedAt}</div>
       </div>
     </button>
   );

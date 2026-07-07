@@ -23,6 +23,8 @@ export type KbsCapturedDocumentRow = {
   mrz_batch_key: string | null;
   scanned_by_user_id: string | null;
   captured_by_staff_name: string | null;
+  /** Personelin girdiği müşteri telefon numarası (web + uygulama ortak). */
+  guest_phone_submitted: string | null;
 };
 
 /** Kimlik çekim listesi — ops.guest_documents (+ oda ataması). guest_stays kullanılmaz. */
@@ -37,7 +39,7 @@ export async function fetchKbsCapturedDocuments(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id,
+      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -47,7 +49,7 @@ export async function fetchKbsCapturedDocuments(
     .limit(limit);
   if (error) throw new Error(error.message);
 
-  const list = (docs ?? []) as {
+  const list = (docs ?? []) as unknown as {
     id: string;
     guest_id: string;
     captured_at: string | null;
@@ -58,6 +60,7 @@ export async function fetchKbsCapturedDocuments(
     ocr_engine: string | null;
     mrz_batch_key: string | null;
     scanned_by_user_id: string | null;
+    guest_phone_submitted: string | null;
     document_number: string | null;
     nationality_code: string | null;
     issuing_country_code: string | null;
@@ -131,7 +134,33 @@ export async function fetchKbsCapturedDocuments(
     captured_by_staff_name: d.scanned_by_user_id
       ? nameByAuthId.get(d.scanned_by_user_id) ?? 'Personel'
       : null,
+    guest_phone_submitted: d.guest_phone_submitted ?? null,
   }));
+}
+
+/** Rakam, +, boşluk, tire, parantez dışını temizler; boşsa null. */
+export function normalizeKbsGuestPhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/[^\d+()\s-]/g, '').trim();
+  return cleaned ? cleaned : null;
+}
+
+/**
+ * Müşteri numarasını (guest_phone_submitted) kaydeder. ops.guest_documents realtime
+ * yayınında olduğu için web paneli ve diğer cihazlar anında güncellenir.
+ */
+export async function updateKbsCaptureGuestPhone(
+  docId: string,
+  phone: string | null
+): Promise<{ ok: true; phone: string | null } | { ok: false; message: string }> {
+  const value = normalizeKbsGuestPhone(phone);
+  const { error } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .update({ guest_phone_submitted: value })
+    .eq('id', docId);
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, phone: value };
 }
 
 /** Kimlik çekim yetkisi olan personel tüm çekimleri görür. */
@@ -442,7 +471,7 @@ export async function fetchKbsCapturedDocumentById(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id,
+      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -452,7 +481,7 @@ export async function fetchKbsCapturedDocumentById(
   if (error) throw new Error(error.message);
   if (!doc?.front_image_url) return null;
 
-  const row = doc as {
+  const row = doc as unknown as {
     id: string;
     guest_id: string;
     captured_at: string | null;
@@ -463,6 +492,7 @@ export async function fetchKbsCapturedDocumentById(
     ocr_engine: string | null;
     mrz_batch_key: string | null;
     scanned_by_user_id: string | null;
+    guest_phone_submitted: string | null;
     document_number: string | null;
     nationality_code: string | null;
     issuing_country_code: string | null;
@@ -523,6 +553,7 @@ export async function fetchKbsCapturedDocumentById(
     mrz_batch_key: row.mrz_batch_key ?? null,
     scanned_by_user_id: row.scanned_by_user_id ?? null,
     captured_by_staff_name: row.scanned_by_user_id ? staffName ?? 'Personel' : null,
+    guest_phone_submitted: row.guest_phone_submitted ?? null,
   };
 }
 
