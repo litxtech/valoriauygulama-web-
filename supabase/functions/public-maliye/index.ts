@@ -6,6 +6,12 @@ import {
   fetchHmbDataForDay,
   loadHmbBranding,
 } from "../_shared/maliyeHmbDaily.ts";
+import {
+  buildTeskDailyListHtml,
+  fetchTeskRowsForDay,
+  loadTeskSerial,
+  siraForDate,
+} from "../_shared/maliyeTeskDaily.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -750,6 +756,28 @@ Deno.serve(async (req: Request) => {
       status: 200,
       headers: JSON_HEADERS,
     });
+  }
+
+  if (view === "tesk-daily-list") {
+    const date = (url.searchParams.get("date") ?? "").trim() || new Date().toISOString().slice(0, 10);
+    const branding = await loadHmbBranding(supabase);
+    const serialCfg = await loadTeskSerial(supabase, orgId);
+    const rows = await fetchTeskRowsForDay(supabase, orgId, date);
+    const sira = siraForDate(serialCfg, date);
+    const html = buildTeskDailyListHtml(rows, branding, date, { seri: serialCfg.seri, sira });
+    await supabase.from("maliye_audit_logs").insert({
+      organization_id: orgId,
+      token_id: auth.row.id,
+      event_type: "forms.tesk_print",
+      success: true,
+      ip_address: ip,
+      user_agent: ua,
+      metadata: { date, guestCount: rows.length, seri: serialCfg.seri, sira },
+    });
+    return new Response(
+      JSON.stringify({ html, date, guestCount: rows.length, seri: serialCfg.seri, sira }),
+      { status: 200, headers: JSON_HEADERS }
+    );
   }
 
   if (view === "daily-forms" || view === "latest-form") {

@@ -55,3 +55,27 @@ export async function listMaliyeLogs(limit = 200) {
     .order('created_at', { ascending: false })
     .limit(limit);
 }
+
+export type MaliyeTeskSerial = {
+  seri: string;
+  start_sira: number;
+  anchor_date: string;
+  per_page: number;
+  updated_at: string | null;
+};
+
+export async function getMaliyeTeskSerial() {
+  return await supabase
+    .from('maliye_tesk_serial')
+    .select('seri, start_sira, anchor_date, per_page, updated_at')
+    .maybeSingle();
+}
+
+/** Seri başlangıcını belirle/sıfırla — girilen numara bugünden itibaren geçerli, her gün +1 artar. */
+export async function setMaliyeTeskSerial(seri: string, startSira: number, perPage = 14) {
+  return await supabase.rpc('set_maliye_tesk_serial', {
+    p_seri: seri,
+    p_start_sira: startSira,
+    p_per_page: perPage,
+  });
+}

@@ -399,6 +399,7 @@ export default function AdminLayout() {
       <Stack.Screen name="maliye/index" options={{ title: 'Maliye Evrak Merkezi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="maliye/documents" options={{ title: 'Maliye Evrakları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="maliye/forms" options={{ title: 'Müşteri Formları', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="maliye/tesk-serial" options={{ title: 'Günlük Liste Seri No', headerRight: renderHeaderRight }} />
       <Stack.Screen name="maliye/access" options={{ title: 'Maliye Erişim', headerRight: renderHeaderRight }} />
       <Stack.Screen name="maliye/logs" options={{ title: 'Maliye Logları', headerRight: renderHeaderRight }} />
       <Stack.Screen
@@ -422,6 +423,7 @@ export default function AdminLayout() {
       <Stack.Screen name="carbon" options={{ headerShown: false }} />
       <Stack.Screen name="salary/index" options={{ title: t('adminSalaryManagement'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/all" options={{ title: t('adminSalaryAllPayments'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="salary/pay" options={{ title: 'Maaş öde', headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/new" options={{ title: t('adminSalaryNewPayment'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/history/[id]" options={{ title: t('adminSalaryHistory'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/edit/[paymentId]" options={{ title: t('adminSalaryEdit'), headerRight: renderHeaderRight }} />

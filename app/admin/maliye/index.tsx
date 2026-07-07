@@ -27,6 +27,9 @@ export default function AdminMaliyeHome() {
       <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/admin/maliye/forms')}>
         <Text style={styles.navText}>Günlük Müşteri Formları</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/admin/maliye/tesk-serial')}>
+        <Text style={styles.navText}>Günlük Liste Seri / Sıra No (TESK)</Text>
+      </TouchableOpacity>
       <TouchableOpacity style={styles.navBtn} onPress={() => router.push('/admin/maliye/access')}>
         <Text style={styles.navText}>PIN ve Erişim Tokenları</Text>
       </TouchableOpacity>

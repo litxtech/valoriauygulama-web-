@@ -296,7 +296,8 @@
           <input id="endDate" type="date" />
         </div>
         <button type="button" id="btnLoadForms" class="btn btn-primary">Formları Getir</button>
-        <button type="button" id="btnPrintAll" class="btn btn-green">Toplu Yazdır</button>
+        <button type="button" id="btnTeskAll" class="btn btn-green">Günlük Müşteri Listesi (TESK)</button>
+        <button type="button" id="btnPrintAll" class="btn btn-secondary">HMB Formu</button>
         <button type="button" id="btnPdfAll" class="btn btn-secondary">PDF İndir</button>
       </div>
       <div class="quick-btns">
@@ -547,7 +548,8 @@
         html += '<span>' + gForeign + ' Yabancı</span>';
         html += '</div></div>';
         html += '<div class="day-group-actions">';
-        html += '<button type="button" class="btn btn-sm btn-green" data-print-day="' + esc(g.date) + '">Yazdır</button>';
+        html += '<button type="button" class="btn btn-sm btn-green" data-tesk-day="' + esc(g.date) + '">TESK Listesi</button>';
+        html += '<button type="button" class="btn btn-sm btn-secondary" data-print-day="' + esc(g.date) + '">HMB</button>';
         html += '<button type="button" class="btn btn-sm btn-secondary" data-pdf-day="' + esc(g.date) + '">PDF</button>';
         html += '</div></div>';
 
@@ -624,6 +626,20 @@
       } catch(e) { setMsg("err", e.message || "Yazdırılamadı"); }
     }
 
+    async function printTesk(dateYmd) {
+      if (!pin) return;
+      var day = dateYmd || document.getElementById("dayFilter").value || todayYmd();
+      setMsg("wait", "Günlük müşteri listesi hazırlanıyor...");
+      try {
+        var res = await api({ view: "tesk-daily-list", date: day });
+        var w = window.open("", "_blank");
+        if (!w) throw new Error("Pencere açılamadı");
+        w.document.open(); w.document.write(res.html || ""); w.document.close();
+        setTimeout(function() { try { w.print(); } catch(_){} }, 800);
+        clearMsg();
+      } catch(e) { setMsg("err", e.message || "Liste oluşturulamadı"); }
+    }
+
     async function downloadPdf(dateYmd) {
       if (!pin) return;
       var day = dateYmd || document.getElementById("dayFilter").value || todayYmd();
@@ -645,6 +661,7 @@
     document.getElementById("pin").addEventListener("keydown", function(ev) { if (ev.key === "Enter") { ev.preventDefault(); void unlock(); } });
     document.getElementById("btnRefresh").addEventListener("click", function() { void loadForms().catch(function(e) { setMsg("err", e.message); }); });
     document.getElementById("btnLoadForms").addEventListener("click", function() { void loadForms().catch(function(e) { setMsg("err", e.message); }); });
+    document.getElementById("btnTeskAll").addEventListener("click", function() { void printTesk(); });
     document.getElementById("btnPrintAll").addEventListener("click", function() { void printDay(); });
     document.getElementById("btnPdfAll").addEventListener("click", function() { void downloadPdf(); });
     document.getElementById("drawerClose").addEventListener("click", closeDrawer);
@@ -675,6 +692,8 @@
         if (el) el.style.display = el.style.display === "none" || !el.style.display ? "block" : "none";
         return;
       }
+      var teskBtn = ev.target.closest && ev.target.closest("[data-tesk-day]");
+      if (teskBtn) { void printTesk(teskBtn.getAttribute("data-tesk-day")); return; }
       var printBtn = ev.target.closest && ev.target.closest("[data-print-day]");
       if (printBtn) { void printDay(printBtn.getAttribute("data-print-day")); return; }
       var pdfBtn = ev.target.closest && ev.target.closest("[data-pdf-day]");
