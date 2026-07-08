@@ -692,6 +692,27 @@ export default function HomeScreen() {
                 </LinearGradient>
               </Pressable>
             </View>
+
+            <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('signIn')}</Text>
+            <TouchableOpacity
+              style={styles.webSignInBtn}
+              onPress={() => safeRouterPush(router, '/auth')}
+              activeOpacity={0.88}
+            >
+              <LinearGradient
+                colors={['#0d9488', '#0891b2', '#0ea5e9']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.webSignInBtnGradient}
+              >
+                <Ionicons name="log-in-outline" size={22} color="#fff" />
+                <View style={styles.webSignInBtnTextWrap}>
+                  <Text style={styles.webSignInBtnTitle}>{t('signIn')}</Text>
+                  <Text style={styles.webSignInBtnHint}>{t('loginSubtitle')}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.85)" />
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -1198,6 +1219,26 @@ const styles = StyleSheet.create({
   },
   portalTileTitle: { fontSize: 13, fontWeight: '800', textAlign: 'center', marginBottom: 3 },
   portalTileHint: { fontSize: 10, fontWeight: '600', textAlign: 'center', opacity: 0.8 },
+  webSignInBtn: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 5,
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
+  },
+  webSignInBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+  },
+  webSignInBtnTextWrap: { flex: 1 },
+  webSignInBtnTitle: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  webSignInBtnHint: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.88)', marginTop: 2 },
   checkinPromptCard: {
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 22,

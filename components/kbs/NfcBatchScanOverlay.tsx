@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import type { MrzCameraFrameKind } from '@/lib/scanner/mrzFrameTheme';
 import { MRZ_FRAME_BORDER } from '@/lib/scanner/mrzFrameTheme';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 
 type ScanStep = 'mrz' | 'nfc';
 
@@ -144,7 +145,7 @@ export function NfcBatchScanOverlay({
         </View>
       ) : null}
 
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+      <View style={[styles.bottomBar, { paddingBottom: getFloatingTabBarTotalHeight(insets) + 10 }]}>
         {reading && onCancelNfc ? (
           <TouchableOpacity style={styles.cancelBtn} onPress={onCancelNfc}>
             <Text style={styles.cancelBtnText}>{t('kbsNfcCancelRead')}</Text>
@@ -192,6 +193,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 14,
     gap: 10,
+    zIndex: 2,
   },
   step: { flexDirection: 'row', alignItems: 'center', gap: 6, opacity: 0.55 },
   stepOn: { opacity: 1 },
@@ -207,15 +209,22 @@ const styles = StyleSheet.create({
   stepLabel: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 12 },
   stepLabelOn: { color: '#fff' },
   stepLine: { width: 28, height: 2, backgroundColor: 'rgba(255,255,255,0.28)', borderRadius: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  mrzFrame: {
-    width: '86%',
-    height: '20%',
-    borderWidth: 3,
-    borderRadius: 14,
-    backgroundColor: 'transparent',
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 240,
+    zIndex: 1,
   },
-  hintBox: { marginTop: 20, paddingHorizontal: 28, alignItems: 'center' },
+  mrzFrame: {
+    width: '88%',
+    height: 100,
+    borderWidth: 3,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignSelf: 'center',
+  },
+  hintBox: { marginTop: 18, paddingHorizontal: 28, alignItems: 'center' },
   hint: {
     color: '#fff',
     fontSize: 15,

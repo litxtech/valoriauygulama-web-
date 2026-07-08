@@ -16,7 +16,11 @@ export function WebPublicRouteRedirect() {
   const winSearch = window.location.search || '';
   const winNormalized = winPath.replace(/\/$/, '') || '/';
 
-  /** Web: /admin/payments/* doğrudan açılışta unmatched route — personel rotasına taşı */
+  /** Web: /login → /auth; /admin/payments/* → personel ödeme rotası */
+  if (winNormalized === '/login') {
+    return <Redirect href="/auth" />;
+  }
+
   if (winNormalized === '/admin/payments' || winNormalized.startsWith('/admin/payments/')) {
     const staffPath = `${winNormalized.replace(/^\/admin\/payments/, '/staff/payments')}${winSearch}`;
     const expoStaffPath = (pathname || '').replace(/^\/admin\/payments/, '/staff/payments');

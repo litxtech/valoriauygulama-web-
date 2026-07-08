@@ -787,6 +787,7 @@ function RootLayoutInner() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="[id]" options={{ headerShown: false }} />
         <Stack.Screen name="room-select" options={{ headerShown: false }} />
         <Stack.Screen name="policies" />

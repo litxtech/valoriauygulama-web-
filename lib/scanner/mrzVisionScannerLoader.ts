@@ -7,6 +7,7 @@ export type MrzVisionScannerProps = {
   torchEnabled: boolean;
   resetToken?: number;
   keepCameraWarm?: boolean;
+  unlockOnly?: boolean;
   onUiStateChange: (ui: MrzVisionUiState) => void;
   onLocked: (payload: MrzLockedPayload) => void;
   onOcrPreview?: (preview: string) => void;

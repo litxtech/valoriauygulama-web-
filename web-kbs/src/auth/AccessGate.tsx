@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 type Status = { required: boolean; version: string | null };
 
 const STORAGE_PREFIX = 'valoria_kbs_access_';
+const ACCESS_STATUS_TIMEOUT_MS = 8_000;
 
 async function fetchStatus(): Promise<Status> {
   try {
@@ -37,8 +38,18 @@ export function AccessGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    const timer = setTimeout(() => {
+      if (!active) return;
+      setStatus((prev) => {
+        if (prev !== null) return prev;
+        setUnlocked(true);
+        return { required: false, version: null };
+      });
+    }, ACCESS_STATUS_TIMEOUT_MS);
+
     void fetchStatus().then((s) => {
       if (!active) return;
+      clearTimeout(timer);
       setStatus(s);
       if (!s.required) {
         setUnlocked(true);
@@ -54,6 +65,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
     });
     return () => {
       active = false;
+      clearTimeout(timer);
     };
   }, []);
 

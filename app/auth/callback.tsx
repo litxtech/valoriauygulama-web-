@@ -8,6 +8,7 @@ import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { hasPolicyConsent } from '@/lib/policyConsent';
 import { log } from '@/lib/logger';
+import { readAuthCallbackUrl } from '@/lib/authCallbackUrl';
 
 function parseHashParams(url: string): { access_token?: string; refresh_token?: string; type?: string } {
   const hashIndex = url.indexOf('#');
@@ -33,7 +34,8 @@ export default function AuthCallbackScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const url = await Linking.getInitialURL();
+      const webUrl = readAuthCallbackUrl();
+      const url = webUrl ?? (await Linking.getInitialURL());
       if (cancelled) return;
       if (!url || !url.includes('auth/callback')) {
         setStatus('error');

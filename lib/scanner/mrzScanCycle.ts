@@ -10,11 +10,12 @@ export function shouldAcceptMrzLock(
   lastKey: string | null,
   lastAt: number,
   mrz: string,
-  now = Date.now()
+  now = Date.now(),
+  cooldownMs = MRZ_SCAN_LOCK_COOLDOWN_MS
 ): boolean {
   const key = mrzNormalizedKey(mrz);
   if (!key.length) return false;
-  if (lastKey === key && now - lastAt < MRZ_SCAN_LOCK_COOLDOWN_MS) return false;
+  if (lastKey === key && now - lastAt < cooldownMs) return false;
   return true;
 }
 

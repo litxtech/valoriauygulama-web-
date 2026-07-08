@@ -162,12 +162,16 @@ async function portraitUriFromChip(
   }
 }
 
+let cachedPlaceholderUri: string | null = null;
+
 export async function writeNfcPlaceholderImageUri(): Promise<string> {
-  const path = `${FileSystem.cacheDirectory}nfc-placeholder-${Date.now()}.jpg`;
+  if (cachedPlaceholderUri) return cachedPlaceholderUri;
+  const path = `${FileSystem.cacheDirectory}nfc-placeholder.jpg`;
   await FileSystem.writeAsStringAsync(path, PLACEHOLDER_JPEG_B64, {
     encoding: FileSystem.EncodingType.Base64,
   });
-  return path.startsWith('file://') ? path : `file://${path}`;
+  cachedPlaceholderUri = path.startsWith('file://') ? path : `file://${path}`;
+  return cachedPlaceholderUri;
 }
 
 export function isNfcPassportNativeReady(): boolean {

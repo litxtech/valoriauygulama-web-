@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { useTranslation } from 'react-i18next';
+import { getAuthCallbackRedirectUrl } from '@/lib/authCallbackUrl';
 
 const CODE_LENGTH = 6;
 
@@ -48,7 +49,7 @@ export default function AuthResetScreen() {
     setConfirmPassword('');
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(e, {
-        redirectTo: 'valoria://auth/callback',
+        redirectTo: getAuthCallbackRedirectUrl(),
       });
       if (error) throw error;
       setSent(true);

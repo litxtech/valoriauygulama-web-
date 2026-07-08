@@ -47,16 +47,24 @@ type Props = {
   resetToken?: number;
   /** Onay ekranında kamera önizlemesi açık kalsın (hızlı 2. tarama). */
   keepCameraWarm?: boolean;
+  /**
+   * NFC sekmesi: MRZ sadece BAC anahtarı için.
+   * Daha yüksek OCR frekansı, kısa cooldown, kısa başarı animasyonu.
+   */
+  unlockOnly?: boolean;
   onUiStateChange: (ui: MrzVisionUiState) => void;
   onLocked: (payload: MrzLockedPayload) => void;
   onOcrPreview?: (preview: string) => void;
 };
 
 const TARGET_FPS = 12;
+const TARGET_FPS_UNLOCK = 16;
 const REFOCUS_INTERVAL_MS = 4500;
 const UNLOCK_AFTER_LOCK_MS = 500;
+const UNLOCK_AFTER_LOCK_FAST_MS = 180;
 /** Kamera init sonrası ilk karelerde OCR atla — önizleme hızlı görünsün */
 const OCR_WARMUP_FRAMES = 2;
+const OCR_WARMUP_UNLOCK = 1;
 /** GuestScannerOverlay mrzFrame ile uyumlu (merkez ~%62 dikey) */
 const MRZ_FOCUS_X_RATIO = 0.5;
 const MRZ_FOCUS_Y_RATIO = 0.62;
@@ -91,6 +99,7 @@ export function MrzVisionScanner({
   torchEnabled,
   resetToken = 0,
   keepCameraWarm = false,
+  unlockOnly = false,
   onUiStateChange,
   onLocked,
   onOcrPreview,
@@ -108,6 +117,9 @@ export function MrzVisionScanner({
   const stabilityRef = useRef(createMrzStabilityState());
   const [successGlow, setSuccessGlow] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
+  const targetFps = unlockOnly ? TARGET_FPS_UNLOCK : TARGET_FPS;
+  const warmupFrames = unlockOnly ? OCR_WARMUP_UNLOCK : OCR_WARMUP_FRAMES;
+  const unlockAfterMs = unlockOnly ? UNLOCK_AFTER_LOCK_FAST_MS : UNLOCK_AFTER_LOCK_MS;
   const format = useCameraFormat(device, [
     { videoResolution: { width: 1280, height: 720 } },
     { fps: 30 },
@@ -115,7 +127,8 @@ export function MrzVisionScanner({
 
   const { textRecognition } = useTextRecognition({
     language: 'LATIN',
-    scaleFactor: 1.5,
+    // NFC BAC: daha hafif OCR → daha hızlı kilit
+    scaleFactor: unlockOnly ? 1.25 : 1.5,
     invertColors: torchEnabled,
   });
 
@@ -208,7 +221,7 @@ export function MrzVisionScanner({
     useCallback(
       (fullText: string, blocksJson: string, frameHeight: number) => {
         if (!enabled || lockedRef.current) return;
-        if (ocrWarmupRef.current < OCR_WARMUP_FRAMES) {
+        if (ocrWarmupRef.current < warmupFrames) {
           ocrWarmupRef.current += 1;
           return;
         }
@@ -234,7 +247,8 @@ export function MrzVisionScanner({
         }
 
         const mrz = locked.mrz;
-        if (!shouldAcceptMrzLock(lastLockRef.current.key, lastLockRef.current.at, mrz)) {
+        const cooldownMs = unlockOnly ? 700 : undefined;
+        if (!shouldAcceptMrzLock(lastLockRef.current.key, lastLockRef.current.at, mrz, Date.now(), cooldownMs)) {
           return;
         }
 
@@ -243,15 +257,15 @@ export function MrzVisionScanner({
         setSuccessGlow(true);
         pushUi('success', 'kbsMrzFrameSuccess', false, true);
         onLocked(locked);
-        setTimeout(() => setSuccessGlow(false), 1400);
+        setTimeout(() => setSuccessGlow(false), unlockOnly ? 500 : 1400);
         setTimeout(() => {
           resetScanCycle(lockedRef, stabilityRef);
           if (enabled) pushUi('hunting', 'kbsMrzFrameAutoHunting', false);
-        }, UNLOCK_AFTER_LOCK_MS);
+        }, unlockAfterMs);
       },
-      [enabled, onLocked, onOcrPreview, pushUi]
+      [enabled, onLocked, onOcrPreview, pushUi, unlockAfterMs, unlockOnly, warmupFrames]
     ),
-    [enabled, onLocked, onOcrPreview, pushUi]
+    [enabled, onLocked, onOcrPreview, pushUi, unlockAfterMs, unlockOnly, warmupFrames]
   );
 
   const frameProcessor = useFrameProcessor(
@@ -259,7 +273,7 @@ export function MrzVisionScanner({
       'worklet';
       if (!enabled) return;
 
-      runAtTargetFps(TARGET_FPS, () => {
+      runAtTargetFps(targetFps, () => {
         'worklet';
         runAsync(frame, () => {
           'worklet';
@@ -284,7 +298,7 @@ export function MrzVisionScanner({
         });
       });
     },
-    [enabled, torchEnabled, textRecognition, handleOcrResult]
+    [enabled, torchEnabled, textRecognition, handleOcrResult, targetFps]
   );
 
   if (!hasPermission) {

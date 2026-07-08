@@ -31,17 +31,22 @@ import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { useTranslation } from 'react-i18next';
 import { warmKbsCaptureOpsContext } from '@/lib/kbsCapturePrewarm';
+import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import {
   bacKeyFromMrzLock,
+  cancelNfcPassportRead,
   isNfcPassportAvailable,
   isNfcPassportNativeReady,
   readPassportViaNfc,
 } from '@/lib/nfcPassport';
+import { getEIdReader, isNfcNativeLinked } from '@/lib/nfcNative';
 import { saveKbsNfcCaptureItemsParallel } from '@/lib/kbsNfcCaptureSave';
 import { NfcParsedFieldsPanel } from '@/components/kbs/NfcParsedFieldsPanel';
 import { NfcFamilyMemberCard } from '@/components/kbs/NfcFamilyMemberCard';
 import { NfcBatchScanOverlay } from '@/components/kbs/NfcBatchScanOverlay';
 import type { MrzLockedPayload, MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
+import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
+import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
 import {
   getMrzVisionScannerCached,
   preloadMrzVisionScanner,
@@ -64,7 +69,8 @@ type ScanStep = 'mrz' | 'nfc';
 
 const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
 const IS_ANDROID = Platform.OS === 'android';
-const MRZ_LOCK_DEBOUNCE_MS = 650;
+/** MRZ kilit → NFC geçiş; düşük tut — çift okumayı bumpScanCycle önler. */
+const MRZ_LOCK_DEBOUNCE_MS = 280;
 
 const ROOM_MODAL_ANDROID_PROPS = IS_ANDROID
   ? ({ statusBarTranslucent: true, navigationBarTranslucent: true } as const)
@@ -143,21 +149,23 @@ export default function KbsNfcCaptureScreen() {
   const [VisionScanner, setVisionScanner] = useState<MrzVisionScannerComponent | null>(() =>
     getMrzVisionScannerCached()
   );
+  const [visionLoadFailed, setVisionLoadFailed] = useState(false);
 
   const savingRef = useRef(false);
   const readLockRef = useRef(false);
   const mrzLockUntilRef = useRef(0);
+  const nfcCancelRef = useRef({ cancelled: false });
   const roomPrefetchRef = useRef<{ key: string; room: KbsOpsRoom } | null>(null);
   const roomPrefetchGenRef = useRef(0);
 
   const roomNoTrimmed = roomNoInput.trim();
   const phoneTrimmed = phoneInput.trim();
-  const cameraScanEnabled = phase === 'scan' && isFocused && !reading;
+  const cameraScanEnabled = phase === 'scan' && isFocused && !reading && !!VisionScanner;
 
   useEffect(() => {
-    const ready = isNfcPassportNativeReady();
-    setNativeReady(ready);
-    if (!ready) {
+    const linked = isNfcNativeLinked() || getEIdReader() != null || isNfcPassportNativeReady();
+    setNativeReady(linked);
+    if (!linked) {
       setNfcAvailable(false);
       return;
     }
@@ -170,15 +178,24 @@ export default function KbsNfcCaptureScreen() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (VisionScanner) return;
+    if (VisionScanner) {
+      setVisionLoadFailed(false);
+      return;
+    }
     let cancelled = false;
     void preloadMrzVisionScanner().then((Comp) => {
-      if (!cancelled && Comp) setVisionScanner(() => Comp);
+      if (cancelled) return;
+      if (Comp) {
+        setVisionScanner(() => Comp);
+        setVisionLoadFailed(false);
+      } else if (!isMrzVisionScannerAvailable()) {
+        setVisionLoadFailed(true);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [VisionScanner]);
+  }, [VisionScanner, isFocused]);
 
   useEffect(() => {
     if (!IS_ANDROID || phase !== 'review') {
@@ -264,6 +281,11 @@ export default function KbsNfcCaptureScreen() {
     setScanStep('mrz');
   }, []);
 
+  const cancelActiveNfc = useCallback(() => {
+    nfcCancelRef.current.cancelled = true;
+    cancelNfcPassportRead();
+  }, []);
+
   const enqueueCapture = useCallback(
     (data: { parsed: ParsedDocument; rawMrz: string | null; portraitUri: string }) => {
       const fp = fingerprintFromMrzQueued({
@@ -297,8 +319,8 @@ export default function KbsNfcCaptureScreen() {
   const runNfcRead = useCallback(
     async (bac: { documentNumber: string; birthDate: string; expiryDate: string }) => {
       if (readLockRef.current || !isFocused) return false;
-      if (!nativeReady) {
-        Alert.alert(t('kbsNfcCaptureTitle'), t('kbsNfcChipModuleMissing'));
+      if (!nativeReady || getEIdReader() == null) {
+        Alert.alert(t('kbsNfcNativeBuildTitle'), t('kbsNfcNativeBuildBody'));
         return false;
       }
       if (nfcAvailable === false) {
@@ -307,19 +329,48 @@ export default function KbsNfcCaptureScreen() {
       }
 
       readLockRef.current = true;
+      nfcCancelRef.current = { cancelled: false };
       setReading(true);
       setScanStep('nfc');
       try {
-        const result = await readPassportViaNfc(bac);
-        if (!result.ok) {
-          if (result.code === 'cancelled') return false;
-          if (result.code === 'native_build') {
-            Alert.alert(t('kbsNfcNativeBuildTitle'), result.message ?? t('kbsNfcNativeBuildBody'));
-            return false;
-          }
-          Alert.alert(t('kbsNfcCaptureTitle'), result.message || t('kbsNfcReadFailed'));
+        let result = await readPassportViaNfc(bac, {
+          signal: nfcCancelRef.current,
+          timeoutMs: Platform.OS === 'ios' ? 55000 : 45000,
+        });
+
+        if (!result.ok && (result.code === 'cancelled' || nfcCancelRef.current.cancelled)) {
           return false;
         }
+        if (!result.ok && result.code === 'native_build') {
+          Alert.alert(t('kbsNfcNativeBuildTitle'), result.message ?? t('kbsNfcNativeBuildBody'));
+          return false;
+        }
+        if (!result.ok) {
+          const msg =
+            result.code === 'timeout' ? t('kbsNfcTimeout') : result.message || t('kbsNfcReadFailed');
+          const shouldRetry = await new Promise<boolean>((resolve) => {
+            Alert.alert(t('kbsNfcCaptureTitle'), msg, [
+              { text: t('cancel'), style: 'cancel', onPress: () => resolve(false) },
+              { text: t('kbsNfcRetryChip'), onPress: () => resolve(true) },
+            ]);
+          });
+          if (!shouldRetry) return false;
+          nfcCancelRef.current = { cancelled: false };
+          result = await readPassportViaNfc(bac, {
+            signal: nfcCancelRef.current,
+            timeoutMs: Platform.OS === 'ios' ? 55000 : 45000,
+          });
+          if (!result.ok) {
+            if (result.code !== 'cancelled' && !nfcCancelRef.current.cancelled) {
+              Alert.alert(
+                t('kbsNfcCaptureTitle'),
+                result.code === 'timeout' ? t('kbsNfcTimeout') : result.message || t('kbsNfcReadFailed')
+              );
+            }
+            return false;
+          }
+        }
+
         await playKbsScanSound('read', true);
         triggerMrzSuccessHaptic(0, true);
         enqueueCapture({
@@ -329,6 +380,7 @@ export default function KbsNfcCaptureScreen() {
         });
         return true;
       } finally {
+        cancelNfcPassportRead();
         setReading(false);
         readLockRef.current = false;
         setScanStep('mrz');
@@ -350,9 +402,8 @@ export default function KbsNfcCaptureScreen() {
         return;
       }
 
-      await playKbsScanSound('read', true);
+      // Ses/haptic NFC başarısında — kilitte gecikme yaratma, hemen çipe geç.
       triggerMrzSuccessHaptic(0, true);
-      // Asıl eksiksiz bilgiler NFC çipinden gelir (MRZ sadece kilit açar).
       await runNfcRead(bac);
       bumpScanCycle();
     },
@@ -494,7 +545,8 @@ export default function KbsNfcCaptureScreen() {
           style={[
             styles.reviewFooter,
             {
-              paddingBottom: androidKeyboardInset > 0 ? 12 : Math.max(insets.bottom, 16),
+              paddingBottom:
+                androidKeyboardInset > 0 ? 12 : getFloatingTabBarTotalHeight(insets) + 12,
             },
             IS_ANDROID && androidKeyboardInset > 0 ? { marginBottom: androidKeyboardInset } : null,
           ]}
@@ -578,29 +630,39 @@ export default function KbsNfcCaptureScreen() {
     );
   }
 
+  if (visionLoadFailed && !VisionScanner) {
+    return (
+      <View style={styles.root}>
+        <StatusBar style="light" />
+        <MrzNativeBuildRequired />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
       {VisionScanner ? (
         <VisionScanner
           enabled={cameraScanEnabled}
-          keepCameraWarm
+          keepCameraWarm={false}
+          unlockOnly
           resetToken={scanResetToken}
           torchEnabled={torchEnabled}
           onUiStateChange={setUi}
           onLocked={(payload) => void handleMrzLocked(payload)}
         />
       ) : (
-        <View style={styles.cameraLoader}>
+        <View style={[StyleSheet.absoluteFillObject, styles.cameraLoader]}>
           <ActivityIndicator color="#fff" size="large" />
-          <Text style={styles.cameraLoaderText}>{t('kbsNfcBatchScanHint')}</Text>
+          <Text style={styles.cameraLoaderText}>{t('kbsNfcCameraLoading')}</Text>
         </View>
       )}
 
       <NfcBatchScanOverlay
         hint={ui.hint || t('kbsNfcBatchScanHint')}
         frameKind={ui.frameKind}
-        showSpinner={ui.showSpinner}
+        showSpinner={ui.showSpinner || !VisionScanner}
         successGlow={ui.successGlow}
         scanStep={scanStep}
         queueCount={queue.length}
@@ -610,6 +672,7 @@ export default function KbsNfcCaptureScreen() {
         onToggleTorch={() => setTorchEnabled((v) => !v)}
         onBack={goBack}
         onFinish={goToReview}
+        onCancelNfc={cancelActiveNfc}
       />
 
       {!nativeReady || nfcAvailable === false ? (

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Redirect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 
 /** valoria://tech-asset/<uuid> bağlantılarında pathname tek segment "/<uuid>" olur; Expo Router bu ekranı eşleştirir. */
@@ -10,27 +10,23 @@ export default function TechAssetDeepLinkRootRedirect() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const raw = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : '';
+  const isUuid = !!raw && UUID_RE.test(raw);
   const loading = useAuthStore((s) => s.loading);
   const staff = useAuthStore((s) => s.staff);
 
   useEffect(() => {
-    if (!raw) {
-      router.replace('/');
-      return;
-    }
-    if (!UUID_RE.test(raw)) {
-      router.replace('/');
-      return;
-    }
+    if (!isUuid) return;
     if (loading) return;
     if (staff) {
       router.replace({ pathname: '/staff/technical-assets/[id]', params: { id: raw } } as never);
     } else {
       router.replace('/');
     }
-  }, [raw, loading, staff, router]);
+  }, [isUuid, raw, loading, staff, router]);
 
-  if (!raw || !UUID_RE.test(raw)) return null;
+  if (!isUuid) {
+    return <Redirect href="/" />;
+  }
 
   return (
     <View style={styles.center}>

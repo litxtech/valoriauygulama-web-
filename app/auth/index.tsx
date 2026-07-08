@@ -18,7 +18,7 @@ import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { log } from '@/lib/logger';
 import { theme } from '@/constants/theme';
 
-const MAGIC_LINK_REDIRECT = 'valoria://auth/callback';
+import { getAuthCallbackRedirectUrl } from '@/lib/authCallbackUrl';
 
 export default function AuthEmailScreen() {
   const { t } = useTranslation();
@@ -42,7 +42,7 @@ export default function AuthEmailScreen() {
         email: e,
         options: {
           shouldCreateUser: true,
-          emailRedirectTo: MAGIC_LINK_REDIRECT,
+          emailRedirectTo: getAuthCallbackRedirectUrl(),
         },
       });
       if (error) throw error;
