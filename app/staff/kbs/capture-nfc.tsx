@@ -32,7 +32,7 @@ import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { useTranslation } from 'react-i18next';
 import { warmKbsCaptureOpsContext } from '@/lib/kbsCapturePrewarm';
 import {
-  bacKeyFromParsed,
+  bacKeyFromMrzLock,
   isNfcPassportAvailable,
   isNfcPassportNativeReady,
   readPassportViaNfc,
@@ -42,6 +42,7 @@ import { NfcNativeBuildRequired } from '@/components/kbs/NfcNativeBuildRequired'
 import { NfcParsedFieldsPanel } from '@/components/kbs/NfcParsedFieldsPanel';
 import { NfcFamilyMemberCard } from '@/components/kbs/NfcFamilyMemberCard';
 import { NfcBatchScanOverlay } from '@/components/kbs/NfcBatchScanOverlay';
+import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
 import type { MrzLockedPayload, MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
 import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
 import {
@@ -49,7 +50,6 @@ import {
   preloadMrzVisionScanner,
   type MrzVisionScannerComponent,
 } from '@/lib/scanner/mrzVisionScannerLoader';
-import { scanDocumentFromGallery } from '@/lib/guestScan/galleryScan';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { playKbsScanSound } from '@/lib/kbsScanSounds';
 import { triggerMrzSuccessHaptic } from '@/lib/mrzScanHaptics';
@@ -67,7 +67,7 @@ type ScanStep = 'mrz' | 'nfc';
 
 const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
 const IS_ANDROID = Platform.OS === 'android';
-const MRZ_LOCK_DEBOUNCE_MS = 450;
+const MRZ_LOCK_DEBOUNCE_MS = 650;
 const VISION_OK = isMrzVisionScannerAvailable();
 
 const ROOM_MODAL_ANDROID_PROPS = IS_ANDROID
@@ -103,6 +103,10 @@ function isDuplicateInQueue(queue: NfcQueueItem[], fp: ReturnType<typeof fingerp
   });
 }
 
+function displayName(parsed: ParsedDocument) {
+  return [parsed.firstName, parsed.lastName].filter(Boolean).join(' ').trim();
+}
+
 export default function KbsCaptureNfcScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -119,10 +123,6 @@ export default function KbsCaptureNfcScreen() {
   const [reading, setReading] = useState(false);
   const [scanStep, setScanStep] = useState<ScanStep>('mrz');
   const [queue, setQueue] = useState<NfcQueueItem[]>([]);
-  const [manualBacMode, setManualBacMode] = useState(!VISION_OK);
-  const [docNoInput, setDocNoInput] = useState('');
-  const [birthInput, setBirthInput] = useState('');
-  const [expiryInput, setExpiryInput] = useState('');
   const [roomNoInput, setRoomNoInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
@@ -132,7 +132,7 @@ export default function KbsCaptureNfcScreen() {
   const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const [scanResetToken, setScanResetToken] = useState(0);
   const [torchEnabled, setTorchEnabled] = useState(false);
-  const [galleryBusy, setGalleryBusy] = useState(false);
+  const [lastAddedName, setLastAddedName] = useState<string | null>(null);
   const [ui, setUi] = useState<MrzVisionUiState>({
     frameKind: 'hunting',
     hint: t('kbsMrzLiveCameraWarming'),
@@ -152,7 +152,7 @@ export default function KbsCaptureNfcScreen() {
 
   const roomNoTrimmed = roomNoInput.trim();
   const phoneTrimmed = phoneInput.trim();
-  const cameraScanEnabled = VISION_OK && !manualBacMode && phase === 'scan' && isFocused && !reading;
+  const cameraScanEnabled = VISION_OK && phase === 'scan' && isFocused && !reading && nativeReady;
 
   useEffect(() => {
     if (!nativeReady) {
@@ -289,6 +289,7 @@ export default function KbsCaptureNfcScreen() {
           },
         ];
       });
+      setLastAddedName(displayName(data.parsed) || data.parsed.documentNumber || 'OK');
     },
     [t]
   );
@@ -312,9 +313,7 @@ export default function KbsCaptureNfcScreen() {
             Alert.alert(t('kbsNfcNativeBuildTitle'), result.message ?? t('kbsNfcNativeBuildBody'));
             return false;
           }
-          if (result.message) {
-            Alert.alert(t('kbsNfcCaptureTitle'), result.message);
-          }
+          Alert.alert(t('kbsNfcCaptureTitle'), result.message || t('kbsNfcReadFailed'));
           return false;
         }
         await playKbsScanSound('read', true);
@@ -339,7 +338,7 @@ export default function KbsCaptureNfcScreen() {
       if (Date.now() < mrzLockUntilRef.current || readLockRef.current || reading) return;
       mrzLockUntilRef.current = Date.now() + MRZ_LOCK_DEBOUNCE_MS;
 
-      const bac = bacKeyFromParsed(payload.parsed);
+      const bac = bacKeyFromMrzLock({ mrz: payload.mrz, parsed: payload.parsed });
       if (!bac) {
         Alert.alert(t('kbsNfcCaptureTitle'), t('kbsNfcBacInvalid'));
         bumpScanCycle();
@@ -348,49 +347,11 @@ export default function KbsCaptureNfcScreen() {
 
       await playKbsScanSound('read', true);
       triggerMrzSuccessHaptic(0, true);
-      const ok = await runNfcRead(bac);
+      await runNfcRead(bac);
       bumpScanCycle();
-      if (!ok) return;
     },
     [bumpScanCycle, reading, runNfcRead, t]
   );
-
-  const handleGalleryPick = useCallback(async () => {
-    if (galleryBusy || reading) return;
-    setGalleryBusy(true);
-    try {
-      const res = await scanDocumentFromGallery();
-      if (!res.ok) {
-        if (res.code !== 'cancelled' && res.message) {
-          Alert.alert(t('kbsGuestGalleryTitle'), res.message);
-        }
-        return;
-      }
-      const bac = bacKeyFromParsed(res.payload.parsed);
-      if (!bac) {
-        Alert.alert(t('kbsNfcCaptureTitle'), t('kbsNfcBacInvalid'));
-        return;
-      }
-      mrzLockUntilRef.current = Date.now() + MRZ_LOCK_DEBOUNCE_MS;
-      const ok = await runNfcRead(bac);
-      if (ok) bumpScanCycle();
-    } finally {
-      setGalleryBusy(false);
-    }
-  }, [bumpScanCycle, galleryBusy, reading, runNfcRead, t]);
-
-  const handleManualNfcRead = useCallback(async () => {
-    const ok = await runNfcRead({
-      documentNumber: docNoInput,
-      birthDate: birthInput,
-      expiryDate: expiryInput,
-    });
-    if (ok) {
-      setDocNoInput('');
-      setBirthInput('');
-      setExpiryInput('');
-    }
-  }, [birthInput, docNoInput, expiryInput, runNfcRead]);
 
   const goToReview = useCallback(() => {
     if (queue.length === 0) {
@@ -443,6 +404,7 @@ export default function KbsCaptureNfcScreen() {
       setQueue([]);
       setRoomNoInput('');
       setPhoneInput('');
+      setLastAddedName(null);
       roomPrefetchRef.current = null;
       setPhase('scan');
 
@@ -467,7 +429,7 @@ export default function KbsCaptureNfcScreen() {
   const queueGalleryItems = useMemo(
     () =>
       queue.map((item, index) => {
-        const name = [item.parsed.firstName, item.parsed.lastName].filter(Boolean).join(' ').trim();
+        const name = displayName(item.parsed);
         const doc = item.parsed.documentNumber?.trim();
         return {
           id: item.id,
@@ -478,13 +440,6 @@ export default function KbsCaptureNfcScreen() {
       }),
     [queue, roomNoTrimmed]
   );
-
-  const canManualRead =
-    docNoInput.trim().length >= 3 &&
-    birthInput.trim().length >= 6 &&
-    expiryInput.trim().length >= 6 &&
-    !reading &&
-    nfcAvailable !== false;
 
   if (!nativeReady) {
     return (
@@ -498,6 +453,22 @@ export default function KbsCaptureNfcScreen() {
           <View style={{ width: 44 }} />
         </View>
         <NfcNativeBuildRequired />
+      </View>
+    );
+  }
+
+  if (!VISION_OK) {
+    return (
+      <View style={styles.root}>
+        <StatusBar style="light" />
+        <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
+          <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel={t('back')}>
+            <Ionicons name="chevron-back" size={30} color="#fff" />
+          </Pressable>
+          <Text style={styles.title}>{t('kbsNfcCaptureTitle')}</Text>
+          <View style={{ width: 44 }} />
+        </View>
+        <MrzNativeBuildRequired />
       </View>
     );
   }
@@ -540,7 +511,7 @@ export default function KbsCaptureNfcScreen() {
           ))}
 
           <TouchableOpacity style={styles.addMoreBtn} onPress={() => setPhase('scan')} disabled={saving}>
-            <Ionicons name="add-circle-outline" size={22} color="#2563eb" />
+            <Ionicons name="scan-outline" size={22} color="#2563eb" />
             <Text style={styles.addMoreText}>{t('kbsNfcAddMore')}</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -564,7 +535,6 @@ export default function KbsCaptureNfcScreen() {
             placeholderTextColor="#94a3b8"
             editable={!saving}
             maxLength={24}
-            keyboardType="default"
           />
 
           <Text style={styles.reviewFieldLabel}>{t('kbsNfcFamilyPhone')}</Text>
@@ -635,238 +605,50 @@ export default function KbsCaptureNfcScreen() {
     );
   }
 
-  if (VISION_OK && !manualBacMode) {
-    return (
-      <View style={styles.root}>
-        <StatusBar style="light" />
-        {VisionScanner ? (
-          <VisionScanner
-            enabled={cameraScanEnabled}
-            keepCameraWarm
-            resetToken={scanResetToken}
-            torchEnabled={torchEnabled}
-            onUiStateChange={setUi}
-            onLocked={(payload) => void handleMrzLocked(payload)}
-          />
-        ) : (
-          <View style={styles.cameraLoader}>
-            <ActivityIndicator color="#fff" size="large" />
-          </View>
-        )}
-
-        <NfcBatchScanOverlay
-          hint={ui.hint}
-          frameKind={ui.frameKind}
-          showSpinner={ui.showSpinner}
-          successGlow={ui.successGlow}
-          scanStep={scanStep}
-          queueCount={queue.length}
-          reading={reading}
-          torchEnabled={torchEnabled}
-          onToggleTorch={() => setTorchEnabled((v) => !v)}
-          onBack={goBack}
-          onFinish={goToReview}
-          onGallery={() => void handleGalleryPick()}
-          galleryBusy={galleryBusy}
-        />
-
-        {VISION_OK ? (
-          <Pressable
-            style={[styles.manualToggle, { top: Math.max(insets.top, 12) + 52 }]}
-            onPress={() => setManualBacMode(true)}
-          >
-            <Text style={styles.manualToggleText}>{t('kbsNfcManualBac')}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    );
-  }
-
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-
-      <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
-        <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel={t('back')}>
-          <Ionicons name="chevron-back" size={30} color="#fff" />
-        </Pressable>
-        <Text style={styles.title}>{t('kbsNfcCaptureTitle')}</Text>
-        <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel={t('kbsCapturedListA11y')}>
-          <Ionicons name="albums" size={18} color="#fff" />
-          <Text style={styles.capturedListBtnText}>{t('kbsNfcCapturedListShort')}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.centerPanel}>
-        <View style={styles.nfcIconRing}>
-          <Ionicons name="hardware-chip-outline" size={56} color="#93c5fd" />
+      {VisionScanner ? (
+        <VisionScanner
+          enabled={cameraScanEnabled}
+          keepCameraWarm
+          resetToken={scanResetToken}
+          torchEnabled={torchEnabled}
+          onUiStateChange={setUi}
+          onLocked={(payload) => void handleMrzLocked(payload)}
+        />
+      ) : (
+        <View style={styles.cameraLoader}>
+          <ActivityIndicator color="#fff" size="large" />
         </View>
-        <Text style={styles.hintMain}>{t('kbsNfcCaptureHint')}</Text>
-        <Text style={styles.hintSub}>{t('kbsNfcCaptureHintSub')}</Text>
+      )}
 
-        {nfcAvailable === false ? <Text style={styles.warn}>{t('kbsNfcUnavailable')}</Text> : null}
+      <NfcBatchScanOverlay
+        hint={ui.hint}
+        frameKind={ui.frameKind}
+        showSpinner={ui.showSpinner}
+        successGlow={ui.successGlow}
+        scanStep={scanStep}
+        queueCount={queue.length}
+        reading={reading}
+        lastName={lastAddedName}
+        torchEnabled={torchEnabled}
+        onToggleTorch={() => setTorchEnabled((v) => !v)}
+        onBack={goBack}
+        onFinish={goToReview}
+      />
 
-        {VISION_OK ? (
-          <TouchableOpacity style={styles.cameraBackBtn} onPress={() => setManualBacMode(false)}>
-            <Ionicons name="camera-outline" size={18} color="#93c5fd" />
-            <Text style={styles.cameraBackBtnText}>{t('kbsNfcManualBacHide')}</Text>
-          </TouchableOpacity>
-        ) : null}
-
-        <View style={styles.bacCard}>
-          <Text style={styles.bacTitle}>{t('kbsNfcBacSection')}</Text>
-          <Text style={styles.bacSub}>{t('kbsNfcBacSectionSub')}</Text>
-          <Text style={styles.fieldLabel}>{t('kbsNfcDocNo')}</Text>
-          <TextInput
-            style={styles.fieldInput}
-            value={docNoInput}
-            onChangeText={setDocNoInput}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            placeholder="U12345678"
-            placeholderTextColor="#64748b"
-            editable={!reading && !saving}
-          />
-          <Text style={styles.fieldLabel}>{t('kbsNfcBirthDate')}</Text>
-          <TextInput
-            style={styles.fieldInput}
-            value={birthInput}
-            onChangeText={setBirthInput}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#64748b"
-            editable={!reading && !saving}
-          />
-          <Text style={styles.fieldLabel}>{t('kbsNfcExpiryDate')}</Text>
-          <TextInput
-            style={styles.fieldInput}
-            value={expiryInput}
-            onChangeText={setExpiryInput}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#64748b"
-            editable={!reading && !saving}
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.readBtn, !canManualRead && styles.readBtnDisabled]}
-          onPress={() => void handleManualNfcRead()}
-          disabled={!canManualRead}
-          activeOpacity={0.9}
-        >
-          {reading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="radio-outline" size={22} color="#fff" />
-              <Text style={styles.readBtnText}>{t('kbsNfcStartRead')}</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.stepBadge}>
-        <Text style={styles.stepBadgeText}>
-          {queue.length > 0 ? t('kbsNfcQueueBadge', { count: queue.length }) : t('kbsNfcQueueEmpty')}
-        </Text>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.queueStrip}>
-        {queue.map((item, index) => {
-          const name = [item.parsed.firstName, item.parsed.lastName].filter(Boolean).join(' ').trim();
-          const doc = item.parsed.documentNumber?.trim();
-          return (
-            <View key={item.id} style={styles.queueCard}>
-              <Pressable style={styles.queueThumbWrap} onPress={() => setGalleryIndex(index)}>
-                <Image source={{ uri: item.portraitUri }} style={styles.queueThumb} contentFit="cover" />
-                <Text style={styles.queueIndex}>{index + 1}</Text>
-              </Pressable>
-              <Text style={styles.queueName} numberOfLines={1}>
-                {name || '—'}
-              </Text>
-              <Text style={styles.queueDoc} numberOfLines={1}>
-                {doc || '—'}
-              </Text>
-              <TouchableOpacity
-                style={styles.queueInfoBtn}
-                onPress={() => setDetailIndex(index)}
-                hitSlop={8}
-                accessibilityLabel={t('kbsNfcDetailA11y')}
-              >
-                <Ionicons name="information-circle" size={20} color="#93c5fd" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.queueRemove}
-                onPress={() => removeFromQueue(item.id)}
-                hitSlop={8}
-                accessibilityLabel={t('kbsRemoveFromListA11y')}
-              >
-                <Ionicons name="close-circle" size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </ScrollView>
-
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <TouchableOpacity
-          style={[styles.forwardBtn, queue.length === 0 && styles.forwardBtnDisabled]}
-          onPress={goToReview}
-          disabled={queue.length === 0 || saving}
-        >
-          <Text style={styles.forwardBtnText}>{t('kbsNfcForwardRoom')}</Text>
-          <Ionicons name="arrow-forward" size={20} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      {saving ? (
-        <View style={styles.busyMask}>
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.busyText}>{saveStatus || t('kbsSaving')}</Text>
+      {nfcAvailable === false ? (
+        <View style={[styles.nfcWarn, { top: Math.max(insets.top, 12) + 56 }]}>
+          <Text style={styles.nfcWarnText}>{t('kbsNfcUnavailable')}</Text>
         </View>
       ) : null}
-
-      <Modal
-        visible={detailIndex !== null && queue[detailIndex ?? -1] != null}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setDetailIndex(null)}
-        {...ROOM_MODAL_ANDROID_PROPS}
-      >
-        <View style={styles.detailBackdrop}>
-          <Pressable style={styles.roomModalDismiss} onPress={() => setDetailIndex(null)} />
-          <View style={[styles.detailSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <View style={styles.detailHeader}>
-              <Text style={styles.detailTitle}>{t('kbsNfcDetailTitle')}</Text>
-              <Pressable onPress={() => setDetailIndex(null)} hitSlop={10}>
-                <Ionicons name="close" size={26} color="#fff" />
-              </Pressable>
-            </View>
-            {detailIndex != null && queue[detailIndex] ? (
-              <>
-                <Image
-                  source={{ uri: queue[detailIndex]!.portraitUri }}
-                  style={styles.detailPortrait}
-                  contentFit="cover"
-                />
-                <NfcParsedFieldsPanel parsed={queue[detailIndex]!.parsed} />
-              </>
-            ) : null}
-          </View>
-        </View>
-      </Modal>
-
-      <KbsZoomImageModal
-        items={queueGalleryItems}
-        initialIndex={galleryIndex ?? 0}
-        visible={galleryIndex !== null}
-        onClose={() => setGalleryIndex(null)}
-      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1220' },
+  root: { flex: 1, backgroundColor: '#000' },
   cameraLoader: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   topBar: {
     paddingHorizontal: 14,
@@ -883,178 +665,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   title: { color: '#fff', fontSize: 16, fontWeight: '800', flex: 1, textAlign: 'center' },
-  capturedListBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: 'rgba(37, 99, 235, 0.92)',
-  },
-  capturedListBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  manualToggle: {
+  nfcWarn: {
     position: 'absolute',
-    right: 14,
-    zIndex: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  manualToggleText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  centerPanel: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    alignItems: 'center',
-  },
-  nfcIconRing: {
-    width: 108,
-    height: 108,
-    borderRadius: 54,
-    backgroundColor: 'rgba(30, 58, 138, 0.55)',
-    borderWidth: 2,
-    borderColor: 'rgba(147, 197, 253, 0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  hintMain: { color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center' },
-  hintSub: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 6,
-    marginBottom: 14,
-    lineHeight: 18,
-  },
-  warn: {
-    color: '#fde68a',
-    fontSize: 13,
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  cameraBackBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(180, 83, 9, 0.92)',
     borderRadius: 12,
-    backgroundColor: 'rgba(37, 99, 235, 0.25)',
+    padding: 10,
+    zIndex: 30,
   },
-  cameraBackBtnText: { color: '#93c5fd', fontWeight: '700', fontSize: 13 },
-  bacCard: {
-    width: '100%',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    padding: 14,
-    marginBottom: 14,
-  },
-  bacTitle: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  bacSub: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 4, marginBottom: 10 },
-  fieldLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700', marginTop: 6 },
-  fieldInput: {
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#fff',
-    fontSize: 15,
-  },
-  readBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    width: '100%',
-    backgroundColor: theme.colors.primary,
-    borderRadius: 14,
-    paddingVertical: 15,
-  },
-  readBtnDisabled: { opacity: 0.45 },
-  readBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  stepBadge: {
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
-    marginBottom: 8,
-  },
-  stepBadgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  queueStrip: { paddingHorizontal: 14, gap: 10, paddingBottom: 8, minHeight: 118 },
-  queueCard: { width: 92, position: 'relative' },
-  queueThumbWrap: {
-    width: 92,
-    height: 92,
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: 'rgba(147, 197, 253, 0.5)',
-  },
-  queueThumb: { width: '100%', height: '100%' },
-  queueIndex: {
-    position: 'absolute',
-    left: 6,
-    top: 6,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 11,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  queueName: { color: '#fff', fontSize: 11, fontWeight: '700', marginTop: 4 },
-  queueDoc: { color: 'rgba(255,255,255,0.65)', fontSize: 10 },
-  queueInfoBtn: {
-    position: 'absolute',
-    left: -2,
-    bottom: 26,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius: 12,
-    padding: 2,
-  },
-  queueRemove: { position: 'absolute', right: -4, top: -4 },
-  bottomBar: { paddingHorizontal: 16, paddingTop: 8 },
-  forwardBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#2563eb',
-    borderRadius: 14,
-    paddingVertical: 14,
-  },
-  forwardBtnDisabled: { opacity: 0.4 },
-  forwardBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  busyMask: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  busyText: { color: '#fff', fontWeight: '700' },
+  nfcWarnText: { color: '#fff', fontWeight: '700', textAlign: 'center', fontSize: 13 },
   roomModalDismiss: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
   roomSubmitInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   detailBackdrop: { flex: 1, justifyContent: 'flex-end' },
-  detailSheet: {
-    backgroundColor: '#0f172a',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    maxHeight: '88%',
-  },
   detailSheetLight: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 18,
@@ -1063,28 +686,13 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     maxHeight: '88%',
   },
-  detailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
   detailHeaderLight: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 10,
   },
-  detailTitle: { color: '#fff', fontSize: 17, fontWeight: '800' },
   detailTitleLight: { color: '#0f172a', fontSize: 17, fontWeight: '800' },
-  detailPortrait: {
-    width: 88,
-    height: 110,
-    borderRadius: 10,
-    alignSelf: 'center',
-    marginBottom: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
   detailPortraitLight: {
     width: 88,
     height: 110,

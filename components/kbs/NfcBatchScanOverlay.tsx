@@ -15,12 +15,11 @@ type Props = {
   scanStep: ScanStep;
   queueCount: number;
   reading: boolean;
+  lastName?: string | null;
   torchEnabled: boolean;
   onToggleTorch: () => void;
   onBack: () => void;
   onFinish: () => void;
-  onGallery?: () => void;
-  galleryBusy?: boolean;
 };
 
 export function NfcBatchScanOverlay({
@@ -31,17 +30,16 @@ export function NfcBatchScanOverlay({
   scanStep,
   queueCount,
   reading,
+  lastName,
   torchEnabled,
   onToggleTorch,
   onBack,
   onFinish,
-  onGallery,
-  galleryBusy,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const borderColor =
-    successGlow || frameKind === 'locked'
+    successGlow || frameKind === 'locked' || scanStep === 'nfc'
       ? '#22c55e'
       : frameKind === 'reading' || frameKind === 'signal'
         ? '#fbbf24'
@@ -49,7 +47,7 @@ export function NfcBatchScanOverlay({
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <View style={[styles.topBar, { paddingTop: insets.top + 6 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={onBack} style={styles.topIconBtn} hitSlop={12} accessibilityLabel={t('back')}>
           <Ionicons name="chevron-back" size={28} color="#fff" />
         </TouchableOpacity>
@@ -58,11 +56,11 @@ export function NfcBatchScanOverlay({
           <Text style={styles.title} numberOfLines={1}>
             {t('kbsNfcBatchScanTitle')}
           </Text>
-          {queueCount > 0 ? (
-            <Text style={styles.groupSub}>{t('kbsNfcBatchQueueCount', { count: queueCount })}</Text>
-          ) : (
-            <Text style={styles.groupSub}>{t('kbsNfcBatchScanSub')}</Text>
-          )}
+          <Text style={styles.groupSub}>
+            {queueCount > 0
+              ? t('kbsNfcBatchQueueCount', { count: queueCount })
+              : t('kbsNfcBatchScanSub')}
+          </Text>
         </View>
 
         <TouchableOpacity
@@ -75,49 +73,70 @@ export function NfcBatchScanOverlay({
         </TouchableOpacity>
       </View>
 
-      <View style={styles.stepRow} pointerEvents="none">
-        <View style={[styles.stepPill, scanStep === 'mrz' && styles.stepPillActive]}>
-          <Text style={[styles.stepText, scanStep === 'mrz' && styles.stepTextActive]}>1 · MRZ</Text>
+      <View style={styles.steps} pointerEvents="none">
+        <View style={[styles.step, scanStep === 'mrz' && styles.stepOn]}>
+          <View style={[styles.stepDot, scanStep === 'mrz' && styles.stepDotOn]}>
+            <Text style={styles.stepNum}>1</Text>
+          </View>
+          <Text style={[styles.stepLabel, scanStep === 'mrz' && styles.stepLabelOn]}>MRZ</Text>
         </View>
-        <Ionicons name="arrow-forward" size={14} color="rgba(255,255,255,0.7)" />
-        <View style={[styles.stepPill, scanStep === 'nfc' && styles.stepPillActive]}>
-          <Text style={[styles.stepText, scanStep === 'nfc' && styles.stepTextActive]}>2 · NFC</Text>
+        <View style={styles.stepLine} />
+        <View style={[styles.step, scanStep === 'nfc' && styles.stepOn]}>
+          <View style={[styles.stepDot, scanStep === 'nfc' && styles.stepDotOn]}>
+            <Ionicons name="radio-outline" size={14} color="#fff" />
+          </View>
+          <Text style={[styles.stepLabel, scanStep === 'nfc' && styles.stepLabelOn]}>NFC</Text>
         </View>
       </View>
 
       <View style={styles.center} pointerEvents="none">
-        <View style={[styles.mrzFrame, { borderColor }]} />
-        <View style={styles.hintBox}>
-          {showSpinner || reading ? <ActivityIndicator color="#fff" size="small" style={{ marginBottom: 6 }} /> : null}
-          <Text style={styles.hint}>
-            {reading ? t('kbsNfcPresentPassport') : hint || t('kbsNfcBatchScanHint')}
-          </Text>
-        </View>
+        {scanStep === 'nfc' ? (
+          <View style={styles.nfcPulse}>
+            <View style={styles.nfcPulseInner}>
+              <Ionicons name="hardware-chip" size={52} color="#93c5fd" />
+            </View>
+            <Text style={styles.nfcTitle}>{t('kbsNfcPresentPassport')}</Text>
+            <Text style={styles.nfcSub}>{t('kbsNfcHoldPhoneHint')}</Text>
+          </View>
+        ) : (
+          <>
+            <View style={[styles.mrzFrame, { borderColor }]} />
+            <View style={styles.hintBox}>
+              {showSpinner ? (
+                <ActivityIndicator color="#fff" size="small" style={{ marginBottom: 8 }} />
+              ) : null}
+              <Text style={styles.hint}>{hint || t('kbsNfcBatchScanHint')}</Text>
+            </View>
+          </>
+        )}
       </View>
 
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
-        {onGallery ? (
-          <TouchableOpacity
-            style={styles.galleryBtn}
-            onPress={onGallery}
-            disabled={galleryBusy || reading}
-            accessibilityLabel={t('kbsGuestGalleryPick')}
-          >
-            {galleryBusy ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="images-outline" size={22} color="#fff" />
-            )}
-          </TouchableOpacity>
-        ) : null}
+      {queueCount > 0 || reading ? (
+        <View style={styles.toast} pointerEvents="none">
+          {reading ? (
+            <Text style={styles.toastText}>{t('kbsNfcReading')}</Text>
+          ) : lastName ? (
+            <Text style={styles.toastText}>
+              ✓ {lastName} · {t('kbsNfcBatchQueueCount', { count: queueCount })}
+            </Text>
+          ) : (
+            <Text style={styles.toastText}>{t('kbsNfcBatchQueueCount', { count: queueCount })}</Text>
+          )}
+        </View>
+      ) : null}
 
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <TouchableOpacity
           style={[styles.finishBtn, queueCount === 0 && styles.finishBtnDisabled]}
           onPress={onFinish}
           disabled={queueCount === 0 || reading}
         >
-          <Text style={styles.finishBtnText}>{t('kbsNfcFinishScanning')}</Text>
-          <Ionicons name="checkmark-done" size={20} color="#fff" />
+          <Text style={styles.finishBtnText}>
+            {queueCount > 0
+              ? t('kbsNfcFinishScanningCount', { count: queueCount })
+              : t('kbsNfcFinishScanning')}
+          </Text>
+          <Ionicons name="arrow-forward" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>
@@ -128,7 +147,7 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     gap: 8,
   },
   topIconBtn: {
@@ -140,71 +159,90 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   topCenter: { flex: 1, alignItems: 'center', minWidth: 0 },
-  title: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  groupSub: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2, fontWeight: '600' },
-  stepRow: {
+  title: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  groupSub: { color: 'rgba(255,255,255,0.78)', fontSize: 12, marginTop: 3, fontWeight: '600' },
+  steps: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    marginTop: 8,
+    marginTop: 14,
+    gap: 10,
   },
-  stepPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+  step: { flexDirection: 'row', alignItems: 'center', gap: 6, opacity: 0.55 },
+  stepOn: { opacity: 1 },
+  stepDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  stepPillActive: { backgroundColor: 'rgba(37, 99, 235, 0.85)' },
-  stepText: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '700' },
-  stepTextActive: { color: '#fff' },
+  stepDotOn: { backgroundColor: '#2563eb' },
+  stepNum: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  stepLabel: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 12 },
+  stepLabelOn: { color: '#fff' },
+  stepLine: { width: 28, height: 2, backgroundColor: 'rgba(255,255,255,0.28)', borderRadius: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   mrzFrame: {
-    width: '88%',
-    height: '22%',
+    width: '86%',
+    height: '20%',
     borderWidth: 3,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: 'transparent',
   },
-  hintBox: {
-    marginTop: 18,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-  },
+  hintBox: { marginTop: 20, paddingHorizontal: 28, alignItems: 'center' },
   hint: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.6)',
+    lineHeight: 21,
+    textShadowColor: 'rgba(0,0,0,0.55)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  galleryBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+  nfcPulse: { alignItems: 'center', paddingHorizontal: 28 },
+  nfcPulseInner: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(37, 99, 235, 0.35)',
+    borderWidth: 2,
+    borderColor: 'rgba(147, 197, 253, 0.65)',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 18,
   },
+  nfcTitle: { color: '#fff', fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  nfcSub: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  toast: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.82)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.35)',
+  },
+  toastText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  bottomBar: { paddingHorizontal: 16, paddingTop: 8 },
   finishBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     backgroundColor: '#2563eb',
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 16,
+    paddingVertical: 15,
   },
-  finishBtnDisabled: { opacity: 0.45 },
-  finishBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  finishBtnDisabled: { opacity: 0.4 },
+  finishBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 });
