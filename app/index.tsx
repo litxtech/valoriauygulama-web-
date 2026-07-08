@@ -42,6 +42,7 @@ import { isPublicWebPath } from '@/lib/publicWebRoute';
 import { publicContractHref, publicMenuHref, publicPaymentNewHref } from '@/lib/publicPortalNav';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
+import { enterAppAfterSignIn } from '@/lib/enterAppAfterSignIn';
 import { hasPendingNotificationData } from '@/lib/notificationNavigation';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import ExpoNotifications from '@/lib/expoNotificationsModule';
@@ -103,26 +104,7 @@ function LobbyBootScreen() {
 }
 
 /** Giriş sonrası panele yönlendir — personel ise partner bekleme. */
-async function enterAppAfterSignIn(router: ReturnType<typeof useRouter>, userId: string): Promise<void> {
-  const { staff } = useAuthStore.getState();
-  const partner = staff ? null : usePartnerAuthStore.getState().partner;
-  const surface = usePartnerAppSurfaceStore.getState().surface;
-  const accepted = await hasPolicyConsent(userId);
-  let path = '/customer';
-  let nextParam = 'customer';
-  if (staff) {
-    path = '/staff';
-    nextParam = 'staff';
-  } else if (partner) {
-    path = resolvePartnerEntryPath(partner, surface);
-    nextParam = 'partner';
-  }
-  if (accepted) {
-    safeRouterReplace(router, path);
-  } else {
-    safeRouterReplace(router, { pathname: '/policies', params: { next: nextParam } });
-  }
-}
+export { enterAppAfterSignIn } from '@/lib/enterAppAfterSignIn';
 
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -303,9 +285,7 @@ export default function HomeScreen() {
     if (hasPendingNotificationData()) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const pathname = window.location.pathname || '';
-      const normalized = pathname.replace(/\/$/, '') || '/';
       if (isPublicWebPath(pathname, window.location.search || '')) return;
-      if (normalized === '/') return;
       if (
         pathname.includes('/guest/sign-one') ||
         pathname.includes('/guest/success') ||
@@ -560,7 +540,7 @@ export default function HomeScreen() {
   }
 
   if (user || staff) {
-    return <BootScreen />;
+    return Platform.OS === 'web' ? <LobbyBootScreen /> : <BootScreen />;
   }
 
   return (

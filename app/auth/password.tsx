@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { safeRouterReplace } from '@/lib/safeRouter';
+import { enterAppAfterSignIn } from '@/lib/enterAppAfterSignIn';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { completeSignIn, useAuthStore } from '@/stores/authStore';
@@ -64,8 +65,8 @@ export default function AuthPasswordScreen() {
             await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
             clearPendingRoom();
           }
-          // Lobi yönlendirmesi staff/partner durumuna göre doğru panele gider.
-          safeRouterReplace(router, '/');
+          // Personel / misafir paneline doğrudan yönlendir (web'de / boş ekranda kalmasın).
+          await enterAppAfterSignIn(router, data.user.id);
         }
       }
     } catch (err: unknown) {

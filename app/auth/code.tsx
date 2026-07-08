@@ -11,10 +11,11 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
-import { useAuthStore } from '@/stores/authStore';
+import { completeSignIn, useAuthStore } from '@/stores/authStore';
 import { useCustomerRoomStore } from '@/stores/customerRoomStore';
 import { linkGuestToRoom } from '@/lib/linkGuestToRoom';
 import { log } from '@/lib/logger';
+import { enterAppAfterSignIn } from '@/lib/enterAppAfterSignIn';
 
 const CODE_LENGTH = 6;
 
@@ -64,14 +65,18 @@ export default function AuthCodeScreen() {
         if (res.error) throw err;
       }
       log.info('AuthCode', 'OTP doğrulandı');
-      await useAuthStore.getState().loadSession();
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+      const sessionUser = sessionData.session?.user;
+      if (!sessionUser) throw new Error('Oturum kullanıcısı alınamadı');
+      await completeSignIn(sessionUser);
       const { user } = useAuthStore.getState();
       const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
       if (pendingRoom && user?.email) {
         await linkGuestToRoom(user.email, pendingRoom.roomId, user.user_metadata?.full_name);
         clearPendingRoom();
       }
-      router.replace('/');
+      await enterAppAfterSignIn(router, sessionUser.id);
     } catch (err: unknown) {
       const msg = (err as Error)?.message ?? t('codeInvalidOrExpired');
       log.error('AuthCode', 'verifyOtp', err, msg);
