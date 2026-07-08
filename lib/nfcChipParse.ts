@@ -111,6 +111,10 @@ export function resolveNfcRawMrz(
   for (const raw of candidates) {
     if (isPlausibleNfcMrz(raw)) return raw;
   }
+  for (const raw of candidates) {
+    const parsed = parseMrzToNormalized(raw);
+    if (parsed.documentNumber || parsed.firstName || parsed.lastName) return raw;
+  }
   return null;
 }
 

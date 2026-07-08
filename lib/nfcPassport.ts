@@ -9,6 +9,7 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 import { isoDateToMrzSix, mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { getEIdReader, isNfcNativeLinked } from '@/lib/nfcNative';
 import { mapEIdChipToParsed, type EIdChipData, type NfcBacKeyInput } from '@/lib/nfcChipParse';
+import { mergeParsedDocuments } from '@/lib/mergeParsedDocument';
 
 export type { NfcBacKeyInput } from '@/lib/nfcChipParse';
 
@@ -268,6 +269,8 @@ export type NfcReadOptions = {
   /** true olunca mevcut okuma iptal sayılır */
   signal?: { cancelled: boolean };
   timeoutMs?: number;
+  /** Kamera MRZ kilidi — çip alanları eksikse ad, belge no vb. buradan tamamlanır */
+  mrzLock?: { mrz?: string | null; parsed?: ParsedDocument | null };
 };
 
 /**
@@ -343,7 +346,7 @@ export async function readPassportViaNfc(
 
     const bacBirth = normalizeToMrzSix(bac.birthDate);
     const bacExpiry = normalizeToMrzSix(bac.expiryDate);
-    const forced: ParsedDocument = {
+    let forced: ParsedDocument = {
       ...parsed,
       documentType: parsed.documentType || 'passport',
       documentNumber: parsed.documentNumber || bac.documentNumber.replace(/</g, ''),
@@ -354,11 +357,19 @@ export async function readPassportViaNfc(
       warnings: [...new Set([...(parsed.warnings ?? []), 'nfc_chip'])],
     };
 
+    if (opts?.mrzLock?.parsed) {
+      forced = mergeParsedDocuments(forced, opts.mrzLock.parsed, {
+        rawMrzFallback: opts.mrzLock.mrz,
+      });
+    }
+
+    const finalRawMrz = forced.rawMrz ?? rawMrz ?? opts?.mrzLock?.mrz ?? null;
+
     return {
       ok: true,
       data: {
         parsed: forced,
-        rawMrz: rawMrz ?? forced.rawMrz,
+        rawMrz: finalRawMrz,
         portraitUri,
       },
     };

@@ -317,7 +317,10 @@ export default function KbsNfcCaptureScreen() {
   );
 
   const runNfcRead = useCallback(
-    async (bac: { documentNumber: string; birthDate: string; expiryDate: string }) => {
+    async (
+      bac: { documentNumber: string; birthDate: string; expiryDate: string },
+      mrzLock?: { mrz: string; parsed: ParsedDocument }
+    ) => {
       if (readLockRef.current || !isFocused) return false;
       if (!nativeReady || getEIdReader() == null) {
         Alert.alert(t('kbsNfcNativeBuildTitle'), t('kbsNfcNativeBuildBody'));
@@ -336,6 +339,7 @@ export default function KbsNfcCaptureScreen() {
         let result = await readPassportViaNfc(bac, {
           signal: nfcCancelRef.current,
           timeoutMs: Platform.OS === 'ios' ? 55000 : 45000,
+          mrzLock,
         });
 
         if (!result.ok && (result.code === 'cancelled' || nfcCancelRef.current.cancelled)) {
@@ -359,6 +363,7 @@ export default function KbsNfcCaptureScreen() {
           result = await readPassportViaNfc(bac, {
             signal: nfcCancelRef.current,
             timeoutMs: Platform.OS === 'ios' ? 55000 : 45000,
+            mrzLock,
           });
           if (!result.ok) {
             if (result.code !== 'cancelled' && !nfcCancelRef.current.cancelled) {
@@ -404,7 +409,7 @@ export default function KbsNfcCaptureScreen() {
 
       // Ses/haptic NFC başarısında — kilitte gecikme yaratma, hemen çipe geç.
       triggerMrzSuccessHaptic(0, true);
-      await runNfcRead(bac);
+      await runNfcRead(bac, { mrz: payload.mrz, parsed: payload.parsed });
       bumpScanCycle();
     },
     [bumpScanCycle, reading, runNfcRead, t]
