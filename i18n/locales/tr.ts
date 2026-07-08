@@ -537,6 +537,7 @@ const translation = {
       kbsNfcInvalidMrzKey: 'MRZ bilgileri çiple uyuşmuyor',
       kbsNfcReadFailed: 'NFC pasaport okuma başarısız.',
       kbsNfcUnavailable: 'NFC bu cihazda kullanılamıyor veya kapalı.',
+      kbsNfcChipModuleMissing: 'NFC modülü bu kurulumda görünmüyor. Yeni development build yükleyin.',
       kbsNfcBacInvalid: 'Belge no ve tarihleri kontrol edin (YYYY-MM-DD).',
       kbsNfcNativeBuildTitle: 'NFC için native derleme gerekli',
       kbsNfcNativeBuildBody:

@@ -38,13 +38,10 @@ import {
   readPassportViaNfc,
 } from '@/lib/nfcPassport';
 import { saveKbsNfcCaptureItemsParallel } from '@/lib/kbsNfcCaptureSave';
-import { NfcNativeBuildRequired } from '@/components/kbs/NfcNativeBuildRequired';
 import { NfcParsedFieldsPanel } from '@/components/kbs/NfcParsedFieldsPanel';
 import { NfcFamilyMemberCard } from '@/components/kbs/NfcFamilyMemberCard';
 import { NfcBatchScanOverlay } from '@/components/kbs/NfcBatchScanOverlay';
-import { MrzNativeBuildRequired } from '@/components/mrz/MrzNativeBuildRequired';
 import type { MrzLockedPayload, MrzVisionUiState } from '@/components/mrz/mrzVisionTypes';
-import { isMrzVisionScannerAvailable } from '@/lib/scanner/mrzVisionAvailability';
 import {
   getMrzVisionScannerCached,
   preloadMrzVisionScanner,
@@ -68,7 +65,6 @@ type ScanStep = 'mrz' | 'nfc';
 const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
 const IS_ANDROID = Platform.OS === 'android';
 const MRZ_LOCK_DEBOUNCE_MS = 650;
-const VISION_OK = isMrzVisionScannerAvailable();
 
 const ROOM_MODAL_ANDROID_PROPS = IS_ANDROID
   ? ({ statusBarTranslucent: true, navigationBarTranslucent: true } as const)
@@ -119,7 +115,7 @@ export default function KbsCaptureNfcScreen() {
 
   const [phase, setPhase] = useState<FlowPhase>('scan');
   const [nfcAvailable, setNfcAvailable] = useState<boolean | null>(null);
-  const [nativeReady] = useState(() => isNfcPassportNativeReady());
+  const [nativeReady, setNativeReady] = useState(() => isNfcPassportNativeReady());
   const [reading, setReading] = useState(false);
   const [scanStep, setScanStep] = useState<ScanStep>('mrz');
   const [queue, setQueue] = useState<NfcQueueItem[]>([]);
@@ -152,15 +148,17 @@ export default function KbsCaptureNfcScreen() {
 
   const roomNoTrimmed = roomNoInput.trim();
   const phoneTrimmed = phoneInput.trim();
-  const cameraScanEnabled = VISION_OK && phase === 'scan' && isFocused && !reading && nativeReady;
+  const cameraScanEnabled = phase === 'scan' && isFocused && !reading;
 
   useEffect(() => {
-    if (!nativeReady) {
+    const ready = isNfcPassportNativeReady();
+    setNativeReady(ready);
+    if (!ready) {
       setNfcAvailable(false);
       return;
     }
     void isNfcPassportAvailable().then(setNfcAvailable);
-  }, [nativeReady]);
+  }, [isFocused]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -168,7 +166,7 @@ export default function KbsCaptureNfcScreen() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!VISION_OK || VisionScanner) return;
+    if (VisionScanner) return;
     let cancelled = false;
     void preloadMrzVisionScanner().then((Comp) => {
       if (!cancelled && Comp) setVisionScanner(() => Comp);
@@ -441,38 +439,6 @@ export default function KbsCaptureNfcScreen() {
     [queue, roomNoTrimmed]
   );
 
-  if (!nativeReady) {
-    return (
-      <View style={styles.root}>
-        <StatusBar style="light" />
-        <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
-          <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel={t('back')}>
-            <Ionicons name="chevron-back" size={30} color="#fff" />
-          </Pressable>
-          <Text style={styles.title}>{t('kbsNfcCaptureTitle')}</Text>
-          <View style={{ width: 44 }} />
-        </View>
-        <NfcNativeBuildRequired />
-      </View>
-    );
-  }
-
-  if (!VISION_OK) {
-    return (
-      <View style={styles.root}>
-        <StatusBar style="light" />
-        <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
-          <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel={t('back')}>
-            <Ionicons name="chevron-back" size={30} color="#fff" />
-          </Pressable>
-          <Text style={styles.title}>{t('kbsNfcCaptureTitle')}</Text>
-          <View style={{ width: 44 }} />
-        </View>
-        <MrzNativeBuildRequired />
-      </View>
-    );
-  }
-
   if (phase === 'review') {
     return (
       <KeyboardAvoidingView
@@ -638,9 +604,11 @@ export default function KbsCaptureNfcScreen() {
         onFinish={goToReview}
       />
 
-      {nfcAvailable === false ? (
+      {!nativeReady || nfcAvailable === false ? (
         <View style={[styles.nfcWarn, { top: Math.max(insets.top, 12) + 56 }]}>
-          <Text style={styles.nfcWarnText}>{t('kbsNfcUnavailable')}</Text>
+          <Text style={styles.nfcWarnText}>
+            {!nativeReady ? t('kbsNfcChipModuleMissing') : t('kbsNfcUnavailable')}
+          </Text>
         </View>
       ) : null}
     </View>

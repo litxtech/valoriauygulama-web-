@@ -532,6 +532,7 @@ const translation = {
       kbsNfcInvalidMrzKey: 'MRZ data does not match the chip',
       kbsNfcReadFailed: 'NFC passport read failed.',
       kbsNfcUnavailable: 'NFC is not available or disabled on this device.',
+      kbsNfcChipModuleMissing: 'NFC module is missing in this install. Install a new development build.',
       kbsNfcBacInvalid: 'Check document no and dates (YYYY-MM-DD).',
       kbsNfcNativeBuildTitle: 'Native build required for NFC',
       kbsNfcNativeBuildBody:

@@ -127,7 +127,7 @@ export async function writeNfcPlaceholderImageUri(): Promise<string> {
 /** Native EIdReader modülü binary içinde mi? */
 export function isNfcPassportNativeReady(): boolean {
   if (Platform.OS === 'web') return false;
-  return isNfcNativeLinked() && getEIdReader() != null;
+  return getEIdReader() != null || isNfcNativeLinked();
 }
 
 export async function isNfcPassportAvailable(): Promise<boolean> {

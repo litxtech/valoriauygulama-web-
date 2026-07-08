@@ -11,21 +11,32 @@ export type EIdReaderNative = {
   stopReading: () => void;
 };
 
-/** Derlenmiş JS girişi — package.json "react-native": "src/index" Metro'da codegen modül hatası verir. */
-export function loadEIdReaderModule(): { default: EIdReaderNative } | EIdReaderNative | null {
+/**
+ * Doğrudan TurboModule — paket `getEnforcing` ile yüklenirken JS hatası verse bile
+ * native bağlıysa okuma yapılabilsin.
+ */
+export function getEIdReader(): EIdReaderNative | null {
   if (Platform.OS === 'web') return null;
+
+  try {
+    const tm = TurboModuleRegistry.get('EIdReader') as EIdReaderNative | null;
+    if (tm && typeof tm.startReading === 'function') return tm;
+  } catch {
+    /* ignore */
+  }
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require('@2060.io/react-native-eid-reader/lib/commonjs/index.js');
+    const mod = require('@2060.io/react-native-eid-reader/lib/commonjs/index.js') as
+      | { default?: EIdReaderNative }
+      | EIdReaderNative;
+    const reader = (mod as { default?: EIdReaderNative }).default ?? (mod as EIdReaderNative);
+    if (reader && typeof reader.startReading === 'function') return reader;
   } catch {
-    return null;
+    /* Expo Go / eski client */
   }
-}
 
-export function getEIdReader(): EIdReaderNative | null {
-  const mod = loadEIdReaderModule();
-  if (!mod) return null;
-  return ((mod as { default?: EIdReaderNative }).default ?? mod) as EIdReaderNative;
+  return null;
 }
 
 /** EIdReader TurboModule native binary'de kayıtlı mı? */
