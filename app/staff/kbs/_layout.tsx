@@ -34,7 +34,8 @@ export default function KbsLayout() {
   }, [staff?.id]);
 
   if (idCaptureWriteRoute && !idCaptureWriteAccess) {
-    return <Redirect href="/staff" />;
+    // Sessizce /staff'a atma — kullanıcıya net mesaj
+    return <Redirect href={'/staff/(tabs)' as Href} />;
   }
 
   if (idCaptureReadRoute && !idCaptureReadAccess) {

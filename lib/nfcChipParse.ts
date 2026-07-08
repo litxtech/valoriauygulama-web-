@@ -26,6 +26,9 @@ export type EIdChipData = {
   lastName?: string;
   mrz?: string;
   nationality?: string;
+  /** DG11 veya native ek alanlar */
+  issuingAuthority?: string;
+  fullName?: string;
 };
 
 function mapGender(g?: string): ParsedDocument['gender'] {
@@ -130,7 +133,11 @@ function mergeChipExtras(parsed: ParsedDocument, data: EIdChipData): ParsedDocum
     firstName: names.firstName ?? parsed.firstName ?? data.firstName?.trim() ?? null,
     lastName: names.lastName ?? parsed.lastName ?? data.lastName?.trim() ?? null,
     middleName: names.middleName ?? parsed.middleName,
-    fullName: names.fullName ?? parsed.fullName,
+    fullName:
+      names.fullName ??
+      parsed.fullName ??
+      data.fullName?.trim() ??
+      null,
     nationalityCode,
     birthDate: parsed.birthDate ?? isoFromChipDate(data.birthDate, 'birth'),
     expiryDate: parsed.expiryDate ?? isoFromChipDate(data.expiryDate, 'expiry'),
@@ -140,7 +147,7 @@ function mergeChipExtras(parsed: ParsedDocument, data: EIdChipData): ParsedDocum
     placeOfBirth: data.placeOfBirth?.trim() || parsed.placeOfBirth || null,
     personalNumber:
       data.identityNo?.replace(/</g, '').trim() || parsed.personalNumber || null,
-    confidence: Math.max(parsed.confidence ?? 0, 0.98),
+    confidence: Math.max(parsed.confidence ?? 0, 0.99),
     checksumsValid: parsed.checksumsValid ?? true,
     warnings,
   };

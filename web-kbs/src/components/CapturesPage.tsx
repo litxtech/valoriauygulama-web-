@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import {
   buildFamilyIndex,
@@ -38,7 +38,7 @@ function startOfToday(): number {
 
 function startOfWeek(): number {
   const d = new Date();
-  const day = (d.getDay() + 6) % 7; // Pazartesi = 0
+  const day = (d.getDay() + 6) % 7;
   d.setDate(d.getDate() - day);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
@@ -54,45 +54,62 @@ export function CapturesPage() {
   const { session, signOut } = useAuth();
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queryInput, setQueryInput] = useState('');
   const [query, setQuery] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
   const [selected, setSelected] = useState<CaptureItem | null>(null);
   const [live, setLive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [visibleCount, setVisibleCount] = useState(48);
+  const [, startTransition] = useTransition();
 
   const hotelRef = useRef<string | null>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const initialLoadDone = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    const soft = opts?.soft === true && initialLoadDone.current;
     try {
       setError(null);
+      if (soft) setRefreshing(true);
+      else setLoading(true);
+
       let hotelId = hotelRef.current;
       if (!hotelId) {
         const ctx = await resolveOpsContext();
         if (!ctx.ok) {
           setError(ctx.message);
           setLoading(false);
+          setRefreshing(false);
           return;
         }
         hotelId = ctx.hotelId;
         hotelRef.current = hotelId;
       }
       const data = await fetchCaptures(hotelId);
-      setItems(data);
-      setLastUpdated(new Date());
+      startTransition(() => {
+        setItems(data);
+        setLastUpdated(new Date());
+        setVisibleCount(48);
+      });
+      initialLoadDone.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Liste yüklenemedi');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   const scheduleReload = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     reloadTimer.current = setTimeout(() => {
-      void load();
-    }, 400);
+      void load({ soft: true });
+    }, 650);
   }, [load]);
 
   useEffect(() => {
@@ -110,6 +127,19 @@ export function CapturesPage() {
       unsub();
     };
   }, [scheduleReload, items.length]);
+
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      startTransition(() => {
+        setQuery(queryInput.trim());
+        setVisibleCount(48);
+      });
+    }, 180);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [queryInput]);
 
   const familyIndex = useMemo(() => buildFamilyIndex(items), [items]);
 
@@ -138,9 +168,38 @@ export function CapturesPage() {
     [items, range, query]
   );
 
+  const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+  const hasMore = visible.length < filtered.length;
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          startTransition(() => setVisibleCount((n) => Math.min(n + 36, filtered.length)));
+        }
+      },
+      { rootMargin: '400px 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, filtered.length, visible.length]);
+
   const handlePhoneSaved = useCallback((id: string, phone: string | null) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, guest_phone_submitted: phone } : it)));
     setSelected((cur) => (cur && cur.id === id ? { ...cur, guest_phone_submitted: phone } : cur));
+  }, []);
+
+  const openCard = useCallback((item: CaptureItem) => {
+    setSelected(item);
+  }, []);
+
+  const setRangeSafe = useCallback((next: RangeKey | ((r: RangeKey) => RangeKey)) => {
+    startTransition(() => {
+      setRange(next);
+      setVisibleCount(48);
+    });
   }, []);
 
   const email = session?.user?.email ?? '';
@@ -162,51 +221,70 @@ export function CapturesPage() {
           <input
             className="search"
             placeholder="Ad, oda, no, uyruk, personel ara…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={queryInput}
+            onChange={(e) => setQueryInput(e.target.value)}
           />
-          <button className="btn-ghost" onClick={() => void load()}>
-            Yenile
+          <button
+            type="button"
+            className={`btn-ghost${refreshing ? ' is-busy' : ''}`}
+            onClick={() => void load({ soft: true })}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Güncelleniyor…' : 'Yenile'}
           </button>
           <div className="user-chip" title={email}>
             {email}
           </div>
-          <button className="btn-ghost" onClick={() => void signOut()}>
+          <button type="button" className="btn-ghost" onClick={() => void signOut()}>
             Çıkış
           </button>
         </div>
       </header>
 
-      <main className="content">
+      <main className={`content${refreshing ? ' is-refreshing' : ''}`}>
         {error ? (
           <div className="state-box error">
             <p>{error}</p>
-            <button className="btn-primary" onClick={() => void load()}>
+            <button type="button" className="btn-primary" onClick={() => void load()}>
               Tekrar dene
             </button>
           </div>
         ) : loading ? (
-          <div className="state-box">Yükleniyor…</div>
+          <div className="grid grid-skeleton" aria-busy aria-label="Yükleniyor">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="card card-skeleton">
+                <div className="card-thumb skeleton-block" />
+                <div className="card-body">
+                  <div className="skeleton-line w70" />
+                  <div className="skeleton-line w40" />
+                  <div className="skeleton-line w55" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             <div className="stats-bar">
               <button
+                type="button"
                 className={`stat ${range === 'today' ? 'active' : ''}`}
-                onClick={() => setRange((r) => (r === 'today' ? 'all' : 'today'))}
+                onClick={() => setRangeSafe((r) => (r === 'today' ? 'all' : 'today'))}
               >
                 <span className="stat-num">{stats.today}</span>
                 <span className="stat-label">Bugün</span>
               </button>
               <button
+                type="button"
                 className={`stat ${range === 'week' ? 'active' : ''}`}
-                onClick={() => setRange((r) => (r === 'week' ? 'all' : 'week'))}
+                onClick={() => setRangeSafe((r) => (r === 'week' ? 'all' : 'week'))}
               >
                 <span className="stat-num">{stats.week}</span>
                 <span className="stat-label">Bu hafta</span>
               </button>
               <button
+                type="button"
                 className={`stat ${range === 'all' ? 'active' : ''}`}
-                onClick={() => setRange('all')}
+                onClick={() => setRangeSafe('all')}
               >
                 <span className="stat-num">{stats.total}</span>
                 <span className="stat-label">Toplam</span>
@@ -220,9 +298,7 @@ export function CapturesPage() {
 
             {filtered.length === 0 ? (
               <div className="state-box">
-                {query || range !== 'all'
-                  ? 'Seçime uygun kayıt yok.'
-                  : 'Henüz çekilen kimlik yok.'}
+                {query || range !== 'all' ? 'Seçime uygun kayıt yok.' : 'Henüz çekilen kimlik yok.'}
               </div>
             ) : (
               <>
@@ -230,22 +306,22 @@ export function CapturesPage() {
                   <span>
                     {filtered.length} kayıt
                     {range === 'today' ? ' · Bugün' : range === 'week' ? ' · Bu hafta' : ''}
+                    {hasMore ? ` · ${visible.length} gösteriliyor` : ''}
                   </span>
                 </div>
                 <div className="grid">
-                  {filtered.map((item) => (
+                  {visible.map((item) => (
                     <CaptureCard
                       key={item.id}
                       item={item}
-                      onOpen={setSelected}
+                      onOpen={openCard}
                       familyCount={
-                        item.mrz_batch_key
-                          ? familyIndex.get(item.mrz_batch_key)?.length ?? 0
-                          : 0
+                        item.mrz_batch_key ? familyIndex.get(item.mrz_batch_key)?.length ?? 0 : 0
                       }
                     />
                   ))}
                 </div>
+                {hasMore ? <div ref={sentinelRef} className="grid-sentinel" aria-hidden /> : null}
               </>
             )}
           </>

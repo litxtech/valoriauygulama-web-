@@ -49,7 +49,7 @@ export default function StaffKbsTab() {
             title={t('kbsNfcCaptureTileTitle')}
             subtitle={t('kbsNfcCaptureTileSub')}
             icon="hardware-chip-outline"
-            onPress={() => router.push('/staff/kbs/capture-nfc' as never)}
+            onPress={() => router.push('/staff/(tabs)/nfc' as never)}
           />
         </>
       ) : null}

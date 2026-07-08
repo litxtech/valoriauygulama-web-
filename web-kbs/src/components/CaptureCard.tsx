@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import type { CaptureItem } from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
@@ -14,7 +15,7 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   residence_permit: 'İkamet',
 };
 
-export function CaptureCard({ item, onOpen, familyCount = 0 }: Props) {
+function CaptureCardInner({ item, onOpen, familyCount = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
@@ -30,11 +31,21 @@ export function CaptureCard({ item, onOpen, familyCount = 0 }: Props) {
     minute: '2-digit',
   });
 
+  const handleOpen = useCallback(() => {
+    onOpen(item);
+  }, [onOpen, item]);
+
   return (
-    <button className="card" onClick={() => onOpen(item)}>
+    <button type="button" className="card" onClick={handleOpen}>
       <div className="card-thumb">
         {item.front_image_url ? (
-          <img src={item.front_image_url} alt={name} loading="lazy" />
+          <img
+            src={item.front_image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            fetchPriority="low"
+          />
         ) : (
           <div className="card-thumb-empty">Görsel yok</div>
         )}
@@ -61,17 +72,23 @@ export function CaptureCard({ item, onOpen, familyCount = 0 }: Props) {
         </div>
 
         <div className={`card-phone ${item.guest_phone_submitted ? 'has' : 'empty'}`}>
-          <span className="ico">📞</span>
+          <span className="ico" aria-hidden>
+            📞
+          </span>
           {item.guest_phone_submitted ? item.guest_phone_submitted : 'Numara ekle'}
         </div>
 
         <div className="card-foot">
           <span className="card-hotel" title={item.captured_by_hotel_name ?? ''}>
-            <span className="ico">🏨</span>
+            <span className="ico" aria-hidden>
+              🏨
+            </span>
             {item.captured_by_hotel_name ?? 'Otel —'}
           </span>
           <span className="card-staff" title={item.captured_by_staff_name ?? ''}>
-            <span className="ico">👤</span>
+            <span className="ico" aria-hidden>
+              👤
+            </span>
             {item.captured_by_staff_name ?? '—'}
           </span>
         </div>
@@ -80,3 +97,5 @@ export function CaptureCard({ item, onOpen, familyCount = 0 }: Props) {
     </button>
   );
 }
+
+export const CaptureCard = memo(CaptureCardInner);

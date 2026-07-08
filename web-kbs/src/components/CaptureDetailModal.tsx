@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useTransition } from 'react';
 import { familyMembersOf, updateCaptureGuestPhone, type CaptureItem } from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
+import { ZoomLightbox } from './ZoomLightbox';
 
 type Props = {
   item: CaptureItem;
@@ -18,6 +19,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   const fields = buildKbsCopyFields(parsed);
   const [copied, setCopied] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
 
   const [phone, setPhone] = useState(item.guest_phone_submitted ?? '');
   const [phoneSaving, setPhoneSaving] = useState(false);
@@ -26,6 +28,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   useEffect(() => {
     setPhone(item.guest_phone_submitted ?? '');
     setPhoneMsg(null);
+    setZoom(null);
   }, [item.id, item.guest_phone_submitted]);
 
   const savePhone = async () => {
@@ -50,8 +53,9 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   const family = familyMembersOf(item, familyIndex);
 
   useEffect(() => {
+    if (zoom) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') (zoom ? setZoom(null) : onClose());
+      if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -75,6 +79,17 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   const images = [item.front_image_url, item.back_image_url].filter(Boolean) as string[];
   const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR');
 
+  const openZoom = useCallback((src: string) => {
+    setZoom(src);
+  }, []);
+
+  const selectMember = useCallback(
+    (m: CaptureItem) => {
+      startTransition(() => onSelect(m));
+    },
+    [onSelect]
+  );
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -89,7 +104,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
               ) : null}
             </div>
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Kapat">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Kapat">
             ×
           </button>
         </header>
@@ -98,7 +113,15 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
           <div className="modal-images">
             {images.length ? (
               images.map((src) => (
-                <img key={src} src={src} alt={name} onClick={() => setZoom(src)} />
+                <button
+                  key={src}
+                  type="button"
+                  className="modal-img-btn"
+                  onClick={() => openZoom(src)}
+                  aria-label="Yakınlaştır"
+                >
+                  <img src={src} alt={name} decoding="async" />
+                </button>
               ))
             ) : (
               <div className="card-thumb-empty">Görsel yok</div>
@@ -108,10 +131,15 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
           <div className="modal-fields">
             <div className="phone-block">
               <div className="phone-block-head">
-                <span className="phone-ico">📞</span>
+                <span className="phone-ico" aria-hidden>
+                  📞
+                </span>
                 <div>
                   <h3>Müşteri Numarası</h3>
-                  <span className="phone-sub">{name}{item.room_number ? ` · Oda ${item.room_number}` : ''}</span>
+                  <span className="phone-sub">
+                    {name}
+                    {item.room_number ? ` · Oda ${item.room_number}` : ''}
+                  </span>
                 </div>
               </div>
               <div className="phone-row">
@@ -126,7 +154,12 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
                     if (e.key === 'Enter') void savePhone();
                   }}
                 />
-                <button className="btn-primary phone-save" onClick={() => void savePhone()} disabled={phoneSaving}>
+                <button
+                  type="button"
+                  className="btn-primary phone-save"
+                  onClick={() => void savePhone()}
+                  disabled={phoneSaving}
+                >
                   {phoneSaving ? 'Kaydediliyor…' : 'Kaydet'}
                 </button>
               </div>
@@ -135,7 +168,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
 
             <div className="fields-head">
               <h3>Kimlik Bilgileri</h3>
-              <button className="btn-ghost" onClick={copyAll}>
+              <button type="button" className="btn-ghost" onClick={copyAll}>
                 {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
               </button>
             </div>
@@ -145,7 +178,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
             ) : (
               <ul className="field-list">
                 {fields.map((f) => (
-                  <li key={f.key} onClick={() => copy(f.key, f.value)} title="Kopyalamak için tıkla">
+                  <li key={f.key} onClick={() => void copy(f.key, f.value)} title="Kopyalamak için tıkla">
                     <span className="field-label">{f.label}</span>
                     <span className="field-value">{f.value}</span>
                     <span className="field-copy">{copied === f.key ? '✓' : '⧉'}</span>
@@ -192,18 +225,16 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
                       <li
                         key={m.id}
                         className={isCurrent ? 'current' : ''}
-                        onClick={() => !isCurrent && onSelect(m)}
+                        onClick={() => !isCurrent && selectMember(m)}
                         title={isCurrent ? 'Görüntülenen kişi' : 'Aç'}
                       >
                         {m.front_image_url ? (
-                          <img src={m.front_image_url} alt={mName} loading="lazy" />
+                          <img src={m.front_image_url} alt="" loading="lazy" decoding="async" />
                         ) : (
                           <span className="family-noimg">—</span>
                         )}
                         <span className="family-name">{mName}</span>
-                        <span className="family-room">
-                          {m.room_number ? `Oda ${m.room_number}` : ''}
-                        </span>
+                        <span className="family-room">{m.room_number ? `Oda ${m.room_number}` : ''}</span>
                       </li>
                     );
                   })}
@@ -214,11 +245,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
         </div>
       </div>
 
-      {zoom ? (
-        <div className="zoom-overlay" onClick={() => setZoom(null)}>
-          <img src={zoom} alt={name} />
-        </div>
-      ) : null}
+      {zoom ? <ZoomLightbox src={zoom} alt={name} onClose={() => setZoom(null)} /> : null}
     </div>
   );
 }

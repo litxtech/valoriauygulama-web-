@@ -528,9 +528,7 @@ function StaffMainTabsLayout() {
           ),
         }}
         listeners={{
-          tabPress: (e) => {
-            e.preventDefault();
-            router.push('/staff/kbs/capture-nfc' as Href);
+          tabPress: () => {
             hapticSelection();
           },
         }}

@@ -1,12 +1,12 @@
 /**
- * ePasaport / ICAO 9303 çip okuma — MRZ BAC anahtarı ile NFC üzerinden DG1 (+ isteğe bağlı DG2 portre).
- * Yalnızca kullanıcı NFC oturumunu başlattığında çalışır; arka planda dinleme yok.
+ * ePasaport / ICAO 9303 — kamera sadece BAC kilidini açar, NFC çipten tüm veriyi çeker.
+ * NFC sırasında kamera unmount edilmeli; startReading asılırsa zaman aşımı ile çıkılır.
  */
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import i18n from 'i18next';
 import type { ParsedDocument } from '@/lib/scanner/types';
-import { isoDateToMrzSix } from '@/lib/scanner/mrzDates';
+import { isoDateToMrzSix, mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { getEIdReader, isNfcNativeLinked } from '@/lib/nfcNative';
 import { mapEIdChipToParsed, type EIdChipData, type NfcBacKeyInput } from '@/lib/nfcChipParse';
 
@@ -20,19 +20,28 @@ export type NfcPassportCaptureResult = {
 
 export type NfcPassportReadOutcome =
   | { ok: true; data: NfcPassportCaptureResult }
-  | { ok: false; code: 'unavailable' | 'native_build' | 'cancelled' | 'error'; message?: string };
+  | {
+      ok: false;
+      code: 'unavailable' | 'native_build' | 'cancelled' | 'error' | 'timeout';
+      message?: string;
+    };
 
-/** 1×1 beyaz JPEG — portre yoksa KBS kayıt kuyruğu için yedek. */
 const PLACEHOLDER_JPEG_B64 =
   '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwAA8A/9k=';
 
+/** iOS sistem NFC paneli ~60sn; biz UI’yi daha erken serbest bırakırız. */
+const NFC_READ_TIMEOUT_MS = Platform.OS === 'ios' ? 45000 : 35000;
+
 function normalizeToMrzSix(date: string): string | null {
-  const s = date.trim();
+  const s = date.trim().replace(/[./]/g, '-');
   if (/^\d{6}$/.test(s)) return s;
+  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+    const [dd, mm, yyyy] = s.split('-');
+    return isoDateToMrzSix(`${yyyy}-${mm}-${dd}`);
+  }
   return isoDateToMrzSix(s);
 }
 
-/** ICAO BAC — belge no 9 karakter, eksik `<` ile doldurulur. */
 export function formatBacDocumentNumber(docNo: string): string {
   return docNo.replace(/</g, '').trim().toUpperCase().padEnd(9, '<').slice(0, 9);
 }
@@ -45,11 +54,6 @@ export function bacKeyFromParsed(parsed: ParsedDocument): NfcBacKeyInput | null 
   return { documentNumber: doc, birthDate: birth, expiryDate: expiry };
 }
 
-/**
- * ICAO BAC alanları — mümkünse ham MRZ satırından (kamera kilidi).
- * TD3 satır 2: belge no (9) + doğum (YYMMDD) + bitiş (YYMMDD).
- * Parse edilmiş alanlar yedek; TR kimlikte TC ile karışmayı engeller.
- */
 export function bacKeyFromMrzLock(args: {
   mrz?: string | null;
   parsed: ParsedDocument;
@@ -59,34 +63,48 @@ export function bacKeyFromMrzLock(args: {
   return bacKeyFromParsed(args.parsed);
 }
 
-/** TD2/TD3 MRZ satırından BAC documentNumber + YYMMDD dates. */
-function bacFieldsFromRawMrz(raw: string | null | undefined): NfcBacKeyInput | null {
-  if (!raw?.trim()) return null;
-  const lines = raw
+function cleanMrzLines(raw: string): string[] {
+  return raw
     .replace(/\r/g, '\n')
     .split('\n')
-    .map((l) => l.replace(/\s+/g, '').toUpperCase())
-    .filter((l) => l.length >= 28 && /^[A-Z0-9<]+$/.test(l));
+    .map((l) => l.replace(/[^A-Z0-9<]/gi, '').toUpperCase())
+    .filter((l) => l.length >= 28);
+}
 
+function bacFieldsFromRawMrz(raw: string | null | undefined): NfcBacKeyInput | null {
+  if (!raw?.trim()) return null;
+  const lines = cleanMrzLines(raw);
   if (lines.length === 0) return null;
 
-  // TD3 passport: 2×44 — belge/doğum/bitiş satır 2'de (satır 1 P</V< ile başlar)
-  const line2 =
-    lines.find((l) => l.length === 44 && !/^[PV]/i.test(l)) ??
-    (lines.length >= 2 && lines[1]!.length >= 28 ? lines[1]! : null) ??
-    lines.find((l) => l.length >= 36 && !/^[PV]/i.test(l));
-
-  if (line2 && line2.length >= 27) {
-    const documentNumber = line2.slice(0, 9).replace(/</g, '').trim();
-    const birthDate = line2.slice(13, 19);
-    const expiryDate = line2.slice(21, 27);
+  const tryTd3Line = (line: string): NfcBacKeyInput | null => {
+    if (line.length < 27) return null;
+    const documentNumber = line.slice(0, 9).replace(/</g, '').trim();
+    const birthDate = line.slice(13, 19);
+    const expiryDate = line.slice(21, 27);
     if (documentNumber.length >= 5 && /^\d{6}$/.test(birthDate) && /^\d{6}$/.test(expiryDate)) {
       return { documentNumber, birthDate, expiryDate };
     }
+    return null;
+  };
+
+  for (const line of lines) {
+    if (line.length === 44 && !/^[PV]/i.test(line)) {
+      const hit = tryTd3Line(line);
+      if (hit) return hit;
+    }
+  }
+  if (lines.length >= 2) {
+    const hit = tryTd3Line(lines[1]!);
+    if (hit) return hit;
+  }
+  for (const line of lines) {
+    if (line.length >= 36 && !/^[PV]/i.test(line)) {
+      const hit = tryTd3Line(line);
+      if (hit) return hit;
+    }
   }
 
-  // TD1 kimlik: 3×30 — belge satır 1'de (5..14), doğum/bitiş satır 2'de
-  if (lines.length >= 2 && lines[0]!.length === 30 && lines[1]!.length === 30) {
+  if (lines.length >= 2 && lines[0]!.length >= 30 && lines[1]!.length >= 30) {
     const documentNumber = lines[0]!.slice(5, 14).replace(/</g, '').trim();
     const birthDate = lines[1]!.slice(0, 6);
     const expiryDate = lines[1]!.slice(8, 14);
@@ -98,13 +116,41 @@ function bacFieldsFromRawMrz(raw: string | null | undefined): NfcBacKeyInput | n
   return null;
 }
 
+function resolveBacMrzInfo(bac: NfcBacKeyInput): {
+  documentNumber: string;
+  birthDate: string;
+  expirationDate: string;
+} | null {
+  const birthDate = normalizeToMrzSix(bac.birthDate);
+  const expirationDate = normalizeToMrzSix(bac.expiryDate);
+  const documentNumber = bac.documentNumber.replace(/\s/g, '').replace(/</g, '').toUpperCase().trim();
+  if (!birthDate || !expirationDate || documentNumber.length < 5) return null;
+  return {
+    documentNumber: documentNumber.length <= 9 ? formatBacDocumentNumber(documentNumber) : documentNumber,
+    birthDate,
+    expirationDate,
+  };
+}
+
 async function portraitUriFromChip(
   reader: NonNullable<ReturnType<typeof getEIdReader>>,
   faceB64?: string
 ): Promise<string | null> {
   if (!faceB64?.trim()) return null;
   try {
-    const dataUrl = reader.imageDataUrlToJpegDataUrl(`data:image/jp2;base64,${faceB64.trim()}`);
+    let dataUrl = faceB64.trim();
+    if (!dataUrl.startsWith('data:')) {
+      dataUrl = `data:image/jpeg;base64,${dataUrl}`;
+    }
+    if (dataUrl.includes('image/jp2') || dataUrl.includes('image/jpeg2000')) {
+      dataUrl = reader.imageDataUrlToJpegDataUrl(dataUrl);
+    } else if (!dataUrl.includes('image/jpeg')) {
+      try {
+        dataUrl = reader.imageDataUrlToJpegDataUrl(dataUrl);
+      } catch {
+        /* already jpeg */
+      }
+    }
     const b64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
     const path = `${FileSystem.cacheDirectory}nfc-portrait-${Date.now()}.jpg`;
     await FileSystem.writeAsStringAsync(path, b64, {
@@ -124,7 +170,6 @@ export async function writeNfcPlaceholderImageUri(): Promise<string> {
   return path.startsWith('file://') ? path : `file://${path}`;
 }
 
-/** Native EIdReader modülü binary içinde mi? */
 export function isNfcPassportNativeReady(): boolean {
   if (Platform.OS === 'web') return false;
   return getEIdReader() != null || isNfcNativeLinked();
@@ -138,7 +183,8 @@ export async function isNfcPassportAvailable(): Promise<boolean> {
     const supported = await reader.isNfcSupported();
     if (!supported) return false;
     if (Platform.OS === 'android') {
-      return reader.isNfcEnabled();
+      const enabled = await Promise.resolve(reader.isNfcEnabled());
+      return !!enabled;
     }
     return true;
   } catch {
@@ -146,12 +192,89 @@ export async function isNfcPassportAvailable(): Promise<boolean> {
   }
 }
 
+function nfcLabels() {
+  return {
+    title: i18n.t('kbsNfcCaptureTitle'),
+    requestPresentPassport: i18n.t('kbsNfcPresentPassport'),
+    authenticatingWithPassport: i18n.t('kbsNfcAuthenticating'),
+    reading: i18n.t('kbsNfcReadingChipData'),
+    successfulRead: i18n.t('kbsNfcSuccess'),
+    invalidMRZKey: i18n.t('kbsNfcInvalidMrzKey'),
+    error: i18n.t('kbsNfcReadFailed'),
+    cancelButton: i18n.t('cancel'),
+  };
+}
+
+type NativeReadResult = {
+  status: string;
+  data?: EIdChipData & { originalFacePhoto?: string };
+  dataGroupsBase64?: Record<string, string>;
+  error?: string;
+};
+
+function safeStop(reader: NonNullable<ReturnType<typeof getEIdReader>>) {
+  try {
+    reader.stopReading();
+  } catch {
+    /* iOS stub / Android dismiss — promise asılı kalsa bile UI serbest */
+  }
+}
+
+function withTimeoutOrCancel<T>(
+  promise: Promise<T>,
+  ms: number,
+  signal: { cancelled: boolean } | undefined,
+  onAbort: () => void
+): Promise<T | 'timeout' | 'cancelled'> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (v: T | 'timeout' | 'cancelled') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(poll);
+      resolve(v);
+    };
+
+    const timer = setTimeout(() => {
+      onAbort();
+      finish('timeout');
+    }, ms);
+
+    const poll = setInterval(() => {
+      if (signal?.cancelled) {
+        onAbort();
+        finish('cancelled');
+      }
+    }, 200);
+
+    promise
+      .then((v) => finish(v))
+      .catch((e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(poll);
+        reject(e);
+      });
+  });
+}
+
+export type NfcReadOptions = {
+  /** true olunca mevcut okuma iptal sayılır */
+  signal?: { cancelled: boolean };
+  timeoutMs?: number;
+};
+
 /**
- * NFC pasaport okuma — yalnızca bu fonksiyon çağrıldığında oturum açılır.
- * DG1 ham verisi ile tam MRZ (ad, soyad, uyruk, veren ülke, tarihler vb.) çıkarılır.
+ * Tek NFC oturumu. Kamera unmount edilmiş olmalı.
+ * Asılı native promise → zaman aşımı / iptal ile UI kurtarılır.
  */
-export async function readPassportViaNfc(bac: NfcBacKeyInput): Promise<NfcPassportReadOutcome> {
-  if (!isNfcNativeLinked()) {
+export async function readPassportViaNfc(
+  bac: NfcBacKeyInput,
+  opts?: NfcReadOptions
+): Promise<NfcPassportReadOutcome> {
+  if (!isNfcNativeLinked() && !getEIdReader()) {
     return { ok: false, code: 'native_build', message: i18n.t('kbsNfcNativeBuildBody') };
   }
 
@@ -160,45 +283,51 @@ export async function readPassportViaNfc(bac: NfcBacKeyInput): Promise<NfcPasspo
     return { ok: false, code: 'unavailable', message: i18n.t('kbsNfcUnavailable') };
   }
 
-  // Native getMRZKey padOrKeep kullanır: YYMMDD bırakın, belgeyi kısaltmayın (TD1 uzatılabilir).
-  const birthDate = normalizeToMrzSix(bac.birthDate);
-  const expirationDate = normalizeToMrzSix(bac.expiryDate);
-  const documentNumber = bac.documentNumber.replace(/\s/g, '').toUpperCase().trim();
-
-  if (!birthDate || !expirationDate || documentNumber.length < 5) {
+  const mrzInfo = resolveBacMrzInfo(bac);
+  if (!mrzInfo) {
     return { ok: false, code: 'error', message: i18n.t('kbsNfcBacInvalid') };
   }
 
+  if (opts?.signal?.cancelled) {
+    return { ok: false, code: 'cancelled' };
+  }
+
   try {
-    const result = (await reader.startReading({
-      mrzInfo: {
-        documentNumber: documentNumber.length <= 9 ? formatBacDocumentNumber(documentNumber) : documentNumber,
-        birthDate,
-        expirationDate,
-      },
+    if (opts?.signal?.cancelled) {
+      return { ok: false, code: 'cancelled' };
+    }
+
+    const timeoutMs = opts?.timeoutMs ?? NFC_READ_TIMEOUT_MS;
+    const readPromise = reader.startReading({
+      mrzInfo,
       includeImages: true,
       includeRawData: true,
-      labels: {
-        title: i18n.t('kbsNfcCaptureTitle'),
-        requestPresentPassport: i18n.t('kbsNfcPresentPassport'),
-        authenticatingWithPassport: i18n.t('kbsNfcAuthenticating'),
-        reading: i18n.t('kbsNfcReading'),
-        successfulRead: i18n.t('kbsNfcSuccess'),
-        invalidMRZKey: i18n.t('kbsNfcInvalidMrzKey'),
-        error: i18n.t('kbsNfcReadFailed'),
-        cancelButton: i18n.t('cancel'),
-      },
-    })) as {
-      status: string;
-      data: EIdChipData & { originalFacePhoto?: string };
-      dataGroupsBase64?: Record<string, string>;
-    };
+      labels: nfcLabels(),
+    }) as Promise<NativeReadResult>;
 
+    const raced = await withTimeoutOrCancel(readPromise, timeoutMs, opts?.signal, () =>
+      safeStop(reader)
+    );
+
+    if (raced === 'cancelled' || opts?.signal?.cancelled) {
+      safeStop(reader);
+      return { ok: false, code: 'cancelled' };
+    }
+
+    if (raced === 'timeout') {
+      return { ok: false, code: 'timeout', message: i18n.t('kbsNfcTimeout') };
+    }
+
+    const result = raced;
     if (result.status === 'Canceled') {
       return { ok: false, code: 'cancelled' };
     }
-    if (result.status !== 'OK') {
-      return { ok: false, code: 'error', message: i18n.t('kbsNfcReadFailed') };
+    if (result.status !== 'OK' || !result.data) {
+      return {
+        ok: false,
+        code: 'error',
+        message: result.error || i18n.t('kbsNfcReadFailed'),
+      };
     }
 
     const dg1Base64 = result.dataGroupsBase64?.DG1 ?? null;
@@ -208,11 +337,24 @@ export async function readPassportViaNfc(bac: NfcBacKeyInput): Promise<NfcPasspo
       portraitUri = await writeNfcPlaceholderImageUri();
     }
 
+    const bacBirth = normalizeToMrzSix(bac.birthDate);
+    const bacExpiry = normalizeToMrzSix(bac.expiryDate);
+    const forced: ParsedDocument = {
+      ...parsed,
+      documentType: parsed.documentType || 'passport',
+      documentNumber: parsed.documentNumber || bac.documentNumber.replace(/</g, ''),
+      birthDate: parsed.birthDate || (bacBirth ? mrzSixDigitsToIso(bacBirth, 'birth') : null),
+      expiryDate: parsed.expiryDate || (bacExpiry ? mrzSixDigitsToIso(bacExpiry, 'expiry') : null),
+      rawMrz: rawMrz ?? parsed.rawMrz,
+      confidence: 0.99,
+      warnings: [...new Set([...(parsed.warnings ?? []), 'nfc_chip'])],
+    };
+
     return {
       ok: true,
       data: {
-        parsed: { ...parsed, rawMrz: rawMrz ?? parsed.rawMrz },
-        rawMrz: rawMrz ?? parsed.rawMrz,
+        parsed: forced,
+        rawMrz: rawMrz ?? forced.rawMrz,
         portraitUri,
       },
     };
@@ -221,17 +363,18 @@ export async function readPassportViaNfc(bac: NfcBacKeyInput): Promise<NfcPasspo
     if (/TurboModuleRegistry|EIdReader|could not be found/i.test(msg)) {
       return { ok: false, code: 'native_build', message: i18n.t('kbsNfcNativeBuildBody') };
     }
-    return {
-      ok: false,
-      code: 'error',
-      message: msg || i18n.t('kbsNfcReadFailed'),
-    };
-  } finally {
-    try {
-      reader.stopReading();
-    } catch {
-      /* ignore */
+    if (/cancel/i.test(msg)) {
+      return { ok: false, code: 'cancelled' };
     }
+    return { ok: false, code: 'error', message: msg || i18n.t('kbsNfcReadFailed') };
+  } finally {
+    safeStop(reader);
   }
 }
 
+export function cancelNfcPassportRead(): void {
+  const reader = getEIdReader();
+  if (reader) safeStop(reader);
+}
+
+export const readPassportViaNfcForced = readPassportViaNfc;
