@@ -1,7 +1,8 @@
 import { parse } from 'mrz';
 import type { ParsedDocument } from './types';
 import { mrzSixDigitsToIso } from './mrzDates';
-import { finalizeMrzPersonNames } from '@/lib/scanner/mrzPersonNames';
+import { finalizeMrzPersonNames, isGccNationality } from '@/lib/scanner/mrzPersonNames';
+import { extractIssuingCountryFromMrz } from '@/lib/scanner/mrzIssuingExtract';
 
 function cleanMrz(raw: string): string {
   return raw
@@ -161,6 +162,29 @@ function resolveMrzDocumentNumber(args: {
   return { documentNumber: mrzDocNo, documentSeries: null };
 }
 
+/** MRZ opsiyonel alan — Suudi/BAE ulusal kimlik no vb. */
+function resolveMrzPersonalNumber(
+  fields: Record<string, unknown>,
+  documentType: ParsedDocument['documentType']
+): string | null {
+  const blobs = [fields.personalNumber, fields.optional1, fields.optional2]
+    .map((v) => (v == null ? null : String(v).replace(/</g, '').trim()))
+    .filter(Boolean) as string[];
+
+  for (const b of blobs) {
+    if (b.length < 4 || b.length > 24) continue;
+    if (/^[0-9A-Z]+$/i.test(b)) return b.toUpperCase();
+  }
+
+  if (documentType === 'passport') {
+    for (const b of blobs) {
+      const digits = b.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 15) return digits;
+    }
+  }
+  return null;
+}
+
 export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
   const raw = cleanMrz(rawMrz);
   const warnings: string[] = [];
@@ -177,7 +201,10 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
 
     const issuingRaw =
       fields.issuingState ?? fields.issuingCountry ?? fields.issuer ?? null;
-    const issuingCountryCode = issuingRaw ? String(issuingRaw).toUpperCase() : null;
+    let issuingCountryCode = issuingRaw ? String(issuingRaw).toUpperCase() : null;
+    if (!issuingCountryCode) {
+      issuingCountryCode = extractIssuingCountryFromMrz(raw);
+    }
     const nationalityCode = fields.nationality ? String(fields.nationality).toUpperCase() : null;
 
     const names = finalizeMrzPersonNames({
@@ -209,8 +236,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
     if (checksumsValid === false) warnings.push('MRZ checksum validation failed');
 
     const nat = String(fields.nationality ?? '').toUpperCase();
-    const gcc = new Set(['OMN', 'SAU', 'QAT', 'KWT', 'ARE', 'BHR', 'YEM', 'IRQ', 'IRN', 'JOR', 'LBN', 'SYR', 'PSE']);
-    if (nat && gcc.has(nat)) {
+    if (nat && isGccNationality(nat)) {
       warnings.push(
         'Körfez / Arap pasaportu: MRZ ad sırası farklı olabilir; KBS’e göndermeden ad-soyadı ekranda kontrol edin.'
       );
@@ -221,6 +247,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
 
     const birthDate = birthRaw && /^\d{6}$/.test(birthRaw) ? mrzSixDigitsToIso(birthRaw, 'birth') : birthRaw;
     const expiryDate = expiryRaw && /^\d{6}$/.test(expiryRaw) ? mrzSixDigitsToIso(expiryRaw, 'expiry') : expiryRaw;
+    const personalNumber = resolveMrzPersonalNumber(fields, documentType);
 
     return {
       documentType,
@@ -234,6 +261,7 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
       birthDate,
       expiryDate,
       gender: mapMrzSex(fields.sex),
+      personalNumber,
       rawMrz: raw,
       confidence: null,
       checksumsValid,

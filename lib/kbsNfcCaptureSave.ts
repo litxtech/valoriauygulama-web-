@@ -7,6 +7,7 @@ import { checkoutRoomOtherGuests } from '@/lib/hotelInHouse';
 import { getKbsCaptureOpsContext } from '@/lib/kbsCapturePrewarm';
 import { canSaveMrzDocument } from '@/lib/scanner/mrzScanGate';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
+import { listCoreMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 
 export const KBS_OCR_ENGINE_NFC_CHIP = 'nfc-chip' as const;
 
@@ -74,7 +75,9 @@ export async function saveKbsNfcCaptureItemsParallel(
       const gate = effectiveRaw
         ? canSaveMrzDocument({ rawMrz: effectiveRaw, parsed: parsedForSave })
         : { allowed: true as const };
-      if (!gate.allowed) {
+      const nfcChip = parsedForSave.warnings?.includes('nfc_chip');
+      const coreComplete = listCoreMissingIdFields(parsedForSave).length === 0;
+      if (!gate.allowed && !(nfcChip && coreComplete)) {
         throw new Error('MRZ doğrulama geçilmedi');
       }
 

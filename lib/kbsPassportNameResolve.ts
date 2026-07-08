@@ -89,11 +89,11 @@ export function applyBestPassportNamesToParsed(
   parsed: ParsedDocument,
   lines: string[]
 ): ParsedDocument {
-  if (parsed.documentType === 'id_card') return parsed;
-
+  const hasMrzChevron = !!parsed.rawMrz?.includes('<<');
   const isPassport =
     parsed.documentType === 'passport' || !!parsed.rawMrz || lines.join(' ').toUpperCase().includes('PASSPORT');
-  if (!isPassport) return parsed;
+  const isMrzIdCard = parsed.documentType === 'id_card' && hasMrzChevron;
+  if (!isPassport && !isMrzIdCard) return parsed;
 
   const chevron = parseChevronNamesFromMrz(parsed.rawMrz);
   if (isUsablePersonName(chevron.surname) && isUsablePersonName(chevron.given)) {

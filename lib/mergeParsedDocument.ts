@@ -1,5 +1,6 @@
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { finalizeMrzPersonNames } from '@/lib/scanner/mrzPersonNames';
+import { finalizeNfcParsedDocument } from '@/lib/nfcFinalizeParsed';
 
 function filled(v: string | null | undefined): v is string {
   return v != null && String(v).trim().length > 0;
@@ -34,7 +35,7 @@ export function mergeParsedDocuments(
     warnings.push('nfc_mrz_lock_fill');
   }
 
-  return {
+  return finalizeNfcParsedDocument({
     documentType: primary.documentType !== 'other' ? primary.documentType : fallback.documentType,
     fullName: names.fullName ?? primary.fullName ?? fallback.fullName,
     firstName: names.firstName ?? primary.firstName ?? fallback.firstName,
@@ -56,5 +57,5 @@ export function mergeParsedDocuments(
     confidence: Math.max(primary.confidence ?? 0, fallback.confidence ?? 0) || null,
     checksumsValid: primary.checksumsValid ?? fallback.checksumsValid,
     warnings,
-  };
+  });
 }

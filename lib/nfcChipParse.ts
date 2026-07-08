@@ -8,6 +8,7 @@ import { parseMrzToNormalized } from '@/lib/scanner/mrzParser';
 import { isoDateToMrzSix, mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { finalizeMrzPersonNames } from '@/lib/scanner/mrzPersonNames';
 import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
+import { extractIssuingCountryFromMrz } from '@/lib/scanner/mrzIssuingExtract';
 
 export type NfcBacKeyInput = {
   documentNumber: string;
@@ -118,22 +119,63 @@ export function resolveNfcRawMrz(
   return null;
 }
 
+/** DG11 ham verisinden okunabilir metin parçaları (doğum yeri, tam ad yedek). */
+function extractDg11Hints(dg11Base64: string | null | undefined): {
+  placeOfBirth?: string;
+  fullName?: string;
+} {
+  const b64 = dg11Base64?.trim();
+  if (!b64) return {};
+  try {
+    const bytes = new Uint8Array(decodeBase64(b64));
+    const chunks: string[] = [];
+    let buf = '';
+    for (const b of bytes) {
+      const ok = (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || b === 0x20 || b === 0x2d || b === 0x27;
+      if (ok) {
+        buf += String.fromCharCode(b);
+      } else if (buf.length >= 4) {
+        chunks.push(buf.trim());
+        buf = '';
+      } else {
+        buf = '';
+      }
+    }
+    if (buf.length >= 4) chunks.push(buf.trim());
+
+    const place =
+      chunks.find((c) => /^[A-Z][A-Z\s'-]{3,40}$/.test(c) && !c.includes('<<')) ??
+      chunks.find((c) => c.length >= 4 && c.length <= 48 && /[A-Z]/.test(c));
+    const fullName = chunks.find((c) => c.includes(' ') && c.length >= 8 && c.length <= 64);
+
+    return {
+      placeOfBirth: place,
+      fullName,
+    };
+  } catch {
+    return {};
+  }
+}
+
 function mergeChipExtras(parsed: ParsedDocument, data: EIdChipData): ParsedDocument {
   const warnings = [...(parsed.warnings ?? [])];
   if (!warnings.includes('nfc_chip')) warnings.push('nfc_chip');
 
   const nationalityCode = parsed.nationalityCode ?? data.nationality?.trim().toUpperCase().slice(0, 3) ?? null;
+  const issuingCountryCode =
+    parsed.issuingCountryCode ?? extractIssuingCountryFromMrz(parsed.rawMrz) ?? null;
   const names = finalizeMrzPersonNames({
     firstNameRaw: parsed.firstName ?? data.firstName?.trim() ?? null,
     lastNameRaw: parsed.lastName ?? data.lastName?.trim() ?? null,
-    fullNameRaw: parsed.fullName,
+    fullNameRaw: parsed.fullName ?? data.fullName?.trim() ?? null,
     rawMrz: parsed.rawMrz,
     nationalityCode,
-    issuingCountryCode: parsed.issuingCountryCode,
+    issuingCountryCode,
   });
 
   return {
     ...parsed,
+    documentType: parsed.documentType !== 'other' ? parsed.documentType : 'passport',
     firstName: names.firstName ?? parsed.firstName ?? data.firstName?.trim() ?? null,
     lastName: names.lastName ?? parsed.lastName ?? data.lastName?.trim() ?? null,
     middleName: names.middleName ?? parsed.middleName,
@@ -143,6 +185,7 @@ function mergeChipExtras(parsed: ParsedDocument, data: EIdChipData): ParsedDocum
       data.fullName?.trim() ??
       null,
     nationalityCode,
+    issuingCountryCode,
     birthDate: parsed.birthDate ?? isoFromChipDate(data.birthDate, 'birth'),
     expiryDate: parsed.expiryDate ?? isoFromChipDate(data.expiryDate, 'expiry'),
     documentNumber:
@@ -157,12 +200,16 @@ function mergeChipExtras(parsed: ParsedDocument, data: EIdChipData): ParsedDocum
   };
 }
 
-function parsedFromEIdChip(data: EIdChipData, bac?: NfcBacKeyInput): ParsedDocument {
+function parsedFromEIdChip(
+  data: EIdChipData,
+  bac?: NfcBacKeyInput,
+  dg11?: { placeOfBirth?: string; fullName?: string }
+): ParsedDocument {
   const nationalityCode = data.nationality?.trim().toUpperCase().slice(0, 3) || null;
   const names = finalizeMrzPersonNames({
     firstNameRaw: data.firstName?.trim() ?? null,
     lastNameRaw: data.lastName?.trim() ?? null,
-    fullNameRaw: null,
+    fullNameRaw: dg11?.fullName ?? data.fullName?.trim() ?? null,
     rawMrz: null,
     nationalityCode,
     issuingCountryCode: null,
@@ -191,7 +238,7 @@ function parsedFromEIdChip(data: EIdChipData, bac?: NfcBacKeyInput): ParsedDocum
     birthDate,
     expiryDate,
     gender: mapGender(data.gender),
-    placeOfBirth: data.placeOfBirth?.trim() || null,
+    placeOfBirth: data.placeOfBirth?.trim() || dg11?.placeOfBirth?.trim() || null,
     personalNumber: data.identityNo?.replace(/</g, '').trim() || null,
     rawMrz: null,
     confidence: 0.98,
@@ -202,12 +249,16 @@ function parsedFromEIdChip(data: EIdChipData, bac?: NfcBacKeyInput): ParsedDocum
 
 export function mapEIdChipToParsed(
   data: EIdChipData,
-  opts?: { dg1Base64?: string | null; bac?: NfcBacKeyInput }
+  opts?: { dg1Base64?: string | null; dg11Base64?: string | null; bac?: NfcBacKeyInput }
 ): { parsed: ParsedDocument; rawMrz: string | null } {
+  const dg11Hints = extractDg11Hints(opts?.dg11Base64);
   const rawMrz = resolveNfcRawMrz(data.mrz, opts?.dg1Base64);
 
   if (rawMrz) {
     const parsed = mergeChipExtras(parseMrzToNormalized(rawMrz), data);
+    if (!parsed.placeOfBirth && dg11Hints.placeOfBirth) {
+      parsed.placeOfBirth = dg11Hints.placeOfBirth;
+    }
     return {
       parsed: { ...parsed, rawMrz },
       rawMrz,
@@ -215,7 +266,7 @@ export function mapEIdChipToParsed(
   }
 
   return {
-    parsed: parsedFromEIdChip(data, opts?.bac),
+    parsed: parsedFromEIdChip(data, opts?.bac, dg11Hints),
     rawMrz: null,
   };
 }

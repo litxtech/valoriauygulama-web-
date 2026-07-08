@@ -10,6 +10,7 @@ import { isoDateToMrzSix, mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { getEIdReader, isNfcNativeLinked } from '@/lib/nfcNative';
 import { mapEIdChipToParsed, type EIdChipData, type NfcBacKeyInput } from '@/lib/nfcChipParse';
 import { mergeParsedDocuments } from '@/lib/mergeParsedDocument';
+import { finalizeNfcParsedDocument } from '@/lib/nfcFinalizeParsed';
 
 export type { NfcBacKeyInput } from '@/lib/nfcChipParse';
 
@@ -338,7 +339,8 @@ export async function readPassportViaNfc(
     }
 
     const dg1Base64 = result.dataGroupsBase64?.DG1 ?? null;
-    const { parsed, rawMrz } = mapEIdChipToParsed(result.data, { dg1Base64, bac });
+    const dg11Base64 = result.dataGroupsBase64?.DG11 ?? null;
+    const { parsed, rawMrz } = mapEIdChipToParsed(result.data, { dg1Base64, dg11Base64, bac });
     let portraitUri = await portraitUriFromChip(reader, result.data.originalFacePhoto);
     if (!portraitUri) {
       portraitUri = await writeNfcPlaceholderImageUri();
@@ -362,6 +364,8 @@ export async function readPassportViaNfc(
         rawMrzFallback: opts.mrzLock.mrz,
       });
     }
+
+    forced = finalizeNfcParsedDocument(forced);
 
     const finalRawMrz = forced.rawMrz ?? rawMrz ?? opts?.mrzLock?.mrz ?? null;
 

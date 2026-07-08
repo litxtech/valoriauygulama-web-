@@ -19,5 +19,6 @@ export function inferKbsPersonKind(
 
   if (parsed.documentType === 'id_card' && turkish) return 'tc_citizen';
   if (turkish && parsed.documentType !== 'passport') return 'tc_citizen';
+  if (parsed.documentType === 'id_card') return 'foreign';
   return 'ykn_foreign';
 }

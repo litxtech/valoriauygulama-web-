@@ -188,9 +188,12 @@ export function buildKbsCopyFields(parsed: ParsedDocument | null | undefined): K
 
   push('documentNumber', 'Kimlik / pasaport no', parsed.documentNumber);
   push('documentSeries', 'Seri no', parsed.documentSeries);
+  push('personalNumber', 'Kişisel / ulusal no', parsed.personalNumber);
 
   const birthTr = formatKbsTrDate(parsed.birthDate);
   if (birthTr) push('birthDate', 'Doğum tarihi', birthTr);
+
+  push('placeOfBirth', 'Doğum yeri', parsed.placeOfBirth);
 
   const age = kbsAgeYearsFromBirthDate(parsed.birthDate);
   if (age != null) push('age', 'Yaş', String(age));

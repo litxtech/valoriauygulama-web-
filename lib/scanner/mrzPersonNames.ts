@@ -382,5 +382,14 @@ export function finalizeMrzPersonNames(args: {
   const fullName =
     [firstName, lastName].filter(Boolean).join(' ').trim() || fullNameFromField || null;
 
-  return { firstName, lastName, fullName, middleName: null };
+  let middleName: string | null = null;
+  if (hadChevronGiven && firstName) {
+    const parts = firstName.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) {
+      firstName = parts[0] ?? firstName;
+      middleName = parts.slice(1).join(' ');
+    }
+  }
+
+  return { firstName, lastName, fullName, middleName };
 }
