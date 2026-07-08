@@ -1,6 +1,10 @@
 /**
- * @2060.io/react-native-eid-reader — tam MRZ + iOS expiryDate yamaları.
+ * @2060.io/react-native-eid-reader — tam MRZ + iOS expiryDate + Xcode 26.2 NFC API yamaları.
  * npm postinstall ve EAS prebuild öncesi çalışır.
+ *
+ * PassportReader.swift iOS 26.4 / Xcode 26.4 NFCTagReaderSession.Configuration kullanır;
+ * EAS SDK 54 image (Xcode 26.2) bu tipi bilmediği için #available bloğu bile derlenmez.
+ * Eski pollingOption initializer’a düşürürüz (pasaport BAC için yeterli).
  */
 const fs = require('fs');
 const path = require('path');
@@ -34,7 +38,7 @@ function patchAndroidEIdReader(root) {
   return true;
 }
 
-function patchIosEIdReader(root) {
+function patchIosExpiryDate(root) {
   const swiftPath = path.join(root, 'node_modules/@2060.io/react-native-eid-reader/ios/EidReader.swift');
   if (!fs.existsSync(swiftPath)) return false;
   let src = fs.readFileSync(swiftPath, 'utf8');
@@ -46,6 +50,81 @@ function patchIosEIdReader(root) {
   if (!src.includes(needle)) return false;
   fs.writeFileSync(swiftPath, src.replace(needle, insert));
   return true;
+}
+
+/** Xcode 26.2: Configuration / .pace API’sini kaldır — yalnız iso14443 polling. */
+function patchIosPassportReaderForXcode262(root) {
+  const swiftPath = path.join(
+    root,
+    'node_modules/@2060.io/react-native-eid-reader/ios/NFCPassportReader/PassportReader.swift'
+  );
+  if (!fs.existsSync(swiftPath)) return false;
+  let src = fs.readFileSync(swiftPath, 'utf8');
+  if (src.includes('EAS_XCODE_262_NFC_PATCH')) return false;
+  if (!src.includes('NFCTagReaderSession.Configuration')) return false;
+
+  const broken = `        if NFCTagReaderSession.readingAvailable {
+            // iOS 26.4+ provides a Configuration-based initializer that
+            // correctly handles combined \`.iso14443\` + \`.pace\` polling,
+            // supporting both standard passports (BAC) and eIDs that
+            // require PACE-aware polling (e.g. French CNIe).
+            // On older iOS, fall back to \`.iso14443\` only.
+            if #available(iOS 26.4, *) {
+                let config = NFCTagReaderSession.Configuration(
+                    pollingOption: [.iso14443, .pace],
+                    iso7816SelectIdentifiers: [],
+                    feliCaSystemCodes: []
+                )
+                readerSession = NFCTagReaderSession(configuration: config, delegate: self, queue: nil)
+            } else {
+                readerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
+            }
+            
+            self.updateReaderSessionMessage( alertMessage: NFCViewDisplayMessage.requestPresentPassport(labels?["requestPresentPassport"] as? String))
+            readerSession?.begin()
+        }`;
+
+  const fixed = `        if NFCTagReaderSession.readingAvailable {
+            // EAS_XCODE_262_NFC_PATCH: Xcode 26.2 SDK has no Configuration / .pace;
+            // keep BAC-compatible iso14443 polling for ePassport.
+            readerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
+            
+            self.updateReaderSessionMessage( alertMessage: NFCViewDisplayMessage.requestPresentPassport(labels?["requestPresentPassport"] as? String))
+            readerSession?.begin()
+        }`;
+
+  if (!src.includes(broken)) {
+    // Whitespace-tolerant fallback: strip the 26.4 branch by regex.
+    const re =
+      /if NFCTagReaderSession\.readingAvailable \{\s*\/\/ iOS 26\.4\+[\s\S]*?readerSession = NFCTagReaderSession\(pollingOption: \[\\.iso14443\], delegate: self, queue: nil\)\s*\}\s*self\.updateReaderSessionMessage/;
+    if (!re.test(src) && !src.includes('NFCTagReaderSession.Configuration')) return false;
+    if (src.includes('NFCTagReaderSession.Configuration')) {
+      src = src.replace(
+        /if NFCTagReaderSession\.readingAvailable \{[\s\S]*?readerSession\?\.begin\(\)\s*\}/,
+        `if NFCTagReaderSession.readingAvailable {
+            // EAS_XCODE_262_NFC_PATCH: Xcode 26.2 SDK has no Configuration / .pace;
+            // keep BAC-compatible iso14443 polling for ePassport.
+            readerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
+            
+            self.updateReaderSessionMessage( alertMessage: NFCViewDisplayMessage.requestPresentPassport(labels?["requestPresentPassport"] as? String))
+            readerSession?.begin()
+        }`
+      );
+      if (!src.includes('EAS_XCODE_262_NFC_PATCH')) return false;
+      fs.writeFileSync(swiftPath, src);
+      return true;
+    }
+    return false;
+  }
+
+  fs.writeFileSync(swiftPath, src.replace(broken, fixed));
+  return true;
+}
+
+function patchIosEIdReader(root) {
+  const expiry = patchIosExpiryDate(root);
+  const reader = patchIosPassportReaderForXcode262(root);
+  return expiry || reader;
 }
 
 const android = patchAndroidEIdReader(projectRoot);
