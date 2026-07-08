@@ -13,8 +13,9 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
-import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
+import { FullScreenTextEditor } from '@/components/contracts/FullScreenTextEditor';
 
 const VERSION = 2;
 const LANG_LABELS: Record<string, string> = {
@@ -34,6 +35,7 @@ export default function ContractLangEdit() {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     if (!lang) return;
@@ -113,16 +115,29 @@ export default function ContractLangEdit() {
             placeholder="Başlık"
             placeholderTextColor="#94a3b8"
           />
-          <Text style={styles.label}>İçerik (düz metin)</Text>
-          <AutoGrowMultilineInput
-            style={styles.contentInput}
-            value={content}
-            onChangeText={setContent}
-            minHeight={280}
-            lineHeight={20}
-            placeholder="İçerik"
-            placeholderTextColor="#94a3b8"
-          />
+          <View style={styles.contentHeaderRow}>
+            <Text style={styles.label}>İçerik (düz metin)</Text>
+            <Text style={styles.contentMeta}>
+              {content ? `${content.split('\n').length} satır · ${content.length} karakter` : 'Boş'}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.editorCard}
+            activeOpacity={0.7}
+            onPress={() => setEditorOpen(true)}
+          >
+            <Text style={content ? styles.previewText : styles.previewPlaceholder} numberOfLines={12}>
+              {content || 'İçerik henüz yok. Tam ekranda düzenlemek için dokunun.'}
+            </Text>
+            {content.split('\n').length > 12 ? <Text style={styles.previewMore}>…</Text> : null}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.editBtn} onPress={() => setEditorOpen(true)} activeOpacity={0.85}>
+            <Ionicons name="create-outline" size={20} color="#fff" />
+            <Text style={styles.editBtnText}>Tam ekranda düzenle</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={save} disabled={saving}>
             {saving ? (
               <ActivityIndicator color="#fff" style={styles.btnSpinner} />
@@ -132,6 +147,18 @@ export default function ContractLangEdit() {
           </TouchableOpacity>
         </ScrollView>
       )}
+
+      <FullScreenTextEditor
+        visible={editorOpen}
+        title={`${langLabel} – Sözleşme metni`}
+        initialValue={content}
+        placeholder="Sözleşme metnini buraya yazın veya yapıştırın…"
+        onCancel={() => setEditorOpen(false)}
+        onSave={(text) => {
+          setContent(text);
+          setEditorOpen(false);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -154,16 +181,38 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: '#fff',
   },
-  contentInput: {
+  contentHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  contentMeta: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
+  editorCard: {
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    minHeight: 280,
+    borderRadius: 10,
+    padding: 14,
+    minHeight: 180,
+    maxHeight: 300,
     backgroundColor: '#fff',
-    marginBottom: 24,
+    marginBottom: 12,
+    overflow: 'hidden',
   },
+  previewText: { fontSize: 14, lineHeight: 21, color: '#0f172a' },
+  previewPlaceholder: { fontSize: 14, lineHeight: 21, color: '#94a3b8' },
+  previewMore: { fontSize: 18, color: '#94a3b8', marginTop: 4, textAlign: 'center' },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#2563eb',
+    paddingVertical: 13,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  editBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   saveBtn: {
     backgroundColor: '#1a365d',
     paddingVertical: 14,

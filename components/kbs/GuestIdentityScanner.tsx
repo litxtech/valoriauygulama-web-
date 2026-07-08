@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useTranslation } from 'react-i18next';
@@ -21,9 +21,7 @@ const LOCK_DEBOUNCE_MS = 400;
 type Props = {
   enabled: boolean;
   soundEnabled: boolean;
-  /** Artırıldığında kilitleme / OCR döngüsü sıfırlanır (tam remount gerekmez). */
   scanResetToken?: number;
-  /** Onay veya bekleme sırasında kamera önizlemesi açık kalsın. */
   keepCameraWarm?: boolean;
   groupCount?: number;
   onLocked: (payload: GuestScanLockPayload) => void;
@@ -77,7 +75,7 @@ export function GuestIdentityScanner({
       if (Date.now() < lockUntilRef.current) return;
       lockUntilRef.current = Date.now() + LOCK_DEBOUNCE_MS;
       await playKbsScanSound('read', soundEnabled);
-      void triggerMrzSuccessHaptic();
+      void triggerMrzSuccessHaptic(0, soundEnabled);
       onLocked({
         parsed: p.parsed,
         mrz: p.mrz,
@@ -98,7 +96,7 @@ export function GuestIdentityScanner({
       }
       lockUntilRef.current = Date.now() + LOCK_DEBOUNCE_MS;
       await playKbsScanSound('read', soundEnabled);
-      void triggerMrzSuccessHaptic();
+      void triggerMrzSuccessHaptic(0, soundEnabled);
       onLocked(res.payload);
     } finally {
       setGalleryBusy(false);

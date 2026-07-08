@@ -2,6 +2,16 @@ const { withBuildProperties } = require('expo-build-properties');
 
 const devClientScheme = 'exp+valoria-hotel';
 
+/**
+ * Mağaza sürümleri — tek kaynak.
+ * Her Play/App Store yüklemesinde ANDROID_VERSION_CODE ve IOS_BUILD_NUMBER
+ * mutlaka önceki en yüksek değerden BÜYÜK olmalı (Play Console bundle no).
+ * Son Play: bundle 29 (2.2.21) · Son EAS Android: versionCode 32.
+ */
+const APP_VERSION = '2.6.0';
+const ANDROID_VERSION_CODE = 34;
+const IOS_BUILD_NUMBER = '34';
+
 /** EAS Build: preview/production → Apple production APNs; development client → sandbox */
 const easProfile = process.env.EAS_BUILD_PROFILE;
 const expoPushIosMode =
@@ -13,7 +23,7 @@ const googleServicesFile =
 const baseConfig = {
   name: 'Valoria',
   slug: 'valoria-hotel',
-  version: '2.2.22',
+  version: APP_VERSION,
   /** Android tablet: döner; iPad kapalı (supportsTablet false). Bkz. withTabletOrientation.js */
   orientation: 'default',
   icon: './assets/icon.png',
@@ -29,14 +39,24 @@ const baseConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: 'com.valoria.hotel',
-    buildNumber: '29',
+    buildNumber: IOS_BUILD_NUMBER,
     newArchEnabled: true,
+    entitlements: {
+      'com.apple.developer.nfc.readersession.formats': ['TAG', 'NDEF'],
+      'com.apple.developer.nfc.readersession.iso7816.select-identifiers': [
+        'A0000002471001',
+        'A0000002472001',
+        '00000000000000',
+      ],
+    },
     infoPlist: {
       /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
       'UISupportedInterfaceOrientations~ipad': ['UIInterfaceOrientationPortrait'],
       UIBackgroundModes: ['remote-notification'],
       NSCameraUsageDescription:
         'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
+      NFCReaderUsageDescription:
+        'Pasaport çipi NFC okuma ve kapı etiketi okuma için NFC kullanılır.',
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
       NSLocationWhenInUseUsageDescription:
         'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
@@ -53,7 +73,7 @@ const baseConfig = {
     newArchEnabled: true,
     /** SDK 54 / target 35+: edge-to-edge; statusBarColor gibi eski API kullanmayın. */
     edgeToEdgeEnabled: true,
-    versionCode: 30,
+    versionCode: ANDROID_VERSION_CODE,
     softwareKeyboardLayoutMode: 'resize',
     ...(easPlatform === 'ios' ? {} : { googleServicesFile }),
     adaptiveIcon: {
@@ -201,6 +221,16 @@ const baseConfig = {
     ],
     './plugins/withPlaySafeManifest.js',
     './plugins/withGoogleModularHeaders.js',
+    './plugins/withEidReaderNfc.js',
+    [
+      'react-native-nfc-manager',
+      {
+        nfcPermission:
+          'Pasaport çipi okuma ve dijital anahtar kapı etiketi için NFC kullanılır.',
+        selectIdentifiers: ['A0000002471001', 'A0000002472001', '00000000000000'],
+        includeNdefEntitlement: true,
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,

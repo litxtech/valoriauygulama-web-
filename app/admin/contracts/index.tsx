@@ -163,7 +163,7 @@ export default function ContractsHubScreen() {
   const navigation = useNavigation();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const { selectedOrganizationId } = useAdminOrgStore();
   const canUseAllOrganizations = staff?.app_permissions?.super_admin === true || staff?.role === 'admin';
   const [templates, setTemplates] = useState<Template[]>([]);

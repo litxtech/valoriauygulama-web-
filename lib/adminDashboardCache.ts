@@ -30,7 +30,7 @@ type CacheEntry = {
 const STORAGE_PREFIX = 'admin_dashboard_stats_v3:';
 
 /** Bu süre içinde panele girince ağ isteği atlanır (önbellek yeterli). */
-export const ADMIN_DASHBOARD_FOCUS_REFRESH_MS = 5 * 60_000;
+export const ADMIN_DASHBOARD_FOCUS_REFRESH_MS = 8 * 60_000;
 
 /** Sohbet unread rozeti — ana sayfa yenilense bile bu süre dolmadan tekrar çekilmez. */
 export const ADMIN_DASHBOARD_MESSAGES_REFRESH_MS = 10 * 60_000;
@@ -107,11 +107,10 @@ export function getAdminDashboardCacheAgeMs(key: string): number | null {
 
 export function shouldSkipAdminDashboardNetwork(key: string, force?: boolean): boolean {
   if (force) return false;
-  const hasCache = !!entry && entry.key === key;
+  if (!entry || entry.key !== key) return false;
   // Cooldown yalnızca gösterilecek önbellek varsa ağı atlasın; ilk yüklemede panel boş kalıp
   // 12 sn boyunca veri çekmemesini önler.
-  if (isSupabaseInCooldown() && hasCache) return true;
-  if (!hasCache) return false;
+  if (isSupabaseInCooldown()) return true;
   return isEntryFresh(entry, ADMIN_DASHBOARD_FOCUS_REFRESH_MS);
 }
 

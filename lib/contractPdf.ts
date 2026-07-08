@@ -26,6 +26,7 @@ export type GuestForPdf = {
   accommodation_tax_amount?: number | null;
   payment_method?: string | null;
   reservation_channel?: string | null;
+  family_member_tcs?: { full_name?: string | null; tc?: string | null }[] | null;
 };
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -259,6 +260,17 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
   const channelLine = guest.reservation_channel
     ? `<p><strong>Rezervasyon Kanalı:</strong> ${escapeHtml(RESERVATION_CHANNEL_LABELS[guest.reservation_channel] ?? guest.reservation_channel)}</p>`
     : '';
+  const familyRows = Array.isArray(guest.family_member_tcs) ? guest.family_member_tcs : [];
+  const familyLine =
+    familyRows.length > 0
+      ? `<p><strong>Aile fertleri T.C.:</strong> ${familyRows
+          .map((r) => {
+            const n = escapeHtml((r.full_name ?? '').trim() || '—');
+            const tc = escapeHtml(String(r.tc ?? '').replace(/\D/g, '') || '—');
+            return `${n} (${tc})`;
+          })
+          .join('; ')}</p>`
+      : '';
 
   return `
 <!DOCTYPE html>
@@ -275,6 +287,7 @@ export function buildContractHtml(guest: GuestForPdf, appearance?: ContractPdfAp
     <p><strong>Telefon:</strong> ${phone}</p>
     <p><strong>E-posta:</strong> ${email}</p>
     <p><strong>Kimlik No:</strong> ${idNo}</p>
+    ${familyLine}
     <p><strong>Oda:</strong> ${room}</p>
     <p><strong>Onay Tarihi:</strong> ${date}</p>
     ${nightsLine}

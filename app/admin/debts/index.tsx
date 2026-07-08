@@ -88,6 +88,7 @@ export default function AdminDebtsIndex() {
       )
       .order('created_at', { ascending: false });
     if (orgFilter && orgFilter !== 'all') q = q.eq('organization_id', orgFilter);
+    q = q.limit(200);
     const { data, error } = await q;
     if (error) setRows([]);
     else setRows((((data ?? []) as unknown) as DebtListRow[]) ?? []);

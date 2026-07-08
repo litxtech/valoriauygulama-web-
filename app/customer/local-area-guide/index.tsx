@@ -5,10 +5,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useSegments } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +18,7 @@ import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { CachedImage } from '@/components/CachedImage';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF } from '@/lib/customerPerf';
 
 export type LocalAreaGuideListRow = {
   id: string;
@@ -145,8 +146,10 @@ export default function LocalAreaGuideListScreen() {
 
   return (
     <View style={styles.root}>
-      <FlatList
+      <FlashList
         data={rows}
+        estimatedItemSize={CARD_IMG_H + 50}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
         keyExtractor={(r) => r.id}
         renderItem={renderItem}
         numColumns={numCols}
@@ -174,6 +177,7 @@ export default function LocalAreaGuideListScreen() {
             </View>
           )
         }
+        {...CUSTOMER_LIST_PERF}
       />
     </View>
   );

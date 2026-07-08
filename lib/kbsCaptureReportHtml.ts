@@ -74,6 +74,10 @@ function buildSinglePageHtml(
   const img = imageBlock(row, includeImage, imageMap);
   const headline = esc(displayCapturedName(row));
   const capturedAt = new Date(row.captured_at ?? row.created_at).toLocaleString('tr-TR');
+  const capturer = row.captured_by_staff_name?.trim() || (row.scanned_by_user_id ? 'Personel' : '');
+  const capturerLine = capturer
+    ? `<div class="head-meta">Yükleyen: ${esc(capturer)}</div>`
+    : '';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <style>${SINGLE_PAGE_STYLES}</style></head><body>
@@ -81,6 +85,7 @@ function buildSinglePageHtml(
   <div class="head">
     <h1>${headline}</h1>
     <div class="head-meta">${esc(capturedAt)}</div>
+    ${capturerLine}
   </div>
   ${img}
   <div class="identity-block">
@@ -102,7 +107,11 @@ function buildCardsHtml(
       const fields = fieldsTableHtml(buildKbsReportFields(r, parsed));
       const img = imageBlock(r, includeImages, imageMap);
       const headline = esc(displayCapturedName(r));
-      return `<section class="card"><h2>${headline}</h2>${img}<h3 class="section-title">Kimlik bilgileri</h3>${fields}</section>`;
+      const capturer = r.captured_by_staff_name?.trim() || (r.scanned_by_user_id ? 'Personel' : '');
+      const capturerHtml = capturer
+        ? `<p class="card-meta">Yükleyen: ${esc(capturer)}</p>`
+        : '';
+      return `<section class="card"><h2>${headline}</h2>${capturerHtml}${img}<h3 class="section-title">Kimlik bilgileri</h3>${fields}</section>`;
     })
     .join('');
 }
@@ -136,6 +145,7 @@ body{font-family:system-ui,sans-serif;padding:8px;color:#111;margin:0}
 h1{font-size:16px;margin:0 0 6px}
 h2{font-size:14px;margin:0 0 8px;font-weight:800}
 .card{page-break-inside:avoid;margin-bottom:16px;border:1px solid #ddd;border-radius:8px;padding:10px}
+.card-meta{font-size:12px;color:#0f766e;font-weight:700;margin:0 0 8px}
 .section-title{
   font-size:13px;font-weight:800;color:#0f172a;margin:10px 0 8px;
   padding-bottom:6px;border-bottom:2px solid #0d9488;

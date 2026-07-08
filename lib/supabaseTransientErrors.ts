@@ -103,6 +103,24 @@ export function extractErrorMessage(reason: unknown): string {
   return String(reason);
 }
 
+/** Fetch timeout / iptal — kullanıcıya ham "aborted" gösterme. */
+export function isAbortLikeError(reason: unknown): boolean {
+  if (reason instanceof Error && reason.name === 'AbortError') return true;
+  const msg = extractErrorMessage(reason).toLowerCase();
+  return msg.includes('aborted') || msg.includes('aborterror') || msg === 'abort';
+}
+
+export function toSupabaseUserMessage(reason: unknown, fallback = 'Bağlantı hatası'): string {
+  if (isAbortLikeError(reason)) {
+    return 'Bağlantı zaman aşımına uğradı. Tekrar deneyin.';
+  }
+  const msg = sanitizeSupabaseErrorMessage(extractErrorMessage(reason));
+  if (isSupabaseUnavailableError(msg)) {
+    return 'Sunucuya ulaşılamıyor. Biraz sonra yenileyin.';
+  }
+  return msg || fallback;
+}
+
 /** PostgREST / RPC geçici hata — yeniden denenebilir. */
 export function isTransientSupabaseDbError(
   e: { code?: string; message?: string } | null | undefined

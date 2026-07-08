@@ -14,6 +14,10 @@ export type ParsedDocument = {
   gender: 'M' | 'F' | 'X' | null;
   motherName?: string | null;
   fatherName?: string | null;
+  /** NFC DG11 / çip — doğum yeri */
+  placeOfBirth?: string | null;
+  /** MRZ opsiyonel alan / NFC identityNo — kişisel numara */
+  personalNumber?: string | null;
   /** Ön yüz OCR — EVLİ / BEKAR vb. */
   maritalStatus?: 'married' | 'single' | null;
   rawMrz: string | null;

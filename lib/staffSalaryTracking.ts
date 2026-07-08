@@ -8,6 +8,7 @@ export type StaffSalaryPayment = {
   payment_type: string | null;
   bank_or_reference: string | null;
   description: string | null;
+  entry_kind?: string | null;
   status: string;
   staff_approved_at: string | null;
   staff_rejected_at: string | null;
@@ -52,6 +53,15 @@ export function classifySalaryPaymentKinds(rows: StaffSalaryPayment[]): Map<stri
       return ca.localeCompare(cb);
     });
     sorted.forEach((row, idx) => {
+      const kind = row.entry_kind;
+      if (kind === 'bonus' || kind === 'early_partial') {
+        result.set(row.id, 'extra');
+        return;
+      }
+      if (kind === 'regular') {
+        result.set(row.id, 'regular');
+        return;
+      }
       const extraHint = EXTRA_HINT.test(row.description ?? '');
       result.set(row.id, idx > 0 || extraHint ? 'extra' : 'regular');
     });

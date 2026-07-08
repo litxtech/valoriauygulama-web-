@@ -22,7 +22,7 @@ const EXPENSE_RECEIPT_MAX_WIDTH = 1600;
 const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
 
 /** Edge deploy/522 sorunlarında doğrudan Storage yeterli (RLS: authenticated insert). */
-const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'expense-receipts', 'breakfast-partner-camera']);
+const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'fault-records', 'expense-receipts', 'breakfast-partner-camera']);
 
 /** `feed-media` bucket `file_size_limit` (155_feed_media_bucket_file_size_limit.sql) ile aynı */
 const FEED_MEDIA_MAX_BYTES = 157286400;
@@ -100,7 +100,7 @@ function contentTypeForFeedUpload(kind: PublicUploadKind, ext: string, mime: str
 }
 
 function storageContentType(bucketId: string, kind: PublicUploadKind, ext: string, mime: string): string {
-  if (bucketId === 'feed-media' || bucketId === 'facility-journal') {
+  if (bucketId === 'feed-media' || bucketId === 'facility-journal' || bucketId === 'fault-records') {
     return contentTypeForFeedUpload(kind, ext, mime);
   }
   return stripMimeParams(mime);
@@ -278,7 +278,7 @@ export async function uploadUriToPublicBucket(params: {
   }
 
   if (
-    params.bucketId === 'facility-journal' &&
+    (params.bucketId === 'facility-journal' || params.bucketId === 'fault-records') &&
     (kind === 'video' || !isLocalFileUriForUpload(uploadUri))
   ) {
     if (!isLocalFileUriForUpload(uploadUri)) {

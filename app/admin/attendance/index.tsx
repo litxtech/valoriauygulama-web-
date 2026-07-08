@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -65,6 +67,7 @@ export default function AdminAttendanceIndexScreen() {
       if (error) throw new Error(error.message);
       return (data ?? []) as AdminAttendanceRow[];
     },
+    staleTime: 5 * 60_000,
   });
 
   const todayPretty = useMemo(
@@ -137,26 +140,16 @@ export default function AdminAttendanceIndexScreen() {
     { key: 'not_started', label: isTr ? 'Başlamadı' : 'Missing', value: trackingStats.notStarted, icon: 'alert-circle', color: T.colors.error },
   ];
 
-  const handleNotify = async () => {
-    const result = await sendNoCheckInNotification(manualNote);
-    if (!result?.error) setManualNote('');
-  };
+  const handleNotify = useCallback(async () => {
+    await sendNoCheckInNotification(manualNote);
+    setManualNote('');
+  }, [manualNote, sendNoCheckInNotification]);
 
   const isLoading = dailyQuery.isLoading && !dailyQuery.data;
 
-  return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={dailyQuery.isFetching || monthlyQuery.isFetching}
-          onRefresh={() => void Promise.all([refresh(), monthlyQuery.refetch()])}
-          tintColor={T.colors.accentBright}
-        />
-      }
-      showsVerticalScrollIndicator={false}
-    >
+  const listHeader = useMemo(
+    () => (
+      <>
       <LinearGradient colors={['#0f172a', '#1e293b', '#334155']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroDecor} pointerEvents="none" />
         <View style={styles.heroTop}>
@@ -242,35 +235,27 @@ export default function AdminAttendanceIndexScreen() {
         </Text>
         <Text style={styles.listSub}>{isTr ? 'Durum · giriş · çıkış · süre' : 'Status · in · out · duration'}</Text>
       </View>
+      </>
+    ),
+    [
+      activeFilter,
+      dailyQuery.isFetching,
+      isTr,
+      qText,
+      refresh,
+      rows.length,
+      todayPretty,
+      trackingStats.finished,
+      trackingStats.late,
+      trackingStats.notStarted,
+      trackingStats.onShift,
+      trackingStats.total,
+    ]
+  );
 
-      {isLoading ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color={T.colors.accent} />
-        </View>
-      ) : rows.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Ionicons name="people-outline" size={40} color={T.colors.textMuted} />
-          <Text style={styles.emptyTitle}>{isTr ? 'Kayıt bulunamadı' : 'No records'}</Text>
-          <Text style={styles.emptySub}>
-            {isTr ? 'Filtreyi değiştirin veya listeyi yenileyin.' : 'Change filter or refresh the list.'}
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.cardList}>
-          {rows.map((row) => (
-            <AdminAttendanceStaffCard
-              key={`${row.staff_id}-${row.work_date}`}
-              row={row}
-              localeCode={localeCode}
-              isTr={isTr}
-              onPress={() =>
-                router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: row.staff_id } })
-              }
-            />
-          ))}
-        </View>
-      )}
-
+  const listFooter = useMemo(
+    () => (
+      <>
       <TouchableOpacity
         style={styles.notifyBanner}
         onPress={() => setNotifyExpanded((v) => !v)}
@@ -360,7 +345,71 @@ export default function AdminAttendanceIndexScreen() {
           })}
         </View>
       )}
-    </ScrollView>
+      </>
+    ),
+    [
+      handleNotify,
+      isTr,
+      manualNote,
+      monthlyRanking,
+      noCheckInRows.length,
+      notifyExpanded,
+      router,
+      sendingNoCheckIn,
+    ]
+  );
+
+  const renderStaffRow = useCallback(
+    ({ item: row }: { item: AdminAttendanceRow }) => (
+      <AdminAttendanceStaffCard
+        row={row}
+        localeCode={localeCode}
+        isTr={isTr}
+        onPress={() =>
+          router.push({ pathname: '/admin/attendance/[staffId]', params: { staffId: row.staff_id } })
+        }
+      />
+    ),
+    [isTr, localeCode, router]
+  );
+
+  return (
+    <FlatList
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      data={isLoading ? [] : rows}
+      keyExtractor={(row) => `${row.staff_id}-${row.work_date}`}
+      renderItem={renderStaffRow}
+      ListHeaderComponent={listHeader}
+      ListFooterComponent={listFooter}
+      ListEmptyComponent={
+        isLoading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color={T.colors.accent} />
+          </View>
+        ) : (
+          <View style={styles.emptyBox}>
+            <Ionicons name="people-outline" size={40} color={T.colors.textMuted} />
+            <Text style={styles.emptyTitle}>{isTr ? 'Kayıt bulunamadı' : 'No records'}</Text>
+            <Text style={styles.emptySub}>
+              {isTr ? 'Filtreyi değiştirin veya listeyi yenileyin.' : 'Change filter or refresh the list.'}
+            </Text>
+          </View>
+        )
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={dailyQuery.isFetching || monthlyQuery.isFetching}
+          onRefresh={() => void Promise.all([refresh(), monthlyQuery.refetch()])}
+          tintColor={T.colors.accentBright}
+        />
+      }
+      showsVerticalScrollIndicator={false}
+      initialNumToRender={10}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS === 'android'}
+    />
   );
 }
 

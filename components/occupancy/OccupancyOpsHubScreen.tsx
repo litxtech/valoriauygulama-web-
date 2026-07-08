@@ -390,7 +390,7 @@ export function OccupancyOpsHubScreen() {
 
   const renderRoomCard = (room: OccupancyRoom) => {
     const st = ROOM_STATUS[room.status] ?? ROOM_STATUS.available;
-    const isOccupied = room.guests.length > 0;
+    const isOccupied = room.guests.length > 0 || room.kbsGuests.length > 0;
     return (
       <View key={room.id} style={styles.roomCard}>
         <TouchableOpacity style={styles.roomCardHead} onPress={() => openRoom(room.id)} activeOpacity={0.85}>
@@ -409,21 +409,32 @@ export function OccupancyOpsHubScreen() {
           </View>
         </TouchableOpacity>
 
-        {room.guests.length > 0 ? (
-          room.guests.map((g) => renderGuestCard(g))
-        ) : room.pending_contract_name ? (
-          <View style={styles.pendingInRoom}>
-            <Ionicons name="document-text-outline" size={16} color="#2563eb" />
-            <Text style={styles.pendingInRoomText}>
-              Sözleşme onaylı, oda bekliyor: <Text style={{ fontWeight: '700' }}>{room.pending_contract_name}</Text>
+        {room.guests.length > 0 ? room.guests.map((g) => renderGuestCard(g)) : null}
+
+        {room.kbsGuests.length > 0 ? (
+          <View style={styles.kbsRow}>
+            <Ionicons name="id-card-outline" size={15} color="#0f766e" />
+            <Text style={styles.kbsText}>
+              KBS kimlik: {room.kbsGuests.map((g) => g.initials).join(', ')}
             </Text>
-            <TouchableOpacity style={styles.linkBtn} onPress={() => setTab('pending')}>
-              <Text style={styles.linkBtnText}>Oda ata →</Text>
-            </TouchableOpacity>
           </View>
-        ) : (
-          <Text style={styles.emptyRoom}>Misafir yok — giriş için bekleyenler sekmesine bakın.</Text>
-        )}
+        ) : null}
+
+        {room.guests.length === 0 && room.kbsGuests.length === 0 ? (
+          room.pending_contract_name ? (
+            <View style={styles.pendingInRoom}>
+              <Ionicons name="document-text-outline" size={16} color="#2563eb" />
+              <Text style={styles.pendingInRoomText}>
+                Sözleşme onaylı, oda bekliyor: <Text style={{ fontWeight: '700' }}>{room.pending_contract_name}</Text>
+              </Text>
+              <TouchableOpacity style={styles.linkBtn} onPress={() => setTab('pending')}>
+                <Text style={styles.linkBtnText}>Oda ata →</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={styles.emptyRoom}>Misafir yok — giriş için bekleyenler sekmesine bakın.</Text>
+          )
+        ) : null}
       </View>
     );
   };
@@ -873,6 +884,19 @@ const styles = StyleSheet.create({
   },
   checkoutBtnText: { fontSize: 12, fontWeight: '800', color: '#fff' },
   emptyRoom: { fontSize: 13, color: '#94a3b8', padding: 14, fontStyle: 'italic' },
+  kbsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#0f766e12',
+    borderWidth: 1,
+    borderColor: '#0f766e33',
+  },
+  kbsText: { flex: 1, fontSize: 13, fontWeight: '700', color: '#0f766e', letterSpacing: 0.5 },
   pendingInRoom: { padding: 12, gap: 6 },
   pendingInRoomText: { fontSize: 13, color: '#334155', lineHeight: 18 },
   linkBtn: { alignSelf: 'flex-start' },
@@ -881,7 +905,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: 8,
     backgroundColor: '#fff',
     borderRadius: 12,
     borderWidth: 1,

@@ -1,5 +1,6 @@
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { MRZ_OCR_ENGINE_EXPO } from '@/lib/scanner/ocrLinesFromImage';
+import { KBS_OCR_ENGINE_NFC_CHIP } from '@/lib/kbsNfcCaptureSave';
 
 /** İsteğe bağlı gelişmiş / yedek okuma (expo) — nadiren kullanılır. */
 export const KBS_OCR_ENGINE_AI_FALLBACK = 'kbs-ai-fallback' as const;
@@ -9,6 +10,7 @@ export const KBS_OCR_ENGINE_FRONT_VISUAL = 'kbs-on-yuz' as const;
 export function kbsOcrEngineLabel(engine: string | null | undefined): string {
   const e = (engine ?? '').trim();
   if (e === KBS_OCR_ENGINE_FRONT_VISUAL) return 'Ön yüz okuma';
+  if (e === KBS_OCR_ENGINE_NFC_CHIP) return 'NFC çip okuma';
   if (e === MRZ_OCR_ENGINE_VISION_MLKIT) return 'Belge okuma';
   if (e === KBS_OCR_ENGINE_AI_FALLBACK) return 'AI yedek okuma';
   if (e === MRZ_OCR_ENGINE_EXPO) return 'Yedek okuma';
@@ -19,6 +21,7 @@ export function kbsOcrEngineLabel(engine: string | null | undefined): string {
 export function kbsOcrEngineShort(engine: string | null | undefined): string {
   const e = (engine ?? '').trim();
   if (e === KBS_OCR_ENGINE_FRONT_VISUAL) return 'Ön yüz';
+  if (e === KBS_OCR_ENGINE_NFC_CHIP) return 'NFC';
   if (e === MRZ_OCR_ENGINE_VISION_MLKIT) return 'Okuma';
   if (e === KBS_OCR_ENGINE_AI_FALLBACK) return 'AI';
   if (e === MRZ_OCR_ENGINE_EXPO) return 'Yedek';

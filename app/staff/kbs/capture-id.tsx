@@ -102,27 +102,21 @@ export default function KbsCaptureIdScreen() {
   const [cameraReady, setCameraReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const [roomNoInput, setRoomNoInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
   const [roomModalVisible, setRoomModalVisible] = useState(false);
-  const [guestNamesById, setGuestNamesById] = useState<Record<string, { firstName: string; lastName: string }>>(
-    {}
-  );
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const [splitting, setSplitting] = useState(false);
   const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
   const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const captureLockRef = useRef(false);
+  const phoneInputRef = useRef<TextInput | null>(null);
 
-  const setGuestName = useCallback((itemId: string, field: 'firstName' | 'lastName', value: string) => {
-    setGuestNamesById((prev) => ({
-      ...prev,
-      [itemId]: {
-        firstName: field === 'firstName' ? value : (prev[itemId]?.firstName ?? ''),
-        lastName: field === 'lastName' ? value : (prev[itemId]?.lastName ?? ''),
-      },
-    }));
+  const onPhoneChange = useCallback((text: string) => {
+    setPhoneInput(text.replace(/[^\d+()\s-]/g, '').slice(0, 24));
   }, []);
 
   const roomNoTrimmed = roomNoInput.trim();
+  const phoneTrimmed = phoneInput.trim();
 
   const queueGalleryItems = useMemo(
     () =>
@@ -256,11 +250,6 @@ export default function KbsCaptureIdScreen() {
   const removeFromQueue = useCallback((itemId: string) => {
     cancelKbsCapturePrewarm(itemId);
     setQueue((q) => q.filter((item) => item.id !== itemId));
-    setGuestNamesById((prev) => {
-      const next = { ...prev };
-      delete next[itemId];
-      return next;
-    });
   }, []);
 
   /** Yazılan oda numarası aynen kullanılır; listeden eşleştirme yapılmaz. */
@@ -376,20 +365,14 @@ export default function KbsCaptureIdScreen() {
         roomPrefetchRef.current = { key: roomNoTrimmed, room };
       }
 
-      const saveItems: KbsCaptureSaveItem[] = items.map((item, index) => {
-        const draft = guestNamesById[item.id];
-        const fn = draft?.firstName?.trim();
-        const ln = draft?.lastName?.trim();
-        return {
-          imageUri: item.imageUri,
-          index,
-          clientId: item.id,
-          captureSource: item.captureSource,
-          captureSide: item.captureSide,
-          firstName: fn || null,
-          lastName: ln || null,
-        };
-      });
+      const saveItems: KbsCaptureSaveItem[] = items.map((item, index) => ({
+        imageUri: item.imageUri,
+        index,
+        clientId: item.id,
+        captureSource: item.captureSource,
+        captureSide: item.captureSide,
+        guestPhone: phoneTrimmed || null,
+      }));
 
       setSaveStatus(t('kbsSaveFinishing'));
       const saved = await saveKbsCaptureItemsParallel(saveItems, room, (msg) => setSaveStatus(msg));
@@ -399,7 +382,7 @@ export default function KbsCaptureIdScreen() {
       clearKbsCapturePrewarmAll();
       setQueue([]);
       setRoomNoInput('');
-      setGuestNamesById({});
+      setPhoneInput('');
       roomPrefetchRef.current = null;
       setRoomModalVisible(false);
 
@@ -605,7 +588,7 @@ export default function KbsCaptureIdScreen() {
                 <Ionicons name="chevron-back" size={24} color="#0f172a" />
                 <Text style={styles.roomSheetBackText}>Geri</Text>
               </Pressable>
-              <Text style={styles.roomSheetTitle}>Oda ve misafir</Text>
+              <Text style={styles.roomSheetTitle}>Oda ve iletişim</Text>
               <View style={styles.roomSheetBack} />
             </View>
 
@@ -616,7 +599,7 @@ export default function KbsCaptureIdScreen() {
               showsVerticalScrollIndicator={false}
             >
               <Text style={styles.roomSheetSub}>
-                {queue.length} kimlik — oda numarası zorunlu; ad / soyad isteğe bağlı
+                {queue.length} kimlik — oda numarası zorunlu, telefon isteğe bağlı
               </Text>
 
               <Text style={styles.roomLabel}>Oda numarası</Text>
@@ -625,90 +608,45 @@ export default function KbsCaptureIdScreen() {
                 style={styles.roomInput}
                 value={roomNoInput}
                 onChangeText={onRoomNoChange}
+                placeholder="Örn. 204"
+                placeholderTextColor="#94a3b8"
                 keyboardType={Platform.OS === 'ios' ? 'ascii-capable' : 'default'}
                 autoCorrect={false}
                 autoCapitalize="characters"
                 autoComplete="off"
                 textContentType="none"
                 importantForAutofill="no"
-                returnKeyType="done"
+                returnKeyType="next"
                 blurOnSubmit={false}
-                onSubmitEditing={() => {
-                  if (roomNoTrimmed && !saving) void finalizeBulk();
-                }}
+                onSubmitEditing={() => phoneInputRef.current?.focus()}
                 editable={!saving}
                 maxLength={24}
               />
-              <Text
-                style={[styles.roomHint, roomNoTrimmed.length === 0 && styles.roomHintHidden]}
-                accessibilityElementsHidden={roomNoTrimmed.length === 0}
-                importantForAccessibility={roomNoTrimmed.length === 0 ? 'no-hide-descendants' : 'yes'}
-              >
-                {roomNoTrimmed.length > 0 ? `Kayıt oda no: ${roomNoTrimmed}` : ' '}
-              </Text>
 
-              <Text style={styles.nameSectionTitle}>Ad / soyad (isteğe bağlı)</Text>
-              <Text style={styles.nameSectionHint}>
-                Boş bırakırsanız belge arka planda okunur; ad / soyad geçmişte güncellenir.
+              <Text style={styles.phoneFieldLabel}>Telefon numarası (isteğe bağlı)</Text>
+              <View style={styles.phoneFieldWrap}>
+                <Ionicons name="call-outline" size={18} color="#64748b" style={styles.phoneFieldIcon} />
+                <TextInput
+                  ref={phoneInputRef}
+                  style={styles.phoneFieldInput}
+                  value={phoneInput}
+                  onChangeText={onPhoneChange}
+                  placeholder="Örn. 0555 123 45 67"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="phone-pad"
+                  autoComplete="tel"
+                  textContentType="telephoneNumber"
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (roomNoTrimmed && !saving) void finalizeBulk();
+                  }}
+                  editable={!saving}
+                  maxLength={24}
+                />
+              </View>
+              <Text style={styles.phoneFieldHint}>
+                Numara yazılırsa pasaport bilgileri kartında “Ara” ve “WhatsApp” butonları görünür.
               </Text>
-
-              {queue.length === 1 ? (
-                <View style={styles.nameRowPair}>
-                  <View style={styles.nameField}>
-                    <Text style={styles.nameFieldLabel}>Ad</Text>
-                    <TextInput
-                      style={styles.nameInput}
-                      value={guestNamesById[queue[0]!.id]?.firstName ?? ''}
-                      onChangeText={(v) => setGuestName(queue[0]!.id, 'firstName', v)}
-                      placeholder={t('kbsOptional')}
-                      placeholderTextColor="#94a3b8"
-                      autoCapitalize="words"
-                      editable={!saving}
-                    />
-                  </View>
-                  <View style={styles.nameField}>
-                    <Text style={styles.nameFieldLabel}>Soyad</Text>
-                    <TextInput
-                      style={styles.nameInput}
-                      value={guestNamesById[queue[0]!.id]?.lastName ?? ''}
-                      onChangeText={(v) => setGuestName(queue[0]!.id, 'lastName', v)}
-                      placeholder={t('kbsOptional')}
-                      placeholderTextColor="#94a3b8"
-                      autoCapitalize="words"
-                      editable={!saving}
-                    />
-                  </View>
-                </View>
-              ) : (
-                queue.map((item, index) => (
-                  <View key={item.id} style={styles.nameCard}>
-                    <Pressable onPress={() => openQueueGallery(item.id)}>
-                      <Image source={{ uri: item.imageUri }} style={styles.roomThumb} contentFit="cover" />
-                    </Pressable>
-                    <View style={styles.nameCardFields}>
-                      <Text style={styles.nameCardIndex}>Kimlik {index + 1}</Text>
-                      <TextInput
-                        style={styles.nameInput}
-                        value={guestNamesById[item.id]?.firstName ?? ''}
-                        onChangeText={(v) => setGuestName(item.id, 'firstName', v)}
-                        placeholder="Ad (isteğe bağlı)"
-                        placeholderTextColor="#94a3b8"
-                        autoCapitalize="words"
-                        editable={!saving}
-                      />
-                      <TextInput
-                        style={[styles.nameInput, styles.nameInputLast]}
-                        value={guestNamesById[item.id]?.lastName ?? ''}
-                        onChangeText={(v) => setGuestName(item.id, 'lastName', v)}
-                        placeholder={t('kbsLastNameOptional')}
-                        placeholderTextColor="#94a3b8"
-                        autoCapitalize="words"
-                        editable={!saving}
-                      />
-                    </View>
-                  </View>
-                ))
-              )}
             </ScrollView>
 
             <TouchableOpacity
@@ -1012,58 +950,29 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     minHeight: 44,
   },
-  roomHint: { marginTop: 10, minHeight: 20, fontSize: 14, fontWeight: '600', color: '#0369a1', textAlign: 'center' },
-  roomHintHidden: { opacity: 0 },
-  roomSheetScroll: { flexGrow: 0, flexShrink: 1, maxHeight: SCREEN_H * 0.62 },
-  roomSheetScrollContent: { paddingBottom: 8 },
-  nameSectionTitle: {
-    marginTop: 16,
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  nameSectionHint: {
-    marginTop: 4,
-    marginBottom: 10,
-    fontSize: 12,
-    color: '#64748b',
-    lineHeight: 17,
-  },
-  nameRowPair: { flexDirection: 'row', gap: 10 },
-  nameField: { flex: 1 },
-  nameFieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 },
-  nameInput: {
+  phoneFieldLabel: { fontSize: 15, fontWeight: '800', color: '#0f172a', marginTop: 18, marginBottom: 8 },
+  phoneFieldWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#cbd5e1',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 11 : 9,
-    fontSize: 15,
-    fontWeight: '600',
+    minHeight: 48,
+  },
+  phoneFieldIcon: { marginRight: 8 },
+  phoneFieldInput: {
+    flex: 1,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
+    fontSize: 18,
+    fontWeight: '700',
     color: '#0f172a',
+    letterSpacing: 0.5,
   },
-  nameInputLast: { marginTop: 8 },
-  nameCard: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-  },
-  nameCardFields: { flex: 1, minWidth: 0 },
-  nameCardIndex: { fontSize: 12, fontWeight: '800', color: '#475569', marginBottom: 6 },
-  roomThumb: {
-    width: 64,
-    height: 84,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f1f5f9',
-  },
+  phoneFieldHint: { marginTop: 8, fontSize: 12, color: '#64748b', lineHeight: 17 },
+  roomSheetScroll: { flexGrow: 0, flexShrink: 1, maxHeight: SCREEN_H * 0.62 },
+  roomSheetScrollContent: { paddingBottom: 8 },
   roomSubmitBtn: {
     backgroundColor: theme.colors.primary,
     borderRadius: 14,

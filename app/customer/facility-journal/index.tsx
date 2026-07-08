@@ -3,16 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { FacilityJournalListCard } from '@/components/facilityJournal/FacilityJournalListCard';
 import { listFacilityJournalRecordsForGuest, type FacilityJournalRecordRow } from '@/lib/facilityJournal';
 import { theme } from '@/constants/theme';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 export default function CustomerFacilityJournalIndex() {
   const { t } = useTranslation();
@@ -41,6 +42,13 @@ export default function CustomerFacilityJournalIndex() {
     [router]
   );
 
+  const renderItem = useCallback(
+    ({ item }: { item: FacilityJournalRecordRow }) => (
+      <FacilityJournalListCard item={item} onPress={openRecord} />
+    ),
+    [openRecord]
+  );
+
   if (loading && items.length === 0) {
     return (
       <View style={styles.centered}>
@@ -52,12 +60,15 @@ export default function CustomerFacilityJournalIndex() {
   return (
     <View style={styles.container}>
       <Text style={styles.intro}>{t('customerFacilityJournalIntro')}</Text>
-      <FlatList
+      <FlashList
         data={items}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.facilityJournal}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         contentContainerStyle={items.length === 0 ? styles.emptyList : styles.list}
-        renderItem={({ item }) => <FacilityJournalListCard item={item} onPress={openRecord} />}
+        renderItem={renderItem}
+        {...CUSTOMER_LIST_PERF}
         ListEmptyComponent={
           <Text style={styles.empty}>{error ?? t('customerFacilityJournalEmpty')}</Text>
         }

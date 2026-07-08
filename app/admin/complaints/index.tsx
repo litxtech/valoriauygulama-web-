@@ -49,7 +49,7 @@ type ComplaintRow = AdminGuestComplaintRow & {
 export default function AdminComplaintsIndex() {
   useTranslation();
   const loc = complaintsLocaleTag();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const { orgScoped, canUseAll } = useAdminOrganizationQueryScope();
   const [filter, setFilter] = useState<'all' | ComplaintRow['status']>('all');
   const [updatingId, setUpdatingId] = useState<string | null>(null);

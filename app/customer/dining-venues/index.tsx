@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  FlatList,
   RefreshControl,
   useWindowDimensions,
   Alert,
@@ -14,6 +13,7 @@ import {
   Pressable,
   ScrollView,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,7 @@ import {
 } from '@/lib/diningVenues';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 type TypeFilter = 'all' | VenueType;
 type PriceFilter = 'all' | 1 | 2 | 3;
@@ -182,169 +183,189 @@ export default function CustomerDiningVenuesList({ guestDetailStack = 'customer'
   const TYPE_OPTIONS: TypeFilter[] = ['all', 'restaurant', 'cafe', 'buffet'];
   const typeLabel = (k: TypeFilter) => (k === 'all' ? t('diningVenuesFilterAll') : t(`diningVenuesType_${k}`));
 
-  return (
-    <View style={[styles.root, { paddingTop: insets.top + 6 }]}>
-      <FlatList
-        data={loading ? [] : sorted}
-        keyExtractor={(i) => i.v.id}
-        ListHeaderComponent={
-          <View>
-            <LinearGradient
-              colors={['#2c1810', '#4a2c2a', '#1e3d2f']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.hero}
-            >
-              <Text style={styles.heroTitle}>{t('diningVenuesHeroTitle')}</Text>
-              <View style={styles.searchRow}>
-                <Ionicons name="search" size={18} color="rgba(255,255,255,0.85)" style={{ marginRight: 8 }} />
-                <TextInput
-                  value={q}
-                  onChangeText={setQ}
-                  placeholder={t('diningVenuesSearchPlaceholder')}
-                  placeholderTextColor="rgba(255,255,255,0.5)"
-                  style={styles.searchIn}
-                  returnKeyType="search"
-                />
-              </View>
-            </LinearGradient>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.typeRow}
-              style={styles.typeScroll}
-            >
-              {TYPE_OPTIONS.map((item) => {
-                const on = typeFilter === item;
-                return (
-                  <TouchableOpacity
-                    key={item}
-                    onPress={() => setTypeFilter(item)}
-                    style={[styles.typeChip, on && styles.typeChipOn]}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={[styles.typeChipT, on && styles.typeChipTOn]} numberOfLines={1}>
-                      {typeLabel(item)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+  const listHeader = useMemo(
+    () => (
+      <View>
+        <LinearGradient
+          colors={['#2c1810', '#4a2c2a', '#1e3d2f']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.hero}
+        >
+          <Text style={styles.heroTitle}>{t('diningVenuesHeroTitle')}</Text>
+          <View style={styles.searchRow}>
+            <Ionicons name="search" size={18} color="rgba(255,255,255,0.85)" style={{ marginRight: 8 }} />
+            <TextInput
+              value={q}
+              onChangeText={setQ}
+              placeholder={t('diningVenuesSearchPlaceholder')}
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              style={styles.searchIn}
+              returnKeyType="search"
+            />
+          </View>
+        </LinearGradient>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.typeRow}
+          style={styles.typeScroll}
+        >
+          {TYPE_OPTIONS.map((item) => {
+            const on = typeFilter === item;
+            return (
               <TouchableOpacity
-                style={[styles.filterBtn, extraFilterCount > 0 && styles.filterBtnActive]}
-                onPress={() => setFilterOpen(true)}
+                key={item}
+                onPress={() => setTypeFilter(item)}
+                style={[styles.typeChip, on && styles.typeChipOn]}
                 activeOpacity={0.85}
               >
-                <Ionicons name="options-outline" size={16} color={extraFilterCount > 0 ? '#fff' : theme.colors.text} />
-                <Text style={[styles.filterBtnT, extraFilterCount > 0 && styles.filterBtnTOn]}>
-                  {t('diningVenuesMoreFilters')}
+                <Text style={[styles.typeChipT, on && styles.typeChipTOn]} numberOfLines={1}>
+                  {typeLabel(item)}
                 </Text>
-                {extraFilterCount > 0 ? (
-                  <View style={styles.filterBadge}>
-                    <Text style={styles.filterBadgeT}>{extraFilterCount}</Text>
-                  </View>
-                ) : null}
               </TouchableOpacity>
-            </ScrollView>
-            {locLoading ? <Text style={styles.mutedSmall}>{t('diningVenuesLocating')}</Text> : null}
-            {distFilter !== 'all' && !userPos && !locLoading ? (
-              <TouchableOpacity onPress={requestLocation} style={styles.locBtn}>
-                <Ionicons name="location-outline" size={16} color={theme.colors.primary} />
-                <Text style={styles.locBtnT}>{t('diningVenuesUseMyLocation')}</Text>
-              </TouchableOpacity>
+            );
+          })}
+          <TouchableOpacity
+            style={[styles.filterBtn, extraFilterCount > 0 && styles.filterBtnActive]}
+            onPress={() => setFilterOpen(true)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="options-outline" size={16} color={extraFilterCount > 0 ? '#fff' : theme.colors.text} />
+            <Text style={[styles.filterBtnT, extraFilterCount > 0 && styles.filterBtnTOn]}>
+              {t('diningVenuesMoreFilters')}
+            </Text>
+            {extraFilterCount > 0 ? (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeT}>{extraFilterCount}</Text>
+              </View>
             ) : null}
-            {loading && items.length === 0 ? <Text style={styles.muted}>{t('loading')}</Text> : null}
+          </TouchableOpacity>
+        </ScrollView>
+        {locLoading ? <Text style={styles.mutedSmall}>{t('diningVenuesLocating')}</Text> : null}
+        {distFilter !== 'all' && !userPos && !locLoading ? (
+          <TouchableOpacity onPress={requestLocation} style={styles.locBtn}>
+            <Ionicons name="location-outline" size={16} color={theme.colors.primary} />
+            <Text style={styles.locBtnT}>{t('diningVenuesUseMyLocation')}</Text>
+          </TouchableOpacity>
+        ) : null}
+        {loading && items.length === 0 ? <Text style={styles.muted}>{t('loading')}</Text> : null}
+      </View>
+    ),
+    [
+      TYPE_OPTIONS,
+      distFilter,
+      extraFilterCount,
+      items.length,
+      loading,
+      locLoading,
+      q,
+      requestLocation,
+      t,
+      typeFilter,
+      typeLabel,
+      userPos,
+    ]
+  );
+
+  const renderItem = useCallback(
+    ({ item: { v, km } }: { item: { v: DiningVenueRow; km: number | null } }) => {
+      const cover = v.cover_image || v.images?.[0];
+      const listAvatar = venueAvatarUrl(v);
+      const tagLine = (v.cuisine_tags ?? []).slice(0, 4).join(' · ') || t(`diningVenuesType_${v.venue_type}`);
+      const menuPeek = (v.menu_items ?? [])
+        .map((m) => m.name?.trim())
+        .filter(Boolean)
+        .slice(0, 5);
+      return (
+        <View style={[styles.card, { width: cardW }]}>
+          <View style={styles.coverWrap}>
+            {cover ? (
+              <CachedImage uri={cover} style={styles.cover} contentFit="cover" />
+            ) : (
+              <View style={[styles.cover, styles.coverPh]}>
+                <Ionicons name="restaurant" size={44} color={theme.colors.textMuted} />
+              </View>
+            )}
+            {listAvatar ? (
+              <View style={styles.listAvatar} accessible accessibilityLabel={v.name}>
+                <CachedImage uri={listAvatar} style={styles.listAvatarImg} contentFit="cover" />
+              </View>
+            ) : null}
           </View>
-        }
+          <View style={styles.cardBody}>
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {v.name}
+            </Text>
+            {menuPeek.length > 0 ? (
+              <View style={styles.menuPeek}>
+                <Text style={styles.menuPeekLabel}>{t('diningVenuesMenuPeek')}</Text>
+                <Text style={styles.menuPeekText} numberOfLines={2}>
+                  {menuPeek.join(' · ')}
+                </Text>
+              </View>
+            ) : null}
+            <Text style={styles.desc} numberOfLines={2}>
+              {(v.description ?? '').trim() || '—'}
+            </Text>
+            <Text style={styles.meta} numberOfLines={1}>
+              {tagLine}
+            </Text>
+            <View style={styles.row}>
+              <Text style={styles.price}>
+                {t('diningVenuesPrice')}: {priceLevelLabel(v.price_level)}
+              </Text>
+              {km != null ? (
+                <Text style={styles.kmText}>
+                  {km < 1
+                    ? t('diningVenuesMeters', { m: Math.round(km * 1000) })
+                    : t('diningVenuesKm', { n: km.toFixed(1) })}
+                </Text>
+              ) : null}
+            </View>
+            <View style={styles.badges}>
+              {v.is_open_now ? (
+                <View style={[styles.pill, styles.pillOk]}>
+                  <Text style={styles.pillT}>{t('diningVenuesOpenNow')}</Text>
+                </View>
+              ) : (
+                <View style={[styles.pill, styles.pillNo]}>
+                  <Text style={styles.pillT}>{t('diningVenuesClosedNow')}</Text>
+                </View>
+              )}
+              {v.location_scope === 'on_premises' ? (
+                <View style={styles.pill}>
+                  <Text style={styles.pillT2}>{t('diningVenuesScope_on_premises')}</Text>
+                </View>
+              ) : null}
+            </View>
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={() => router.push({ pathname: detailPath, params: { id: v.id } })}
+            >
+              <Text style={styles.btnPrimaryT}>{t('diningVenuesShowDetails')}</Text>
+              <Ionicons name="chevron-forward" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    },
+    [cardW, detailPath, router, t]
+  );
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top + 6 }]}>
+      <FlashList
+        data={loading ? [] : sorted}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.diningVenue}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
+        keyExtractor={(i) => i.v.id}
+        ListHeaderComponent={listHeader}
         contentContainerStyle={{ paddingBottom: insets.bottom + 28, paddingTop: 0 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        ListEmptyComponent={
-          !loading ? <Text style={styles.muted}>{t('diningVenuesNoResults')}</Text> : null
-        }
-        renderItem={({ item: { v, km } }) => {
-          const cover = v.cover_image || v.images?.[0];
-          const listAvatar = venueAvatarUrl(v);
-          const tagLine = (v.cuisine_tags ?? []).slice(0, 4).join(' · ') || t(`diningVenuesType_${v.venue_type}`);
-          const menuPeek = (v.menu_items ?? [])
-            .map((m) => m.name?.trim())
-            .filter(Boolean)
-            .slice(0, 5);
-          return (
-            <View style={[styles.card, { width: cardW }]}>
-              <View style={styles.coverWrap}>
-                {cover ? (
-                  <CachedImage uri={cover} style={styles.cover} contentFit="cover" />
-                ) : (
-                  <View style={[styles.cover, styles.coverPh]}>
-                    <Ionicons name="restaurant" size={44} color={theme.colors.textMuted} />
-                  </View>
-                )}
-                {listAvatar ? (
-                  <View
-                    style={styles.listAvatar}
-                    accessible
-                    accessibilityLabel={v.name}
-                  >
-                    <CachedImage uri={listAvatar} style={styles.listAvatarImg} contentFit="cover" />
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.cardBody}>
-                <Text style={styles.cardTitle} numberOfLines={2}>
-                  {v.name}
-                </Text>
-                {menuPeek.length > 0 ? (
-                  <View style={styles.menuPeek}>
-                    <Text style={styles.menuPeekLabel}>{t('diningVenuesMenuPeek')}</Text>
-                    <Text style={styles.menuPeekText} numberOfLines={2}>
-                      {menuPeek.join(' · ')}
-                    </Text>
-                  </View>
-                ) : null}
-                <Text style={styles.desc} numberOfLines={2}>
-                  {(v.description ?? '').trim() || '—'}
-                </Text>
-                <Text style={styles.meta} numberOfLines={1}>
-                  {tagLine}
-                </Text>
-                <View style={styles.row}>
-                  <Text style={styles.price}>
-                    {t('diningVenuesPrice')}: {priceLevelLabel(v.price_level)}
-                  </Text>
-                  {km != null ? (
-                    <Text style={styles.kmText}>
-                      {km < 1
-                        ? t('diningVenuesMeters', { m: Math.round(km * 1000) })
-                        : t('diningVenuesKm', { n: km.toFixed(1) })}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={styles.badges}>
-                  {v.is_open_now ? (
-                    <View style={[styles.pill, styles.pillOk]}>
-                      <Text style={styles.pillT}>{t('diningVenuesOpenNow')}</Text>
-                    </View>
-                  ) : (
-                    <View style={[styles.pill, styles.pillNo]}>
-                      <Text style={styles.pillT}>{t('diningVenuesClosedNow')}</Text>
-                    </View>
-                  )}
-                  {v.location_scope === 'on_premises' ? (
-                    <View style={styles.pill}>
-                      <Text style={styles.pillT2}>{t('diningVenuesScope_on_premises')}</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <TouchableOpacity
-                  style={styles.btnPrimary}
-                  onPress={() => router.push({ pathname: detailPath, params: { id: v.id } })}
-                >
-                  <Text style={styles.btnPrimaryT}>{t('diningVenuesShowDetails')}</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        }}
+        ListEmptyComponent={!loading ? <Text style={styles.muted}>{t('diningVenuesNoResults')}</Text> : null}
+        renderItem={renderItem}
+        {...CUSTOMER_LIST_PERF}
       />
 
       <Modal

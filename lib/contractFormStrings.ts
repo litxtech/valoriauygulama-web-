@@ -24,6 +24,15 @@ export type FormStrings = {
   roomType: string;
   adults: string;
   children: string;
+  sectionFamilyTcs: string;
+  familyMemberTcs: string;
+  familyMemberTcsHint: string;
+  familyMemberName: string;
+  familyMemberTc: string;
+  familyMemberAdd: string;
+  familyMemberRemove: string;
+  placeholderFamilyName: string;
+  placeholderFamilyTc: string;
   acceptButton: string;
   placeholderFullName: string;
   placeholderIdNumber: string;
@@ -66,6 +75,16 @@ const tr: FormStrings = {
   roomType: 'Oda tipi',
   adults: 'Yetişkin sayısı',
   children: 'Çocuk (12 yaş altı)',
+  sectionFamilyTcs: 'Aile fertleri kimlik bilgileri',
+  familyMemberTcs: 'Aile fertleri T.C. kimlik numaraları',
+  familyMemberTcsHint:
+    'Türk kimlik fotokopisi alınmaz (yasal kısıtlama). Sözleşmeyi onaylayan kişi, odadaki diğer aile bireylerinin adını ve T.C. kimlik numaralarını yazmalıdır.',
+  familyMemberName: 'Ad soyad',
+  familyMemberTc: 'T.C. kimlik no',
+  familyMemberAdd: 'Aile ferdi ekle',
+  familyMemberRemove: 'Kaldır',
+  placeholderFamilyName: 'Örn: Ayşe Yılmaz',
+  placeholderFamilyTc: '11 haneli T.C. kimlik no',
   acceptButton: 'Sözleşmeyi kabul ediyorum',
   placeholderFullName: 'Örn: Ahmet Yılmaz',
   placeholderIdNumber: 'TC, pasaport veya sürücü belgesi no',
@@ -109,6 +128,16 @@ const en: FormStrings = {
   roomType: 'Room type',
   adults: 'Adults',
   children: 'Children (under 12)',
+  sectionFamilyTcs: 'Family ID details',
+  familyMemberTcs: 'Family members’ national ID numbers',
+  familyMemberTcsHint:
+    'Turkish ID photocopies are not accepted (legal restriction). The person signing must enter the name and national ID (T.C.) of other family members in the room.',
+  familyMemberName: 'Full name',
+  familyMemberTc: 'National ID (T.C.)',
+  familyMemberAdd: 'Add family member',
+  familyMemberRemove: 'Remove',
+  placeholderFamilyName: 'e.g. Ayşe Yılmaz',
+  placeholderFamilyTc: '11-digit T.C. ID number',
   acceptButton: 'I accept the agreement',
   placeholderFullName: 'e.g. John Smith',
   placeholderIdNumber: 'ID, passport or driver licence no',
@@ -152,6 +181,16 @@ const ar: FormStrings = {
   roomType: 'نوع الغرفة',
   adults: 'البالغون',
   children: 'الأطفال (تحت 12)',
+  sectionFamilyTcs: 'بيانات هوية أفراد العائلة',
+  familyMemberTcs: 'أرقام الهوية الوطنية لأفراد العائلة',
+  familyMemberTcsHint:
+    'لا يتم أخذ صورة من الهوية التركية (قيد قانوني). يجب على الموقع إدخال اسم ورقم الهوية (T.C.) لباقي أفراد العائلة في الغرفة.',
+  familyMemberName: 'الاسم الكامل',
+  familyMemberTc: 'رقم الهوية (T.C.)',
+  familyMemberAdd: 'إضافة فرد من العائلة',
+  familyMemberRemove: 'إزالة',
+  placeholderFamilyName: 'مثال: Ayşe Yılmaz',
+  placeholderFamilyTc: 'رقم الهوية المكون من 11 رقمًا',
   acceptButton: 'أوافق على الاتفاقية',
   placeholderFullName: 'الاسم الكامل',
   placeholderIdNumber: 'رقم الهوية أو جواز السفر',
@@ -195,6 +234,16 @@ const de: FormStrings = {
   roomType: 'Zimmertyp',
   adults: 'Erwachsene',
   children: 'Kinder (unter 12)',
+  sectionFamilyTcs: 'Ausweisdaten der Familienmitglieder',
+  familyMemberTcs: 'T.C.-Ausweisnummern der Familienmitglieder',
+  familyMemberTcsHint:
+    'Von türkischen Ausweisen werden keine Fotokopien angefertigt (gesetzliche Vorgabe). Die unterzeichnende Person trägt Name und T.C.-Nummer der übrigen Familienmitglieder im Zimmer ein.',
+  familyMemberName: 'Vollständiger Name',
+  familyMemberTc: 'T.C.-Nummer',
+  familyMemberAdd: 'Familienmitglied hinzufügen',
+  familyMemberRemove: 'Entfernen',
+  placeholderFamilyName: 'z. B. Ayşe Yılmaz',
+  placeholderFamilyTc: '11-stellige T.C.-Nummer',
   acceptButton: 'Ich akzeptiere die Vereinbarung',
   male: 'Männlich',
   female: 'Weiblich',
@@ -225,6 +274,16 @@ const fr: FormStrings = {
   roomType: 'Type de chambre',
   adults: 'Adultes',
   children: 'Enfants (moins de 12 ans)',
+  sectionFamilyTcs: 'Identités des membres de la famille',
+  familyMemberTcs: 'Numéros d’identité (T.C.) des membres de la famille',
+  familyMemberTcsHint:
+    'Les photocopies de pièces d’identité turques ne sont pas prises (restriction légale). La personne qui signe doit saisir le nom et le numéro T.C. des autres membres de la famille dans la chambre.',
+  familyMemberName: 'Nom complet',
+  familyMemberTc: 'N° T.C.',
+  familyMemberAdd: 'Ajouter un membre',
+  familyMemberRemove: 'Supprimer',
+  placeholderFamilyName: 'ex. Ayşe Yılmaz',
+  placeholderFamilyTc: 'N° T.C. à 11 chiffres',
   acceptButton: 'J\'accepte le contrat',
   male: 'Homme',
   female: 'Femme',
@@ -255,6 +314,16 @@ const ru: FormStrings = {
   roomType: 'Тип номера',
   adults: 'Взрослые',
   children: 'Дети (до 12 лет)',
+  sectionFamilyTcs: 'Данные удостоверений членов семьи',
+  familyMemberTcs: 'Номера T.C. членов семьи',
+  familyMemberTcsHint:
+    'Фотокопии турецких удостоверений не снимаются (ограничение закона). Подписывающий указывает ФИО и номер T.C. остальных членов семьи в номере.',
+  familyMemberName: 'ФИО',
+  familyMemberTc: 'Номер T.C.',
+  familyMemberAdd: 'Добавить члена семьи',
+  familyMemberRemove: 'Удалить',
+  placeholderFamilyName: 'напр. Ayşe Yılmaz',
+  placeholderFamilyTc: '11-значный номер T.C.',
   acceptButton: 'Я принимаю условия',
   male: 'Мужской',
   female: 'Женский',
@@ -285,6 +354,16 @@ const es: FormStrings = {
   roomType: 'Tipo de habitación',
   adults: 'Adultos',
   children: 'Niños (menores de 12)',
+  sectionFamilyTcs: 'Datos de identidad de la familia',
+  familyMemberTcs: 'Números de identidad (T.C.) de los familiares',
+  familyMemberTcsHint:
+    'No se toman fotocopias de documentos de identidad turcos (restricción legal). Quien firma debe escribir el nombre y el número T.C. de los demás familiares en la habitación.',
+  familyMemberName: 'Nombre completo',
+  familyMemberTc: 'Nº T.C.',
+  familyMemberAdd: 'Añadir familiar',
+  familyMemberRemove: 'Quitar',
+  placeholderFamilyName: 'ej. Ayşe Yılmaz',
+  placeholderFamilyTc: 'Nº T.C. de 11 dígitos',
   acceptButton: 'Acepto el acuerdo',
   male: 'Hombre',
   female: 'Mujer',
@@ -310,4 +389,5 @@ export const DEFAULT_FORM_FIELDS: Record<string, boolean> = {
   room_type: true,
   adults: true,
   children: true,
+  family_member_tcs: true,
 };

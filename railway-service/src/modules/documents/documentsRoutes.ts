@@ -116,10 +116,7 @@ export const documentsRoutes: FastifyPluginAsync = async (app) => {
       rawMrz: body.rawMrz ?? null,
       ocrEngine: body.ocrEngine ?? null
     });
-    const scanMeta =
-      'mrz_checksum_valid' in mrzExtra
-        ? { scanned_by_user_id: auth.authUserId as string }
-        : ({} as Record<string, never>);
+    const scanMeta = { scanned_by_user_id: auth.authUserId as string };
     const normalizedDocNo = body.parsed.documentNumber ? body.parsed.documentNumber.trim() : null;
     const fullName =
       body.parsed.fullName ??

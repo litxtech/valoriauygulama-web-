@@ -10,7 +10,7 @@ import { KbsCaptureWatermarkHost } from '@/components/kbs/KbsCaptureWatermarkHos
 
 function isIdCaptureWriteRoute(pathname: string | null | undefined): boolean {
   const p = pathname ?? '';
-  return p.includes('/kbs/capture-id');
+  return p.includes('/kbs/capture-id') || p.includes('/kbs/capture-nfc');
 }
 
 function isIdCaptureReadRoute(pathname: string | null | undefined): boolean {
@@ -67,6 +67,10 @@ export default function KbsLayout() {
       <Stack.Screen
         name="capture-id"
         options={{ title: 'Kimlik/Pasaport Çekim', headerShown: false, contentStyle: { backgroundColor: '#000' } }}
+      />
+      <Stack.Screen
+        name="capture-nfc"
+        options={{ title: 'Pasaport NFC', headerShown: false, contentStyle: { backgroundColor: '#0b1220' } }}
       />
       <Stack.Screen
         name="capture-history"

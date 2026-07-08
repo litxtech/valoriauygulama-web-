@@ -1,15 +1,15 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
   Linking,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -32,6 +32,7 @@ import {
   hydrateListCache,
   setListCache,
 } from '@/lib/listCache';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 const NOTIF_LIST_TTL_MS = 60_000;
 
@@ -46,6 +47,48 @@ type NotifRow = {
 };
 
 type LoadOpts = { force?: boolean };
+
+type NotifRowItemProps = {
+  item: NotifRow;
+  title: string;
+  body: string;
+  locale: string;
+  onPress: (item: NotifRow) => void;
+  styles: ReturnType<typeof createCustomerNotifStyles>;
+};
+
+const NotifRowItem = memo(function NotifRowItem({
+  item,
+  title,
+  body,
+  locale,
+  onPress,
+  styles,
+}: NotifRowItemProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.row, item.read_at ? styles.rowRead : null]}
+      onPress={() => onPress(item)}
+      activeOpacity={0.8}
+    >
+      <View style={styles.rowContent}>
+        {!item.read_at ? <View style={styles.unreadDot} /> : null}
+        <View style={styles.rowTextWrap}>
+          <Text style={styles.rowTitle}>{title}</Text>
+          {body ? (
+            <Text style={styles.rowBody} numberOfLines={2}>
+              {body}
+            </Text>
+          ) : null}
+          <Text style={styles.rowTime}>
+            {new Date(item.created_at).toLocaleString(locale === 'tr' ? 'tr-TR' : locale)}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export default function CustomerNotificationsScreen() {
   const { t } = useTranslation();
@@ -354,91 +397,97 @@ export default function CustomerNotificationsScreen() {
   }
 
   const listLoading = loading && list.length === 0 && !refreshing;
+  const notifLocale = i18n.language === 'tr' ? 'tr' : i18n.language;
 
-  return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            void load({ force: true });
-          }}
-        />
-      }
-    >
-      <Text style={styles.title}>{t('guestNotifScreenTitle')}</Text>
-      {!isExpoGo && (pushPerm === 'denied' || pushPerm === 'undetermined') && (
-        <View style={styles.pushCard}>
-          <View style={styles.pushCardRow}>
-            <Ionicons name="notifications-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.pushCardTitle}>{t('guestNotifPermCardTitle')}</Text>
-          </View>
-          <Text style={styles.pushCardDesc}>
-            {pushPerm === 'denied' ? t('guestNotifPermDeniedLong') : t('guestNotifPermUndetermined')}
-          </Text>
-          <View style={styles.pushCardBtnRow}>
-            <TouchableOpacity
-              style={[styles.pushCardBtn, enablingPush && styles.pushCardBtnDisabled]}
-              onPress={enablePush}
-              disabled={enablingPush}
-              activeOpacity={0.8}
-            >
-              {enablingPush ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.pushCardBtnText}>
-                  {pushPerm === 'denied' ? t('guestNotifBtnRequestAgain') : t('guestNotifBtnGrant')}
-                </Text>
-              )}
-            </TouchableOpacity>
-            {pushPerm === 'denied' && (
+  const listHeader = useMemo(
+    () => (
+      <View>
+        <Text style={styles.title}>{t('guestNotifScreenTitle')}</Text>
+        {!isExpoGo && (pushPerm === 'denied' || pushPerm === 'undetermined') && (
+          <View style={styles.pushCard}>
+            <View style={styles.pushCardRow}>
+              <Ionicons name="notifications-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.pushCardTitle}>{t('guestNotifPermCardTitle')}</Text>
+            </View>
+            <Text style={styles.pushCardDesc}>
+              {pushPerm === 'denied' ? t('guestNotifPermDeniedLong') : t('guestNotifPermUndetermined')}
+            </Text>
+            <View style={styles.pushCardBtnRow}>
               <TouchableOpacity
-                style={styles.pushCardBtnSecondary}
-                onPress={() => Linking.openSettings()}
+                style={[styles.pushCardBtn, enablingPush && styles.pushCardBtnDisabled]}
+                onPress={enablePush}
+                disabled={enablingPush}
                 activeOpacity={0.8}
               >
-                <Text style={styles.pushCardBtnSecondaryText}>{t('openAppSettings')}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      )}
-      {listLoading ? (
-        <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginVertical: 24 }} />
-      ) : list.length === 0 ? (
-        <Text style={styles.noList}>{t('guestNotifListEmpty')}</Text>
-      ) : (
-        list.map((n) => {
-          const shown = displayFor(n);
-          return (
-          <TouchableOpacity
-            key={n.id}
-            style={[styles.row, n.read_at ? styles.rowRead : null]}
-            onPress={() => handleNotificationPress(n)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.rowContent}>
-              {!n.read_at ? <View style={styles.unreadDot} /> : null}
-              <View style={styles.rowTextWrap}>
-                <Text style={styles.rowTitle}>{shown.title}</Text>
-                {shown.body ? (
-                  <Text style={styles.rowBody} numberOfLines={2}>
-                    {shown.body}
+                {enablingPush ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.pushCardBtnText}>
+                    {pushPerm === 'denied' ? t('guestNotifBtnRequestAgain') : t('guestNotifBtnGrant')}
                   </Text>
-                ) : null}
-                <Text style={styles.rowTime}>
-                  {new Date(n.created_at).toLocaleString(i18n.language === 'tr' ? 'tr-TR' : i18n.language)}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
+                )}
+              </TouchableOpacity>
+              {pushPerm === 'denied' && (
+                <TouchableOpacity
+                  style={styles.pushCardBtnSecondary}
+                  onPress={() => Linking.openSettings()}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pushCardBtnSecondaryText}>{t('openAppSettings')}</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          </TouchableOpacity>
-          );
-        })
-      )}
-    </ScrollView>
+          </View>
+        )}
+        {listLoading ? (
+          <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginVertical: 24 }} />
+        ) : null}
+      </View>
+    ),
+    [enablingPush, enablePush, isExpoGo, listLoading, pushPerm, styles, t]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: NotifRow }) => {
+      const shown = displayFor(item);
+      return (
+        <NotifRowItem
+          item={item}
+          title={shown.title}
+          body={shown.body ?? ''}
+          locale={notifLocale}
+          onPress={handleNotificationPress}
+          styles={styles}
+        />
+      );
+    },
+    [displayFor, handleNotificationPress, notifLocale, styles]
+  );
+
+  return (
+    <View style={styles.container}>
+      <FlashList
+        data={list}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.notification}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        ListHeaderComponent={listHeader}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void load({ force: true });
+            }}
+          />
+        }
+        ListEmptyComponent={
+          !listLoading ? <Text style={styles.noList}>{t('guestNotifListEmpty')}</Text> : null
+        }
+        {...CUSTOMER_LIST_PERF}
+      />
+    </View>
   );
 }
 

@@ -77,20 +77,15 @@ export function useHotelLiveMetrics(refreshKey = 0, opts?: { enablePolling?: boo
       const todayEnd = endOfTodayIso();
 
       try {
-        const { data: orgStaffRows } = await supabase
-          .from('staff')
-          .select('id')
-          .eq('organization_id', orgId)
-          .eq('is_active', true);
-        const orgStaffIds = (orgStaffRows ?? []).map((r: { id: string }) => r.id);
-
-        let tasksQuery = supabase
+        // Personel id listesi çekmeden görev sayısı: inner join ile org filtresi (tek count sorgusu).
+        const tasksQuery = supabase
           .from('staff_assignments')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['pending', 'in_progress']);
-        if (orgStaffIds.length > 0) {
-          tasksQuery = tasksQuery.in('assigned_staff_id', orgStaffIds);
-        }
+          .select('id, assigned_staff:assigned_staff_id!inner(organization_id)', {
+            count: 'exact',
+            head: true,
+          })
+          .in('status', ['pending', 'in_progress'])
+          .eq('assigned_staff.organization_id', orgId);
 
         const checkInQuery = supabase
           .from('guests')

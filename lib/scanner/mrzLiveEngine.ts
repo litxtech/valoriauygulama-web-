@@ -1,3 +1,4 @@
+import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
 import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
 import { normalizeMrzOcrLines } from '@/lib/scanner/mrzOcrNormalize';
 import { ocrLinesLookLikeMrz } from '@/lib/scanner/mrzPresence';
@@ -51,5 +52,8 @@ export function analyzeOcrLinesForMrzLive(lines: string[]): MrzLiveAnalyzeResult
     return { phase: 'signal' };
   }
 
-  return { phase: 'locking', locked: { mrz: best.mrz, parsed: best.parsed } };
+  const ocrLines = probe.length ? probe : lines;
+  const parsed = applyBestPassportNamesToParsed(best.parsed, ocrLines);
+
+  return { phase: 'locking', locked: { mrz: best.mrz, parsed } };
 }

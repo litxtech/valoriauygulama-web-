@@ -35,6 +35,13 @@ export function mrzSixDigitsToIso(yymmdd: string | null | undefined, kind: 'birt
   return `${year}-${mm}-${dd}`;
 }
 
+/** YYYY-MM-DD → YYMMDD (NFC BAC / MRZ çip anahtarı) */
+export function isoDateToMrzSix(iso: string | null | undefined): string | null {
+  const m = String(iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return `${m[1]!.slice(2)}${m[2]}${m[3]}`;
+}
+
 /** YYYY-MM-DD → DD.MM.YYYY (Türkçe gösterim) */
 export function formatIsoDateTr(iso: string | null | undefined): string {
   if (!iso) return '—';

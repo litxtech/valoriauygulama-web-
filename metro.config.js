@@ -23,6 +23,12 @@ const workletsCoreEntry = path.join(
   'node_modules/react-native-worklets-core/lib/module/index.js'
 );
 
+/** eid-reader package.json "react-native": "src/index" → codegen modül 4838 hatası; derlenmiş JS kullan. */
+const eidReaderEntry = path.join(
+  __dirname,
+  'node_modules/@2060.io/react-native-eid-reader/lib/commonjs/index.js'
+);
+
 const defaultResolveRequest = config.resolver.resolveRequest;
 
 // npm geçici @expo/.cli-* klasörleri silinince Metro ENOENT ile çökebiliyor (Windows).
@@ -39,6 +45,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'react-native-worklets-core') {
     return { filePath: workletsCoreEntry, type: 'sourceFile' };
+  }
+  if (
+    moduleName === '@2060.io/react-native-eid-reader' ||
+    moduleName.startsWith('@2060.io/react-native-eid-reader/')
+  ) {
+    return { filePath: eidReaderEntry, type: 'sourceFile' };
   }
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, moduleName, platform);

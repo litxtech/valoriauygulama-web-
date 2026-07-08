@@ -1,0 +1,35 @@
+diff --git a/node_modules/@2060.io/react-native-eid-reader/android/src/main/java/io/twentysixty/rn/eidreader/EIdReader.kt b/node_modules/@2060.io/react-native-eid-reader/android/src/main/java/io/twentysixty/rn/eidreader/EIdReader.kt
+index 185feb9..8c2f214 100644
+--- a/node_modules/@2060.io/react-native-eid-reader/android/src/main/java/io/twentysixty/rn/eidreader/EIdReader.kt
++++ b/node_modules/@2060.io/react-native-eid-reader/android/src/main/java/io/twentysixty/rn/eidreader/EIdReader.kt
+@@ -163,8 +163,16 @@ class EIdReader(context: Context) {
+ 
+     nfcResult.documentNo = mrzInfo.documentNumber
+     nfcResult.nationality = mrzInfo.nationality
+-    nfcResult.mrz =
+-      "${mrzInfo.documentNumber}${mrzInfo.dateOfExpiry}${mrzInfo.dateOfBirth}"
++    nfcResult.mrz = run {
++      val ascii = String(dg1RawBytes, Charsets.ISO_8859_1)
++      val lines = ascii.split(Regex("[\\r\\n]+"))
++        .map { it.trim() }
++        .filter { it.length in 30..46 && it.all { c -> c in 'A'..'Z' || c in '0'..'9' || c == '<' } }
++      when {
++        lines.size >= 2 -> lines.take(3).joinToString("\n")
++        else -> "${mrzInfo.documentNumber}${mrzInfo.dateOfExpiry}${mrzInfo.dateOfBirth}"
++      }
++    }
+ 
+     if (includeImages) {
+       val dg2RawBytes = service.getInputStream(PassportService.EF_DG2).use { it.readBytes() }
+diff --git a/node_modules/@2060.io/react-native-eid-reader/ios/EidReader.swift b/node_modules/@2060.io/react-native-eid-reader/ios/EidReader.swift
+index bb41b00..fd71a10 100644
+--- a/node_modules/@2060.io/react-native-eid-reader/ios/EidReader.swift
++++ b/node_modules/@2060.io/react-native-eid-reader/ios/EidReader.swift
+@@ -75,6 +75,7 @@ public class EIdReaderImpl: NSObject {
+         data["identityNo"] = passport.personalNumber
+         data["lastName"] = passport.lastName
+         data["mrz"] = passport.passportMRZ
++        data["expiryDate"] = passport.documentExpiryDate
+         data["nationality"] = passport.nationality
+ 
+         if (includeImages == true) {

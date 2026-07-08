@@ -9,8 +9,6 @@ import { parseKbsCaptureSideFromWarnings } from '@/lib/kbsCaptureSideMeta';
 import { listCoreMissingIdFields, normalizeKbsParsedPayload } from '@/lib/kbsCaptureParsedFields';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
-import { flattenMrzDocumentOcrLineSets, ocrLinesForGalleryDocument } from '@/lib/scanner/mrzDocumentOcr';
-import { filterKbsOcrLines } from '@/lib/kbsOcrDocumentFocus';
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
@@ -51,13 +49,13 @@ export async function correctKbsCapturedDocument(
     }
 
     const prepared = await prepareProfessionalKbsOcrUri(local);
-    const docOcr = await ocrLinesForGalleryDocument(prepared);
-    const allLines = filterKbsOcrLines(flattenMrzDocumentOcrLineSets(docOcr.lineSets));
-
     const warnings = (row.parsed_payload as ParsedDocument | null)?.warnings;
     const captureSide = parseKbsCaptureSideFromWarnings(warnings);
 
     const ocr = await parseIdCardImageUriGalleryDeep(prepared, { captureSide });
+    const allLines = ocr.parsed.rawMrz
+      ? ocr.parsed.rawMrz.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean)
+      : [];
     const existing = normalizeKbsParsedPayload(row.parsed_payload) ?? ocr.parsed;
     const corrected = buildCorrectionParsed(existing, ocr.parsed, allLines);
 

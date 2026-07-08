@@ -79,7 +79,11 @@ export default function KbsGuestConfirmScreen() {
         : t('kbsPersonForeign');
 
   const sourceLabel =
-    draft.sourceType === 'gallery' ? t('kbsGuestSourceGallery') : t('kbsGuestSourceCamera');
+    draft.sourceType === 'gallery'
+      ? t('kbsGuestSourceGallery')
+      : draft.sourceType === 'nfc'
+        ? t('kbsGuestSourceNfc')
+        : t('kbsGuestSourceCamera');
 
   const rescan = () => {
     setPending(null);

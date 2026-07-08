@@ -51,7 +51,7 @@ type ReportRow = {
 
 export default function AdminReportsIndex() {
   const router = useRouter();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const [list, setList] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'reviewed' | 'resolved' | 'dismissed'>('pending');

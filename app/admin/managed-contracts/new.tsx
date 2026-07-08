@@ -27,6 +27,8 @@ import {
 } from '@/components/contracts/PartyFormFields';
 import { ContractAiAssistant } from '@/components/contracts/ContractAiAssistant';
 import { AutoGrowMultilineInput } from '@/components/ui/AutoGrowMultilineInput';
+import { FullScreenTextEditor } from '@/components/contracts/FullScreenTextEditor';
+import { Ionicons } from '@expo/vector-icons';
 import type { ManagedContractType } from '@/lib/managedContracts/constants';
 
 export default function ManagedContractNewScreen() {
@@ -53,6 +55,7 @@ export default function ManagedContractNewScreen() {
     role: 'Taraf 2',
   }));
   const [saving, setSaving] = useState(false);
+  const [bodyEditorOpen, setBodyEditorOpen] = useState(false);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [organizationName, setOrganizationName] = useState('');
   const orgNameLoaded = useRef(false);
@@ -286,16 +289,21 @@ export default function ManagedContractNewScreen() {
           ))}
         </View>
 
-        <Text style={styles.label}>Sözleşme metni</Text>
-        <AutoGrowMultilineInput
-          style={[styles.input, styles.textArea]}
-          value={bodyText}
-          onChangeText={setBodyText}
-          minHeight={180}
-          lineHeight={21}
-          placeholder="Tüm maddeleri buraya yazın veya düzenleyin…"
-          placeholderTextColor={adminTheme.colors.textMuted}
-        />
+        <View style={styles.bodyHeaderRow}>
+          <Text style={styles.label}>Sözleşme metni</Text>
+          <Text style={styles.bodyMeta}>
+            {bodyText ? `${bodyText.split('\n').length} satır · ${bodyText.length} karakter` : 'Boş'}
+          </Text>
+        </View>
+        <TouchableOpacity style={styles.bodyPreview} activeOpacity={0.7} onPress={() => setBodyEditorOpen(true)}>
+          <Text style={bodyText ? styles.bodyPreviewText : styles.bodyPreviewPlaceholder} numberOfLines={10}>
+            {bodyText || 'Tüm maddeleri tam ekranda rahatça yazın veya düzenleyin…'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.bodyEditBtn} activeOpacity={0.85} onPress={() => setBodyEditorOpen(true)}>
+          <Ionicons name="create-outline" size={20} color="#fff" />
+          <Text style={styles.bodyEditBtnText}>Tam ekranda düzenle</Text>
+        </TouchableOpacity>
 
         <Text style={styles.label}>Özel maddeler</Text>
         <AutoGrowMultilineInput
@@ -317,6 +325,18 @@ export default function ManagedContractNewScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <FullScreenTextEditor
+        visible={bodyEditorOpen}
+        title="Sözleşme metni"
+        initialValue={bodyText}
+        placeholder="Tüm maddeleri buraya yazın veya düzenleyin…"
+        onCancel={() => setBodyEditorOpen(false)}
+        onSave={(text) => {
+          setBodyText(text);
+          setBodyEditorOpen(false);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -339,8 +359,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: adminTheme.colors.text,
   },
-  textArea: { minHeight: 180, fontSize: 14, lineHeight: 21, marginTop: 4 },
   textAreaSm: { minHeight: 90, fontSize: 14, lineHeight: 20, marginTop: 4 },
+  bodyHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bodyMeta: { fontSize: 12, color: adminTheme.colors.textMuted, fontWeight: '700', marginTop: 10 },
+  bodyPreview: {
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    borderRadius: 10,
+    padding: 14,
+    minHeight: 140,
+    maxHeight: 260,
+    marginTop: 4,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  bodyPreviewText: { fontSize: 14, lineHeight: 21, color: adminTheme.colors.text },
+  bodyPreviewPlaceholder: { fontSize: 14, lineHeight: 21, color: adminTheme.colors.textMuted },
+  bodyEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: adminTheme.colors.primary,
+    paddingVertical: 13,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  bodyEditBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   row: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },

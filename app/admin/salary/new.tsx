@@ -19,6 +19,11 @@ import { adminTheme } from '@/constants/adminTheme';
 import { sendNotification } from '@/lib/notificationService';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { AdminOrganizationPicker } from '@/components/admin';
+import {
+  createAdminSalaryPayment,
+  SALARY_ENTRY_KIND_LABELS,
+  type SalaryEntryKind,
+} from '@/lib/adminSalaryPayments';
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const PAYMENT_TYPES = [
@@ -44,6 +49,7 @@ export default function AdminSalaryNewScreen() {
   const [paymentType, setPaymentType] = useState<'transfer' | 'cash' | 'credit_card'>('transfer');
   const [bankOrReference, setBankOrReference] = useState('');
   const [description, setDescription] = useState('');
+  const [entryKind, setEntryKind] = useState<SalaryEntryKind>('regular');
   const [saving, setSaving] = useState(false);
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
 
@@ -79,41 +85,34 @@ export default function AdminSalaryNewScreen() {
       return;
     }
     setSaving(true);
-    const { data: inserted, error } = await supabase
-      .from('salary_payments')
-      .insert({
-        staff_id: staffId,
-        organization_id: canUseAllOrganizations && selectedOrganizationId !== 'all'
-          ? selectedOrganizationId
-          : me?.organization_id ?? null,
-        period_month: periodMonth,
-        period_year: periodYear,
-        amount: num,
-        payment_date: paymentDate,
-        payment_time: paymentTime || null,
-        payment_type: paymentType,
-        bank_or_reference: bankOrReference.trim() || null,
-        description: description.trim() || null,
-        status: 'pending_approval',
-        created_by: me?.id ?? null,
-      })
-      .select('id')
-      .single();
-
+    const result = await createAdminSalaryPayment({
+      staffId,
+      periodMonth,
+      periodYear,
+      amount: num,
+      paymentDate,
+      paymentTime: paymentTime || null,
+      paymentType,
+      bankOrReference: bankOrReference.trim() || null,
+      description: description.trim() || null,
+      entryKind,
+      createdByStaffId: me?.id ?? null,
+    });
     setSaving(false);
-    if (error) {
-      Alert.alert('Hata', error.message);
+    if (result.error || !result.id) {
+      Alert.alert('Hata', result.error ?? 'Kayıt yapılamadı');
       return;
     }
 
     const periodLabel = `${MONTH_NAMES[periodMonth - 1]} ${periodYear}`;
+    const kindLabel = SALARY_ENTRY_KIND_LABELS[entryKind];
     await sendNotification({
       staffId,
-      title: 'Maaşınız yatırıldı!',
-      body: `Dönem: ${periodLabel}\nTutar: ${new Intl.NumberFormat('tr-TR').format(num)} ₺\nÖdeme tarihi: ${paymentDate}\n\nLütfen maaş takip sayfasından kontrol edip onaylayın.`,
+      title: entryKind === 'regular' ? 'Maaşınız yatırıldı!' : 'Ödeme bildirimi',
+      body: `${kindLabel}\nDönem: ${periodLabel}\nTutar: ${new Intl.NumberFormat('tr-TR').format(num)} ₺\nÖdeme tarihi: ${paymentDate}\n\nLütfen maaş takip sayfasından kontrol edip onaylayın.`,
       notificationType: 'salary_deposited',
       category: 'staff',
-      data: { type: 'salary', paymentId: inserted?.id, screen: '/staff/salary-history' },
+      data: { type: 'salary', paymentId: result.id, screen: '/staff/salary-history' },
       createdByStaffId: me?.id ?? null,
     }).catch(() => {});
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,12 @@ import {
   Linking,
   Modal,
 } from 'react-native';
+import {
+  ADMIN_SCREEN_FOCUS_TTL_MS,
+  createDebouncedRunner,
+  getAdminScreenCache,
+  setAdminScreenCache,
+} from '@/lib/adminPerf';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -72,14 +78,19 @@ type MonthBucket = {
   pending: number;
 };
 
-async function fetchAllExpenseAggRows(organizationId?: string | 'all'): Promise<AggRow[]> {
+/** Son 12 ay — tüm geçmişi sayfalayıp çekmek ana ekranı kilitlemesin */
+async function fetchExpenseAggRows(organizationId?: string | 'all'): Promise<AggRow[]> {
+  const since = new Date();
+  since.setMonth(since.getMonth() - 12);
+  const sinceStr = since.toISOString().slice(0, 10);
   const out: AggRow[] = [];
-  const page = 1000;
+  const page = 500;
   let from = 0;
   for (;;) {
     let q = supabase
       .from('staff_expenses')
       .select('amount,status,expense_date')
+      .gte('expense_date', sinceStr)
       .order('expense_date', { ascending: true })
       .range(from, from + page - 1);
     if (organizationId && organizationId !== 'all') {
@@ -91,6 +102,7 @@ async function fetchAllExpenseAggRows(organizationId?: string | 'all'): Promise<
     out.push(...chunk);
     if (chunk.length < page) break;
     from += page;
+    if (from >= 3000) break;
   }
   return out;
 }
@@ -156,12 +168,13 @@ function aggregateExpenses(rows: AggRow[]): {
 
 export default function AdminExpensesScreen() {
   const router = useRouter();
-  const { staff: me } = useAuthStore();
-  const { selectedOrganizationId } = useAdminOrgStore();
+  const me = useAuthStore((s) => s.staff);
+  const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
   const [pending, setPending] = useState<ExpenseRow[]>([]);
   const [allExpenses, setAllExpenses] = useState<ExpenseRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const realtimeDebounce = useRef(createDebouncedRunner(1_200)).current;
   const [actingId, setActingId] = useState<string | null>(null);
   const [selectedPending, setSelectedPending] = useState<Set<string>>(() => new Set());
   const [bulkActing, setBulkActing] = useState(false);
@@ -185,20 +198,38 @@ export default function AdminExpensesScreen() {
   const [monthlyHistory, setMonthlyHistory] = useState<MonthBucket[]>([]);
   const [receiptModal, setReceiptModal] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
     const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
     const orgId = canUseAll ? selectedOrganizationId : me?.organization_id;
+    const cacheKey = `expenses:${orgId ?? 'all'}`;
+    if (!opts?.force) {
+      const cached = getAdminScreenCache<{
+        pending: ExpenseRow[];
+        allExpenses: ExpenseRow[];
+        monthlyHistory: MonthBucket[];
+        summary: typeof summary;
+      }>(cacheKey, ADMIN_SCREEN_FOCUS_TTL_MS);
+      if (cached) {
+        setPending(cached.pending);
+        setAllExpenses(cached.allExpenses);
+        setMonthlyHistory(cached.monthlyHistory);
+        setSummary(cached.summary);
+        setLoading(false);
+        return;
+      }
+    }
     let pendingQuery = supabase
       .from('staff_expenses')
       .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
       .eq('status', 'pending')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(80);
     let allQuery = supabase
       .from('staff_expenses')
       .select('id, amount, description, receipt_image_url, status, expense_date, created_at, staff_id, staff:staff_id(full_name, department), category:category_id(name), organization:organization_id(name)')
       .order('expense_date', { ascending: false })
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(40);
     if (orgId && orgId !== 'all') {
       pendingQuery = pendingQuery.eq('organization_id', orgId);
       allQuery = allQuery.eq('organization_id', orgId);
@@ -206,7 +237,7 @@ export default function AdminExpensesScreen() {
     const [pendingRes, allDataRes, aggRows] = await Promise.all([
       pendingQuery,
       allQuery,
-      fetchAllExpenseAggRows(orgId),
+      fetchExpenseAggRows(orgId),
     ]);
 
     const pendingList = (pendingRes.data ?? []) as unknown as ExpenseRow[];
@@ -219,7 +250,7 @@ export default function AdminExpensesScreen() {
     setMonthlyHistory(agg.months);
 
     const pendingAmount = pendingList.reduce((s, e) => s + Number(e.amount), 0);
-    setSummary({
+    const nextSummary = {
       thisMonthTotal: agg.thisMonthActive,
       lastMonthTotal: agg.lastMonthApproved,
       pendingCount: pendingList.length,
@@ -227,29 +258,39 @@ export default function AdminExpensesScreen() {
       approvedThisMonth: agg.approvedThisMonth,
       grandTotalActive: agg.grandTotalActive,
       grandApproved: agg.grandApproved,
+    };
+    setSummary(nextSummary);
+    setAdminScreenCache(cacheKey, {
+      pending: pendingList,
+      allExpenses: allList,
+      monthlyHistory: agg.months,
+      summary: nextSummary,
     });
     setLoading(false);
-  }, [me?.app_permissions?.super_admin, me?.organization_id, selectedOrganizationId]);
+  }, [me?.app_permissions?.super_admin, me?.organization_id, me?.role, selectedOrganizationId]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   useEffect(() => {
     const channel = supabase
       .channel('admin-expenses-hub')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_expenses' }, () => {
-        load();
+        realtimeDebounce.schedule(() => {
+          void load({ force: true });
+        });
       })
       .subscribe();
     return () => {
+      realtimeDebounce.cancel();
       supabase.removeChannel(channel);
     };
-  }, [load]);
+  }, [load, realtimeDebounce]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    load().finally(() => setRefreshing(false));
+    void load({ force: true }).finally(() => setRefreshing(false));
   }, [load]);
 
   const getExpenseSummary = (e: ExpenseRow) =>
@@ -277,7 +318,7 @@ export default function AdminExpensesScreen() {
         createdByStaffId: me.id,
       });
     }
-    load();
+    void load({ force: true });
   };
 
   const rejectWithReason = async (e: ExpenseRow, reason: string) => {
@@ -309,7 +350,11 @@ export default function AdminExpensesScreen() {
   };
 
   const reject = (e: ExpenseRow) => {
-    pickExpenseRejectReason((reason) => void rejectWithReason(e, reason), 'Harcamayı reddet');
+    pickExpenseRejectReason((reason) => {
+      void rejectWithReason(e, reason).then((ok) => {
+        if (ok) void load({ force: true });
+      });
+    }, 'Harcamayı reddet');
   };
 
   const pendingSelected = useMemo(
@@ -358,7 +403,7 @@ export default function AdminExpensesScreen() {
     setActingId(null);
     setBulkActing(false);
     setSelectedPending(new Set());
-    load();
+    void load({ force: true });
     Alert.alert('Tamam', `${ok} harcama onaylandı.`);
   };
 
@@ -371,7 +416,7 @@ export default function AdminExpensesScreen() {
     }
     setBulkActing(false);
     setSelectedPending(new Set());
-    load();
+    void load({ force: true });
     Alert.alert('Tamam', `${ok} harcama reddedildi.`);
   };
 

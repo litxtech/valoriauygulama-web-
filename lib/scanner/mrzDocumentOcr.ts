@@ -27,6 +27,17 @@ export type MrzDocumentOcrResult = {
   engine: string;
 };
 
+const GALLERY_REGION_PRIORITY = [
+  'mrz_band',
+  'bottom_half',
+  'document_crop',
+  'full',
+  'center',
+  'top_half',
+] as const;
+
+const GALLERY_OCR_CONCURRENCY = 3;
+
 function pickEngine(...engines: string[]): string {
   return engines.some((e) => e === MRZ_OCR_ENGINE_VISION_MLKIT)
     ? MRZ_OCR_ENGINE_VISION_MLKIT
@@ -145,8 +156,38 @@ export async function ocrLinesForKbsDocument(
   return { lineSets, engine: pickEngine(...engines) };
 }
 
+async function ocrGalleryRegion(
+  region: string,
+  regionUri: string,
+  lineSets: MrzDocumentOcrLineSet[],
+  engines: string[]
+): Promise<void> {
+  const pass = region as MrzDocumentOcrPassId;
+  try {
+    const hybrid = await ocrLinesFromImage(regionUri, { document: true, fast: false, imagePrepared: true });
+    if (hybrid.lines.length) {
+      lineSets.push({ pass, lines: hybrid.lines });
+      engines.push(hybrid.engine);
+    }
+  } catch {
+    /* sonraki bölge */
+  }
+
+  if (hasConfidentMrz(lineSets)) return;
+
+  try {
+    const expo = await ocrLinesFromImageExpoOnly(regionUri, { document: true, fast: false, imagePrepared: true });
+    if (expo.lines.length) {
+      lineSets.push({ pass: `${pass}_expo` as MrzDocumentOcrPassId, lines: expo.lines });
+      engines.push(expo.engine);
+    }
+  } catch {
+    /* expo yedek */
+  }
+}
+
 /**
- * Galeri — tüm belge bölgeleri + ML Kit + expo; yavaş, eksiksiz okuma.
+ * Galeri — belge bölgeleri paralel; MRZ bulununca erken çık.
  */
 export async function ocrLinesForGalleryDocument(uri: string): Promise<MrzDocumentOcrResult> {
   const prepared = await prepareProfessionalKbsOcrUri(uri);
@@ -154,26 +195,18 @@ export async function ocrLinesForGalleryDocument(uri: string): Promise<MrzDocume
   const lineSets: MrzDocumentOcrLineSet[] = [];
   const engines: string[] = [];
 
-  for (const { region, uri: regionUri } of regions) {
-    const pass = region as MrzDocumentOcrPassId;
-    try {
-      const hybrid = await ocrLinesFromImage(regionUri, { document: true, fast: false });
-      if (hybrid.lines.length) {
-        lineSets.push({ pass, lines: hybrid.lines });
-        engines.push(hybrid.engine);
-      }
-    } catch {
-      /* sonraki bölge */
-    }
-    try {
-      const expo = await ocrLinesFromImageExpoOnly(regionUri, { document: true, fast: false });
-      if (expo.lines.length) {
-        lineSets.push({ pass: `${pass}_expo` as MrzDocumentOcrPassId, lines: expo.lines });
-        engines.push(expo.engine);
-      }
-    } catch {
-      /* expo yedek */
-    }
+  const ordered = [...regions].sort((a, b) => {
+    const ia = GALLERY_REGION_PRIORITY.indexOf(a.region as (typeof GALLERY_REGION_PRIORITY)[number]);
+    const ib = GALLERY_REGION_PRIORITY.indexOf(b.region as (typeof GALLERY_REGION_PRIORITY)[number]);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  for (let i = 0; i < ordered.length; i += GALLERY_OCR_CONCURRENCY) {
+    const batch = ordered.slice(i, i + GALLERY_OCR_CONCURRENCY);
+    await Promise.all(
+      batch.map((entry) => ocrGalleryRegion(entry.region, entry.uri, lineSets, engines))
+    );
+    if (hasConfidentMrz(lineSets)) break;
   }
 
   return { lineSets, engine: pickEngine(...engines) };

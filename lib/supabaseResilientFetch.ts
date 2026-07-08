@@ -6,7 +6,7 @@ import {
 import { markSupabaseUnhealthy } from '@/lib/supabaseHealthGate';
 
 /** Okuma / RPC — yavaş sunucuda donmayı kısaltır ama meşru sorguları kesmeyecek kadar geniş. */
-const FETCH_TIMEOUT_READ_MS = 20_000;
+const FETCH_TIMEOUT_READ_MS = 28_000;
 /** Auth oturumu — GoTrue. */
 const FETCH_TIMEOUT_AUTH_MS = 10_000;
 /** Storage yükleme — büyük dosyalar. */

@@ -45,7 +45,7 @@ export async function upsertGuestDocumentLocal(args: {
   motherName?: string | null;
   frontImageUrl?: string | null;
   backImageUrl?: string | null;
-  captureSource?: 'camera' | 'gallery' | 'mixed' | null;
+  captureSource?: 'camera' | 'gallery' | 'mixed' | 'nfc' | null;
   capturedAt?: string | null;
   /** Toplu kayıtta tekrarlayan ensure_my_ops_app_user RPC çağrısını önler. */
   opsContext?: { hotelId: string; userId: string };
@@ -124,13 +124,18 @@ export async function upsertGuestDocumentLocal(args: {
   };
 
   const payloadJson = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  // Kimliği yükleyen personel her zaman yazılır (MRZ olsun olmasın).
   const mrzAudit = isMrzPayload(effectiveRaw)
     ? {
         mrz_checksum_valid: true as const,
         ocr_engine: ocrEngine ?? 'expo-text-extractor',
         scanned_by_user_id: uid,
       }
-    : { mrz_checksum_valid: null, ocr_engine: null, scanned_by_user_id: null };
+    : {
+        mrz_checksum_valid: null,
+        ocr_engine: ocrEngine ?? null,
+        scanned_by_user_id: uid,
+      };
 
   if (normalizedDocNo) {
     const existing = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);

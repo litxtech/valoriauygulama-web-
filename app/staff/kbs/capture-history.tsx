@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -54,6 +54,7 @@ import type { ParsedDocument } from '@/lib/scanner/types';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { buildKbsCaptureGalleryItems } from '@/lib/kbsCaptureGallery';
 import { useTranslation } from 'react-i18next';
+import { isAbortLikeError, toSupabaseUserMessage } from '@/lib/supabaseTransientErrors';
 
 const CAPTURE_ID_ROUTE = '/staff/kbs/capture-id' as Href;
 
@@ -165,8 +166,10 @@ function CaptureCard({
           ) : null}
         </View>
         {!inGroup ? <Text style={styles.meta}>Oda {item.room_number ?? '—'}</Text> : null}
-        {showCapturedBy && item.captured_by_staff_name ? (
-          <Text style={styles.meta}>Çeken: {item.captured_by_staff_name}</Text>
+        {showCapturedBy && (item.captured_by_staff_name || item.scanned_by_user_id) ? (
+          <Text style={styles.metaStaff}>
+            Yükleyen: {item.captured_by_staff_name?.trim() || 'Personel'}
+          </Text>
         ) : null}
         <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
         {cardStatus?.tone === 'ok' ? (
@@ -205,6 +208,8 @@ export default function KbsCaptureHistoryScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const reloadSeqRef = useRef(0);
+  const lastFocusReloadAtRef = useRef(0);
 
   const canDelete = staffCanDeleteKbsCaptures(staff);
   const canSeeImages =
@@ -216,19 +221,26 @@ export default function KbsCaptureHistoryScreen() {
   const reload = useCallback(async () => {
     const authId = user?.id ?? staff?.auth_id;
     if (!authId) return;
+    const seq = ++reloadSeqRef.current;
     try {
       setError(null);
       const data = await fetchKbsCapturedDocuments(300, authId);
+      if (seq !== reloadSeqRef.current) return;
       const scoped = filterKbsCapturesForViewer(data, staff, staff?.auth_id);
       setRows(scoped);
       setKbsCaptureHistoryCache(scoped);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('kbsListLoadFailed'));
+      if (seq !== reloadSeqRef.current) return;
+      if (isAbortLikeError(e) && (getKbsCaptureHistoryCache()?.length ?? rows.length) > 0) {
+        return;
+      }
+      setError(toSupabaseUserMessage(e, t('kbsListLoadFailed')));
     } finally {
+      if (seq !== reloadSeqRef.current) return;
       setLoading(false);
       setRefreshing(false);
     }
-  }, [staff, user?.id, t]);
+  }, [rows.length, staff, user?.id, t]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -251,7 +263,13 @@ export default function KbsCaptureHistoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastFocusReloadAtRef.current < 2500) return;
+      lastFocusReloadAtRef.current = now;
       void reload();
+      return () => {
+        reloadSeqRef.current += 1;
+      };
     }, [reload])
   );
 
@@ -668,7 +686,7 @@ export default function KbsCaptureHistoryScreen() {
                 canSeeImages={canSeeImages}
                 canDelete={canDelete}
                 isNew={isRowNew(row)}
-                showCapturedBy={viewAllCaptures}
+                showCapturedBy
                 selectionMode={selectionMode}
                 selected={selectedIds.has(row.id)}
                 onPress={() => openRow(row)}
@@ -684,6 +702,7 @@ export default function KbsCaptureHistoryScreen() {
 
           const { rows, roomNumber, capturedAt } = entry;
           const capturedLabel = new Date(capturedAt).toLocaleString('tr-TR');
+          const groupCapturer = rows.find((r) => r.captured_by_staff_name)?.captured_by_staff_name;
           const groupAllSelected = rows.every((r) => selectedIds.has(r.id));
           const groupSomeSelected = rows.some((r) => selectedIds.has(r.id));
 
@@ -704,6 +723,7 @@ export default function KbsCaptureHistoryScreen() {
                   <Text style={styles.groupTitle}>Aynı kayıt · {rows.length} kişi</Text>
                   <Text style={styles.groupSub}>
                     Oda {roomNumber ?? '—'} · {capturedLabel}
+                    {groupCapturer ? ` · ${groupCapturer}` : ''}
                   </Text>
                 </View>
                 {selectionMode ? (
@@ -743,7 +763,7 @@ export default function KbsCaptureHistoryScreen() {
                         canSeeImages={canSeeImages}
                         canDelete={canDelete}
                         isNew={isRowNew(row)}
-                        showCapturedBy={viewAllCaptures}
+                        showCapturedBy
                         inGroup
                         groupPosition={pos}
                         selectionMode={selectionMode}
@@ -1084,6 +1104,7 @@ const styles = StyleSheet.create({
   cardBody: { flex: 1, minWidth: 0 },
   name: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
   meta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
+  metaStaff: { fontSize: 12, color: '#0f766e', marginTop: 2, fontWeight: '700' },
   parsedLine: { fontSize: 11, color: theme.colors.text, marginTop: 6, lineHeight: 15 },
   parsedHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontStyle: 'italic' },
   missingLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '700' },

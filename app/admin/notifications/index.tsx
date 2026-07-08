@@ -18,7 +18,7 @@ type NotifRow = {
 
 export default function AdminNotificationsIndex() {
   const router = useRouter();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const { selectedOrganizationId } = useAdminOrgStore();
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);

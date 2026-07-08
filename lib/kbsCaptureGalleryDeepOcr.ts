@@ -59,18 +59,28 @@ export async function parseIdCardImageUriMaximum(
   let merged = toResult(mergeKbsOcrPassResults(passes));
   if (coreComplete(merged.parsed) && merged.parsed.rawMrz) return merged;
 
+  // Aynı satırlardan ön/MRZ parse — tekrar OCR yok.
   passes.push(
-    await parseIdCardImageUriProfessional(prepared, {
-      captureSide: 'front',
-      fast: false,
-      galleryDeep: true,
+    parseKbsFromDocumentOcr({
+      lineSets: docOcr.lineSets,
+      engine: docOcr.engine,
+      mrzFocused: false,
+    }),
+    parseKbsFromDocumentOcr({
+      lineSets: docOcr.lineSets,
+      engine: docOcr.engine,
+      mrzFocused: true,
     })
   );
+  merged = toResult(mergeKbsOcrPassResults(passes));
+  if (coreComplete(merged.parsed)) return merged;
+
   passes.push(
     await parseIdCardImageUriProfessional(prepared, {
-      captureSide: 'mrz_back',
+      captureSide: side,
       fast: false,
       galleryDeep: true,
+      imagePrepared: true,
     })
   );
   merged = toResult(mergeKbsOcrPassResults(passes));

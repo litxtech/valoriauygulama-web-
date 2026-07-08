@@ -3,6 +3,7 @@ import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
 import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
 import { assignKbsRoomsBatch, type KbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
+import { checkoutRoomOtherGuests } from '@/lib/hotelInHouse';
 import {
   awaitKbsCapturePrewarm,
   getKbsCaptureOpsContext,
@@ -24,6 +25,8 @@ export type KbsCaptureSaveItem = {
   /** İsteğe bağlı — oda onayunda girilir. */
   firstName?: string | null;
   lastName?: string | null;
+  /** İsteğe bağlı — oda onayında girilen müşteri telefon numarası (guest_phone_submitted). */
+  guestPhone?: string | null;
 };
 
 function buildFallbackParsed(
@@ -181,6 +184,7 @@ export async function saveKbsCaptureItemsParallel(
         deferReady: false,
         usageKind: 'konaklama',
         mrzBatchKey: batchKey,
+        guestPhone: item.guestPhone ?? null,
         frontImageUrl: pack.upload.publicUrl,
         backImageUrl: null,
         captureSource: item.captureSource,
@@ -215,6 +219,10 @@ export async function saveKbsCaptureItemsParallel(
     guestDocumentIds: upserted.map((r) => r.guestDocumentId),
   });
   if (!assignRes.ok) throw new Error(assignRes.error.message);
+
+  // Odaya bu çekimde giren misafirler kalır; önceki farklı misafirler otomatik çıkış yapar.
+  const keepGuestIds = [...new Set(upserted.map((r) => r.guestId).filter(Boolean))];
+  void checkoutRoomOtherGuests(room.id, keepGuestIds).catch(() => {});
 
   return upserted.map((row) => ({
     guestDocumentId: row.guestDocumentId,

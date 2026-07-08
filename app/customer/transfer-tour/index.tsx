@@ -9,6 +9,7 @@ import {
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +28,7 @@ import {
 } from '@/lib/transferTour';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 const TYPE_FILTER: (TransferServiceType | 'all')[] = ['all', 'transfer', 'tour', 'vip', 'custom_route'];
 const SIZE_FILTER: (VehicleSize | 'all')[] = ['all', 'small', 'medium', 'large', 'vip'];
@@ -124,6 +126,88 @@ export default function CustomerTransferTourList({ guestDetailStack = 'customer'
     return s.price != null ? `${s.price} ${s.currency}` : '—';
   };
 
+  const renderService = useCallback(
+    ({ item: s }: { item: TransferServiceRow }) => {
+      const title = pickLocalizedString(s.title as I18nJson, lang, t('transferTourNavTitle'));
+      const cover = s.cover_image || s.images?.[0];
+      const leg0 = s.routes[0];
+      const from0 = leg0 ? pickLocalizedString(leg0.from, lang, '') : '';
+      const to0 = leg0 ? pickLocalizedString(leg0.to, lang, '') : '';
+      const routeText =
+        from0.trim() && to0.trim()
+          ? `${from0} → ${to0}`
+          : (from0 || to0).trim() || t('transferTourListRouteShort');
+      return (
+        <View style={[styles.card, { width: cardW }]}>
+          {cover ? (
+            <CachedImage uri={cover} style={styles.cover} contentFit="cover" />
+          ) : (
+            <View style={[styles.cover, styles.coverPh]}>
+              <Ionicons name="car-sport" size={48} color={theme.colors.textMuted} />
+            </View>
+          )}
+          <View style={styles.cardBody}>
+            {s.tour_operator_name || s.tour_operator_logo ? (
+              <View style={styles.opRow}>
+                {s.tour_operator_logo ? (
+                  <CachedImage uri={s.tour_operator_logo} style={styles.opAvatar} contentFit="cover" />
+                ) : (
+                  <View style={[styles.opAvatar, styles.opAvatarPh]}>
+                    <Ionicons name="business-outline" size={20} color={theme.colors.textMuted} />
+                  </View>
+                )}
+                {s.tour_operator_name ? (
+                  <Text style={styles.opName} numberOfLines={2}>
+                    {s.tour_operator_name}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {title}
+            </Text>
+            {s.brand || s.model ? (
+              <Text style={styles.meta}>
+                {[s.brand, s.model].filter(Boolean).join(' · ')}
+              </Text>
+            ) : null}
+            <View style={styles.row}>
+              <Ionicons name="people-outline" size={16} color={theme.colors.textSecondary} />
+              <Text style={styles.metaSmall}> {t('transferTourPassengers', { n: s.capacity })}</Text>
+              <Text style={styles.metaSmall}> · </Text>
+              <Text style={styles.metaSmall}>{t('transferTourLuggage', { n: s.luggage_capacity })}</Text>
+            </View>
+            {routeText ? (
+              <Text style={styles.route} numberOfLines={2}>
+                {routeText}
+              </Text>
+            ) : null}
+            <View style={styles.cardFooter}>
+              <Text style={styles.price}>{priceLabel(s)}</Text>
+              <View style={styles.btnRow}>
+                <TouchableOpacity
+                  style={styles.btnGhost}
+                  onPress={() => router.push({ pathname: detailPath as Href, params: { id: s.id } })}
+                >
+                  <Text style={styles.btnGhostT}>{t('transferTourShowDetails')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.btnPrimary}
+                  onPress={() =>
+                    router.push({ pathname: detailPath as Href, params: { id: s.id, request: '1' } })
+                  }
+                >
+                  <Text style={styles.btnPrimaryT}>{t('transferTourRequest')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      );
+    },
+    [cardW, detailPath, lang, router, t]
+  );
+
   /** Personel stack’inde üstte zaten navigation header var; çift boşluk olmasın */
   const listTopPad = guestDetailStack === 'staff' ? 8 : insets.top + 8;
 
@@ -200,90 +284,16 @@ export default function CustomerTransferTourList({ guestDetailStack = 'customer'
       {loading && items.length === 0 ? (
         <Text style={styles.muted}>{t('loading')}</Text>
       ) : (
-        <FlatList
+        <FlashList
           data={filtered}
+          estimatedItemSize={CUSTOMER_ROW_HEIGHT.transferTour}
+          drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           ListEmptyComponent={<Text style={styles.muted}>{t('transferTourNoResults')}</Text>}
-          renderItem={({ item: s }) => {
-            const title = pickLocalizedString(s.title as I18nJson, lang, t('transferTourNavTitle'));
-            const cover = s.cover_image || s.images?.[0];
-            const leg0 = s.routes[0];
-            const from0 = leg0 ? pickLocalizedString(leg0.from, lang, '') : '';
-            const to0 = leg0 ? pickLocalizedString(leg0.to, lang, '') : '';
-            const routeText =
-              from0.trim() && to0.trim()
-                ? `${from0} → ${to0}`
-                : (from0 || to0).trim() || t('transferTourListRouteShort');
-            return (
-              <View style={[styles.card, { width: cardW }]}>
-                {cover ? (
-                  <CachedImage uri={cover} style={styles.cover} contentFit="cover" />
-                ) : (
-                  <View style={[styles.cover, styles.coverPh]}>
-                    <Ionicons name="car-sport" size={48} color={theme.colors.textMuted} />
-                  </View>
-                )}
-                <View style={styles.cardBody}>
-                  {s.tour_operator_name || s.tour_operator_logo ? (
-                    <View style={styles.opRow}>
-                      {s.tour_operator_logo ? (
-                        <CachedImage uri={s.tour_operator_logo} style={styles.opAvatar} contentFit="cover" />
-                      ) : (
-                        <View style={[styles.opAvatar, styles.opAvatarPh]}>
-                          <Ionicons name="business-outline" size={20} color={theme.colors.textMuted} />
-                        </View>
-                      )}
-                      {s.tour_operator_name ? (
-                        <Text style={styles.opName} numberOfLines={2}>
-                          {s.tour_operator_name}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                  <Text style={styles.cardTitle} numberOfLines={2}>
-                    {title}
-                  </Text>
-                  {s.brand || s.model ? (
-                    <Text style={styles.meta}>
-                      {[s.brand, s.model].filter(Boolean).join(' · ')}
-                    </Text>
-                  ) : null}
-                  <View style={styles.row}>
-                    <Ionicons name="people-outline" size={16} color={theme.colors.textSecondary} />
-                    <Text style={styles.metaSmall}> {t('transferTourPassengers', { n: s.capacity })}</Text>
-                    <Text style={styles.metaSmall}> · </Text>
-                    <Text style={styles.metaSmall}>{t('transferTourLuggage', { n: s.luggage_capacity })}</Text>
-                  </View>
-                  {routeText ? (
-                    <Text style={styles.route} numberOfLines={2}>
-                      {routeText}
-                    </Text>
-                  ) : null}
-                  <View style={styles.cardFooter}>
-                    <Text style={styles.price}>{priceLabel(s)}</Text>
-                    <View style={styles.btnRow}>
-                      <TouchableOpacity
-                        style={styles.btnGhost}
-                        onPress={() => router.push({ pathname: detailPath as Href, params: { id: s.id } })}
-                      >
-                        <Text style={styles.btnGhostT}>{t('transferTourShowDetails')}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.btnPrimary}
-                        onPress={() =>
-                          router.push({ pathname: detailPath as Href, params: { id: s.id, request: '1' } })
-                        }
-                      >
-                        <Text style={styles.btnPrimaryT}>{t('transferTourRequest')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            );
-          }}
+          renderItem={renderService}
+          {...CUSTOMER_LIST_PERF}
         />
       )}
     </View>

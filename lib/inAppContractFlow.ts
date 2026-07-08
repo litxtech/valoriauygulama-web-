@@ -27,6 +27,7 @@ export type GuestContractPrefill = {
   children?: number | null;
   room_id?: string | null;
   contract_approved?: boolean | null;
+  family_member_tcs?: { full_name?: string | null; tc?: string | null }[] | null;
 };
 
 async function fetchValidRoomToken(roomId: string): Promise<string | null> {
@@ -66,7 +67,7 @@ export async function resolveInAppContractContext(): Promise<
   const { data: guestRow, error } = await supabase
     .from('guests')
     .select(
-      'id, full_name, id_number, id_type, phone, phone_country_code, email, nationality, date_of_birth, gender, address, check_in_at, check_out_at, room_type, adults, children, room_id, contract_approved, rooms(room_number)'
+      'id, full_name, id_number, id_type, phone, phone_country_code, email, nationality, date_of_birth, gender, address, check_in_at, check_out_at, room_type, adults, children, room_id, contract_approved, family_member_tcs, rooms(room_number)'
     )
     .eq('id', sessionGuest.guest_id)
     .maybeSingle();

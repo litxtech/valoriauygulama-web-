@@ -163,6 +163,11 @@ export async function parseIdCardImageUriForUpload(
     return pickBetterKbsOcrResult(best, refined);
   }
 
+  // Kamera çekiminde derin tarama yalnızca galeri / manuel düzeltme — prewarm hızını korur.
+  if (options?.galleryDeep !== true) {
+    return pickBetterKbsOcrResult(best, refined);
+  }
+
   const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
   return parseIdCardImageUriMaximum(prepared, { captureSide: side });
 }

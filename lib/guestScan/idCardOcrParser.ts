@@ -1125,6 +1125,25 @@ function mergeNameFields(
   id: ParsedDocument & TurkishIdOcrExtras,
   lines: string[]
 ): Pick<ParsedDocument, 'firstName' | 'lastName' | 'fullName' | 'middleName'> {
+  const turkishId =
+    parsed.documentType === 'id_card' ||
+    isTurkishMrzDocument(parsed.nationalityCode, parsed.issuingCountryCode);
+
+  if (
+    !turkishId &&
+    (parsed.documentType === 'passport' || !!parsed.rawMrz || id.documentType === 'passport')
+  ) {
+    const best = resolveBestPassportNames({ parsed, ocrLines: lines });
+    if (isUsablePersonName(best.firstName) && isUsablePersonName(best.lastName)) {
+      return {
+        firstName: best.firstName,
+        lastName: best.lastName,
+        fullName: best.fullName,
+        middleName: null,
+      };
+    }
+  }
+
   const ocrNames = extractNamesFromOcr(lines);
   const fromFull = splitFullNameToFirstLast(parsed.fullName);
   const fromIdFull = splitFullNameToFirstLast(id.fullName);
@@ -1267,19 +1286,28 @@ export function enrichMrzParsedWithFrontOcr(
   const natCode = parsed.nationalityCode ?? extractNationalityFromOcr(lines);
   const { birthDate, expiryDate } = extractIdCardDates(lines);
 
-  const bestNames =
-    parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines))
-      ? (() => {
-          const tr = extractTurkishIdCardNamesFromOcr(normLines(lines));
-          if (isUsablePersonName(tr.firstName) && isUsablePersonName(tr.lastName)) return tr;
-          return resolveBestPassportNames({ parsed, ocrLines: lines });
-        })()
-      : resolveBestPassportNames({ parsed, ocrLines: lines });
-  const firstName = bestNames.firstName ?? parsed.firstName;
-  const lastName = bestNames.lastName ?? parsed.lastName;
-  const fullName =
-    bestNames.fullName ??
-    ([firstName, lastName].filter(Boolean).join(' ').trim() || parsed.fullName);
+  const isTurkishId =
+    parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines));
+
+  let firstName = parsed.firstName;
+  let lastName = parsed.lastName;
+  let fullName = parsed.fullName;
+
+  if (isTurkishId) {
+    const tr = extractTurkishIdCardNamesFromOcr(normLines(lines));
+    if (isUsablePersonName(tr.firstName) && isUsablePersonName(tr.lastName)) {
+      firstName = tr.firstName;
+      lastName = tr.lastName;
+      fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || parsed.fullName;
+    } else {
+      const best = resolveBestPassportNames({ parsed, ocrLines: lines });
+      firstName = best.firstName ?? parsed.firstName;
+      lastName = best.lastName ?? parsed.lastName;
+      fullName =
+        best.fullName ??
+        ([firstName, lastName].filter(Boolean).join(' ').trim() || parsed.fullName);
+    }
+  }
 
   return {
     ...parsed,

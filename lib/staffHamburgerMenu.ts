@@ -109,6 +109,7 @@ const ACCENTS: Record<string, string> = {
   assets: '#7c3aed',
   my_stock: '#0d9488',
   facility_journal: '#0f766e',
+  fault_records: '#ea580c',
   debts: '#0369a1',
   mrz: '#ca8a04',
   contracts: '#6366f1',
@@ -548,6 +549,13 @@ export function buildStaffHamburgerMenuSections(
       icon: 'camera-outline',
       accent: ACCENTS.kbs,
     });
+    push('hotel', {
+      id: 'nfc_capture',
+      label: t('kbsNfcCaptureTileTitle'),
+      href: '/staff/kbs/capture-nfc',
+      icon: 'hardware-chip-outline',
+      accent: ACCENTS.kbs,
+    });
   }
   if (canStaffViewKbsCaptureHistory(staff)) {
     push('hotel', {
@@ -671,6 +679,20 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.facility_journal,
     });
   }
+  push('ops', {
+    id: 'fault_records_new',
+    label: 'Arıza kaydı ekle',
+    href: '/staff/fault-records/new',
+    icon: 'construct-outline',
+    accent: ACCENTS.fault_records,
+  });
+  push('ops', {
+    id: 'fault_records',
+    label: 'Arıza kayıtları',
+    href: '/staff/fault-records',
+    icon: 'build-outline',
+    accent: ACCENTS.fault_records,
+  });
   if (canAccessLostFound(staff)) {
     const lfBase = isAdmin ? '/admin/lost-found' : '/staff/lost-found';
     push('ops', {
@@ -877,11 +899,18 @@ export function buildStaffHamburgerMenuSections(
     }
     if (canAccessAdminRoute(staff, '/admin/salary')) {
       push('admin', {
+        id: 'salary_pay',
+        label: 'Maaş öde',
+        href: '/admin/salary/pay',
+        icon: 'wallet-outline',
+        accent: ACCENTS.salary_all,
+      });
+      push('admin', {
         id: 'salary_all',
         label: t('profileUiAllPayments'),
         href: '/admin/salary/all',
         icon: 'cash-outline',
-        accent: ACCENTS.salary_all,
+        accent: ACCENTS.salary_history,
       });
     }
     if (canAccessAdminRoute(staff, '/admin/contracts/all')) {

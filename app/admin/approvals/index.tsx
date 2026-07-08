@@ -256,7 +256,7 @@ function orgNameFromJoin(row: { organization?: { name?: string } | { name?: stri
 
 export default function AdminApprovalsHubScreen() {
   const router = useRouter();
-  const { staff: me } = useAuthStore();
+  const me = useAuthStore((s) => s.staff);
   const canUseAll = me?.app_permissions?.super_admin === true || me?.role === 'admin';
   const orgScopedForCache = canUseAll ? null : me?.organization_id ?? null;
   const initialCacheKey = approvalsCacheKey(canUseAll, orgScopedForCache);

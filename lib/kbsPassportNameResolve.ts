@@ -27,14 +27,17 @@ function buildNameResult(
   };
 }
 
-/** Pasaport / MRZ — görsel etiket + chevron + MRZ kütüphanesi birleşimi. */
+/** Pasaport / MRZ — MRZ chevron öncelikli; görsel OCR yalnızca yedek. */
 export function resolveBestPassportNames(args: {
   parsed: ParsedDocument;
   ocrLines: string[];
 }): { firstName: string | null; lastName: string | null; fullName: string | null } {
-  const visualPassport = extractPassportNamesFromOcr(args.ocrLines);
-  const visualId = extractNamesFromOcr(args.ocrLines);
   const chevron = parseChevronNamesFromMrz(args.parsed.rawMrz);
+
+  if (isUsablePersonName(chevron.surname) && isUsablePersonName(chevron.given)) {
+    return buildNameResult(chevron.given, chevron.surname);
+  }
+
   const finalized = finalizeMrzPersonNames({
     firstNameRaw: args.parsed.firstName,
     lastNameRaw: args.parsed.lastName,
@@ -44,35 +47,9 @@ export function resolveBestPassportNames(args: {
     issuingCountryCode: args.parsed.issuingCountryCode,
   });
 
-  const visual =
-    isUsablePersonName(visualPassport.firstName) && isUsablePersonName(visualPassport.lastName)
-      ? visualPassport
-      : isUsablePersonName(visualId.firstName) && isUsablePersonName(visualId.lastName)
-        ? visualId
-        : { firstName: null as string | null, lastName: null as string | null };
-
-  // MRZ soyadı (chevron) — görsel OCR ile uzatılmaz; gürültü tokenları kesilir.
-  if (args.parsed.rawMrz && isUsablePersonName(chevron.surname)) {
-    const lastName =
-      trimMrzPersonNameTokens(chevron.surname, { role: 'surname' }) ?? chevron.surname;
-
-    const firstName = coalescePersonName(
-      chevron.given,
-      visualPassport.firstName,
-      visualId.firstName,
-      visual.firstName,
-      finalized.firstName
-    );
-
-    return buildNameResult(firstName, lastName);
-  }
-
-  if (chevron.surname && chevron.given) {
-    return buildNameResult(chevron.given, chevron.surname);
-  }
-
-  if (isUsablePersonName(visual.firstName) && isUsablePersonName(visual.lastName)) {
-    return buildNameResult(visual.firstName, visual.lastName);
+  if (isUsablePersonName(chevron.surname)) {
+    const firstName = coalescePersonName(chevron.given, finalized.firstName);
+    return buildNameResult(firstName, chevron.surname);
   }
 
   if (mrzNamesLookValid(finalized.firstName, finalized.lastName)) {
@@ -81,6 +58,16 @@ export function resolveBestPassportNames(args: {
       lastName: finalized.lastName,
       fullName: finalized.fullName,
     };
+  }
+
+  const visualPassport = extractPassportNamesFromOcr(args.ocrLines);
+  if (isUsablePersonName(visualPassport.firstName) && isUsablePersonName(visualPassport.lastName)) {
+    return buildNameResult(visualPassport.firstName, visualPassport.lastName);
+  }
+
+  const visualId = extractNamesFromOcr(args.ocrLines);
+  if (isUsablePersonName(visualId.firstName) && isUsablePersonName(visualId.lastName)) {
+    return buildNameResult(visualId.firstName, visualId.lastName);
   }
 
   if (
@@ -107,6 +94,17 @@ export function applyBestPassportNamesToParsed(
   const isPassport =
     parsed.documentType === 'passport' || !!parsed.rawMrz || lines.join(' ').toUpperCase().includes('PASSPORT');
   if (!isPassport) return parsed;
+
+  const chevron = parseChevronNamesFromMrz(parsed.rawMrz);
+  if (isUsablePersonName(chevron.surname) && isUsablePersonName(chevron.given)) {
+    const best = buildNameResult(chevron.given, chevron.surname);
+    return {
+      ...parsed,
+      firstName: best.firstName,
+      lastName: best.lastName,
+      fullName: best.fullName,
+    };
+  }
 
   const best = resolveBestPassportNames({ parsed, ocrLines: lines });
   if (!isUsablePersonName(best.firstName) || !isUsablePersonName(best.lastName)) {

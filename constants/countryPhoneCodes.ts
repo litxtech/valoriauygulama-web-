@@ -146,3 +146,73 @@ COUNTRY_PHONE_CODES.forEach((c) => {
   if (!byDial.has(c.dial)) byDial.set(c.dial, c);
 });
 export const UNIQUE_DIAL_CODES: CountryCode[] = Array.from(byDial.values());
+
+/**
+ * ISO 3166-1 alpha-3 (MRZ / kimlik uyruk-veren ülke kodu) → uluslararası arama kodu (+ yok).
+ * Körfez ve yaygın ülkeler önceliklidir; listede olmayan ülke için varsayılan uygulanır.
+ */
+export const ISO3_DIAL_CODES: Record<string, string> = {
+  TUR: '90',
+  // Körfez / Orta Doğu
+  SAU: '966', KWT: '965', QAT: '974', ARE: '971', BHR: '973', OMN: '968',
+  IRQ: '964', IRN: '98', JOR: '962', LBN: '961', SYR: '963', PSE: '970', YEM: '967', ISR: '972',
+  // Kuzey Afrika
+  EGY: '20', LBY: '218', SDN: '249', DZA: '213', MAR: '212', TUN: '216', MRT: '222',
+  // Avrupa
+  GBR: '44', DEU: '49', FRA: '33', ITA: '39', ESP: '34', NLD: '31', BEL: '32', AUT: '43',
+  CHE: '41', PRT: '351', SWE: '46', NOR: '47', DNK: '45', FIN: '358', IRL: '353', ISL: '354',
+  GRC: '30', POL: '48', ROU: '40', HUN: '36', CZE: '420', SVK: '421', BGR: '359', HRV: '385',
+  SVN: '386', SRB: '381', BIH: '387', MKD: '389', ALB: '355', MNE: '382', XKX: '383', UNK: '383',
+  LTU: '370', LVA: '371', EST: '372', MLT: '356', CYP: '357', LUX: '352', MCO: '377',
+  UKR: '380', BLR: '375', MDA: '373', RUS: '7',
+  // Kafkasya / Orta Asya
+  AZE: '994', GEO: '995', ARM: '374', KAZ: '7', TKM: '993', UZB: '998', KGZ: '996', TJK: '992', MNG: '976',
+  // Amerika
+  USA: '1', CAN: '1', MEX: '52', BRA: '55', ARG: '54', CHL: '56', COL: '57', PER: '51',
+  VEN: '58', ECU: '593', URY: '598', PRY: '595', BOL: '591', CRI: '506', PAN: '507', GTM: '502',
+  CUB: '53', DOM: '1',
+  // Asya
+  CHN: '86', JPN: '81', KOR: '82', PRK: '850', TWN: '886', HKG: '852', MAC: '853', IND: '91',
+  PAK: '92', BGD: '880', LKA: '94', NPL: '977', IDN: '62', MYS: '60', THA: '66', VNM: '84',
+  PHL: '63', SGP: '65', KHM: '855', MMR: '95', LAO: '856', BRN: '673', TLS: '670',
+  // Okyanusya
+  AUS: '61', NZL: '64',
+  // Afrika (yaygın)
+  ZAF: '27', NGA: '234', KEN: '254', TZA: '255', UGA: '256', GHA: '233', CMR: '237',
+  ETH: '251', SEN: '221', CIV: '225',
+};
+
+/** Ülke kodundan (alpha-3 veya alpha-2) uluslararası arama kodunu (+ yok) döndürür. */
+export function dialCodeForCountry(code?: string | null): string | null {
+  if (!code) return null;
+  const c = code.trim().toUpperCase();
+  if (c.length === 3) return ISO3_DIAL_CODES[c] ?? null;
+  if (c.length === 2) {
+    const found = COUNTRY_PHONE_CODES.find((x) => x.code === c);
+    return found ? found.dial.replace(/\D/g, '') : null;
+  }
+  return null;
+}
+
+/**
+ * Serbest girilmiş numarayı WhatsApp/wa.me için uluslararası formata (yalnız rakam) çevirir.
+ * - `+90…` / `0090…` → zaten uluslararası, olduğu gibi.
+ * - Baş `0` (yerel) → misafirin belge ülkesinin kodu eklenir (bilinmiyorsa varsayılan).
+ * - Baş `0` yok → ülke koduyla başlamıyorsa kod eklenir (Körfez'de yerel numaralar 0'sız yazılır).
+ */
+export function toInternationalPhoneNumber(
+  raw: string | null | undefined,
+  countryCode?: string | null,
+  fallbackDial = '90'
+): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return '';
+  if (trimmed.startsWith('+')) return digits;
+  if (digits.startsWith('00')) return digits.slice(2);
+  const cc = dialCodeForCountry(countryCode) ?? fallbackDial;
+  if (digits.startsWith('0')) return `${cc}${digits.slice(1)}`;
+  if (cc && !digits.startsWith(cc)) return `${cc}${digits}`;
+  return digits;
+}

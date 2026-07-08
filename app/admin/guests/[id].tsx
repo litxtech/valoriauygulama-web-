@@ -48,6 +48,7 @@ type Guest = {
   nights_count?: number | null;
   photo_url?: string | null;
   created_at: string;
+  family_member_tcs?: { full_name?: string | null; tc?: string | null }[] | null;
 };
 
 type RoomOption = { id: string; room_number: string; price_per_night?: number | null };
@@ -132,7 +133,7 @@ export default function GuestDetail() {
     const { data: g } = await supabase
       .from('guests')
       .select(
-        'id, full_name, id_number, phone, email, status, room_id, check_in_at, check_out_at, signature_data, contract_lang, total_amount_net, vat_amount, accommodation_tax_amount, nights_count, photo_url, created_at, rooms(room_number)'
+        'id, full_name, id_number, phone, email, status, room_id, check_in_at, check_out_at, signature_data, contract_lang, total_amount_net, vat_amount, accommodation_tax_amount, nights_count, photo_url, created_at, family_member_tcs, rooms(room_number)'
       )
       .eq('id', id)
       .is('deleted_at', null)
@@ -514,6 +515,19 @@ export default function GuestDetail() {
               <Text style={styles.infoValue}>{guest.id_number}</Text>
             </View>
           ) : null}
+          {Array.isArray(guest.family_member_tcs) && guest.family_member_tcs.length > 0 ? (
+            <View style={styles.familyTcBlock}>
+              <View style={styles.familyTcHeader}>
+                <Ionicons name="people-outline" size={16} color="#64748b" />
+                <Text style={styles.infoLabel}>Aile fertleri T.C.</Text>
+              </View>
+              {guest.family_member_tcs.map((m, i) => (
+                <Text key={`fam-tc-${i}`} style={styles.infoValue}>
+                  {(m.full_name ?? '').trim() || '—'} · {(m.tc ?? '').toString().replace(/\D/g, '') || '—'}
+                </Text>
+              ))}
+            </View>
+          ) : null}
           {guest.nights_count != null || guest.total_amount_net != null ? (
             <View style={styles.infoCell}>
               <Ionicons name="receipt-outline" size={16} color="#64748b" />
@@ -746,6 +760,16 @@ const styles = StyleSheet.create({
   },
   infoLabel: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
   infoValue: { fontSize: 14, fontWeight: '600', color: '#0f172a' },
+  familyTcBlock: {
+    width: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 4,
+  },
+  familyTcHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   warnBox: {
     flexDirection: 'row',
     alignItems: 'center',

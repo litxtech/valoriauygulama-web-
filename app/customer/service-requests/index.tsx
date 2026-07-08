@@ -1,13 +1,13 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -20,6 +20,7 @@ import {
 } from '@/lib/guestServiceRequestsI18n';
 import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 const TYPE_ICON: Record<GuestServiceRequestType, keyof typeof Ionicons.glyphMap> = {
   room_cleaning: 'sparkles-outline',
@@ -38,6 +39,37 @@ const STATUS_COLOR: Record<string, string> = {
   completed: '#22c55e',
   cancelled: '#94a3b8',
 };
+
+const ServiceRequestRow = memo(function ServiceRequestRow({ row }: { row: GuestServiceRequestRow }) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardTop}>
+        <View style={styles.typeRow}>
+          <Ionicons name={TYPE_ICON[row.request_type]} size={18} color={theme.colors.primary} />
+          <Text style={styles.typeText}>{guestServiceTypeLabel(row.request_type)}</Text>
+        </View>
+        <View style={[styles.statusPill, { backgroundColor: (STATUS_COLOR[row.status] ?? '#94a3b8') + '22' }]}>
+          <Text style={[styles.statusText, { color: STATUS_COLOR[row.status] ?? '#64748b' }]}>
+            {guestServiceStatusLabel(row.status)}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.desc} numberOfLines={3}>
+        {row.description}
+      </Text>
+      {row.room_number ? (
+        <Text style={styles.meta}>{guestServiceText('roomPrefix')} {row.room_number}</Text>
+      ) : null}
+      <Text style={styles.time}>{formatFeedRelativeTime(row.created_at)}</Text>
+      {row.staff_note ? (
+        <View style={styles.noteBox}>
+          <Text style={styles.noteLabel}>{guestServiceText('staffNote')}</Text>
+          <Text style={styles.noteText}>{row.staff_note}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+});
 
 export default function CustomerServiceRequestsScreen() {
   const router = useRouter();
@@ -60,68 +92,55 @@ export default function CustomerServiceRequestsScreen() {
     [rows]
   );
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.heroTitle}>{guestServiceText('listTitle')}</Text>
-        <Text style={styles.heroSub}>{guestServiceText('intro')}</Text>
-        {activeCount > 0 ? (
-          <View style={styles.activePill}>
-            <Text style={styles.activePillText}>{activeCount} aktif</Text>
-          </View>
+  const renderItem = useCallback(
+    ({ item }: { item: GuestServiceRequestRow }) => <ServiceRequestRow row={item} />,
+    []
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <View>
+        <View style={styles.hero}>
+          <Text style={styles.heroTitle}>{guestServiceText('listTitle')}</Text>
+          <Text style={styles.heroSub}>{guestServiceText('intro')}</Text>
+          {activeCount > 0 ? (
+            <View style={styles.activePill}>
+              <Text style={styles.activePillText}>{activeCount} aktif</Text>
+            </View>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={styles.newBtn}
+          activeOpacity={0.88}
+          onPress={() => router.push('/customer/service-requests/new')}
+        >
+          <Ionicons name="add-circle" size={22} color="#fff" />
+          <Text style={styles.newBtnText}>{guestServiceText('screenNew')}</Text>
+        </TouchableOpacity>
+        {loading && rows.length === 0 ? (
+          <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
         ) : null}
       </View>
+    ),
+    [activeCount, loading, router, rows.length]
+  );
 
-      <TouchableOpacity
-        style={styles.newBtn}
-        activeOpacity={0.88}
-        onPress={() => router.push('/customer/service-requests/new')}
-      >
-        <Ionicons name="add-circle" size={22} color="#fff" />
-        <Text style={styles.newBtnText}>{guestServiceText('screenNew')}</Text>
-      </TouchableOpacity>
-
-      {loading && rows.length === 0 ? (
-        <ActivityIndicator style={styles.loader} color={theme.colors.primary} />
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        >
-          {rows.length === 0 ? (
-            <Text style={styles.empty}>{guestServiceText('emptyList')}</Text>
-          ) : (
-            rows.map((row) => (
-              <View key={row.id} style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={styles.typeRow}>
-                    <Ionicons name={TYPE_ICON[row.request_type]} size={18} color={theme.colors.primary} />
-                    <Text style={styles.typeText}>{guestServiceTypeLabel(row.request_type)}</Text>
-                  </View>
-                  <View style={[styles.statusPill, { backgroundColor: (STATUS_COLOR[row.status] ?? '#94a3b8') + '22' }]}>
-                    <Text style={[styles.statusText, { color: STATUS_COLOR[row.status] ?? '#64748b' }]}>
-                      {guestServiceStatusLabel(row.status)}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.desc} numberOfLines={3}>
-                  {row.description}
-                </Text>
-                {row.room_number ? (
-                  <Text style={styles.meta}>{guestServiceText('roomPrefix')} {row.room_number}</Text>
-                ) : null}
-                <Text style={styles.time}>{formatFeedRelativeTime(row.created_at)}</Text>
-                {row.staff_note ? (
-                  <View style={styles.noteBox}>
-                    <Text style={styles.noteLabel}>{guestServiceText('staffNote')}</Text>
-                    <Text style={styles.noteText}>{row.staff_note}</Text>
-                  </View>
-                ) : null}
-              </View>
-            ))
-          )}
-        </ScrollView>
-      )}
+  return (
+    <View style={styles.container}>
+      <FlashList
+        data={rows}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.serviceRequest}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        ListHeaderComponent={listHeader}
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+        ListEmptyComponent={
+          !loading ? <Text style={styles.empty}>{guestServiceText('emptyList')}</Text> : null
+        }
+        {...CUSTOMER_LIST_PERF}
+      />
     </View>
   );
 }
@@ -153,12 +172,13 @@ const styles = StyleSheet.create({
   },
   newBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
   loader: { marginTop: 40 },
-  list: { padding: theme.spacing.lg, paddingTop: 4, paddingBottom: 40, gap: 12 },
+  list: { paddingHorizontal: theme.spacing.lg, paddingTop: 4, paddingBottom: 40 },
   empty: { fontSize: 15, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 24 },
   card: {
     backgroundColor: theme.colors.surface,
     borderRadius: 16,
     padding: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
   },

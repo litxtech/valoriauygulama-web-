@@ -38,12 +38,20 @@ export default function StaffKbsTab() {
       </View>
 
       {showIdCapture ? (
-        <Tile
-          title="Kimlik/Pasaport Çekim"
-          subtitle="Tam ekran çek, AI tarasın, oda ata, anlık bildir."
-          icon="camera-outline"
-          onPress={() => router.push('/staff/kbs/capture-id' as never)}
-        />
+        <>
+          <Tile
+            title="Kimlik/Pasaport Çekim"
+            subtitle="Tam ekran çek, AI tarasın, oda ata, anlık bildir."
+            icon="camera-outline"
+            onPress={() => router.push('/staff/kbs/capture-id' as never)}
+          />
+          <Tile
+            title={t('kbsNfcCaptureTileTitle')}
+            subtitle={t('kbsNfcCaptureTileSub')}
+            icon="hardware-chip-outline"
+            onPress={() => router.push('/staff/kbs/capture-nfc' as never)}
+          />
+        </>
       ) : null}
       {showCaptureHistory ? (
         <Tile

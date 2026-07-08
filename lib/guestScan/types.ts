@@ -3,7 +3,7 @@ import type { KbsPersonKind, UsageKind } from '@/lib/kbsInferPersonKind';
 
 export type GuestScanSessionType = 'single' | 'family' | 'group';
 export type GuestScanSessionStatus = 'draft' | 'ready' | 'submitted' | 'partial_error' | 'completed';
-export type GuestScanSourceType = 'camera' | 'gallery';
+export type GuestScanSourceType = 'camera' | 'gallery' | 'nfc';
 export type GuestScanDocumentType = 'tc_id' | 'foreign_id' | 'passport';
 export type GuestScanValidationStatus = 'valid' | 'needs_review' | 'invalid';
 export type GuestScanKbsStatus = 'pending' | 'sent' | 'failed';

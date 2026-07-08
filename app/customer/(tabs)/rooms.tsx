@@ -1,10 +1,12 @@
 import { useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, RefreshControl, StyleSheet, ActivityIndicator } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { roomStatusLabel } from '@/lib/i18nLookup';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 type Room = {
   id: string;
@@ -31,6 +33,25 @@ export default function CustomerRooms() {
     fetchItems,
   });
 
+  const renderItem = useCallback(
+    ({ item: r }: { item: Room }) => (
+      <View style={styles.card}>
+        <View style={styles.cardRow}>
+          <Text style={styles.roomNumber}>{t('roomNumberLabel', { num: r.room_number })}</Text>
+          <View style={[styles.badge, r.status === 'available' ? styles.badgeOk : styles.badgeBusy]}>
+            <Text style={styles.badgeText}>{roomStatusLabel(r.status)}</Text>
+          </View>
+        </View>
+        {r.floor != null && <Text style={styles.meta}>{t('guestRoomFloor', { floor: r.floor })}</Text>}
+        {r.view_type && <Text style={styles.meta}>{t('guestRoomView', { view: r.view_type })}</Text>}
+        {r.price_per_night != null && (
+          <Text style={styles.price}>{t('guestRoomPricePerNight', { price: r.price_per_night })}</Text>
+        )}
+      </View>
+    ),
+    [t]
+  );
+
   if (loading && !refreshing && rooms.length === 0) {
     return (
       <View style={styles.centered}>
@@ -40,28 +61,18 @@ export default function CustomerRooms() {
   }
 
   return (
-    <ScrollView
+    <FlashList
+      data={rooms}
+      estimatedItemSize={CUSTOMER_ROW_HEIGHT.room}
+      drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
+      keyExtractor={(r) => r.id}
+      renderItem={renderItem}
       style={styles.container}
       contentContainerStyle={styles.listContent}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
-    >
-      {rooms.map((r) => (
-        <View key={r.id} style={styles.card}>
-          <View style={styles.cardRow}>
-            <Text style={styles.roomNumber}>{t('roomNumberLabel', { num: r.room_number })}</Text>
-            <View style={[styles.badge, r.status === 'available' ? styles.badgeOk : styles.badgeBusy]}>
-              <Text style={styles.badgeText}>{roomStatusLabel(r.status)}</Text>
-            </View>
-          </View>
-          {r.floor != null && <Text style={styles.meta}>{t('guestRoomFloor', { floor: r.floor })}</Text>}
-          {r.view_type && <Text style={styles.meta}>{t('guestRoomView', { view: r.view_type })}</Text>}
-          {r.price_per_night != null && (
-            <Text style={styles.price}>{t('guestRoomPricePerNight', { price: r.price_per_night })}</Text>
-          )}
-        </View>
-      ))}
-      {rooms.length === 0 && <Text style={styles.empty}>{t('guestRoomsEmpty')}</Text>}
-    </ScrollView>
+      ListEmptyComponent={<Text style={styles.empty}>{t('guestRoomsEmpty')}</Text>}
+      {...CUSTOMER_LIST_PERF}
+    />
   );
 }
 

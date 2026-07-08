@@ -19,9 +19,21 @@ type MlKitBounds = {
 type MlKitLine = { text?: string; bounds?: MlKitBounds };
 type MlKitBlock = { text?: string; bounds?: MlKitBounds; lines?: MlKitLine[] };
 
+/** MRZ alt bölge satırları — worklet → JS köprüsünde tam JSON yerine kompakt metin. */
+export function mrzBlocksFromCompactText(compact: string): MrzOcrBlock[] {
+  if (!compact.trim()) return [];
+  return compact
+    .split('\n')
+    .map((text) => text.trim())
+    .filter((text) => text.length >= 6)
+    .map((text) => ({ text }));
+}
 /** VisionCamera ML Kit JSON → MRZ blok listesi. */
 export function mrzBlocksFromMlKitJson(blocksJson: string, frameHeight: number): MrzOcrBlock[] {
   if (!blocksJson) return [];
+  if (!blocksJson.trimStart().startsWith('[')) {
+    return mrzBlocksFromCompactText(blocksJson);
+  }
   try {
     const blocks = JSON.parse(blocksJson) as MlKitBlock[];
     return flattenMlKitBlocks(blocks, frameHeight);
@@ -116,6 +128,8 @@ export type MrzFrameReadiness = {
     | 'kbsMrzFrameUnsharp'
     | 'kbsMrzTorchOn';
   lines: string[];
+  /** Stabilite / anlık parse sonucu — JS tarafında tekrar MRZ parse etme. */
+  locked?: { mrz: string; parsed: import('@/lib/scanner/types').ParsedDocument };
 };
 
 const STABILITY_NEEDED = 2;
@@ -152,7 +166,7 @@ export function assessMrzFrameReadiness(
 
   const instant = analyzeOcrLinesForMrzLive(lines);
   if (instant.phase === 'locking' && instant.locked) {
-    return { phase: 'locking', hintKey: 'kbsMrzFrameLockActive', lines };
+    return { phase: 'locking', hintKey: 'kbsMrzFrameLockActive', lines, locked: instant.locked };
   }
 
   if (!ocrLinesLookLikeMrz(lines)) {
@@ -176,5 +190,11 @@ export function assessMrzFrameReadiness(
     return { phase: 'signal', hintKey: 'kbsMrzFrameLockActive', lines };
   }
 
-  return { phase: 'locking', hintKey: 'kbsMrzFrameLockActive', lines };
+  const stable = analyzeOcrLinesForMrzLive(lines);
+  return {
+    phase: 'locking',
+    hintKey: 'kbsMrzFrameLockActive',
+    lines,
+    locked: stable.phase === 'locking' ? stable.locked : undefined,
+  };
 }

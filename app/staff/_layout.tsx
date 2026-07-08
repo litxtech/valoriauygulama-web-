@@ -319,6 +319,7 @@ export default function StaffLayout() {
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="points/index" options={{ title: 'Alınan puanlarım', headerBackTitle: t('back') }} />
+      <Stack.Screen name="in-house" options={{ title: 'Otel nüfusu', headerBackTitle: t('back') }} />
       <Stack.Screen
         name="admin-notes/index"
         options={{
@@ -405,6 +406,9 @@ export default function StaffLayout() {
         name="blacklist/[id]"
         options={{ headerShown: false, contentStyle: { backgroundColor: '#0B1120' } }}
       />
+      <Stack.Screen name="fault-records/index" options={{ title: 'Arıza kayıtları', headerBackTitle: t('back') }} />
+      <Stack.Screen name="fault-records/new" options={{ title: 'Yeni arıza kaydı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="fault-records/[id]" options={{ title: 'Arıza kaydı', headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/index" options={{ title: t('staffFacilityJournal'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/new" options={{ title: t('staffFacilityJournalNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/[id]" options={{ title: t('staffFacilityJournalDetail'), headerBackTitle: t('back') }} />

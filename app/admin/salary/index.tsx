@@ -279,9 +279,9 @@ export default function AdminSalaryIndexScreen() {
         </AdminCard>
 
         <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/admin/salary/new')} activeOpacity={0.8}>
-            <Ionicons name="add" size={20} color="#fff" />
-            <Text style={styles.primaryBtnText}>Yeni maaş kaydı</Text>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/admin/salary/pay')} activeOpacity={0.8}>
+            <Ionicons name="wallet-outline" size={20} color="#fff" />
+            <Text style={styles.primaryBtnText}>Maaş öde</Text>
           </TouchableOpacity>
         </View>
 

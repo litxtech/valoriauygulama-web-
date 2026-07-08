@@ -222,13 +222,18 @@ export function MrzVisionScanner({
           return;
         }
 
-        const analyzed = analyzeOcrLinesForMrzLive(readiness.lines);
-        if (analyzed.phase !== 'locking' || !analyzed.locked) {
+        const locked =
+          readiness.locked ??
+          (() => {
+            const analyzed = analyzeOcrLinesForMrzLive(readiness.lines);
+            return analyzed.phase === 'locking' ? analyzed.locked : undefined;
+          })();
+        if (!locked) {
           pushUi('signal', 'kbsMrzFrameLockActive', false);
           return;
         }
 
-        const mrz = analyzed.locked.mrz;
+        const mrz = locked.mrz;
         if (!shouldAcceptMrzLock(lastLockRef.current.key, lastLockRef.current.at, mrz)) {
           return;
         }
@@ -237,7 +242,7 @@ export function MrzVisionScanner({
         recordMrzLock(lastLockRef.current, mrz);
         setSuccessGlow(true);
         pushUi('success', 'kbsMrzFrameSuccess', false, true);
-        onLocked(analyzed.locked);
+        onLocked(locked);
         setTimeout(() => setSuccessGlow(false), 1400);
         setTimeout(() => {
           resetScanCycle(lockedRef, stabilityRef);
@@ -262,8 +267,20 @@ export function MrzVisionScanner({
             outputOrientation: 'portrait',
           });
           const text = result?.text ?? '';
-          const blocks = (result as { blocks?: unknown[] })?.blocks ?? [];
-          handleOcrResult(text, JSON.stringify(blocks), frame.height);
+          const blocks = (result as { blocks?: { lines?: { text?: string; bounds?: { centerY?: number; top?: number } }[] }[] })?.blocks ?? [];
+          const fh = frame.height > 0 ? frame.height : 1;
+          const mrzLines: string[] = [];
+          for (let bi = 0; bi < blocks.length; bi += 1) {
+            const lines = blocks[bi]?.lines ?? [];
+            for (let li = 0; li < lines.length; li += 1) {
+              const line = lines[li];
+              const t = line?.text?.trim() ?? '';
+              if (t.length < 6) continue;
+              const cy = line?.bounds?.centerY ?? line?.bounds?.top ?? 0;
+              if (cy >= fh * 0.35) mrzLines.push(t);
+            }
+          }
+          handleOcrResult(text, mrzLines.join('\n'), frame.height);
         });
       });
     },

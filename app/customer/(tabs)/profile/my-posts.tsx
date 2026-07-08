@@ -1,16 +1,16 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Alert,
-  ScrollView,
   ActivityIndicator,
   Platform,
   useWindowDimensions,
   RefreshControl,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -21,6 +21,7 @@ import { CachedImage } from '@/components/CachedImage';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 type MyFeedPost = {
   id: string;
@@ -37,6 +38,102 @@ function previewImageUri(post: MyFeedPost): string | null {
   if (post.media_type === 'image' && post.media_url) return post.media_url;
   return null;
 }
+
+const PREVIEW_HEIGHT = 168;
+
+type MyPostRowProps = {
+  post: MyFeedPost;
+  previewWidth: number;
+  deletingPostId: string | null;
+  onOpen: (id: string) => void;
+  onDelete: (post: MyFeedPost) => void;
+  t: (key: string) => string;
+};
+
+const MyPostRow = memo(function MyPostRow({
+  post,
+  previewWidth,
+  deletingPostId,
+  onOpen,
+  onDelete,
+  t,
+}: MyPostRowProps) {
+  const uri = previewImageUri(post);
+  const isVideo = post.media_type === 'video';
+  const isText = post.media_type === 'text';
+  const titleLine =
+    (post.title ?? '').trim() || (isText ? t('myPostsTextPost') : t('myPostsGenericPost'));
+  const rawLang = (i18n.language || 'tr').split('-')[0];
+  const localeTag =
+    rawLang === 'ar' ? 'ar-SA' : rawLang === 'en' ? 'en-GB' : rawLang === 'de' ? 'de-DE' : rawLang === 'fr' ? 'fr-FR' : rawLang === 'ru' ? 'ru-RU' : rawLang === 'es' ? 'es-ES' : 'tr-TR';
+  const subtitle = new Date(post.created_at).toLocaleString(localeTag);
+
+  return (
+    <View style={styles.postCard}>
+      <TouchableOpacity
+        activeOpacity={0.92}
+        onPress={() => onOpen(post.id)}
+        style={[styles.previewTouchable, { width: previewWidth }]}
+      >
+        <View style={[styles.previewClip, { width: previewWidth }]}>
+          {isText ? (
+            <View style={styles.textPreview}>
+              <Ionicons name="document-text-outline" size={32} color={theme.colors.primary} />
+              <Text style={styles.textPreviewTitle} numberOfLines={5}>
+                {titleLine}
+              </Text>
+            </View>
+          ) : uri ? (
+            <View style={styles.previewImgWrap}>
+              <CachedImage uri={uri} style={StyleSheet.absoluteFill} contentFit="cover" />
+              {isVideo ? (
+                <View style={styles.playOverlay} pointerEvents="none">
+                  <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.92)" />
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.placeholderPreview}>
+              <Ionicons name={isVideo ? 'videocam-outline' : 'image-outline'} size={40} color={theme.colors.textMuted} />
+              <Text style={styles.placeholderLabel}>{t('myPostsNoPreview')}</Text>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+      <View style={styles.cardFooter}>
+        <View style={styles.cardTextCol}>
+          <Text style={styles.cardTitle} numberOfLines={2}>
+            {titleLine}
+          </Text>
+          <Text style={styles.cardDate}>{subtitle}</Text>
+        </View>
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            onPress={() => onOpen(post.id)}
+            style={styles.actionBtn}
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="open-outline" size={22} color={theme.colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onDelete(post)}
+            disabled={deletingPostId === post.id}
+            style={styles.actionBtn}
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {deletingPostId === post.id ? (
+              <Text style={styles.busyText}>…</Text>
+            ) : (
+              <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+});
 
 export default function CustomerMyPostsScreen() {
   const { t } = useTranslation();
@@ -70,7 +167,7 @@ export default function CustomerMyPostsScreen() {
     fetchItems,
   });
 
-  const deletePost = (post: MyFeedPost) => {
+  const deletePost = useCallback((post: MyFeedPost) => {
     Alert.alert(t('deletePostTitle'), t('deletePostMessage'), [
       { text: t('cancelAction'), style: 'cancel' },
       {
@@ -89,7 +186,25 @@ export default function CustomerMyPostsScreen() {
         },
       },
     ]);
-  };
+  }, [setMyPosts, t]);
+
+  const openPost = useCallback((id: string) => {
+    router.push('/customer/feed/' + id);
+  }, [router]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: MyFeedPost }) => (
+      <MyPostRow
+        post={item}
+        previewWidth={previewWidth}
+        deletingPostId={deletingPostId}
+        onOpen={openPost}
+        onDelete={deletePost}
+        t={t}
+      />
+    ),
+    [deletePost, deletingPostId, openPost, previewWidth, t]
+  );
 
   if (loading && myPosts.length === 0) {
     return (
@@ -103,100 +218,21 @@ export default function CustomerMyPostsScreen() {
   }
 
   return (
-    <ScrollView
+    <FlashList
+      data={myPosts}
+      estimatedItemSize={CUSTOMER_ROW_HEIGHT.myPost}
+      drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
+      keyExtractor={(item) => item.id}
+      renderItem={renderItem}
       style={styles.container}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
-      contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'never' : undefined}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />}
-    >
-      {myPosts.length === 0 ? (
-        <Text style={styles.emptyText}>{t('myPostsEmpty')}</Text>
-      ) : (
-        myPosts.map((post) => {
-          const uri = previewImageUri(post);
-          const isVideo = post.media_type === 'video';
-          const isText = post.media_type === 'text';
-          const titleLine =
-            (post.title ?? '').trim() || (isText ? t('myPostsTextPost') : t('myPostsGenericPost'));
-          const rawLang = (i18n.language || 'tr').split('-')[0];
-          const localeTag =
-            rawLang === 'ar' ? 'ar-SA' : rawLang === 'en' ? 'en-GB' : rawLang === 'de' ? 'de-DE' : rawLang === 'fr' ? 'fr-FR' : rawLang === 'ru' ? 'ru-RU' : rawLang === 'es' ? 'es-ES' : 'tr-TR';
-          const subtitle = new Date(post.created_at).toLocaleString(localeTag);
-
-          return (
-            <View key={post.id} style={styles.postCard}>
-              <TouchableOpacity
-                activeOpacity={0.92}
-                onPress={() => router.push('/customer/feed/' + post.id)}
-                style={[styles.previewTouchable, { width: previewWidth }]}
-              >
-                <View style={[styles.previewClip, { width: previewWidth }]}>
-                  {isText ? (
-                    <View style={styles.textPreview}>
-                      <Ionicons name="document-text-outline" size={32} color={theme.colors.primary} />
-                      <Text style={styles.textPreviewTitle} numberOfLines={5}>
-                        {titleLine}
-                      </Text>
-                    </View>
-                  ) : uri ? (
-                    <View style={styles.previewImgWrap}>
-                      <CachedImage uri={uri} style={StyleSheet.absoluteFill} contentFit="cover" />
-                      {isVideo ? (
-                        <View style={styles.playOverlay} pointerEvents="none">
-                          <Ionicons name="play-circle" size={52} color="rgba(255,255,255,0.92)" />
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : (
-                    <View style={styles.placeholderPreview}>
-                      <Ionicons name={isVideo ? 'videocam-outline' : 'image-outline'} size={40} color={theme.colors.textMuted} />
-                      <Text style={styles.placeholderLabel}>{t('myPostsNoPreview')}</Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.cardFooter}>
-                <View style={styles.cardTextCol}>
-                  <Text style={styles.cardTitle} numberOfLines={2}>
-                    {titleLine}
-                  </Text>
-                  <Text style={styles.cardDate}>{subtitle}</Text>
-                </View>
-                <View style={styles.cardActions}>
-                  <TouchableOpacity
-                    onPress={() => router.push('/customer/feed/' + post.id)}
-                    style={styles.actionBtn}
-                    activeOpacity={0.75}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="open-outline" size={22} color={theme.colors.primary} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => deletePost(post)}
-                    disabled={deletingPostId === post.id}
-                    style={styles.actionBtn}
-                    activeOpacity={0.75}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    {deletingPostId === post.id ? (
-                      <Text style={styles.busyText}>…</Text>
-                    ) : (
-                      <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          );
-        })
-      )}
-    </ScrollView>
+      ListEmptyComponent={<Text style={styles.emptyText}>{t('myPostsEmpty')}</Text>}
+      {...CUSTOMER_LIST_PERF}
+    />
   );
 }
-
-const PREVIEW_HEIGHT = 168;
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },

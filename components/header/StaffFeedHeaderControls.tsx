@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +11,7 @@ import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActio
 import { ModernHeaderIconButton } from '@/components/header/ModernHeaderIconButton';
 import { ModernMenuButton } from '@/components/header/ModernMenuButton';
 import { FastPress } from '@/components/ui/FastPress';
+import { useHotelInHousePopulation } from '@/hooks/useHotelInHousePopulation';
 
 const HEADER_BTN = {
   notify: '#ea580c',
@@ -19,6 +20,29 @@ const HEADER_BTN = {
 
 const CTRL = 36;
 const SHARE_ACCENT = pds.indigo;
+const POP_ACCENT = '#0f766e';
+
+/** Otel nüfusu (içeride konaklayan) — tıklanınca maskeli liste açılır. */
+function HotelPopulationPill() {
+  const router = useRouter();
+  const { count } = useHotelInHousePopulation();
+  return (
+    <FastPress
+      onPress={() => router.push('/staff/in-house')}
+      accessibilityRole="button"
+      accessibilityLabel={`Otel nüfusu: ${count}`}
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+      rippleColor={`${POP_ACCENT}28`}
+      activeOpacity={0.82}
+      style={styles.popHit}
+    >
+      <View style={styles.popPill}>
+        <Ionicons name="people" size={15} color={POP_ACCENT} />
+        <Text style={styles.popText}>{count}</Text>
+      </View>
+    </FastPress>
+  );
+}
 
 type StaffFeedHeaderLeftProps = {
   menuOpen: boolean;
@@ -123,6 +147,7 @@ export function StaffFeedHeaderRight() {
 
   return (
     <View style={styles.rightRow}>
+      <HotelPopulationPill />
       <ModernHeaderIconButton
         icon="notifications-outline"
         badge={unreadNotify}
@@ -141,9 +166,9 @@ export function feedHeaderLeftMinWidth(showShare: boolean) {
   return CTRL + shareW + 12;
 }
 
-/** Sağ kol genişliği */
+/** Sağ kol genişliği (nüfus rozeti + bildirim) */
 export function feedHeaderRightMinWidth() {
-  return 34 + 12;
+  return 34 + 12 + 58;
 }
 
 export function feedHeaderSideMinWidth(showShare: boolean) {
@@ -161,10 +186,27 @@ const styles = StyleSheet.create({
   rightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
     marginRight: 2,
     minHeight: 44,
   },
+  popHit: {
+    height: CTRL,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  popPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 28,
+    paddingHorizontal: 9,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: `${POP_ACCENT}40`,
+    backgroundColor: `${POP_ACCENT}12`,
+  },
+  popText: { fontSize: 13, fontWeight: '800', color: POP_ACCENT, minWidth: 10, textAlign: 'center' },
   shareHit: {
     width: CTRL,
     height: CTRL,

@@ -52,6 +52,21 @@ function toISODate(s: string): string | null {
 const ID_TYPE_VALUES = ['tc', 'passport', 'other'] as const;
 const GENDER_VALUES = ['male', 'female'] as const;
 
+export type FamilyMemberTcRow = { full_name: string; tc: string };
+
+function emptyFamilyRow(): FamilyMemberTcRow {
+  return { full_name: '', tc: '' };
+}
+
+function normalizeFamilyMemberTcs(rows: FamilyMemberTcRow[]): FamilyMemberTcRow[] {
+  return rows
+    .map((r) => ({
+      full_name: r.full_name.trim(),
+      tc: r.tc.replace(/\D/g, '').slice(0, 11),
+    }))
+    .filter((r) => r.full_name.length > 0 || r.tc.length > 0);
+}
+
 // Göz yormayan, okunaklı renk paleti
 const COLORS = {
   bg: '#f5f6f8',
@@ -109,6 +124,7 @@ export default function GuestSignOneScreen() {
   const [roomType, setRoomType] = useState('Çift kişilik');
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
+  const [familyMemberTcs, setFamilyMemberTcs] = useState<FamilyMemberTcRow[]>([emptyFamilyRow()]);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [inAppBootstrapping, setInAppBootstrapping] = useState(false);
   const [inAppBootstrapError, setInAppBootstrapError] = useState<string | null>(null);
@@ -137,6 +153,20 @@ export default function GuestSignOneScreen() {
     if (row.room_type) setRoomType(row.room_type);
     if (typeof row.adults === 'number') setAdults(row.adults);
     if (typeof row.children === 'number') setChildren(row.children);
+    const fam = (row as GuestContractPrefill & { family_member_tcs?: unknown }).family_member_tcs;
+    if (Array.isArray(fam) && fam.length > 0) {
+      const parsed = fam
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+          const o = item as { full_name?: unknown; tc?: unknown };
+          return {
+            full_name: typeof o.full_name === 'string' ? o.full_name : '',
+            tc: typeof o.tc === 'string' ? o.tc.replace(/\D/g, '').slice(0, 11) : '',
+          };
+        })
+        .filter((r): r is FamilyMemberTcRow => !!r && (r.full_name.length > 0 || r.tc.length > 0));
+      if (parsed.length > 0) setFamilyMemberTcs(parsed);
+    }
   }, []);
 
   const fetchContract = useCallback(async (lng: string) => {
@@ -307,6 +337,11 @@ export default function GuestSignOneScreen() {
     formFieldsConfig.room_type && roomType && `${formStrings.roomType}: ${roomType}`,
     formFieldsConfig.adults && `${formStrings.adults}: ${adults}`,
     formFieldsConfig.children && `${formStrings.children}: ${children}`,
+    formFieldsConfig.family_member_tcs &&
+      normalizeFamilyMemberTcs(familyMemberTcs).length > 0 &&
+      `${formStrings.familyMemberTcs}: ${normalizeFamilyMemberTcs(familyMemberTcs)
+        .map((r) => `${r.full_name || '—'} (${r.tc || '—'})`)
+        .join(', ')}`,
   ].filter(Boolean);
 
   const pickAvatar = async () => {
@@ -368,6 +403,9 @@ export default function GuestSignOneScreen() {
         room_type: formFieldsConfig.room_type ? roomType : null,
         adults: formFieldsConfig.adults ? adults ?? 1 : 0,
         children: formFieldsConfig.children ? children ?? 0 : 0,
+        family_member_tcs: formFieldsConfig.family_member_tcs
+          ? normalizeFamilyMemberTcs(familyMemberTcs)
+          : [],
         status: 'pending' as const,
       };
 
@@ -814,6 +852,69 @@ export default function GuestSignOneScreen() {
         </View>
         )}
 
+        {/* Aile fertleri T.C. — kimlik fotokopisi yerine */}
+        {formFieldsConfig.family_member_tcs && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>{formStrings.sectionFamilyTcs}</Text>
+            <View style={styles.card}>
+              <Text style={styles.familyHint}>{formStrings.familyMemberTcsHint}</Text>
+              {familyMemberTcs.map((row, index) => (
+                <View key={`fam-${index}`} style={styles.familyRow}>
+                  <View style={styles.familyRowHeader}>
+                    <Text style={styles.familyRowIndex}>{index + 1}.</Text>
+                    {familyMemberTcs.length > 1 ? (
+                      <TouchableOpacity
+                        onPress={() =>
+                          setFamilyMemberTcs((prev) => prev.filter((_, i) => i !== index))
+                        }
+                        hitSlop={8}
+                      >
+                        <Text style={styles.familyRemove}>{formStrings.familyMemberRemove}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <Text style={styles.label}>{formStrings.familyMemberName}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder={formStrings.placeholderFamilyName}
+                    placeholderTextColor={COLORS.textSecondary}
+                    value={row.full_name}
+                    onChangeText={(text) =>
+                      setFamilyMemberTcs((prev) =>
+                        prev.map((r, i) => (i === index ? { ...r, full_name: text } : r))
+                      )
+                    }
+                    autoCapitalize="words"
+                  />
+                  <Text style={styles.label}>{formStrings.familyMemberTc}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder={formStrings.placeholderFamilyTc}
+                    placeholderTextColor={COLORS.textSecondary}
+                    value={row.tc}
+                    onChangeText={(text) =>
+                      setFamilyMemberTcs((prev) =>
+                        prev.map((r, i) =>
+                          i === index ? { ...r, tc: text.replace(/\D/g, '').slice(0, 11) } : r
+                        )
+                      )
+                    }
+                    keyboardType="number-pad"
+                    maxLength={11}
+                  />
+                </View>
+              ))}
+              <TouchableOpacity
+                style={styles.familyAddBtn}
+                onPress={() => setFamilyMemberTcs((prev) => [...prev, emptyFamilyRow()])}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.familyAddBtnText}>+ {formStrings.familyMemberAdd}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* 3. Sözleşme metni */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{formStrings.sectionContract}</Text>
@@ -1011,6 +1112,40 @@ const styles = StyleSheet.create({
   },
   stepperText: { color: COLORS.text, fontSize: 20, fontWeight: '600' },
   stepperValue: { color: COLORS.text, fontSize: 18, fontWeight: '600', minWidth: 32, textAlign: 'center' },
+  familyHint: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+    marginBottom: 16,
+    backgroundColor: COLORS.accentLight,
+    padding: 12,
+    borderRadius: 10,
+  },
+  familyRow: {
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.divider,
+  },
+  familyRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  familyRowIndex: { fontSize: 14, fontWeight: '700', color: COLORS.label },
+  familyRemove: { fontSize: 13, fontWeight: '600', color: '#dc2626' },
+  familyAddBtn: {
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    backgroundColor: COLORS.accentLight,
+  },
+  familyAddBtnText: { color: COLORS.accent, fontWeight: '700', fontSize: 14 },
   contractBody: { paddingVertical: 8 },
   contractText: { color: COLORS.text, fontSize: 16, lineHeight: 26 },
   loader: { marginVertical: 24 },

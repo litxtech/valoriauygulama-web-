@@ -31,7 +31,8 @@ export const APP_FEATURE_CATALOG: AppFeatureCatalogEntry[] = [
   // —— Personel sekmeleri ——
   { id: 'staff_tab_feed', labelTr: 'Personel akış (ana sekme)', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'index' },
   { id: 'staff_tab_tasks', labelTr: 'Görevler sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'tasks' },
-  { id: 'staff_tab_stock', labelTr: 'Stok sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'stock' },
+  { id: 'staff_tab_stock', labelTr: 'Stok sekmesi', audience: 'staff', defaultEnabled: false, defaultPlacements: [] },
+  { id: 'staff_tab_nfc', labelTr: 'NFC sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'nfc' },
   { id: 'staff_tab_messages', labelTr: 'Mesajlar sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'messages' },
   { id: 'staff_tab_emergency', labelTr: 'Acil durum sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'emergency' },
   { id: 'staff_tab_acceptances', labelTr: 'Sözleşme onayları sekmesi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['tab'], tabRoute: 'acceptances' },

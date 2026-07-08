@@ -18,6 +18,7 @@ const FIELD_LABELS: Record<string, string> = {
   room_type: 'Oda tipi',
   adults: 'Yetişkin sayısı',
   children: 'Çocuk sayısı',
+  family_member_tcs: 'Aile fertleri T.C. kimlik numaraları',
 };
 
 export default function ContractFormFieldsScreen() {
@@ -59,6 +60,8 @@ export default function ContractFormFieldsScreen() {
       <Text style={styles.title}>Hangi bilgiyi almak istiyorsunuz?</Text>
       <Text style={styles.hint}>
         Aşağıdaki alanları açıp kapatabilirsiniz. Kapalı olanlar sözleşme sayfasında görünmez ve toplanmaz. Kaydettiğiniz anda tüm misafir sözleşme sayfalarına yansır.
+        {'\n\n'}
+        «Aile fertleri T.C.» alanı: Türk kimlik fotokopisi alınmadığı için onaylayan kişinin odadaki diğer aile bireylerinin adını ve T.C. kimlik numaralarını yazması içindir.
       </Text>
       <View style={styles.card}>
         {Object.keys(FIELD_LABELS).map((key, i, arr) => (

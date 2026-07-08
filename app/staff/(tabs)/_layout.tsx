@@ -503,20 +503,36 @@ function StaffMainTabsLayout() {
       <Tabs.Screen
         name="stock"
         options={{
-          href: tabHrefs.stock,
+          href: null,
           title: t('stockTab'),
           headerTitle: t('stockManagement'),
+        }}
+      />
+      <Tabs.Screen
+        name="nfc"
+        options={{
+          href: canIdCapture ? tabHrefs.nfc : null,
+          title: t('kbsNfcCaptureTitle'),
+          headerShown: false,
           tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('stockTab'),
+          tabBarLabel: t('staffTabNfc'),
+          tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 4 },
           tabBarIcon: ({ focused }) => (
             <TabBarScaledIcon focused={focused}>
               <Ionicons
-                name={focused ? 'cube' : 'cube-outline'}
+                name={focused ? 'hardware-chip' : 'hardware-chip-outline'}
                 size={TAB_ICON_SIZE}
                 color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
               />
             </TabBarScaledIcon>
           ),
+        }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push('/staff/kbs/capture-nfc' as Href);
+            hapticSelection();
+          },
         }}
       />
       <Tabs.Screen

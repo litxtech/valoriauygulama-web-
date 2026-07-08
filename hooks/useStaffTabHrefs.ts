@@ -6,7 +6,7 @@ import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesS
 const STAFF_TAB_ROUTES = [
   'index',
   'tasks',
-  'stock',
+  'nfc',
   'messages',
   'emergency',
   'acceptances',

@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { guestOpenStaffChat, formatChatMessageSendError } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +19,8 @@ import { CachedImage } from '@/components/CachedImage';
 import { sortStaffAdminFirst } from '@/lib/sortStaffAdminFirst';
 import { useTranslation } from 'react-i18next';
 import { displayStaffNameForViewer } from '@/lib/staffProfilePrivacy';
+import { useCachedList } from '@/hooks/useCachedList';
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_LIST_PERF, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
 
 type StaffRow = {
   id: string;
@@ -31,58 +33,121 @@ type StaffRow = {
   profile_hidden_by_admin?: boolean | null;
 };
 
+type StaffPickRowProps = {
+  item: StaffRow;
+  startingId: string | null;
+  staffTabLabel: string;
+  onlineLabel: string;
+  onStart: (id: string) => void;
+};
+
+const StaffPickRow = memo(function StaffPickRow({
+  item,
+  startingId,
+  staffTabLabel,
+  onlineLabel,
+  onStart,
+}: StaffPickRowProps) {
+  return (
+    <TouchableOpacity
+      style={styles.row}
+      onPress={() => onStart(item.id)}
+      disabled={!!startingId}
+      activeOpacity={0.7}
+    >
+      <AvatarWithBadge badge={item.verification_badge ?? null} avatarSize={56} badgeSize={12} showBadge={false}>
+        <CachedImage uri={item.profile_image || 'https://via.placeholder.com/56'} style={styles.avatar} contentFit="cover" />
+      </AvatarWithBadge>
+      <View style={styles.rowBody}>
+        <StaffNameWithBadge
+          name={displayStaffNameForViewer(item.full_name, item.profile_hidden_by_admin ?? null, false, staffTabLabel)}
+          badge={item.verification_badge ?? null}
+          textStyle={styles.name}
+        />
+        <Text style={styles.dept}>
+          {item.profile_hidden_by_admin ? '—' : item.department || item.role || '—'}
+          {item.is_online ? `  ·  🟢 ${onlineLabel}` : ''}
+        </Text>
+      </View>
+      {startingId === item.id ? (
+        <ActivityIndicator size="small" color={MESSAGING_COLORS.primary} />
+      ) : (
+        <Text style={styles.arrow}>→</Text>
+      )}
+    </TouchableOpacity>
+  );
+});
+
 export default function NewChatScreen() {
   const router = useRouter();
   const { t } = useTranslation();
   const params = useLocalSearchParams<{ staffId?: string }>();
-  const [staff, setStaff] = useState<StaffRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [startingId, setStartingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadStaff();
-  }, []);
-
-  useEffect(() => {
-    if (!loading && params.staffId && !startingId) {
-      startChat(params.staffId);
-    }
-  }, [loading, params.staffId]);
-
-  /** Oturum varsa: mesajlaşma token'ını daima sunucuyla hizala. */
-  const loadStaff = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
+  const fetchItems = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (session) await syncGuestMessagingAppToken();
     const { data: rpcData } = await supabase.rpc('messaging_list_staff_for_guest');
     const rows: StaffRow[] = Array.isArray(rpcData) ? rpcData : rpcData ? [rpcData] : [];
-    setStaff(sortStaffAdminFirst(rows, (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'tr')));
-    setLoading(false);
-  };
+    return sortStaffAdminFirst(rows, (a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'tr'));
+  }, []);
 
-  const startChat = async (staffId: string) => {
-    const token =
-      (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
-    if (!token) {
-      Alert.alert(t('chatMessageBlockedTitle'), t('authRegisterRequiredMessage'));
-      router.replace('/customer/(tabs)/messages');
-      return;
-    }
-    setStartingId(staffId);
-    try {
-      const { conversationId, error } = await guestOpenStaffChat(token, staffId);
-      if (conversationId) {
-        router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+  const { items: staff, loading } = useCachedList<StaffRow>({
+    cacheKey: 'customer-new-chat-staff',
+    fetchItems,
+  });
+
+  const startChat = useCallback(
+    async (staffId: string) => {
+      const token =
+        (await syncGuestMessagingAppToken()) ?? useGuestMessagingStore.getState().appToken;
+      if (!token) {
+        Alert.alert(t('chatMessageBlockedTitle'), t('authRegisterRequiredMessage'));
+        router.replace('/customer/(tabs)/messages');
         return;
       }
-      Alert.alert(t('messageSendFailedTitle'), error ?? t('unknownError'));
-    } catch (e) {
-      Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
-    } finally {
-      setStartingId(null);
-    }
-  };
+      setStartingId(staffId);
+      try {
+        const { conversationId, error } = await guestOpenStaffChat(token, staffId);
+        if (conversationId) {
+          router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+          return;
+        }
+        Alert.alert(t('messageSendFailedTitle'), error ?? t('unknownError'));
+      } catch (e) {
+        Alert.alert(t('messageSendFailedTitle'), formatChatMessageSendError(e, t('unknownError')));
+      } finally {
+        setStartingId(null);
+      }
+    },
+    [router, t]
+  );
 
-  if (loading) {
+  useEffect(() => {
+    if (!loading && params.staffId && !startingId) {
+      void startChat(params.staffId);
+    }
+  }, [loading, params.staffId, startChat, startingId]);
+
+  const staffTabLabel = useMemo(() => t('staffTab'), [t]);
+  const onlineLabel = useMemo(() => t('online'), [t]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: StaffRow }) => (
+      <StaffPickRow
+        item={item}
+        startingId={startingId}
+        staffTabLabel={staffTabLabel}
+        onlineLabel={onlineLabel}
+        onStart={startChat}
+      />
+    ),
+    [onlineLabel, staffTabLabel, startChat, startingId]
+  );
+
+  if (loading && staff.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={MESSAGING_COLORS.primary} />
@@ -93,45 +158,19 @@ export default function NewChatScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.sectionTitle}>{t('newChatStartWithStaff')}</Text>
-      <FlatList
+      <FlashList
         data={staff}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.newChatStaff}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
         keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        {...CUSTOMER_LIST_PERF}
         ListEmptyComponent={
-          !loading ? (
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>{t('newChatNoStaff')}</Text>
-              <Text style={styles.emptySub}>{t('newChatNoStaffHint')}</Text>
-            </View>
-          ) : null
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>{t('newChatNoStaff')}</Text>
+            <Text style={styles.emptySub}>{t('newChatNoStaffHint')}</Text>
+          </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.row}
-            onPress={() => startChat(item.id)}
-            disabled={!!startingId}
-            activeOpacity={0.7}
-          >
-            <AvatarWithBadge badge={item.verification_badge ?? null} avatarSize={56} badgeSize={12} showBadge={false}>
-              <CachedImage uri={item.profile_image || 'https://via.placeholder.com/56'} style={styles.avatar} contentFit="cover" />
-            </AvatarWithBadge>
-            <View style={styles.rowBody}>
-              <StaffNameWithBadge
-                name={displayStaffNameForViewer(item.full_name, item.profile_hidden_by_admin ?? null, false, t('staffTab'))}
-                badge={item.verification_badge ?? null}
-                textStyle={styles.name}
-              />
-              <Text style={styles.dept}>
-                {item.profile_hidden_by_admin ? '—' : item.department || item.role || '—'}
-                {item.is_online ? `  ·  🟢 ${t('online')}` : ''}
-              </Text>
-            </View>
-            {startingId === item.id ? (
-              <ActivityIndicator size="small" color={MESSAGING_COLORS.primary} />
-            ) : (
-              <Text style={styles.arrow}>→</Text>
-            )}
-          </TouchableOpacity>
-        )}
       />
     </View>
   );

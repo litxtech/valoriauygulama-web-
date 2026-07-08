@@ -39,9 +39,10 @@ import { useChatTheme } from '@/hooks/useScreenTheme';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 
+import { CUSTOMER_FLASH_DRAW_DISTANCE, CUSTOMER_ROW_HEIGHT } from '@/lib/customerPerf';
+
 const LIST_CACHE_TTL_MS = 90_000;
 const MIN_LOAD_INTERVAL_MS = 5_000;
-const CUSTOMER_MESSAGES_ROW_HEIGHT = 78;
 let conversationListCache: ConversationWithMeta[] = [];
 let conversationListCacheUpdatedAt = 0;
 
@@ -386,8 +387,8 @@ export default function CustomerMessagesScreen() {
     <View style={[styles.container, { backgroundColor: palette.pageBg }]}>
       <FlashList
         data={conversations}
-        estimatedItemSize={CUSTOMER_MESSAGES_ROW_HEIGHT}
-        drawDistance={280}
+        estimatedItemSize={CUSTOMER_ROW_HEIGHT.message}
+        drawDistance={CUSTOMER_FLASH_DRAW_DISTANCE}
         keyExtractor={(item) => item.id}
         renderItem={renderRow}
         refreshControl={

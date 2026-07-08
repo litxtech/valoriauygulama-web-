@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  FlatList,
   RefreshControl,
   useWindowDimensions,
   Platform,
@@ -15,6 +16,7 @@ import {
   TextInput,
   type ViewStyle,
   type TextInput as TextInputType,
+  type ListRenderItemInfo,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -49,6 +51,13 @@ import {
   shouldSkipAdminDashboardNetwork,
 } from '@/lib/adminDashboardCache';
 import { ADMIN_HOME_DEFER_MS, ADMIN_HOME_LIVE_OPS_STRIP } from '@/lib/adminHomePerf';
+
+const MENU_LIST_PERF = {
+  initialNumToRender: 2,
+  maxToRenderPerBatch: 2,
+  windowSize: 5,
+  updateCellsBatchingPeriod: 50,
+} as const;
 
 type Stats = AdminDashboardStats;
 
@@ -252,14 +261,12 @@ const AdminMenuButton = memo(function AdminMenuButton({
   isLast,
   onPress,
   tint,
-  delay = 0,
 }: {
   item: SectionItem;
   badge?: number;
   isLast: boolean;
   onPress: () => void;
   tint: { bg: string; icon: string };
-  delay?: number;
 }) {
   const showBadge = badge != null && badge > 0;
 
@@ -267,23 +274,79 @@ const AdminMenuButton = memo(function AdminMenuButton({
     <TouchableOpacity
       style={[styles.menuRow, !isLast && styles.menuRowSpacing]}
       onPress={onPress}
-        activeOpacity={0.9}
-      >
-        <View style={[styles.menuIconWrap, { backgroundColor: tint.bg }]}>
-          <Ionicons name={item.icon} size={22} color={tint.icon} />
-        </View>
-        <Text style={styles.menuLabel} numberOfLines={2}>
-          {item.label}
-        </Text>
-        <View style={styles.menuRowRight}>
-          {showBadge ? (
-            <View style={styles.menuBadge}>
-              <Text style={styles.menuBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+      activeOpacity={0.9}
+    >
+      <View style={[styles.menuIconWrap, { backgroundColor: tint.bg }]}>
+        <Ionicons name={item.icon} size={22} color={tint.icon} />
+      </View>
+      <Text style={styles.menuLabel} numberOfLines={2}>
+        {item.label}
+      </Text>
+      <View style={styles.menuRowRight}>
+        {showBadge ? (
+          <View style={styles.menuBadge}>
+            <Text style={styles.menuBadgeText}>{badge > 99 ? '99+' : badge}</Text>
+          </View>
+        ) : null}
+        <Ionicons name="chevron-forward" size={18} color={tint.icon} />
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+const AdminSectionBlock = memo(function AdminSectionBlock({
+  section,
+  getBadge,
+  onItemPress,
+}: {
+  section: Section;
+  getBadge: (item: SectionItem) => number | undefined;
+  onItemPress: (item: SectionItem) => void;
+}) {
+  const sectionTint = SECTION_TINTS[section.title] ?? {
+    bg: adminTheme.colors.surfaceSecondary,
+    icon: adminTheme.colors.textMuted,
+  };
+  const sectionBadge = section.items.reduce(
+    (sum, item) => sum + (getBadge(item) ?? item.badge ?? 0),
+    0
+  );
+
+  return (
+    <View style={styles.section}>
+      <AdminCard padded={false} elevated>
+        <View style={styles.sectionHeadPadded}>
+          <View style={styles.sectionTitleRow}>
+            <View style={styles.sectionTitleLeft}>
+              <View style={[styles.sectionIconWrap, { backgroundColor: sectionTint.bg }]}>
+                <Ionicons name={section.icon} size={16} color={sectionTint.icon} />
+              </View>
+              <Text style={styles.sectionTitle}>{section.title}</Text>
             </View>
-          ) : null}
-          <Ionicons name="chevron-forward" size={18} color={tint.icon} />
+            {sectionBadge > 0 ? (
+              <View style={styles.sectionBadge}>
+                <Text style={styles.sectionBadgeText}>
+                  {sectionBadge > 99 ? '99+' : sectionBadge}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {section.subtitle ? <Text style={styles.sectionSubtitle}>{section.subtitle}</Text> : null}
         </View>
-      </TouchableOpacity>
+        <View style={styles.menuList}>
+          {section.items.map((item, idx) => (
+            <AdminMenuButton
+              key={`${section.title}:${item.href}`}
+              item={item}
+              badge={getBadge(item) ?? item.badge}
+              isLast={idx === section.items.length - 1}
+              onPress={() => onItemPress(item)}
+              tint={sectionTint}
+            />
+          ))}
+        </View>
+      </AdminCard>
+    </View>
   );
 });
 
@@ -292,7 +355,7 @@ export default function AdminDashboard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const canIdCapture = canStaffUseIdCapture(staff);
   const { selectedOrganizationId } = useAdminOrgStore();
   const adminSections = useMemo(() => {
@@ -322,6 +385,7 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats>(initialDashboardCached ?? EMPTY_STATS);
   const [refreshing, setRefreshing] = useState(false);
   const [homeHeavyReady, setHomeHeavyReady] = useState(false);
+  const [liveOpsRefreshKey, setLiveOpsRefreshKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<TextInputType>(null);
   const searchPulse = useRef(new Animated.Value(1)).current;
@@ -371,14 +435,16 @@ export default function AdminDashboard() {
     const loadRunId = ++loadRunIdRef.current;
     if (isAndroidDebug) log.info('AdminDashboard', 'load start', { staffId: staff.id });
     try {
-      let roomsQuery = supabase.from('rooms').select('*', { count: 'exact', head: true });
-      let roomsOccupiedQuery = supabase.from('rooms').select('*', { count: 'exact', head: true }).eq('status', 'occupied');
+      // Yalnızca hero + rozet için gereken count sorguları (feed/notifications UI'da yok).
+      let roomsQuery = supabase.from('rooms').select('id', { count: 'exact', head: true });
+      let roomsOccupiedQuery = supabase.from('rooms').select('id', { count: 'exact', head: true }).eq('status', 'occupied');
       let guestsQuery = supabase.from('guests').select('id', { count: 'exact', head: true }).eq('status', 'checked_in');
       let staffActiveQuery = supabase.from('staff').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('is_online', true);
       let stockPendingQuery = supabase.from('stock_movements').select('id', { count: 'exact', head: true }).eq('status', 'pending');
       let staffPendingQuery = supabase.from('staff_applications').select('id', { count: 'exact', head: true }).eq('status', 'pending');
       let expensesPendingQuery = supabase.from('staff_expenses').select('id', { count: 'exact', head: true }).eq('status', 'pending');
       let acceptancesUnassignedQuery = supabase.from('contract_acceptances').select('id', { count: 'exact', head: true }).is('assigned_staff_id', null);
+      let reportsPendingQuery = supabase.from('feed_post_reports').select('id', { count: 'exact', head: true }).eq('status', 'pending');
       if (orgScoped) {
         roomsQuery = roomsQuery.eq('organization_id', orgScoped);
         roomsOccupiedQuery = roomsOccupiedQuery.eq('organization_id', orgScoped);
@@ -389,9 +455,6 @@ export default function AdminDashboard() {
         expensesPendingQuery = expensesPendingQuery.eq('organization_id', orgScoped);
         acceptancesUnassignedQuery = acceptancesUnassignedQuery.eq('organization_id', orgScoped);
       }
-      const complaintsPendingPromise = countPendingGuestComplaints(orgScoped ?? undefined).then((count) => ({
-        count,
-      }));
       const [
         roomsRes,
         roomsOccupiedRes,
@@ -400,8 +463,6 @@ export default function AdminDashboard() {
         stockRes,
         staffPendingRes,
         expensesPendingRes,
-        unreadRes,
-        feedCountRes,
         reportsPendingRes,
         complaintsPendingRes,
         acceptancesUnassignedRes,
@@ -413,10 +474,8 @@ export default function AdminDashboard() {
         stockPendingQuery,
         staffPendingQuery,
         expensesPendingQuery,
-        supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('staff_id', staff.id).is('read_at', null),
-        supabase.from('feed_posts').select('id', { count: 'exact', head: true }),
-        supabase.from('feed_post_reports').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        complaintsPendingPromise,
+        reportsPendingQuery,
+        countPendingGuestComplaints(orgScoped ?? undefined).then((count) => ({ count })),
         acceptancesUnassignedQuery,
       ]);
 
@@ -429,9 +488,9 @@ export default function AdminDashboard() {
           stockPending: stockRes.count ?? 0,
           staffPending: staffPendingRes.count ?? 0,
           expensesPending: expensesPendingRes.count ?? 0,
-          unreadNotifs: unreadRes.count ?? 0,
+          unreadNotifs: prev.unreadNotifs,
           messagesUnread: prev.messagesUnread,
-          feedTotal: feedCountRes.count ?? 0,
+          feedTotal: prev.feedTotal,
           reportsPending: reportsPendingRes.count ?? 0,
           complaintsPending: complaintsPendingRes.count ?? 0,
           acceptancesUnassigned: acceptancesUnassignedRes.count ?? 0,
@@ -521,15 +580,18 @@ export default function AdminDashboard() {
       invalidateAdminDashboardCache();
     }
     await load({ force: true });
+    setLiveOpsRefreshKey((k) => k + 1);
     setRefreshing(false);
   }, [load, selectedOrganizationId, staff?.app_permissions?.super_admin, staff?.id, staff?.organization_id, staff?.role]);
 
   const contentWidth = width - H_PAD * 2;
   const normalizedQuery = normalizeSearchText(searchQuery);
 
-  const { getEffectiveBadge, setDismissed } = useAdminBadgeDismissedStore();
+  const getEffectiveBadge = useAdminBadgeDismissedStore((s) => s.getEffectiveBadge);
+  const setDismissed = useAdminBadgeDismissedStore((s) => s.setDismissed);
+  const dismissedBadges = useAdminBadgeDismissedStore((s) => s.dismissed);
 
-  const getBadgeKey = (href: string): keyof typeof stats | 'approvalsTotal' | null => {
+  const getBadgeKey = useCallback((href: string): keyof typeof stats | 'approvalsTotal' | null => {
     if (href === '/admin/approvals') return 'approvalsTotal';
     if (href === '/admin/stock/approvals') return 'stockPending';
     if (href === '/admin/staff' || href === '/admin/staff/pending') return 'staffPending';
@@ -538,7 +600,7 @@ export default function AdminDashboard() {
     if (href === '/admin/complaints') return 'complaintsPending';
     if (href === '/admin/contracts') return 'acceptancesUnassigned';
     return null;
-  };
+  }, []);
 
   const totalApprovals = useMemo(
     () =>
@@ -547,7 +609,7 @@ export default function AdminDashboard() {
       stats.expensesPending +
       stats.reportsPending +
       stats.acceptancesUnassigned,
-    [stats]
+    [stats.staffPending, stats.stockPending, stats.expensesPending, stats.reportsPending, stats.acceptancesUnassigned]
   );
 
   const approvalsHubBadge = getEffectiveBadge('approvalsTotal', totalApprovals);
@@ -568,31 +630,41 @@ export default function AdminDashboard() {
     lastKnownApprovalsTotalRef.current = totalApprovals;
   }, [router, totalApprovals]);
 
-  const getBadge = (item: SectionItem): number | undefined => {
-    const key = getBadgeKey(item.href);
-    if (!key) return undefined;
-    const raw = key === 'approvalsTotal' ? totalApprovals : stats[key as keyof typeof stats];
-    if (raw == null) return undefined;
-    const effective = getEffectiveBadge(key as any, raw);
-    return effective > 0 ? effective : undefined;
-  };
-
-  const getSectionBadge = (items: SectionItem[]): number | undefined => {
-    const total = items.reduce((sum, item) => sum + (getBadge(item) ?? item.badge ?? 0), 0);
-    return total > 0 ? total : undefined;
-  };
-
-  const handleTilePress = (item: SectionItem) => {
-    if (isAndroidDebug) {
-      log.info('AdminDashboard', 'tile press', { href: item.href, label: item.label });
-    }
-    const key = getBadgeKey(item.href);
-    if (key) {
+  const getBadge = useCallback(
+    (item: SectionItem): number | undefined => {
+      const key = getBadgeKey(item.href);
+      if (!key) return undefined;
       const raw = key === 'approvalsTotal' ? totalApprovals : stats[key as keyof typeof stats];
-      if (raw != null && raw > 0) setDismissed(key as any, raw);
-    }
-    router.push(item.href as any);
-  };
+      if (raw == null) return undefined;
+      const effective = getEffectiveBadge(key as any, raw);
+      return effective > 0 ? effective : undefined;
+    },
+    [dismissedBadges, getBadgeKey, getEffectiveBadge, stats, totalApprovals]
+  );
+
+  const handleTilePress = useCallback(
+    (item: SectionItem) => {
+      if (isAndroidDebug) {
+        log.info('AdminDashboard', 'tile press', { href: item.href, label: item.label });
+      }
+      const key = getBadgeKey(item.href);
+      if (key) {
+        const raw = key === 'approvalsTotal' ? totalApprovals : stats[key as keyof typeof stats];
+        if (raw != null && raw > 0) setDismissed(key as any, raw);
+      }
+      router.push(item.href as any);
+    },
+    [getBadgeKey, isAndroidDebug, router, setDismissed, stats, totalApprovals]
+  );
+
+  const renderSection = useCallback(
+    ({ item }: ListRenderItemInfo<Section>) => (
+      <AdminSectionBlock section={item} getBadge={getBadge} onItemPress={handleTilePress} />
+    ),
+    [getBadge, handleTilePress]
+  );
+
+  const sectionKeyExtractor = useCallback((item: Section) => item.title, []);
 
   const staffQuickActions = useMemo(() => staffQuickActionsFor(staff), [staff]);
 
@@ -667,19 +739,8 @@ export default function AdminDashboard() {
     handleTilePress(first);
   };
 
-  return (
+  const listHeader = (
     <>
-    <StatusBar style="light" />
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
-      removeClippedSubviews={Platform.OS === 'android'}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />
-      }
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-    >
       <View style={[styles.heroWrap, { width }]}>
         <LinearGradient
           colors={['#0f172a', '#1e3a5f', '#0f172a']}
@@ -866,7 +927,7 @@ export default function AdminDashboard() {
         ownOrganizationId={staff?.organization_id}
       />
       {homeHeavyReady && ADMIN_HOME_LIVE_OPS_STRIP ? (
-        <AdminLiveOpsStrip refreshKey={refreshing ? Date.now() : 0} />
+        <AdminLiveOpsStrip refreshKey={liveOpsRefreshKey} />
       ) : null}
 
       <TouchableOpacity
@@ -903,97 +964,58 @@ export default function AdminDashboard() {
       </TouchableOpacity>
 
       {staffQuickActions.length > 0 ? (
-      <View style={styles.section}>
-        <AdminCard padded={false} elevated premium auraColor="#3730a3">
-          <View style={styles.sectionHeadPadded}>
-            <View style={styles.sectionTitleRow}>
-              <View style={styles.sectionTitleLeft}>
-                <View style={[styles.sectionIconWrap, { backgroundColor: '#eef2ff' }]}>
-                  <Ionicons name="people-circle-outline" size={16} color="#3730a3" />
+        <View style={styles.section}>
+          <AdminCard padded={false} elevated>
+            <View style={styles.sectionHeadPadded}>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionTitleLeft}>
+                  <View style={[styles.sectionIconWrap, { backgroundColor: '#eef2ff' }]}>
+                    <Ionicons name="people-circle-outline" size={16} color="#3730a3" />
+                  </View>
+                  <Text style={styles.sectionTitle}>Hızlı Personel Erişimi</Text>
                 </View>
-                <Text style={styles.sectionTitle}>Hızlı Personel Erişimi</Text>
               </View>
+              <Text style={styles.sectionSubtitle}>Çalışan yönetimi için en sık kullanılan işlemler</Text>
             </View>
-            <Text style={styles.sectionSubtitle}>Çalışan yönetimi için en sık kullanılan işlemler</Text>
-          </View>
-          <View style={styles.menuList}>
-            {staffQuickActions.map((item, idx) => {
-              const badge = getBadge(item) ?? item.badge;
-              const isLast = idx === staffQuickActions.length - 1;
-              return (
+            <View style={styles.menuList}>
+              {staffQuickActions.map((item, idx) => (
                 <AdminMenuButton
                   key={`staff-quick:${item.href}`}
                   item={item}
-                  badge={badge}
-                  isLast={isLast}
+                  badge={getBadge(item) ?? item.badge}
+                  isLast={idx === staffQuickActions.length - 1}
                   onPress={() => handleTilePress(item)}
                   tint={{ bg: '#eef2ff', icon: '#3730a3' }}
-                  delay={Math.min(180, idx * 18)}
                 />
-              );
-            })}
-          </View>
-        </AdminCard>
-      </View>
+              ))}
+            </View>
+          </AdminCard>
+        </View>
       ) : null}
+    </>
+  );
 
-      {adminSections.map((section, sectionIdx) => {
-        const sectionTint = SECTION_TINTS[section.title] ?? {
-          bg: adminTheme.colors.surfaceSecondary,
-          icon: adminTheme.colors.textMuted,
-        };
-        return (
-          <View key={section.title} style={styles.section}>
-            <AdminCard padded={false} elevated premium auraColor={sectionTint.icon}>
-              <View style={styles.sectionHeadPadded}>
-                {(() => {
-                  const sectionBadge = getSectionBadge(section.items);
-                  const tint = SECTION_TINTS[section.title] ?? {
-                    bg: adminTheme.colors.surfaceSecondary,
-                    icon: adminTheme.colors.textMuted,
-                  };
-                  return (
-                    <View style={styles.sectionTitleRow}>
-                      <View style={styles.sectionTitleLeft}>
-                        <View style={[styles.sectionIconWrap, { backgroundColor: tint.bg }]}>
-                          <Ionicons name={section.icon} size={16} color={tint.icon} />
-                        </View>
-                        <Text style={styles.sectionTitle}>{section.title}</Text>
-                      </View>
-                      {sectionBadge ? (
-                        <View style={styles.sectionBadge}>
-                          <Text style={styles.sectionBadgeText}>
-                            {sectionBadge > 99 ? '99+' : sectionBadge}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  );
-                })()}
-                {section.subtitle ? <Text style={styles.sectionSubtitle}>{section.subtitle}</Text> : null}
-              </View>
-              <View style={styles.menuList}>
-                {section.items.map((item, idx) => {
-                  const badge = getBadge(item) ?? item.badge;
-                  const isLast = idx === section.items.length - 1;
-                  return (
-                    <AdminMenuButton
-                      key={`${section.title}:${item.href}`}
-                      item={item}
-                      badge={badge}
-                      isLast={isLast}
-                      onPress={() => handleTilePress(item)}
-                      tint={sectionTint}
-                      delay={Math.min(220, sectionIdx * 40 + idx * 22)}
-                    />
-                  );
-                })}
-              </View>
-            </AdminCard>
-          </View>
-        );
-      })}
-    </ScrollView>
+  return (
+    <>
+      <StatusBar style="light" />
+      <FlatList
+        style={styles.container}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+        data={normalizedQuery ? [] : adminSections}
+        keyExtractor={sectionKeyExtractor}
+        renderItem={renderSection}
+        ListHeaderComponent={listHeader}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={adminTheme.colors.accent} />
+        }
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={Platform.OS === 'android'}
+        initialNumToRender={MENU_LIST_PERF.initialNumToRender}
+        maxToRenderPerBatch={MENU_LIST_PERF.maxToRenderPerBatch}
+        windowSize={MENU_LIST_PERF.windowSize}
+        updateCellsBatchingPeriod={MENU_LIST_PERF.updateCellsBatchingPeriod}
+      />
     </>
   );
 }

@@ -11,7 +11,7 @@ export const KBS_CAPTURE_JPEG_QUALITY = Platform.select({
 }) ?? 0.92;
 
 /** Odak otursun diye çekimden önce bekleme (ms). */
-export const KBS_CAPTURE_AF_SETTLE_MS = IS_ANDROID ? 520 : 120;
+export const KBS_CAPTURE_AF_SETTLE_MS = IS_ANDROID ? 380 : 100;
 
 type CameraWithPictureApi = {
   takePictureAsync?: (opts: Record<string, unknown>) => Promise<{ uri?: string } | undefined>;

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { getOccupancyCached, occupancyCacheKey, setOccupancyCached } from '@/lib/occupancyCache';
+import { fetchHotelInHouseGuests, formatMaskedInitials } from '@/lib/hotelInHouse';
 
 export type OccupancyGuest = {
   id: string;
@@ -17,6 +18,11 @@ export type OccupancyGuest = {
   contract_accepted_at: string | null;
 };
 
+export type KbsInHouseGuest = {
+  initials: string;
+  checkInAt: string | null;
+};
+
 export type OccupancyRoom = {
   id: string;
   room_number: string;
@@ -24,6 +30,8 @@ export type OccupancyRoom = {
   status: string;
   bed_type: string | null;
   guests: OccupancyGuest[];
+  /** KBS kimlik çekiminden (ops.stay_assignments) gelen maskeli misafirler. */
+  kbsGuests: KbsInHouseGuest[];
   pending_contract_name: string | null;
 };
 
@@ -147,7 +155,7 @@ export async function loadOccupancySnapshot(
     historyQuery = historyQuery.eq('organization_id', orgScoped);
   }
 
-  const [roomsRes, inHouseRes, pendingRes, checkInsRes, checkOutsRes, historyRes, previewCasRes] = await Promise.all([
+  const [roomsRes, inHouseRes, pendingRes, checkInsRes, checkOutsRes, historyRes, previewCasRes, kbsInHouse] = await Promise.all([
     roomsQuery,
     inHouseQuery,
     pendingQuery,
@@ -164,7 +172,18 @@ export async function loadOccupancySnapshot(
           .from('contract_acceptances')
           .select('room_id, guests(full_name, status, room_id)')
           .not('guest_id', 'is', null),
+    fetchHotelInHouseGuests().catch(() => []),
   ]);
+
+  // KBS kimlik çekiminden (ops) gelen maskeli misafirleri oda numarasına göre grupla.
+  const kbsByRoomNumber = new Map<string, KbsInHouseGuest[]>();
+  for (const row of kbsInHouse) {
+    const key = String(row.roomNumber).trim();
+    if (!key || key === '—') continue;
+    const list = kbsByRoomNumber.get(key) ?? [];
+    list.push({ initials: formatMaskedInitials(row), checkInAt: row.checkInAt });
+    kbsByRoomNumber.set(key, list);
+  }
 
   const guestIds = new Set<string>();
   for (const g of [...(inHouseRes.data ?? []), ...(pendingRes.data ?? []), ...(historyRes.data ?? [])]) {
@@ -208,19 +227,44 @@ export async function loadOccupancySnapshot(
     }
   }
 
-  const rooms: OccupancyRoom[] = (roomsRes.data ?? []).map((r: Record<string, unknown>) => ({
-    id: String(r.id),
-    room_number: String(r.room_number),
-    floor: r.floor != null ? Number(r.floor) : null,
-    status: String(r.status ?? 'available'),
-    bed_type: (r.bed_type as string | null) ?? null,
-    guests: guestsByRoom.get(String(r.id)) ?? [],
-    pending_contract_name: previewByRoom[String(r.id)] ?? null,
-  }));
+  const rooms: OccupancyRoom[] = (roomsRes.data ?? []).map((r: Record<string, unknown>) => {
+    const roomNumber = String(r.room_number);
+    const kbsGuests = kbsByRoomNumber.get(roomNumber.trim()) ?? [];
+    kbsByRoomNumber.delete(roomNumber.trim());
+    return {
+      id: String(r.id),
+      room_number: roomNumber,
+      floor: r.floor != null ? Number(r.floor) : null,
+      status: String(r.status ?? 'available'),
+      bed_type: (r.bed_type as string | null) ?? null,
+      guests: guestsByRoom.get(String(r.id)) ?? [],
+      kbsGuests,
+      pending_contract_name: previewByRoom[String(r.id)] ?? null,
+    };
+  });
 
-  const occupiedRooms = rooms.filter((r) => r.guests.length > 0 || r.status === 'occupied').length;
+  // public.rooms'ta olmayan (KBS'de elle yazılmış) oda numaraları için sentetik oda kartları.
+  for (const [roomNumber, kbsGuests] of kbsByRoomNumber.entries()) {
+    rooms.push({
+      id: `kbs-${roomNumber}`,
+      room_number: roomNumber,
+      floor: null,
+      status: 'available',
+      bed_type: null,
+      guests: [],
+      kbsGuests,
+      pending_contract_name: null,
+    });
+  }
+  rooms.sort((a, b) => a.room_number.localeCompare(b.room_number, 'tr', { numeric: true }));
+
+  const occupiedRooms = rooms.filter(
+    (r) => r.guests.length > 0 || r.kbsGuests.length > 0 || r.status === 'occupied'
+  ).length;
   const totalRooms = rooms.length;
-  const guestsInHouse = [...guestsByRoom.values()].reduce((s, list) => s + list.length, 0);
+  const kbsGuestsTotal = rooms.reduce((s, r) => s + r.kbsGuests.length, 0);
+  const guestsInHouse =
+    [...guestsByRoom.values()].reduce((s, list) => s + list.length, 0) + kbsGuestsTotal;
 
   const snapshot: OccupancySnapshot = {
     rooms,
