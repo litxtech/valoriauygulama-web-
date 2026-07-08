@@ -15,9 +15,10 @@ import { safeRouterReplace } from '@/lib/safeRouter';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
+import { GUEST_CONTRACT_WEB_BG } from '@/components/guest/GuestSignOneWebShell';
 
 const COLORS = {
-  bg: '#f5f6f8',
+  bg: Platform.OS === 'web' ? GUEST_CONTRACT_WEB_BG : '#f5f6f8',
   card: '#ffffff',
   text: '#1f2937',
   textSecondary: '#6b7280',

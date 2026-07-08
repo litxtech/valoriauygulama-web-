@@ -27,6 +27,7 @@ import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
 import { fetchPublicAppOriginFromSettings, fetchPublicQrSettings } from '@/lib/appPublicUrl';
 import { WebPublicRouteRedirect } from '@/components/WebPublicRouteRedirect';
+import { GUEST_CONTRACT_WEB_BG } from '@/components/guest/GuestSignOneWebShell';
 import { parseTechnicalAssetIdFromScan } from '@/lib/technicalAssets';
 import { useGuestFlowStore } from '@/stores/guestFlowStore';
 import { supabase } from '@/lib/supabase';
@@ -217,6 +218,7 @@ function AppIconBadgeSync() {
 function RootLayoutInner() {
   const { t } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
   const setQR = useGuestFlowStore((s) => s.setQR);
   const staff = useAuthStore((s) => s.staff);
   const staffCheckComplete = useAuthStore((s) => s.staffCheckComplete);
@@ -303,13 +305,26 @@ function RootLayoutInner() {
   // Web: body arka planı (beyaz ekran önleme) ve splash atla
   useEffect(() => {
     if (Platform.OS === 'web') {
-      if (typeof document !== 'undefined') document.body.style.backgroundColor = WEB_BG;
+      const p = pathname || '';
+      const contractLike =
+        p.includes('/guest/sign-one') ||
+        p.includes('/guest/success') ||
+        p.includes('/sozlesme') ||
+        p.includes('/sözleşme');
+      const bg = contractLike ? GUEST_CONTRACT_WEB_BG : WEB_BG;
+      if (typeof document !== 'undefined') {
+        document.body.style.backgroundColor = bg;
+        document.documentElement.style.backgroundColor = bg;
+      }
       setShowSplashLogo(false);
       return () => {
-        if (typeof document !== 'undefined') document.body.style.backgroundColor = '';
+        if (typeof document !== 'undefined') {
+          document.body.style.backgroundColor = '';
+          document.documentElement.style.backgroundColor = '';
+        }
       };
     }
-  }, []);
+  }, [pathname]);
 
   // Dil: Önce kaydedilmiş tercih, yoksa cihaz dili; böylece uygulama tam seçilen dilde açılır
   // Arapça için RTL: dil değişince yönü güncelle (uygulama yeniden başlatıldığında tam uygulanır)

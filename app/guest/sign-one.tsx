@@ -30,6 +30,7 @@ import { FORM_STRINGS, DEFAULT_FORM_FIELDS, type ContractFormLang } from '@/lib/
 import { notifyAdmins } from '@/lib/notificationService';
 import { ADMIN_TYPES } from '@/lib/notifications';
 import { safeRouterReplace } from '@/lib/safeRouter';
+import { GuestSignOneWebShell, GUEST_CONTRACT_WEB_BG } from '@/components/guest/GuestSignOneWebShell';
 
 const CONTRACT_LANGS = LANGUAGES;
 
@@ -67,20 +68,20 @@ function normalizeFamilyMemberTcs(rows: FamilyMemberTcRow[]): FamilyMemberTcRow[
     .filter((r) => r.full_name.length > 0 || r.tc.length > 0);
 }
 
-// Göz yormayan, okunaklı renk paleti
+// Göz yormayan, okunaklı renk paleti (web: tek sayfa arka planı)
 const COLORS = {
-  bg: '#f5f6f8',
+  bg: GUEST_CONTRACT_WEB_BG,
   card: '#ffffff',
-  cardBorder: '#e8eaed',
-  text: '#1f2937',
-  textSecondary: '#6b7280',
-  label: '#374151',
-  accent: '#0ea5e9',
-  accentLight: '#e0f2fe',
+  cardBorder: '#e2e8f0',
+  text: '#0f172a',
+  textSecondary: '#64748b',
+  label: '#334155',
+  accent: '#0d9488',
+  accentLight: '#ccfbf1',
   success: '#059669',
-  inputBg: '#f9fafb',
-  inputBorder: '#e5e7eb',
-  divider: '#e5e7eb',
+  inputBg: '#f8fafc',
+  inputBorder: '#e2e8f0',
+  divider: '#e2e8f0',
 };
 
 export default function GuestSignOneScreen() {
@@ -535,6 +536,58 @@ export default function GuestSignOneScreen() {
   );
 
   const headerH = 56 + insets.top;
+  const isWebContract = Platform.OS === 'web';
+
+  const langPicker = (
+    <View style={[styles.langWrap, isWebContract && styles.langWrapWeb]}>
+      {CONTRACT_LANGS.map(({ code, label }) => (
+        <TouchableOpacity
+          key={code}
+          style={[styles.langChip, contractLang === code && styles.langChipActive]}
+          onPress={() => {
+            setContractLang(code);
+            fetchContract(code);
+          }}
+          disabled={loadingContract || translating}
+        >
+          <Text style={[styles.langChipText, contractLang === code && styles.langChipTextActive]}>{label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  const submitButton = (
+    <TouchableOpacity
+      style={[styles.submitBtn, isWebContract && styles.submitBtnWeb, saving && styles.submitBtnDisabled]}
+      onPress={() => {
+        void submit();
+      }}
+      disabled={saving}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+    >
+      {saving ? (
+        <ActivityIndicator color="#fff" size="small" />
+      ) : (
+        <Text style={styles.submitBtnText}>{formStrings.acceptButton}</Text>
+      )}
+    </TouchableOpacity>
+  );
+
+  const pageIntro = (
+    <View style={[styles.pageTitleWrap, isWebContract && styles.pageTitleWrapWeb]}>
+      <Text style={[styles.pageTitle, isWebContract && styles.pageTitleWeb]}>{formStrings.pageTitle}</Text>
+      <Text style={[styles.pageSubtitle, isWebContract && styles.pageSubtitleWeb]}>{formStrings.pageSubtitle}</Text>
+      {!isWebContract ? langPicker : null}
+    </View>
+  );
+
+  const webHeader = (
+    <>
+      {pageIntro}
+      {langPicker}
+    </>
+  );
 
   if (missingWebEnv) {
     return (
@@ -574,26 +627,44 @@ export default function GuestSignOneScreen() {
     );
   }
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={headerH}
-    >
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 32 }]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={true}
-        scrollEventThrottle={16}
-        nestedScrollEnabled={false}
-      >
-        <View style={styles.pageTitleWrap}>
-          <Text style={styles.pageTitle}>{formStrings.pageTitle}</Text>
-          <Text style={styles.pageSubtitle}>{formStrings.pageSubtitle}</Text>
-        </View>
+  const modals = (
+    <>
+      {showCountryPicker &&
+        renderPickerModal(
+          t('guestCountryDialCodeTitle'),
+          COUNTRY_PHONE_CODES,
+          (item) => setPhoneCountry(item as CountryCode),
+          () => setShowCountryPicker(false)
+        )}
+      {showNationalityPicker && (
+        <Modal visible transparent animationType="slide">
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowNationalityPicker(false)}>
+            <View style={[styles.modalDrawer, { paddingBottom: insets.bottom + 16 }]}>
+              <Text style={styles.modalTitle}>{formStrings.nationality}</Text>
+              <FlatList
+                data={COUNTRY_PHONE_CODES.map((c) => c.name)}
+                keyExtractor={(name) => name}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.modalRow}
+                    onPress={() => {
+                      setNationality(item);
+                      setShowNationalityPicker(false);
+                    }}
+                  >
+                    <Text style={styles.modalRowText}>{item}</Text>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+    </>
+  );
 
-        {/* Profil fotoğrafı — çalışanlarla aynı bölüm */}
+  const formContent = (
+    <>
         <View style={styles.avatarSection}>
           <TouchableOpacity
             style={styles.avatarWrap}
@@ -611,22 +682,7 @@ export default function GuestSignOneScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Dil seçenekleri – alt başlığın hemen altında */}
-        <View style={styles.langWrap}>
-          {CONTRACT_LANGS.map(({ code, label }) => (
-            <TouchableOpacity
-              key={code}
-              style={[styles.langChip, contractLang === code && styles.langChipActive]}
-              onPress={() => {
-                setContractLang(code);
-                fetchContract(code);
-              }}
-              disabled={loadingContract || translating}
-            >
-              <Text style={[styles.langChipText, contractLang === code && styles.langChipTextActive]}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {!isWebContract ? langPicker : null}
 
         {/* 1. Kişisel bilgiler */}
         {(formFieldsConfig.full_name || formFieldsConfig.id_type || formFieldsConfig.id_number || formFieldsConfig.phone || formFieldsConfig.email || formFieldsConfig.nationality || formFieldsConfig.date_of_birth || formFieldsConfig.gender || formFieldsConfig.address) && (
@@ -916,13 +972,15 @@ export default function GuestSignOneScreen() {
         )}
 
         {/* 3. Sözleşme metni */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{formStrings.sectionContract}</Text>
+        <View style={[styles.section, isWebContract && styles.sectionWeb]}>
+          <Text style={[styles.sectionTitle, isWebContract && styles.sectionTitleWeb]}>{formStrings.sectionContract}</Text>
           {loadingContract || translating ? (
             <ActivityIndicator size="small" color={COLORS.accent} style={styles.loader} />
           ) : (
-            <View style={styles.contractBody}>
-              <Text style={styles.contractText}>{contractContent || formStrings.loadingContract}</Text>
+            <View style={[styles.contractBody, isWebContract && styles.contractCardWeb]}>
+              <Text style={[styles.contractText, isWebContract && styles.contractTextWeb]}>
+                {contractContent || formStrings.loadingContract}
+              </Text>
             </View>
           )}
         </View>
@@ -943,68 +1001,54 @@ export default function GuestSignOneScreen() {
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-          onPress={() => {
-            void submit();
-          }}
-          disabled={saving}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={styles.submitBtnText}>{formStrings.acceptButton}</Text>
-          )}
-        </TouchableOpacity>
-      </ScrollView>
+    </>
+  );
 
-      {showCountryPicker &&
-        renderPickerModal(
-          t('guestCountryDialCodeTitle'),
-          COUNTRY_PHONE_CODES,
-          (item) => setPhoneCountry(item as CountryCode),
-          () => setShowCountryPicker(false)
-        )}
-      {showNationalityPicker && (
-        <Modal visible transparent animationType="slide">
-          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowNationalityPicker(false)}>
-            <View style={[styles.modalDrawer, { paddingBottom: insets.bottom + 16 }]}>
-              <Text style={styles.modalTitle}>{formStrings.nationality}</Text>
-              <FlatList
-                data={COUNTRY_PHONE_CODES.map((c) => c.name)}
-                keyExtractor={(name) => name}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.modalRow}
-                    onPress={() => {
-                      setNationality(item);
-                      setShowNationalityPicker(false);
-                    }}
-                  >
-                    <Text style={styles.modalRowText}>{item}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            </View>
-          </TouchableOpacity>
-        </Modal>
+  return (
+    <>
+      {isWebContract ? (
+        <GuestSignOneWebShell header={webHeader} footer={submitButton}>
+          {formContent}
+        </GuestSignOneWebShell>
+      ) : (
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={headerH}
+        >
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 32 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
+            scrollEventThrottle={16}
+            nestedScrollEnabled={false}
+          >
+            {pageIntro}
+            {formContent}
+            {submitButton}
+          </ScrollView>
+        </KeyboardAvoidingView>
       )}
-    </KeyboardAvoidingView>
+      {modals}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   envContainer: { flex: 1, backgroundColor: COLORS.bg, padding: 24 },
   envTitle: { fontSize: 20, fontWeight: '700', color: COLORS.text, marginBottom: 12, textAlign: 'center' },
   envText: { fontSize: 15, color: COLORS.textSecondary, lineHeight: 24, textAlign: 'center' },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20 },
   pageTitleWrap: { alignItems: 'center', marginBottom: 24 },
+  pageTitleWrapWeb: { marginBottom: 0 },
   pageTitle: { fontSize: 26, fontWeight: '700', color: COLORS.text, marginBottom: 6, textAlign: 'center' },
+  pageTitleWeb: { fontSize: 28, fontWeight: '700', letterSpacing: -0.3 },
   pageSubtitle: { fontSize: 15, color: COLORS.textSecondary, lineHeight: 22, textAlign: 'center' },
+  pageSubtitleWeb: { fontSize: 16, lineHeight: 24, maxWidth: 520 },
+  langWrapWeb: { marginTop: 14, marginBottom: 0 },
   avatarSection: { alignItems: 'center', marginBottom: 20 },
   avatarWrap: {
     width: 96,
@@ -1022,6 +1066,7 @@ const styles = StyleSheet.create({
   avatarPlaceholderText: { fontSize: 32, color: COLORS.accent, fontWeight: '300' },
   avatarHint: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 },
   section: { marginBottom: 28 },
+  sectionWeb: { marginBottom: 32 },
   sectionTitle: {
     fontSize: 15,
     fontWeight: '600',
@@ -1029,6 +1074,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     letterSpacing: 0.3,
   },
+  sectionTitleWeb: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: COLORS.textSecondary },
   sectionHint: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 12 },
   langWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16, justifyContent: 'center' },
   langChip: {
@@ -1147,7 +1193,20 @@ const styles = StyleSheet.create({
   },
   familyAddBtnText: { color: COLORS.accent, fontWeight: '700', fontSize: 14 },
   contractBody: { paddingVertical: 8 },
+  contractCardWeb: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 28,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+  },
   contractText: { color: COLORS.text, fontSize: 16, lineHeight: 26 },
+  contractTextWeb: { fontSize: 17, lineHeight: 30, letterSpacing: 0.15 },
   loader: { marginVertical: 24 },
   signerCard: {
     backgroundColor: COLORS.accentLight,
@@ -1164,6 +1223,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     marginBottom: 24,
+  },
+  submitBtnWeb: {
+    marginBottom: 0,
+    maxWidth: 760,
+    width: '100%',
+    alignSelf: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
   },
   submitBtnDisabled: { opacity: 0.7 },
   submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '600' },
