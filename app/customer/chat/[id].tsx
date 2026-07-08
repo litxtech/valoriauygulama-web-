@@ -539,6 +539,10 @@ export default function CustomerChatScreen() {
         if (newMsg.message_type === 'text' && newMsg.sender_type !== 'guest' && (newMsg.content ?? '').trim()) {
           prefetchTranslations([(newMsg.content ?? '').trim()]);
         }
+        // Sohbet açıkken gelen personel mesajını da okundu say — okunmadı rozeti birikmesin.
+        if (appToken && newMsg.sender_type !== 'guest') {
+          void guestMarkConversationRead(appToken, conversationId);
+        }
         setTimeout(() => scrollChatListToEnd(listRef, true), 150);
       },
       {

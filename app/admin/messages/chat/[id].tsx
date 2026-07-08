@@ -39,6 +39,8 @@ import {
   uploadVoiceMessageForStaff,
 } from '@/lib/messagingApi';
 import { supabase } from '@/lib/supabase';
+import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
+import { markStaffConversationListDirty } from '@/lib/staffConversationListCache';
 import {
   MESSAGING_COLORS,
   replaceChatMessage,
@@ -605,7 +607,9 @@ export default function AdminChatScreen() {
     (async () => {
       const list = await staffGetMessages(conversationId, 50, undefined, staff.id);
       setMessages(capChatMessageList(list));
-      staffMarkConversationRead(conversationId, staff.id);
+      await staffMarkConversationRead(conversationId, staff.id);
+      markStaffConversationListDirty();
+      void useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
       setLoading(false);
     })();
   }, [staff, conversationId]);
@@ -621,6 +625,14 @@ export default function AdminChatScreen() {
           return [...withoutTemp, newMsg];
         });
         setTimeout(() => scrollChatListToLatest(listRef, true), 100);
+        // Sohbet açıkken gelen (bize ait olmayan) mesajı da anında okundu say — rozet birikmesin.
+        if (staff && newMsg.sender_id !== staff.id) {
+          void (async () => {
+            await staffMarkConversationRead(conversationId, staff.id);
+            markStaffConversationListDirty();
+            void useStaffUnreadMessagesStore.getState().refreshUnread(staff.id);
+          })();
+        }
       },
       {
         onMessageDeleted: (messageId) => {

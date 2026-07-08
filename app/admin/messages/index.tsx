@@ -16,6 +16,7 @@ import {
   staffListConversations,
 } from '@/lib/messagingApi';
 import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import { consumeStaffConversationListDirty } from '@/lib/staffConversationListCache';
 import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
 import type { ConversationWithMeta, Message } from '@/lib/messaging';
 import { MESSAGING_COLORS } from '@/lib/messaging';
@@ -36,7 +37,7 @@ function formatTime(iso: string | null): string {
 
 export default function AdminMessagesScreen() {
   const router = useRouter();
-  const { staff } = useAuthStore();
+  const staff = useAuthStore((s) => s.staff);
   const [conversations, setConversations] = useState<ConversationWithMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,7 +106,11 @@ export default function AdminMessagesScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!staff?.id) return () => {};
-      if (inboxDirtyRef.current || conversations.length === 0) {
+      // Bir sohbet okununca liste "dirty" olur → dönünce okunmadı rozetini tazelemek için zorla yenile.
+      const listDirty = consumeStaffConversationListDirty();
+      if (listDirty) {
+        void load({ force: true });
+      } else if (inboxDirtyRef.current || conversations.length === 0) {
         void load();
       }
       const unsub = subscribeStaffInboxLive(staff.id, () => {
