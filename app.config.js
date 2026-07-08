@@ -42,12 +42,8 @@ const baseConfig = {
     buildNumber: IOS_BUILD_NUMBER,
     newArchEnabled: true,
     entitlements: {
+      /** Apple NFC Tag Reading capability — yalnız formats entitlement’tır. */
       'com.apple.developer.nfc.readersession.formats': ['TAG', 'NDEF'],
-      'com.apple.developer.nfc.readersession.iso7816.select-identifiers': [
-        'A0000002471001',
-        'A0000002472001',
-        '00000000000000',
-      ],
     },
     infoPlist: {
       /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
@@ -57,6 +53,12 @@ const baseConfig = {
         'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
       NFCReaderUsageDescription:
         'Pasaport çipi NFC okuma ve kapı etiketi okuma için NFC kullanılır.',
+      /** ISO7816 AID listesi Info.plist anahtarıdır; entitlements’a konursa Xcode imza red eder. */
+      'com.apple.developer.nfc.readersession.iso7816.select-identifiers': [
+        'A0000002471001',
+        'A0000002472001',
+        '00000000000000',
+      ],
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
       NSLocationWhenInUseUsageDescription:
         'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
