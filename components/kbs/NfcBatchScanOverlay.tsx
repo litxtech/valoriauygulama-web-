@@ -59,7 +59,7 @@ export function NfcBatchScanOverlay({
           <Text style={styles.groupSub}>
             {queueCount > 0
               ? t('kbsNfcBatchQueueCount', { count: queueCount })
-              : t('kbsNfcBatchScanSub')}
+              : t('kbsNfcNoManualEntry')}
           </Text>
         </View>
 
@@ -76,16 +76,20 @@ export function NfcBatchScanOverlay({
       <View style={styles.steps} pointerEvents="none">
         <View style={[styles.step, scanStep === 'mrz' && styles.stepOn]}>
           <View style={[styles.stepDot, scanStep === 'mrz' && styles.stepDotOn]}>
-            <Text style={styles.stepNum}>1</Text>
+            <Ionicons name="scan-outline" size={14} color="#fff" />
           </View>
-          <Text style={[styles.stepLabel, scanStep === 'mrz' && styles.stepLabelOn]}>MRZ</Text>
+          <Text style={[styles.stepLabel, scanStep === 'mrz' && styles.stepLabelOn]}>
+            {t('kbsNfcStepUnlock')}
+          </Text>
         </View>
         <View style={styles.stepLine} />
         <View style={[styles.step, scanStep === 'nfc' && styles.stepOn]}>
           <View style={[styles.stepDot, scanStep === 'nfc' && styles.stepDotOn]}>
-            <Ionicons name="radio-outline" size={14} color="#fff" />
+            <Ionicons name="hardware-chip-outline" size={14} color="#fff" />
           </View>
-          <Text style={[styles.stepLabel, scanStep === 'nfc' && styles.stepLabelOn]}>NFC</Text>
+          <Text style={[styles.stepLabel, scanStep === 'nfc' && styles.stepLabelOn]}>
+            {t('kbsNfcStepChip')}
+          </Text>
         </View>
       </View>
 
@@ -114,7 +118,7 @@ export function NfcBatchScanOverlay({
       {queueCount > 0 || reading ? (
         <View style={styles.toast} pointerEvents="none">
           {reading ? (
-            <Text style={styles.toastText}>{t('kbsNfcReading')}</Text>
+            <Text style={styles.toastText}>{t('kbsNfcReadingChipData')}</Text>
           ) : lastName ? (
             <Text style={styles.toastText}>
               ✓ {lastName} · {t('kbsNfcBatchQueueCount', { count: queueCount })}
@@ -179,7 +183,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepDotOn: { backgroundColor: '#2563eb' },
-  stepNum: { color: '#fff', fontWeight: '800', fontSize: 12 },
   stepLabel: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 12 },
   stepLabelOn: { color: '#fff' },
   stepLine: { width: 28, height: 2, backgroundColor: 'rgba(255,255,255,0.28)', borderRadius: 1 },
