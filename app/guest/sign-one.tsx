@@ -68,6 +68,32 @@ function normalizeFamilyMemberTcs(rows: FamilyMemberTcRow[]): FamilyMemberTcRow[
     .filter((r) => r.full_name.length > 0 || r.tc.length > 0);
 }
 
+function showGuestFlowAlert(title: string, message: string) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
+async function uploadGuestAvatarInBackground(guestId: string, avatarUri: string) {
+  try {
+    const arrayBuffer = await uriToArrayBuffer(avatarUri);
+    const fileName = `guest/${guestId}/${Date.now()}.jpg`;
+    const { error: uploadErr } = await supabase.storage.from('profiles').upload(fileName, arrayBuffer, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    });
+    if (uploadErr) return;
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from('profiles').getPublicUrl(fileName);
+    await supabase.from('guests').update({ photo_url: publicUrl }).eq('id', guestId);
+  } catch {
+    /* profil fotoğrafı onayı engellemesin */
+  }
+}
+
 // Göz yormayan, okunaklı renk paleti (web: tek sayfa arka planı)
 const COLORS = {
   bg: GUEST_CONTRACT_WEB_BG,
@@ -367,16 +393,30 @@ export default function GuestSignOneScreen() {
   };
 
   const submit = async () => {
+    if (saving || submittedRef.current) return;
     if (formFieldsConfig.full_name && !fullName.trim()) {
-      Alert.alert(t('error'), formStrings.errorFullName);
+      showGuestFlowAlert(t('error'), formStrings.errorFullName);
       return;
     }
     if (formFieldsConfig.phone && !phoneNumber.trim()) {
-      Alert.alert(t('error'), formStrings.errorPhone);
+      showGuestFlowAlert(t('error'), formStrings.errorPhone);
       return;
     }
     setSaving(true);
     try {
+      let activeGuestId = inAppGuestId;
+      let activeToken = token.trim();
+      let activeRoomId = roomId || null;
+      if (inAppMode) {
+        const ctx = await resolveInAppContractContext();
+        if (!ctx.ok) throw new Error(ctx.message);
+        activeGuestId = ctx.ctx.guestId;
+        activeToken = ctx.ctx.token;
+        activeRoomId = ctx.ctx.roomId || null;
+        setQR(ctx.ctx.token, ctx.ctx.roomId, ctx.ctx.roomNumber);
+        setGuestId(ctx.ctx.guestId);
+      }
+
       const { data: template } = await supabase
         .from('contract_templates')
         .select('id')
@@ -398,7 +438,7 @@ export default function GuestSignOneScreen() {
         date_of_birth: formFieldsConfig.date_of_birth ? toISODate(dateOfBirth) || null : null,
         gender: formFieldsConfig.gender ? gender : null,
         address: formFieldsConfig.address ? address.trim() || null : null,
-        room_id: roomId || null,
+        room_id: activeRoomId,
         check_in_at: formFieldsConfig.check_in_date ? parseDDMMYYYY(checkInDate) || null : null,
         check_out_at: formFieldsConfig.check_out_date ? parseDDMMYYYY(checkOutDate) || null : null,
         room_type: formFieldsConfig.room_type ? roomType : null,
@@ -410,17 +450,22 @@ export default function GuestSignOneScreen() {
         status: 'pending' as const,
       };
 
-      let guestRecordId: string | null = inAppGuestId;
+      let guestRecordId: string | null = activeGuestId;
 
-      if (inAppGuestId) {
+      if (activeGuestId) {
         const { data: updated, error: guestErr } = await supabase
           .from('guests')
           .update(guestPayload)
-          .eq('id', inAppGuestId)
+          .eq('id', activeGuestId)
           .select('id')
-          .single();
+          .maybeSingle();
         if (guestErr) throw guestErr;
-        guestRecordId = updated?.id ?? inAppGuestId;
+        if (!updated?.id) {
+          throw new Error(
+            inAppMode ? t('guestInAppContractSessionFailed') : t('guestRegistrationCreateFailed')
+          );
+        }
+        guestRecordId = updated.id;
       } else {
         const { data: guest, error: guestErr } = await supabase
           .from('guests')
@@ -432,29 +477,11 @@ export default function GuestSignOneScreen() {
         guestRecordId = guest?.id ?? null;
       }
 
-      if (guestRecordId) {
-        setGuestId(guestRecordId);
-        const { data: appToken } = await supabase.rpc('get_guest_app_token', { p_guest_id: guestRecordId });
-        if (appToken) await setAppToken(appToken);
-        if (avatarUri) {
-          try {
-            const arrayBuffer = await uriToArrayBuffer(avatarUri);
-            const fileName = `guest/${guestRecordId}/${Date.now()}.jpg`;
-            const { error: uploadErr } = await supabase.storage.from('profiles').upload(fileName, arrayBuffer, {
-              contentType: 'image/jpeg',
-              upsert: true,
-            });
-            if (!uploadErr) {
-              const { data: { publicUrl } } = supabase.storage.from('profiles').getPublicUrl(fileName);
-              await supabase.from('guests').update({ photo_url: publicUrl }).eq('id', guestRecordId);
-            }
-          } catch {
-            /* avatar upload failed, continue */
-          }
-        }
+      if (!guestRecordId) {
+        throw new Error(t('guestRegistrationCreateFailed'));
       }
 
-      const acceptanceToken = token.trim() || (guestRecordId ? `app:${guestRecordId}` : '');
+      const acceptanceToken = activeToken || `app:${guestRecordId}`;
       if (!acceptanceToken) {
         throw new Error(inAppMode ? t('guestInAppContractSessionFailed') : t('guestInvalidQrToken'));
       }
@@ -466,7 +493,7 @@ export default function GuestSignOneScreen() {
 
       const { error: accErr } = await supabase.from('contract_acceptances').insert({
         token: acceptanceToken,
-        room_id: roomId || null,
+        room_id: activeRoomId,
         contract_lang: langForDb,
         contract_version: 2,
         contract_template_id: template?.id ?? null,
@@ -475,6 +502,7 @@ export default function GuestSignOneScreen() {
       });
       if (accErr) throw accErr;
 
+      setGuestId(guestRecordId);
       const signer = (formFieldsConfig.full_name ? fullName.trim() : '') || t('guestDefaultGuestName');
       void notifyAdmins({
         title: 'Yeni sözleşme onayı',
@@ -485,10 +513,19 @@ export default function GuestSignOneScreen() {
         },
       }).catch(() => {});
 
+      if (avatarUri) {
+        void uploadGuestAvatarInBackground(guestRecordId, avatarUri);
+      }
+      void supabase.rpc('get_guest_app_token', { p_guest_id: guestRecordId }).then(({ data: appToken }) => {
+        if (appToken) void setAppToken(appToken);
+      });
+
       submittedRef.current = true;
       setStoreContractLang(contractLang);
       setSignedFormLines(signerSummary as string[]);
       setStep('done');
+      setSaving(false);
+
       if (inAppMode) {
         if (router.canGoBack()) router.back();
         else safeRouterReplace(router, '/customer/(tabs)/profile');
@@ -502,8 +539,8 @@ export default function GuestSignOneScreen() {
         });
       }
     } catch (e: unknown) {
-      Alert.alert(t('error'), (e as Error)?.message ?? t('guestRegistrationCreateFailed'));
-    } finally {
+      const msg = (e as Error)?.message ?? t('guestRegistrationCreateFailed');
+      showGuestFlowAlert(t('error'), msg);
       setSaving(false);
     }
   };

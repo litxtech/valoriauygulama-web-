@@ -116,12 +116,6 @@ export default function MissingItemsAreaScreen() {
 
   const printSectionLabel = area === 'hotel' ? t('missingItemsPrintSectionHotel') : t('missingItemsPrintSectionKitchen');
 
-  const entries = useMemo((): ListEntry[] => {
-    const reportEntries: ListEntry[] = reports.map((r) => ({ kind: 'report' as const, data: r }));
-    const legacyEntries: ListEntry[] = legacy.map((l) => ({ kind: 'legacy' as const, data: l }));
-    return [...reportEntries, ...legacyEntries];
-  }, [reports, legacy]);
-
   const fetchData = useCallback(async (): Promise<AreaListCache | null> => {
     if (!area) return null;
     const [repRes, legRes] = await Promise.all([
@@ -130,7 +124,7 @@ export default function MissingItemsAreaScreen() {
     ]);
     if (repRes.error) Alert.alert(t('error'), repRes.error);
     if (legRes.error) Alert.alert(t('error'), legRes.error);
-    return { reports: repRes.data, legacy: legRes.data };
+    return { reports: repRes.data ?? [], legacy: legRes.data ?? [] };
   }, [area, tab, t]);
 
   const {
@@ -147,6 +141,12 @@ export default function MissingItemsAreaScreen() {
 
   const reports = data?.reports ?? [];
   const legacy = data?.legacy ?? [];
+
+  const entries = useMemo((): ListEntry[] => {
+    const reportEntries: ListEntry[] = reports.map((r) => ({ kind: 'report' as const, data: r }));
+    const legacyEntries: ListEntry[] = legacy.map((l) => ({ kind: 'legacy' as const, data: l }));
+    return [...reportEntries, ...legacyEntries];
+  }, [reports, legacy]);
 
   const onSubmitReport = async (payload: {
     items: { key?: string; label: string }[];

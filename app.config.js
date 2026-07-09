@@ -3,14 +3,14 @@ const { withBuildProperties } = require('expo-build-properties');
 const devClientScheme = 'exp+valoria-hotel';
 
 /**
- * Mağaza sürümleri — tek kaynak.
- * Her Play/App Store yüklemesinde ANDROID_VERSION_CODE ve IOS_BUILD_NUMBER
- * mutlaka önceki en yüksek değerden BÜYÜK olmalı (Play Console bundle no).
- * Son Play: bundle 29 (2.2.21) · Son EAS Android: versionCode 32.
+ * Mağaza sürümleri — görünen sürüm adı (APP_VERSION) burada; bundle no EAS remote.
+ * ANDROID_VERSION_CODE / IOS_BUILD_NUMBER: ilk remote değer (300). Sonraki production
+ * build’lerde eas.json autoIncrement ile EAS sunucusunda otomatik artar — Play çakışması olmaz.
+ * Önceki: 2.6.0 / versionCode 34 · Yeni taban: 3.0.0 / 300.
  */
-const APP_VERSION = '2.6.0';
-const ANDROID_VERSION_CODE = 34;
-const IOS_BUILD_NUMBER = '34';
+const APP_VERSION = '3.0.0';
+const ANDROID_VERSION_CODE = 300;
+const IOS_BUILD_NUMBER = '300';
 
 /** EAS Build: preview/production → Apple production APNs; development client → sandbox */
 const easProfile = process.env.EAS_BUILD_PROFILE;
