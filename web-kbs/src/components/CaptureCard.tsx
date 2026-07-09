@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react';
-import type { CaptureItem } from '../lib/captures';
+import { isRecentlyAddedCapture, type CaptureItem } from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
 
@@ -7,6 +7,7 @@ type Props = {
   item: CaptureItem;
   onOpen: (item: CaptureItem) => void;
   familyCount?: number;
+  freshnessTick?: number;
 };
 
 const DOC_TYPE_LABEL: Record<string, string> = {
@@ -15,10 +16,12 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   residence_permit: 'İkamet',
 };
 
-function CaptureCardInner({ item, onOpen, familyCount = 0 }: Props) {
+function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
+  const isNew = isRecentlyAddedCapture(item);
+  void freshnessTick;
   const fields = buildKbsCopyFields(parsed);
   const docNo = fields.find((f) => f.key === 'documentNumber')?.value;
   const nationality = fields.find((f) => f.key === 'nationalityCode')?.value;
@@ -36,8 +39,13 @@ function CaptureCardInner({ item, onOpen, familyCount = 0 }: Props) {
   }, [onOpen, item]);
 
   return (
-    <button type="button" className="card" onClick={handleOpen}>
+    <button type="button" className={`card${isNew ? ' is-new' : ''}`} onClick={handleOpen}>
       <div className="card-thumb">
+        {isNew ? (
+          <span className="pill-new" title="Son 1 saat içinde eklendi" aria-label="Yeni kayıt">
+            ✓
+          </span>
+        ) : null}
         {item.front_image_url ? (
           <img
             src={item.front_image_url}

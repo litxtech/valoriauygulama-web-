@@ -71,6 +71,7 @@ export function CapturesPage() {
   const [live, setLive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [visibleCount, setVisibleCount] = useState(36);
+  const [freshnessTick, setFreshnessTick] = useState(0);
   const [, startTransition] = useTransition();
 
   const defaultHotelRef = useRef<string | null>(null);
@@ -144,6 +145,11 @@ export function CapturesPage() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setFreshnessTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -408,6 +414,7 @@ export function CapturesPage() {
                       key={item.id}
                       item={item}
                       onOpen={openCard}
+                      freshnessTick={freshnessTick}
                       familyCount={
                         item.mrz_batch_key ? familyIndex.get(item.mrz_batch_key)?.length ?? 0 : 0
                       }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
-import { familyMembersOf, updateCaptureGuestPhone, type CaptureItem } from '../lib/captures';
+import { familyMembersOf, isRecentlyAddedCapture, updateCaptureGuestPhone, type CaptureItem } from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
 import { ZoomLightbox } from './ZoomLightbox';
@@ -98,6 +98,11 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
             <h2>{name}</h2>
             <div className="modal-sub">
               <StatusBadge status={status} />
+              {isRecentlyAddedCapture(item) ? (
+                <span className="chip chip-new" title="Son 1 saat içinde eklendi">
+                  ✓ Yeni
+                </span>
+              ) : null}
               {item.room_number ? <span className="chip">Oda {item.room_number}</span> : null}
               {(item.hotel_name ?? item.captured_by_hotel_name) ? (
                 <span className="chip">🏨 {item.hotel_name ?? item.captured_by_hotel_name}</span>

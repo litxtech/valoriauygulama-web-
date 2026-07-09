@@ -282,6 +282,14 @@ export function captureDate(item: CaptureItem): Date {
   return new Date(item.captured_at ?? item.created_at);
 }
 
+/** Son 1 saat içinde eklenen çekimler «yeni» sayılır. */
+export const NEW_CAPTURE_WINDOW_MS = 60 * 60 * 1000;
+
+export function isRecentlyAddedCapture(item: CaptureItem, nowMs = Date.now()): boolean {
+  const age = nowMs - captureDate(item).getTime();
+  return age >= 0 && age < NEW_CAPTURE_WINDOW_MS;
+}
+
 export function subscribeCaptures(onChange: () => void): () => void {
   const channel = supabase
     .channel('web-kbs-guest-documents')
