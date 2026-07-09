@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useAuth } from '../auth/AuthContext';
 import {
   buildFamilyIndex,
+  buildStaffFilterOptions,
   captureDate,
   fetchCaptures,
+  listAccessibleHotels,
   resolveOpsContext,
   subscribeCaptures,
   type CaptureItem,
+  type KbsWebHotel,
 } from '../lib/captures';
 import { buildKbsCopyFields, kbsDisplayFullName } from '../lib/parse';
 import { CaptureCard } from './CaptureCard';
@@ -22,6 +25,7 @@ function matchesQuery(item: CaptureItem, q: string): boolean {
     item.room_number ?? '',
     item.captured_by_staff_name ?? '',
     item.captured_by_hotel_name ?? '',
+    item.hotel_name ?? '',
     item.guest_phone_submitted ?? '',
     ...buildKbsCopyFields(parsed).map((f) => f.value),
   ]
@@ -53,6 +57,10 @@ function inRange(item: CaptureItem, range: RangeKey): boolean {
 export function CapturesPage() {
   const { session, signOut } = useAuth();
   const [items, setItems] = useState<CaptureItem[]>([]);
+  const [hotels, setHotels] = useState<KbsWebHotel[]>([]);
+  const [canViewAllHotels, setCanViewAllHotels] = useState(false);
+  const [hotelFilter, setHotelFilter] = useState<string>('all');
+  const [staffFilter, setStaffFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,62 +70,90 @@ export function CapturesPage() {
   const [selected, setSelected] = useState<CaptureItem | null>(null);
   const [live, setLive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [visibleCount, setVisibleCount] = useState(48);
+  const [visibleCount, setVisibleCount] = useState(36);
   const [, startTransition] = useTransition();
 
-  const hotelRef = useRef<string | null>(null);
+  const defaultHotelRef = useRef<string | null>(null);
+  const hotelNameByIdRef = useRef<Map<string, string>>(new Map());
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const initialLoadDone = useRef(false);
 
-  const load = useCallback(async (opts?: { soft?: boolean }) => {
-    const soft = opts?.soft === true && initialLoadDone.current;
-    try {
-      setError(null);
-      if (soft) setRefreshing(true);
-      else setLoading(true);
+  const load = useCallback(
+    async (opts?: { soft?: boolean; hotelIdOverride?: string | null }) => {
+      const soft = opts?.soft === true && initialLoadDone.current;
+      try {
+        setError(null);
+        if (soft) setRefreshing(true);
+        else setLoading(true);
 
-      let hotelId = hotelRef.current;
-      if (!hotelId) {
-        const ctx = await resolveOpsContext();
-        if (!ctx.ok) {
-          setError(ctx.message);
-          setLoading(false);
-          setRefreshing(false);
-          return;
+        let hotelId = defaultHotelRef.current;
+        let viewAll = canViewAllHotels;
+        if (!hotelId) {
+          const ctx = await resolveOpsContext();
+          if (!ctx.ok) {
+            setError(ctx.message);
+            setLoading(false);
+            setRefreshing(false);
+            return;
+          }
+          hotelId = ctx.hotelId;
+          viewAll = ctx.canViewAllHotels;
+          defaultHotelRef.current = hotelId;
+          setCanViewAllHotels(viewAll);
         }
-        hotelId = ctx.hotelId;
-        hotelRef.current = hotelId;
+
+        const hotelList = await listAccessibleHotels();
+        const nameMap = new Map(hotelList.map((h) => [h.id, h.short_label]));
+        hotelNameByIdRef.current = nameMap;
+        setHotels(hotelList);
+
+        const activeFilter = opts?.hotelIdOverride !== undefined ? opts.hotelIdOverride : hotelFilter;
+        const fetchHotelId =
+          activeFilter === 'all' ? (viewAll ? null : hotelId) : activeFilter;
+
+        const data = await fetchCaptures({
+          hotelId: fetchHotelId,
+          hotelNameById: nameMap,
+          limit: viewAll && activeFilter === 'all' ? 400 : 300,
+        });
+        startTransition(() => {
+          setItems(data);
+          setLastUpdated(new Date());
+          setVisibleCount(36);
+        });
+        initialLoadDone.current = true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Liste yüklenemedi');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      const data = await fetchCaptures(hotelId);
-      startTransition(() => {
-        setItems(data);
-        setLastUpdated(new Date());
-        setVisibleCount(48);
-      });
-      initialLoadDone.current = true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Liste yüklenemedi');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [canViewAllHotels, hotelFilter]
+  );
 
   const scheduleReload = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     reloadTimer.current = setTimeout(() => {
       void load({ soft: true });
-    }, 650);
+    }, 1100);
   }, [load]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (!hotelRef.current && !items.length) return;
+    if (!initialLoadDone.current) return;
+    void load({ soft: true, hotelIdOverride: hotelFilter });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hotelFilter]);
+
+  useEffect(() => {
+    if (!defaultHotelRef.current && !items.length) return;
     const unsub = subscribeCaptures(() => {
       setLive(true);
       scheduleReload();
@@ -133,15 +169,17 @@ export function CapturesPage() {
     searchTimer.current = setTimeout(() => {
       startTransition(() => {
         setQuery(queryInput.trim());
-        setVisibleCount(48);
+        setVisibleCount(36);
       });
-    }, 180);
+    }, 220);
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [queryInput]);
 
   const familyIndex = useMemo(() => buildFamilyIndex(items), [items]);
+
+  const staffOptions = useMemo(() => buildStaffFilterOptions(items), [items]);
 
   const stats = useMemo(() => {
     const todayStart = startOfToday();
@@ -156,16 +194,15 @@ export function CapturesPage() {
     return { total: items.length, today, week };
   }, [items]);
 
-  const hotelLabel = useMemo(() => {
-    const names = [...new Set(items.map((i) => i.captured_by_hotel_name).filter(Boolean))] as string[];
-    if (names.length === 1) return names[0]!;
-    if (names.length > 1) return `${names.length} otel`;
-    return null;
-  }, [items]);
-
   const filtered = useMemo(
-    () => items.filter((i) => inRange(i, range) && matchesQuery(i, query)),
-    [items, range, query]
+    () =>
+      items.filter((i) => {
+        if (!inRange(i, range)) return false;
+        if (staffFilter !== 'all' && i.scanned_by_user_id !== staffFilter) return false;
+        if (!matchesQuery(i, query)) return false;
+        return true;
+      }),
+    [items, range, query, staffFilter]
   );
 
   const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
@@ -177,10 +214,10 @@ export function CapturesPage() {
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          startTransition(() => setVisibleCount((n) => Math.min(n + 36, filtered.length)));
+          startTransition(() => setVisibleCount((n) => Math.min(n + 24, filtered.length)));
         }
       },
-      { rootMargin: '400px 0px' }
+      { rootMargin: '500px 0px' }
     );
     io.observe(el);
     return () => io.disconnect();
@@ -198,7 +235,14 @@ export function CapturesPage() {
   const setRangeSafe = useCallback((next: RangeKey | ((r: RangeKey) => RangeKey)) => {
     startTransition(() => {
       setRange(next);
-      setVisibleCount(48);
+      setVisibleCount(36);
+    });
+  }, []);
+
+  const setStaffFilterSafe = useCallback((next: string) => {
+    startTransition(() => {
+      setStaffFilter(next);
+      setVisibleCount(36);
     });
   }, []);
 
@@ -212,7 +256,6 @@ export function CapturesPage() {
           <div>
             <strong>Çekilen Kimlikler</strong>
             <span className="brand-sub">
-              {hotelLabel ? <span className="hotel-tag">🏨 {hotelLabel}</span> : null}
               <span className={`live-dot ${live ? 'on' : ''}`}>{live ? 'Canlı' : 'Bağlı'}</span>
             </span>
           </div>
@@ -240,6 +283,48 @@ export function CapturesPage() {
           </button>
         </div>
       </header>
+
+      <div className="filter-bar">
+        <div className="filter-group">
+          <span className="filter-label">Otel</span>
+          <div className="filter-chips">
+            {(canViewAllHotels || hotels.length > 1) && (
+              <button
+                type="button"
+                className={`filter-chip${hotelFilter === 'all' ? ' active' : ''}`}
+                onClick={() => setHotelFilter('all')}
+              >
+                Tümü
+              </button>
+            )}
+            {hotels.map((h) => (
+              <button
+                key={h.id}
+                type="button"
+                className={`filter-chip${hotelFilter === h.id ? ' active' : ''}`}
+                onClick={() => setHotelFilter(h.id)}
+              >
+                {h.short_label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="filter-group">
+          <span className="filter-label">Personel</span>
+          <select
+            className="filter-select"
+            value={staffFilter}
+            onChange={(e) => setStaffFilterSafe(e.target.value)}
+          >
+            <option value="all">Tüm personel ({items.length})</option>
+            {staffOptions.map((s) => (
+              <option key={s.authId} value={s.authId}>
+                {s.name} ({s.count})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <main className={`content${refreshing ? ' is-refreshing' : ''}`}>
         {error ? (
@@ -298,13 +383,21 @@ export function CapturesPage() {
 
             {filtered.length === 0 ? (
               <div className="state-box">
-                {query || range !== 'all' ? 'Seçime uygun kayıt yok.' : 'Henüz çekilen kimlik yok.'}
+                {query || range !== 'all' || staffFilter !== 'all' ? 'Seçime uygun kayıt yok.' : 'Henüz çekilen kimlik yok.'}
               </div>
             ) : (
               <>
                 <div className="content-meta">
                   <span>
                     {filtered.length} kayıt
+                    {hotelFilter !== 'all'
+                      ? ` · ${hotels.find((h) => h.id === hotelFilter)?.short_label ?? 'Otel'}`
+                      : canViewAllHotels
+                        ? ' · Tüm oteller'
+                        : ''}
+                    {staffFilter !== 'all'
+                      ? ` · ${staffOptions.find((s) => s.authId === staffFilter)?.name ?? 'Personel'}`
+                      : ''}
                     {range === 'today' ? ' · Bugün' : range === 'week' ? ' · Bu hafta' : ''}
                     {hasMore ? ` · ${visible.length} gösteriliyor` : ''}
                   </span>

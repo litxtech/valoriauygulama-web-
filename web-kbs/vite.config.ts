@@ -16,6 +16,18 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
       'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
     },
+    build: {
+      target: 'es2020',
+      cssMinify: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            supabase: ['@supabase/supabase-js'],
+          },
+        },
+      },
+    },
     server: {
       host: true,
       port: 5180,

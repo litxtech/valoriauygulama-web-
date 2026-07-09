@@ -196,6 +196,78 @@ button {
   flex-wrap: wrap;
 }
 
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px 24px;
+  padding: 10px 20px 12px;
+  background: rgba(17, 26, 46, 0.72);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 58px;
+  z-index: 4;
+  backdrop-filter: blur(8px);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-chip {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.filter-chip:hover {
+  border-color: var(--primary);
+}
+
+.filter-chip.active {
+  background: rgba(79, 124, 255, 0.18);
+  border-color: var(--primary);
+  color: #dbeafe;
+}
+
+.filter-select {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
 .topbar-brand {
   display: flex;
   align-items: center;

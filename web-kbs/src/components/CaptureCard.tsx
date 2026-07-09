@@ -79,11 +79,11 @@ function CaptureCardInner({ item, onOpen, familyCount = 0 }: Props) {
         </div>
 
         <div className="card-foot">
-          <span className="card-hotel" title={item.captured_by_hotel_name ?? ''}>
+          <span className="card-hotel" title={item.hotel_name ?? item.captured_by_hotel_name ?? ''}>
             <span className="ico" aria-hidden>
               🏨
             </span>
-            {item.captured_by_hotel_name ?? 'Otel —'}
+            {item.hotel_name ?? item.captured_by_hotel_name ?? 'Otel —'}
           </span>
           <span className="card-staff" title={item.captured_by_staff_name ?? ''}>
             <span className="ico" aria-hidden>

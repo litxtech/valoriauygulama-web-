@@ -4,7 +4,11 @@ import { parseRow } from './parse';
 
 export type CaptureItem = KbsCapturedDocumentRow & { parsed: ParsedDocument | null };
 
-export type OpsContext = { ok: true; hotelId: string } | { ok: false; message: string };
+export type OpsContext = { ok: true; hotelId: string; canViewAllHotels: boolean } | { ok: false; message: string };
+
+export type KbsWebHotel = { id: string; code: string; name: string; short_label: string };
+
+export type StaffFilterOption = { authId: string; name: string; count: number };
 
 const ENSURE_MSG: Record<string, string> = {
   PGRST106:
@@ -18,7 +22,7 @@ const ENSURE_MSG: Record<string, string> = {
 
 type EnsureRpc = { ok?: boolean; hotel_id?: string; code?: string; message?: string };
 
-/** Oturumdaki kullanıcı için ops.app_users.hotel_id döner; yoksa RPC ile oluşturur. Erişim burada kapılanır. */
+/** Oturumdaki kullanıcı için ops.app_users.hotel_id döner; yoksa RPC ile oluşturur. */
 export async function resolveOpsContext(): Promise<OpsContext> {
   const { data, error } = await supabase.rpc('ensure_my_ops_app_user');
   if (error) {
@@ -29,12 +33,43 @@ export async function resolveOpsContext(): Promise<OpsContext> {
     return { ok: false, message: error.message };
   }
   const row = (data ?? {}) as EnsureRpc;
-  if (row.ok && row.hotel_id) return { ok: true, hotelId: row.hotel_id };
-  const code = row.code ?? '';
-  return { ok: false, message: ENSURE_MSG[code] ?? row.message ?? 'ops.app_users kaydı oluşturulamadı.' };
+  if (!row.ok || !row.hotel_id) {
+    const code = row.code ?? '';
+    return { ok: false, message: ENSURE_MSG[code] ?? row.message ?? 'ops.app_users kaydı oluşturulamadı.' };
+  }
+  const hotels = await listAccessibleHotels();
+  const canViewAllHotels = hotels.length > 1;
+  return { ok: true, hotelId: row.hotel_id, canViewAllHotels };
 }
 
-const SELECT_COLS = `id, guest_id, captured_at, created_at, front_image_url, back_image_url, parsed_payload,
+/** Erişilebilir ops otelleri (super admin: tümü; diğer: kendi oteli). */
+export async function listAccessibleHotels(): Promise<KbsWebHotel[]> {
+  const { data, error } = await supabase.rpc('kbs_web_list_hotels');
+  if (error) {
+    const { data: fallback } = await supabase.schema('ops').from('hotels').select('id, code, name').order('name');
+    return ((fallback ?? []) as Array<{ id: string; code: string; name: string }>).map((h) => ({
+      id: h.id,
+      code: h.code,
+      name: h.name,
+      short_label: shortenHotelLabel(h.name, h.code),
+    }));
+  }
+  return ((data ?? []) as KbsWebHotel[]).map((h) => ({
+    ...h,
+    short_label: h.short_label || shortenHotelLabel(h.name, h.code),
+  }));
+}
+
+function shortenHotelLabel(name: string, code: string): string {
+  const n = name.trim();
+  const c = code.trim().toLowerCase();
+  if (c.startsWith('valoria') || n.toLowerCase().includes('valoria')) return 'Valoria';
+  if (c.includes('bavul-suite') || n.toLowerCase().includes('bavul suite')) return 'Bavul Suite';
+  if (c.includes('bavultur') || n.toLowerCase().includes('bavultur')) return 'Bavultur';
+  return n.replace(/\s*\(OPS\)\s*$/i, '').trim() || n;
+}
+
+const SELECT_COLS = `id, guest_id, hotel_id, captured_at, created_at, front_image_url, back_image_url, parsed_payload,
   scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
   document_number, nationality_code, issuing_country_code, expiry_date, document_type,
   guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`;
@@ -49,38 +84,62 @@ type GuestJoin = {
 
 const ACTIVE_STAY = ['assigned', 'checked_in', 'checkout_pending'];
 
-/** Kimlik çekim listesi — ops.guest_documents + personel adı + oda ataması. */
-export async function fetchCaptures(hotelId: string, limit = 300): Promise<CaptureItem[]> {
-  const { data: docs, error } = await supabase
+type RawDoc = KbsCapturedDocumentRow & {
+  hotel_id?: string | null;
+  guest: GuestJoin | GuestJoin[];
+};
+
+/** Kimlik çekim listesi — ops.guest_documents + personel + oda + otel adı. */
+export async function fetchCaptures(opts: {
+  hotelId?: string | null;
+  limit?: number;
+  hotelNameById?: Map<string, string>;
+}): Promise<CaptureItem[]> {
+  const limit = opts.limit ?? 300;
+  let query = supabase
     .schema('ops')
     .from('guest_documents')
     .select(SELECT_COLS)
-    .eq('hotel_id', hotelId)
     .not('front_image_url', 'is', null)
     .order('created_at', { ascending: false })
     .limit(limit);
+
+  if (opts.hotelId) {
+    query = query.eq('hotel_id', opts.hotelId);
+  }
+
+  const { data: docs, error } = await query;
   if (error) throw new Error(error.message);
 
-  const list = (docs ?? []) as unknown as Array<
-    KbsCapturedDocumentRow & { guest: GuestJoin | GuestJoin[] }
-  >;
+  const list = (docs ?? []) as unknown as RawDoc[];
   if (list.length === 0) return [];
 
-  const scannerAuthIds = [
-    ...new Set(list.map((d) => d.scanned_by_user_id).filter(Boolean)),
-  ] as string[];
+  const hotelIds = [...new Set(list.map((d) => d.hotel_id).filter(Boolean))] as string[];
+  const hotelNameById = new Map(opts.hotelNameById ?? []);
+  if (hotelIds.length > 0 && hotelNameById.size === 0) {
+    const { data: hotels } = await supabase
+      .schema('ops')
+      .from('hotels')
+      .select('id, name, code')
+      .in('id', hotelIds);
+    for (const h of (hotels ?? []) as Array<{ id: string; name: string; code: string }>) {
+      hotelNameById.set(h.id, shortenHotelLabel(h.name, h.code));
+    }
+  }
+
+  const scannerAuthIds = [...new Set(list.map((d) => d.scanned_by_user_id).filter(Boolean))] as string[];
   const guestIds = [...new Set(list.map((d) => d.guest_id))];
+  const hotelIdForStays = opts.hotelId ?? list[0]?.hotel_id ?? null;
 
   const [staffResult, stayResult] = await Promise.all([
     scannerAuthIds.length > 0
       ? supabase.from('staff').select('auth_id, full_name, organization_id').in('auth_id', scannerAuthIds)
       : Promise.resolve({ data: [], error: null } as const),
-    guestIds.length > 0
+    guestIds.length > 0 && hotelIdForStays
       ? supabase
           .schema('ops')
           .from('stay_assignments')
-          .select('guest_id, updated_at, room:room_id(room_number)')
-          .eq('hotel_id', hotelId)
+          .select('guest_id, hotel_id, updated_at, room:room_id(room_number)')
           .in('guest_id', guestIds)
           .in('stay_status', ACTIVE_STAY)
           .order('updated_at', { ascending: false })
@@ -102,33 +161,38 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
   );
 
   const orgIds = [...new Set([...orgIdByAuthId.values()])];
-  const hotelNameByOrgId = new Map<string, string>();
+  const orgNameById = new Map<string, string>();
   if (orgIds.length > 0) {
     const { data: orgs } = await supabase.from('organizations').select('id, name').in('id', orgIds);
     for (const o of (orgs ?? []) as Array<{ id: string; name: string | null }>) {
       const nm = String(o.name ?? '').trim();
-      if (nm) hotelNameByOrgId.set(String(o.id), nm);
+      if (nm) orgNameById.set(String(o.id), nm);
     }
   }
 
-  const hotelNameByAuthId = (authId: string | null): string | null => {
+  const scannerOrgName = (authId: string | null): string | null => {
     if (!authId) return null;
     const orgId = orgIdByAuthId.get(authId);
-    return orgId ? hotelNameByOrgId.get(orgId) ?? null : null;
+    return orgId ? orgNameById.get(orgId) ?? null : null;
   };
 
-  const roomByGuest = new Map<string, string>();
+  const roomByGuestHotel = new Map<string, string>();
   for (const s of (stayResult.data ?? []) as Array<{
     guest_id: string;
+    hotel_id: string;
     room: { room_number?: string | number | null } | null;
   }>) {
-    if (roomByGuest.has(s.guest_id)) continue;
+    const key = `${s.guest_id}:${s.hotel_id}`;
+    if (roomByGuestHotel.has(key)) continue;
     const num = s.room?.room_number;
-    if (num != null) roomByGuest.set(s.guest_id, String(num));
+    if (num != null) roomByGuestHotel.set(key, String(num));
   }
 
   return list.map((d) => {
     const guest = Array.isArray(d.guest) ? d.guest[0] ?? null : d.guest ?? null;
+    const docHotelId = d.hotel_id ?? null;
+    const hotelName = docHotelId ? hotelNameById.get(docHotelId) ?? null : null;
+    const roomKey = docHotelId ? `${d.guest_id}:${docHotelId}` : '';
     const row: KbsCapturedDocumentRow = {
       id: d.id,
       guest_id: d.guest_id,
@@ -139,13 +203,15 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
       parsed_payload: d.parsed_payload,
       scan_status: d.scan_status,
       ocr_engine: d.ocr_engine ?? null,
-      room_number: roomByGuest.get(d.guest_id) ?? null,
+      room_number: roomKey ? roomByGuestHotel.get(roomKey) ?? null : null,
       mrz_batch_key: d.mrz_batch_key ?? null,
       scanned_by_user_id: d.scanned_by_user_id ?? null,
       captured_by_staff_name: d.scanned_by_user_id
         ? nameByAuthId.get(d.scanned_by_user_id) ?? 'Personel'
         : null,
-      captured_by_hotel_name: hotelNameByAuthId(d.scanned_by_user_id ?? null),
+      captured_by_hotel_name: scannerOrgName(d.scanned_by_user_id ?? null),
+      hotel_id: docHotelId,
+      hotel_name: hotelName,
       guest_phone_submitted: d.guest_phone_submitted ?? null,
       document_number: d.document_number ?? null,
       nationality_code: d.nationality_code ?? null,
@@ -157,17 +223,33 @@ export async function fetchCaptures(hotelId: string, limit = 300): Promise<Captu
   });
 }
 
-/** Girdiyi telefon numarası olarak normalize et: rakam, +, boşluk, tire, parantez. Boşsa null. */
+/** Personel filtresi için benzersiz çeken personel listesi. */
+export function buildStaffFilterOptions(items: CaptureItem[]): StaffFilterOption[] {
+  const map = new Map<string, StaffFilterOption>();
+  for (const it of items) {
+    const authId = it.scanned_by_user_id;
+    if (!authId) continue;
+    const existing = map.get(authId);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      map.set(authId, {
+        authId,
+        name: it.captured_by_staff_name ?? 'Personel',
+        count: 1,
+      });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'tr'));
+}
+
+/** Girdiyi telefon numarası olarak normalize et. */
 export function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const cleaned = raw.replace(/[^\d+()\s-]/g, '').trim();
   return cleaned ? cleaned : null;
 }
 
-/**
- * Müşteri numarasını (guest_phone_submitted) kaydeder. RLS: kimlik çekim yetkili personel.
- * ops.guest_documents realtime yayınında olduğu için diğer cihazlara anında yansır.
- */
 export async function updateCaptureGuestPhone(docId: string, phone: string | null): Promise<void> {
   const value = normalizePhone(phone);
   const { error } = await supabase
@@ -178,7 +260,6 @@ export async function updateCaptureGuestPhone(docId: string, phone: string | nul
   if (error) throw new Error(error.message);
 }
 
-/** Aynı toplu çekim (mrz_batch_key) → aile/grup üyeleri haritası. */
 export function buildFamilyIndex(items: CaptureItem[]): Map<string, CaptureItem[]> {
   const map = new Map<string, CaptureItem[]>();
   for (const it of items) {
@@ -191,22 +272,16 @@ export function buildFamilyIndex(items: CaptureItem[]): Map<string, CaptureItem[
   return map;
 }
 
-/** Bir kaydın aynı aile/grup üyeleri (kendisi hariç değil, tümü). */
 export function familyMembersOf(item: CaptureItem, index: Map<string, CaptureItem[]>): CaptureItem[] {
   if (!item.mrz_batch_key) return [];
   const arr = index.get(item.mrz_batch_key) ?? [];
   return arr.length > 1 ? arr : [];
 }
 
-/** Kaydın çekim zamanı (Date). */
 export function captureDate(item: CaptureItem): Date {
   return new Date(item.captured_at ?? item.created_at);
 }
 
-/**
- * Realtime: ops.guest_documents INSERT/UPDATE/DELETE olunca `onChange` tetiklenir.
- * Enrichment (personel/oda) gerektiği için tam yeniden çekim yapılır (debounce çağrı tarafında).
- */
 export function subscribeCaptures(onChange: () => void): () => void {
   const channel = supabase
     .channel('web-kbs-guest-documents')

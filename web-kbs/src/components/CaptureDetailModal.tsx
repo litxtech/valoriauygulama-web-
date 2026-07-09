@@ -99,8 +99,8 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
             <div className="modal-sub">
               <StatusBadge status={status} />
               {item.room_number ? <span className="chip">Oda {item.room_number}</span> : null}
-              {item.captured_by_hotel_name ? (
-                <span className="chip">🏨 {item.captured_by_hotel_name}</span>
+              {(item.hotel_name ?? item.captured_by_hotel_name) ? (
+                <span className="chip">🏨 {item.hotel_name ?? item.captured_by_hotel_name}</span>
               ) : null}
             </div>
           </div>
@@ -194,7 +194,7 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
               </div>
               <div>
                 <dt>Otel</dt>
-                <dd>{item.captured_by_hotel_name ?? '—'}</dd>
+                <dd>{item.hotel_name ?? item.captured_by_hotel_name ?? '—'}</dd>
               </div>
               <div>
                 <dt>Kayıt zamanı</dt>
