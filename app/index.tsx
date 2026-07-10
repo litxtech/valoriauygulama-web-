@@ -38,7 +38,7 @@ import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { isSupabaseUnavailableError } from '@/lib/supabaseTransientErrors';
 import { invokeNotifyNewGuestAccount } from '@/lib/notifyNewGuestAccount';
 import { hasPolicyConsent } from '@/lib/policyConsent';
-import { isPublicWebPath, applyPublicWebRoute } from '@/lib/publicWebRoute';
+import { isPublicWebPath } from '@/lib/publicWebRoute';
 import { publicContractHref, publicMenuHref, publicPaymentNewHref } from '@/lib/publicPortalNav';
 import { openPublicMaliyePortal } from '@/lib/openMaliyePortal';
 import { safeRouterPush, safeRouterReplace } from '@/lib/safeRouter';
@@ -135,21 +135,6 @@ export default function HomeScreen() {
   const scrollRef = useRef<ScrollViewType>(null);
   // Kart açılışta anında görünsün — yavaş spring "fade" yerine direkt yerinde.
   const cardEntrance = useRef(new Animated.Value(1)).current;
-  const [webPublicRedirecting, setWebPublicRedirecting] = useState(
-    () =>
-      Platform.OS === 'web' &&
-      typeof window !== 'undefined' &&
-      isPublicWebPath(window.location.pathname, window.location.search || '')
-  );
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const path = window.location.pathname || '';
-    const search = window.location.search || '';
-    if (!isPublicWebPath(path, search)) return;
-    setWebPublicRedirecting(true);
-    applyPublicWebRoute(router, path, search);
-  }, [router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -523,14 +508,6 @@ export default function HomeScreen() {
 
   const cardWidth = width - 24;
   const paddingH = 12;
-
-  if (webPublicRedirecting) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#eef2f7', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#166534" />
-      </View>
-    );
-  }
 
   if (loading && !user) {
     return <LobbyBootScreen />;

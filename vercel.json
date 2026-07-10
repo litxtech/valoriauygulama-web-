@@ -59,11 +59,11 @@
     },
     {
       "source": "/breakfast-pass/",
-      "destination": "/api/breakfast-pass"
+      "destination": "/breakfast-pass/index.html"
     },
     {
       "source": "/breakfast-pass",
-      "destination": "/api/breakfast-pass"
+      "destination": "/breakfast-pass/index.html"
     },
     {
       "source": "/:path*",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "source": "/((?!_expo|assets|maliye|favicon).*)",
+      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass).*)",
       "headers": [
         {
           "key": "Cache-Control",
@@ -100,6 +100,15 @@
     },
     {
       "source": "/maliye-config.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/breakfast-pass-config.js",
       "headers": [
         {
           "key": "Cache-Control",
