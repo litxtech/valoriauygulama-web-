@@ -26,10 +26,7 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
   }
 
   if (isBreakfastPassPublicPath(winNormalized)) {
-    const winRoute = resolvePublicWebRoute(winPath, winSearch);
-    if (winRoute?.kind === 'breakfast-pass' && expoPath !== '/breakfast-pass') {
-      return <Redirect href={{ pathname: '/breakfast-pass', params: { token: winRoute.token } }} />;
-    }
+    // dist/breakfast-pass/index.html — Expo Redirect mount crash verir
     return null;
   }
 
@@ -87,11 +84,6 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
         }}
       />
     );
-  }
-
-  if (route.kind === 'breakfast-pass') {
-    if (expoPath === '/breakfast-pass') return null;
-    return <Redirect href={{ pathname: '/breakfast-pass', params: { token: route.token } }} />;
   }
 
   return null;

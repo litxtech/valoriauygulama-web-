@@ -630,7 +630,10 @@ function RootLayoutInner() {
 
       const breakfastToken = parseBreakfastGuestPassTokenFromScan(url);
       if (breakfastToken) {
-        router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
+        // Web: statik HTML (dist/breakfast-pass) — Expo router mount öncesi navigate crash verir
+        if (Platform.OS !== 'web') {
+          router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
+        }
         return;
       }
 
@@ -755,10 +758,7 @@ function RootLayoutInner() {
       if (path.includes('/guest/success')) {
         // success sayfasına dokunma
       } else if (path.includes('/breakfast-pass')) {
-        const breakfastToken = parseBreakfastGuestPassTokenFromScan(href);
-        if (breakfastToken) {
-          router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
-        }
+        // Statik sayfa — Expo deep link yönlendirmesi yapma
       } else {
         const parsed = parseCheckinUrl(href);
         if (

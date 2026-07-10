@@ -24,7 +24,7 @@ const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABAS
 const outDir = path.join(dist, 'breakfast-pass');
 fs.mkdirSync(outDir, { recursive: true });
 
-const configJs = `window.__VALORIA_BREAKFAST_PASS__=${JSON.stringify({ supabaseUrl: ${JSON.stringify(supabaseUrl)}, anonKey: ${JSON.stringify(anonKey)} })};`;
+const configJs = `window.__VALORIA_BREAKFAST_PASS__=${JSON.stringify({ supabaseUrl, anonKey })};`;
 fs.writeFileSync(path.join(dist, 'breakfast-pass-config.js'), configJs, 'utf8');
 
 const html = `<!DOCTYPE html>
