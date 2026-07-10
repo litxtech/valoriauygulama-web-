@@ -261,7 +261,11 @@ export async function fetchBreakfastGuestPassPublic(
   const { data, error } = await supabase.rpc('breakfast_guest_pass_public_lookup', {
     p_token: token.trim(),
   });
-  if (error || !data || typeof data !== 'object') return null;
+  if (error) {
+    console.warn('[breakfast-pass] lookup failed:', error.message);
+    return null;
+  }
+  if (!data || typeof data !== 'object') return null;
   return mapPublicPassRow(data as Record<string, unknown>);
 }
 

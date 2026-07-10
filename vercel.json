@@ -58,6 +58,14 @@
       "destination": "/api/odeme"
     },
     {
+      "source": "/breakfast-pass/",
+      "destination": "/api/breakfast-pass"
+    },
+    {
+      "source": "/breakfast-pass",
+      "destination": "/api/breakfast-pass"
+    },
+    {
       "source": "/:path*",
       "destination": "/"
     }
