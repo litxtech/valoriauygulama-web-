@@ -14,6 +14,9 @@ export default function PartnerLayout() {
       <Stack.Screen name="camera-requests/index" options={{ headerShown: false }} />
       <Stack.Screen name="camera-requests/new" options={{ headerShown: false }} />
       <Stack.Screen name="camera-requests/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="guest-passes/index" options={{ headerShown: false }} />
+      <Stack.Screen name="guest-passes/new" options={{ headerShown: false }} />
+      <Stack.Screen name="guest-passes/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" />
     </Stack>
   );

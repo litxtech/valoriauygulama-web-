@@ -24,6 +24,8 @@ export async function bootstrapGuestCheckinToken(
 
 export function readGuestCheckinTokenFromLocation(): string | null {
   if (typeof window === 'undefined') return null;
+  const path = window.location.pathname || '';
+  if (path.includes('breakfast-pass')) return null;
   const params = new URLSearchParams(window.location.search || '');
   return (params.get('token') ?? params.get('t') ?? '').trim() || null;
 }

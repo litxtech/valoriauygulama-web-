@@ -25,6 +25,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Linking from 'expo-linking';
 import { log } from '@/lib/logger';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
+import { parseBreakfastGuestPassTokenFromScan } from '@/lib/breakfastGuestPass';
 import { fetchPublicAppOriginFromSettings, fetchPublicQrSettings } from '@/lib/appPublicUrl';
 import { WebPublicRouteRedirect } from '@/components/WebPublicRouteRedirect';
 import { GUEST_CONTRACT_WEB_BG } from '@/components/guest/GuestSignOneWebShell';
@@ -310,7 +311,8 @@ function RootLayoutInner() {
         p.includes('/guest/sign-one') ||
         p.includes('/guest/success') ||
         p.includes('/sozlesme') ||
-        p.includes('/sözleşme');
+        p.includes('/sözleşme') ||
+        p.includes('/breakfast-pass');
       const bg = contractLike ? GUEST_CONTRACT_WEB_BG : WEB_BG;
       if (typeof document !== 'undefined') {
         document.body.style.backgroundColor = bg;
@@ -626,6 +628,12 @@ function RootLayoutInner() {
         return;
       }
 
+      const breakfastToken = parseBreakfastGuestPassTokenFromScan(url);
+      if (breakfastToken) {
+        router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
+        return;
+      }
+
       const parsed = parseCheckinUrl(url);
       if (!parsed) return;
       log.info('RootLayout', 'Deep link', parsed);
@@ -740,12 +748,17 @@ function RootLayoutInner() {
       }
     };
 
-    // Web: QR derin linkleri (sözleşme, check-in token)
+    // Web: QR derin linkleri (sözleşme, check-in token) — kahvaltı bilet QR hariç
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const href = window.location.href;
       const path = window.location.pathname || '';
       if (path.includes('/guest/success')) {
         // success sayfasına dokunma
+      } else if (path.includes('/breakfast-pass')) {
+        const breakfastToken = parseBreakfastGuestPassTokenFromScan(href);
+        if (breakfastToken) {
+          router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
+        }
       } else {
         const parsed = parseCheckinUrl(href);
         if (
@@ -815,6 +828,7 @@ function RootLayoutInner() {
         <Stack.Screen name="sozlesme" options={{ headerShown: false }} />
         <Stack.Screen name="sözleşme" options={{ headerShown: false }} />
         <Stack.Screen name="maliye" options={{ headerShown: false }} />
+        <Stack.Screen name="breakfast-pass" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
         <Stack.Screen name="payment" options={{ headerShown: false }} />
         <Stack.Screen name="odeme" options={{ headerShown: false }} />

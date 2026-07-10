@@ -291,6 +291,8 @@ export default function HomeScreen() {
         pathname.includes('/guest/success') ||
         pathname === '/maliye' ||
         pathname.startsWith('/maliye/') ||
+        pathname === '/breakfast-pass' ||
+        pathname.startsWith('/breakfast-pass/') ||
         pathname === '/payment' ||
         pathname === '/payment/qr' ||
         pathname === '/payment/new' ||

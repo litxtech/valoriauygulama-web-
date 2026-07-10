@@ -53,6 +53,9 @@ export function parseCheckinUrl(url: string): ParsedCheckinLink | null {
       if ((path === 'guest' || path === '') && token) {
         return { type: 'token', token };
       }
+      if (head === 'breakfast-pass' || path === 'breakfast-pass' || path.startsWith('breakfast-pass/')) {
+        return null;
+      }
       if (token) return { type: 'token', token };
       return null;
     }
@@ -76,6 +79,9 @@ export function parseCheckinUrl(url: string): ParsedCheckinLink | null {
     // valoria://guest/contract veya https://.../guest/contract?token=xxx
     if (path === 'guest/contract' || path === 'guest/contract/') {
       return { type: 'contract', token: token || undefined };
+    }
+    if (path === 'breakfast-pass' || path.startsWith('breakfast-pass/')) {
+      return null;
     }
     if (token && path !== 'guest/contract') {
       return { type: 'token', token };

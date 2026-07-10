@@ -4,6 +4,7 @@ import {
   LEGACY_CONTRACT_PATH_TR,
   LEGACY_MENU_PATH,
   LEGACY_MENU_PATH_TR,
+  PUBLIC_BREAKFAST_PASS_PATH,
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
@@ -14,6 +15,7 @@ export type PublicWebRoute =
   | { kind: 'menu'; slug: string }
   | { kind: 'contract'; token?: string; lang?: string }
   | { kind: 'maliye'; token?: string }
+  | { kind: 'breakfast-pass'; token: string }
   | null;
 
 /** Path eşleştirme: menü/menu, sözleşme/sozlesme/guest/sign-one, maliye */
@@ -78,6 +80,11 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
     return { kind: 'maliye', token: token || undefined };
   }
 
+  if (head === PUBLIC_BREAKFAST_PASS_PATH || head === 'breakfast-pass') {
+    if (token?.trim()) return { kind: 'breakfast-pass', token: token.trim() };
+    return null;
+  }
+
   return null;
 }
 
@@ -114,6 +121,14 @@ export function applyPublicWebRoute(
     return true;
   }
 
+  if (route.kind === 'breakfast-pass') {
+    router.replace({
+      pathname: '/breakfast-pass',
+      params: { token: route.token },
+    });
+    return true;
+  }
+
   return false;
 }
 
@@ -123,6 +138,7 @@ export function isPublicWebPath(pathname: string, search?: string): boolean {
   if (p === '/sozlesme' || p === '/sözleşme') return true;
   if (p.includes('/guest/sign-one') || p.includes('/guest/success')) return true;
   if (p === '/maliye' || p.startsWith('/maliye/')) return true;
+  if (p === '/breakfast-pass' || p.startsWith('/breakfast-pass/')) return true;
   if (isPaymentPublicPath(p)) return true;
   if (search?.includes('token=') && p === '/guest') return true;
   return resolvePublicWebRoute(pathname, search) != null;

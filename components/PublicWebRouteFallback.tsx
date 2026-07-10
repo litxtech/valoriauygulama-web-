@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { MaliyeWebPortalRedirect } from '@/components/MaliyeWebPortalRedirect';
 import { PaymentWebPortalRedirect } from '@/components/PaymentWebPortalRedirect';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
+import { isBreakfastPassPublicPath } from '@/lib/breakfastGuestPass';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 import { resolvePublicWebRoute } from '@/lib/publicWebRoute';
 
@@ -22,6 +23,14 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
 
   if (isPaymentPublicPath(winNormalized)) {
     return <PaymentWebPortalRedirect />;
+  }
+
+  if (isBreakfastPassPublicPath(winNormalized)) {
+    const winRoute = resolvePublicWebRoute(winPath, winSearch);
+    if (winRoute?.kind === 'breakfast-pass' && expoPath !== '/breakfast-pass') {
+      return <Redirect href={{ pathname: '/breakfast-pass', params: { token: winRoute.token } }} />;
+    }
+    return null;
   }
 
   const checkin = parseCheckinUrl(`${winNormalized}${winSearch}`);
@@ -54,6 +63,8 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
     expoPath.startsWith('/menü/') ||
     expoPath.startsWith('/menu/') ||
     expoPath.startsWith('/maliye/') ||
+    expoPath === '/breakfast-pass' ||
+    expoPath.startsWith('/breakfast-pass/') ||
     expoPath === '/guest' ||
     expoPath.startsWith('/guest/')
   ) {
@@ -76,6 +87,11 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
         }}
       />
     );
+  }
+
+  if (route.kind === 'breakfast-pass') {
+    if (expoPath === '/breakfast-pass') return null;
+    return <Redirect href={{ pathname: '/breakfast-pass', params: { token: route.token } }} />;
   }
 
   return null;

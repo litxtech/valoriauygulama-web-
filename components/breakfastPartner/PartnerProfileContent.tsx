@@ -363,6 +363,18 @@ export function PartnerProfileContent({ showBack = false }: PartnerProfileConten
         </PartnerGlassCard>
 
         <PartnerGlassCard style={{ marginTop: 14 }}>
+          <PartnerSectionTitle icon="qr-code-outline" title="Misafir QR biletleri" hint="Kişiye özel kahvaltı QR" />
+          <Text style={styles.noticeBody}>
+            Her misafir için QR oluşturun. Valoria resepsiyon okutunca misafir kahvaltı yapabilir olarak görünür.
+          </Text>
+          <PartnerPrimaryButton
+            label="Misafir QR yönetimi"
+            variant="ghost"
+            onPress={() => router.push('/partner/guest-passes')}
+          />
+        </PartnerGlassCard>
+
+        <PartnerGlassCard style={{ marginTop: 14 }}>
           <PartnerSectionTitle icon="videocam-outline" title="Kamera talepleri" hint="Geçmiş kahvaltı kayıtları" />
           <Text style={styles.noticeBody}>
             Belirli tarih ve saat için kamera görüntüsü talep edebilir, sonuçları izleyebilirsiniz.

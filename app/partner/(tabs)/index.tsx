@@ -8,9 +8,11 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useFocusEffect } from 'expo-router';
@@ -140,6 +142,7 @@ function StatusBanner({
 }
 
 export default function PartnerPortalScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
   const partner = usePartnerAuthStore((s) => s.partner)!;
@@ -300,6 +303,25 @@ export default function PartnerPortalScreen() {
           <PartnerStatTile label="Açık cari" value={fmtPartnerMoney(openBalance)} accent />
         </View>
 
+        <TouchableOpacity
+          style={styles.qrPromo}
+          activeOpacity={0.88}
+          onPress={() => router.push('/partner/guest-passes')}
+        >
+          <LinearGradient colors={['#14532d', '#166534']} style={styles.qrPromoInner}>
+            <View style={styles.qrPromoIcon}>
+              <Ionicons name="qr-code" size={28} color="#bbf7d0" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.qrPromoTitle}>Misafir QR biletleri</Text>
+              <Text style={styles.qrPromoBody}>
+                Her misafir için özel QR oluşturun — Valoria resepsiyon okutunca kahvaltı onaylanır
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#bbf7d0" />
+          </LinearGradient>
+        </TouchableOpacity>
+
         <StatusBanner entry={activeEntry} recordDate={recordDate} target={entryTarget} />
 
         <View style={styles.content}>
@@ -429,4 +451,24 @@ const styles = StyleSheet.create({
   },
   previewLabel: { color: partnerTheme.muted, fontWeight: '600' },
   previewValue: { color: partnerTheme.accent, fontWeight: '800', fontSize: 18 },
+  qrPromo: { marginHorizontal: 18, marginBottom: 14 },
+  qrPromoInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: partnerRadii.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(187, 247, 208, 0.25)',
+  },
+  qrPromoIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrPromoTitle: { color: '#ecfdf5', fontWeight: '800', fontSize: 16 },
+  qrPromoBody: { color: 'rgba(236, 253, 245, 0.82)', fontSize: 13, marginTop: 4, lineHeight: 18 },
 });
