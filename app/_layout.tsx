@@ -630,10 +630,14 @@ function RootLayoutInner() {
 
       const breakfastToken = parseBreakfastGuestPassTokenFromScan(url);
       if (breakfastToken) {
-        // Web: statik HTML (dist/breakfast-pass) — Expo router mount öncesi navigate crash verir
-        if (Platform.OS !== 'web') {
-          router.replace({ pathname: '/breakfast-pass', params: { token: breakfastToken } });
+        if (Platform.OS === 'web') {
+          // Web: BreakfastPassWebPortalRedirect statik sayfaya yönlendirir
+          return;
         }
+        safeRouterReplace(router, {
+          pathname: '/breakfast-pass',
+          params: { token: breakfastToken },
+        });
         return;
       }
 

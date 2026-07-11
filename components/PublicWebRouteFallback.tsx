@@ -2,6 +2,7 @@ import { Redirect, usePathname } from 'expo-router';
 import type { ReactElement } from 'react';
 import { Platform } from 'react-native';
 import { MaliyeWebPortalRedirect } from '@/components/MaliyeWebPortalRedirect';
+import { BreakfastPassWebPortalRedirect } from '@/components/BreakfastPassWebPortalRedirect';
 import { PaymentWebPortalRedirect } from '@/components/PaymentWebPortalRedirect';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
 import { isBreakfastPassPublicPath } from '@/lib/breakfastGuestPass';
@@ -26,7 +27,10 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
   }
 
   if (isBreakfastPassPublicPath(winNormalized)) {
-    // dist/breakfast-pass/index.html — Expo Redirect mount crash verir
+    const winRoute = resolvePublicWebRoute(winPath, winSearch);
+    if (winRoute?.kind === 'breakfast-pass') {
+      return <BreakfastPassWebPortalRedirect token={winRoute.token} />;
+    }
     return null;
   }
 
