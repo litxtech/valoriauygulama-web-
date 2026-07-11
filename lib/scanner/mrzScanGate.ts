@@ -94,10 +94,11 @@ export function canUseKbsCaptureMrz(args: {
   ) {
     return false;
   }
+  const hasFallback = parsed.warnings?.includes('mrz_fallback_parse');
   const ratio = mrzCharsetRatio(raw);
-  if (ratio < 0.76) return false;
+  if (ratio < 0.76 && !hasFallback) return false;
   if (!parsed.documentNumber?.trim()) return false;
   const hasDate = !!(parsed.birthDate || parsed.expiryDate);
   const hasName = !!(parsed.firstName?.trim() || parsed.lastName?.trim());
-  return parsed.checksumsValid === true || hasDate || hasName;
+  return parsed.checksumsValid === true || hasFallback || hasDate || hasName;
 }

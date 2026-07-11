@@ -21,6 +21,7 @@ import {
   mapNationalityTextToCode,
 } from '@/lib/kbsNationalityMap';
 import { resolveBestPassportNames } from '@/lib/kbsPassportNameResolve';
+import { parseTd3MrzFallback } from '@/lib/scanner/mrzTd3Fallback';
 
 const TC_RE = /\b([1-9]\d{10})\b/;
 const DATE_RE = /\b(\d{2})[./](\d{2})[./](\d{4})\b/;
@@ -146,8 +147,13 @@ const PASSPORT_ALPHA_DATE_RE =
 const PASSPORT_ALPHA_DATE_INLINE_RE =
   /(?:do[gğ]um\s*tarih|date\s*of\s*birth|birth\s*date|son\s*geçerl|geçerlilik\s*tarih|valid\s*until|date\s*of\s*expiry|expiry\s*date|expires)\s*[:\/\s-]*(\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]{3,9}\s+\d{4})/gi;
 
-const PASSPORT_DOC_RE = /\b([A-Z]{1,2}\d{6,9})\b/;
+const PASSPORT_DOC_RE = /\b([A-Z]{1,2}\d{5,9})\b/;
 const PASSPORT_LABEL_RE = /pasaport\s*(?:no|numara)|passport\s*(?:no|number|#)/i;
+/** GCC pasaport — "NameALOTAIBI, MOHAMMED AATI M" tek satır isim. */
+const PASSPORT_COMMA_NAME_RE = /^Name([A-Z][A-Z\s'-]{1,40}),\s*([A-Z][A-Z\s'-]{1,48})$/i;
+
+const GCC_PASSPORT_HEADER_RE =
+  /(?:kingdom\s*of\s*saudi|saudi\s*arabia|saudi\s*passport|united\s*arab\s*emirates|u\.?a\.?e\.?|emirates\s*passport|state\s*of\s*qatar|qatar\s*passport|sultanate\s*of\s*oman|oman\s*passport|state\s*of\s*kuwait|kuwait\s*passport|kingdom\s*of\s*bahrain|bahrain\s*passport|republic\s*of\s*iraq|iraq\s*passport|hashemite\s*kingdom|jordan\s*passport|lebanese\s*republic|lebanon\s*passport|islamic\s*republic\s*of\s*iran|iran\s*passport)/i;
 
 export type TurkishIdOcrExtras = {
   documentSeries: string | null;
@@ -712,6 +718,14 @@ export function extractPassportNamesFromOcr(lines: string[]): {
   for (let i = 0; i < L.length; i++) {
     const line = L[i]!;
 
+    const commaName = line.match(PASSPORT_COMMA_NAME_RE);
+    if (commaName?.[1] && commaName[2]) {
+      const ln = cleanPassportPersonName(commaName[1].trim(), 'surname');
+      const fn = cleanPassportPersonName(commaName[2].trim(), 'given');
+      if (ln) lastName = ln;
+      if (fn) firstName = fn;
+    }
+
     const surnameInline = line.match(PASSPORT_SURNAME_INLINE_RE);
     if (surnameInline?.[1]) {
       lastName = cleanPassportPersonName(surnameInline[1], 'surname') ?? lastName;
@@ -1040,6 +1054,9 @@ function extractIdCardDates(lines: string[]): { birthDate: string | null; expiry
 
 export function extractNationalityFromOcr(lines: string[]): string | null {
   const L = normLines(lines);
+  const fromHeader = extractNationalityFromPassportHeader(L);
+  if (fromHeader) return fromHeader;
+
   for (let i = 0; i < L.length; i++) {
     const line = L[i]!;
     const inline = line.match(NATIONALITY_INLINE_RE);
@@ -1047,16 +1064,20 @@ export function extractNationalityFromOcr(lines: string[]): string | null {
       const code = mapNationalityTextToCode(inline[1]);
       if (code) return code;
     }
-    if (NATIONALITY_LINE_LABEL_RE.test(line)) {
+    if (NATIONALITY_LINE_LABEL_RE.test(line) || /country\s*code/i.test(line)) {
       for (const next of [L[i + 1], L[i + 2]].filter(Boolean)) {
         const code = mapNationalityTextToCode(next!);
         if (code) return code;
+        const c = next!.trim().toUpperCase();
+        if (isKnownIcao3(c)) return c;
       }
     }
   }
   for (const line of L) {
     const c = line.trim().toUpperCase();
     if (isKnownIcao3(c)) return c;
+    const code = mapNationalityTextToCode(line);
+    if (code) return code;
   }
   return null;
 }
@@ -1091,9 +1112,45 @@ function detectPassportFromOcr(lines: string[]): boolean {
     /\bPASSPORT\b/.test(j) ||
     /\bPASAPORT\b/.test(j) ||
     /\bP<TUR\b/.test(j) ||
+    /\bP<SAU\b/.test(j) ||
+    /\bP<ARE\b/.test(j) ||
+    /\bP<QAT\b/.test(j) ||
+    /\bP<OMN\b/.test(j) ||
+    /\bP<KWT\b/.test(j) ||
+    /\bP<BHR\b/.test(j) ||
+    /\bP<IRQ\b/.test(j) ||
+    /\bP<IRN\b/.test(j) ||
+    /\bP<JOR\b/.test(j) ||
+    /\bP<LBN\b/.test(j) ||
+    GCC_PASSPORT_HEADER_RE.test(j) ||
     /REPUBLIC\s+OF\s+TURKEY/.test(j) ||
     /TURKIYE\s+CUMHURIYETI.*PASAPORT/.test(j.replace(/Ü/g, 'U').replace(/İ/g, 'I'))
   );
+}
+
+function extractPassportNumberFromMrzLines(rawMrz: string | null | undefined): string | null {
+  if (!rawMrz?.trim()) return null;
+  const fallback = parseTd3MrzFallback(rawMrz);
+  return fallback?.documentNumber ?? null;
+}
+
+function extractNationalityFromPassportHeader(lines: string[]): string | null {
+  const j = normLines(lines).join(' ').toUpperCase();
+  if (/SAUDI|KINGDOM\s*OF\s*SAUDI/.test(j)) return 'SAU';
+  if (/EMIRATES|U\.?A\.?E\.?/.test(j) && !/SAUDI/.test(j)) return 'ARE';
+  if (/\bQATAR\b/.test(j)) return 'QAT';
+  if (/\bOMAN\b/.test(j)) return 'OMN';
+  if (/\bKUWAIT\b/.test(j)) return 'KWT';
+  if (/\bBAHRAIN\b/.test(j)) return 'BHR';
+  if (/\bIRAQ\b/.test(j)) return 'IRQ';
+  if (/\bIRAN\b/.test(j)) return 'IRN';
+  if (/\bJORDAN\b/.test(j)) return 'JOR';
+  if (/\bLEBANON\b/.test(j)) return 'LBN';
+  if (/\bSYRIA\b/.test(j)) return 'SYR';
+  if (/\bYEMEN\b/.test(j)) return 'YEM';
+  if (/\bEGYPT\b/.test(j)) return 'EGY';
+  if (/\bPALESTIN/.test(j)) return 'PSE';
+  return null;
 }
 
 function extractPassportNumberFromOcr(lines: string[]): string | null {
@@ -1106,6 +1163,9 @@ function extractPassportNumberFromOcr(lines: string[]): string | null {
     if (next?.[1] && !TC_RE.test(next[1])) return next[1]!.toUpperCase();
   }
   for (const line of L) {
+    const normalized = line.replace(/\s+/g, '');
+    const mrzDoc = normalized.match(/^([A-Z][A-Z0-9]{5,8})<+[0-9A-Z]{3}/i);
+    if (mrzDoc?.[1]) return mrzDoc[1].toUpperCase();
     const m = line.match(PASSPORT_DOC_RE);
     if (m?.[1] && !TC_RE.test(m[1]) && !YKN_RE.test(m[1])) return m[1]!.toUpperCase();
   }
@@ -1283,8 +1343,18 @@ export function enrichMrzParsedWithFrontOcr(
   const serial = extractDocumentSerialFromOcr(lines) ?? parsed.documentSeries;
   const parents = extractParentNamesFromOcr(lines);
   const maritalStatus = extractMaritalStatusFromOcr(lines);
-  const natCode = parsed.nationalityCode ?? extractNationalityFromOcr(lines);
+  const natCode =
+    parsed.nationalityCode ??
+    extractNationalityFromOcr(lines) ??
+    extractNationalityFromPassportHeader(lines);
   const { birthDate, expiryDate } = extractIdCardDates(lines);
+
+  const isPassportDoc =
+    parsed.documentType === 'passport' || !!parsed.rawMrz || detectPassportFromOcr(lines);
+  const passportNo =
+    parsed.documentNumber ??
+    extractPassportNumberFromMrzLines(parsed.rawMrz) ??
+    extractPassportNumberFromOcr(lines);
 
   const isTurkishId =
     parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines));
@@ -1293,7 +1363,12 @@ export function enrichMrzParsedWithFrontOcr(
   let lastName = parsed.lastName;
   let fullName = parsed.fullName;
 
-  if (isTurkishId) {
+  if (isPassportDoc && (!isUsablePersonName(firstName) || !isUsablePersonName(lastName))) {
+    const best = resolveBestPassportNames({ parsed, ocrLines: lines });
+    firstName = best.firstName ?? firstName;
+    lastName = best.lastName ?? lastName;
+    fullName = best.fullName ?? fullName;
+  } else if (isTurkishId) {
     const tr = extractTurkishIdCardNamesFromOcr(normLines(lines));
     if (isUsablePersonName(tr.firstName) && isUsablePersonName(tr.lastName)) {
       firstName = tr.firstName;
@@ -1314,6 +1389,7 @@ export function enrichMrzParsedWithFrontOcr(
     firstName,
     lastName,
     fullName,
+    documentNumber: passportNo ?? parsed.documentNumber,
     nationalityCode: natCode,
     issuingCountryCode: parsed.issuingCountryCode ?? natCode,
     documentSeries: serial ?? parsed.documentSeries ?? null,

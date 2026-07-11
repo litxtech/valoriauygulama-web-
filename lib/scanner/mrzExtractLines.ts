@@ -57,6 +57,8 @@ function buildCandidateStrings(lines: string[]): string[] {
     if (a.length >= TD3_MIN && a.length <= TD3_MAX && b.length >= TD3_MIN && b.length <= TD3_MAX) {
       const p = pairTd3(a, b);
       if (p) out.add(p);
+      const pRev = pairTd3(b, a);
+      if (pRev) out.add(pRev);
     }
     if (a.length >= TD2_MIN && a.length <= TD2_MAX && b.length >= TD2_MIN && b.length <= TD2_MAX) {
       const p2 = pairTd2(a, b);

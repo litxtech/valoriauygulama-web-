@@ -3,6 +3,7 @@ import type { ParsedDocument } from './types';
 import { mrzSixDigitsToIso } from './mrzDates';
 import { finalizeMrzPersonNames, isGccNationality } from '@/lib/scanner/mrzPersonNames';
 import { extractIssuingCountryFromMrz } from '@/lib/scanner/mrzIssuingExtract';
+import { mergeTd3FallbackFields, parseTd3MrzFallback } from '@/lib/scanner/mrzTd3Fallback';
 
 function cleanMrz(raw: string): string {
   return raw
@@ -249,26 +250,32 @@ export function parseMrzToNormalized(rawMrz: string): ParsedDocument {
     const expiryDate = expiryRaw && /^\d{6}$/.test(expiryRaw) ? mrzSixDigitsToIso(expiryRaw, 'expiry') : expiryRaw;
     const personalNumber = resolveMrzPersonalNumber(fields, documentType);
 
-    return {
-      documentType,
-      fullName: names.fullName,
-      firstName: names.firstName,
-      lastName: names.lastName,
-      middleName: names.middleName,
-      documentNumber,
-      nationalityCode,
-      issuingCountryCode,
-      birthDate,
-      expiryDate,
-      gender: mapMrzSex(fields.sex),
-      personalNumber,
-      rawMrz: raw,
-      confidence: null,
-      checksumsValid,
-      warnings,
-      documentSeries,
-    };
+    return mergeTd3FallbackFields(
+      {
+        documentType,
+        fullName: names.fullName,
+        firstName: names.firstName,
+        lastName: names.lastName,
+        middleName: names.middleName,
+        documentNumber,
+        nationalityCode,
+        issuingCountryCode,
+        birthDate,
+        expiryDate,
+        gender: mapMrzSex(fields.sex),
+        personalNumber,
+        rawMrz: raw,
+        confidence: null,
+        checksumsValid,
+        warnings,
+        documentSeries,
+      },
+      raw
+    );
   } catch {
+    const fallback = parseTd3MrzFallback(raw);
+    if (fallback) return fallback;
+
     return {
       documentType: 'other',
       fullName: null,

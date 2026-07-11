@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type { KbsCapturedDocumentRow, ParsedDocument } from './types';
 import { parseRow } from './parse';
+import { formatIcao3ForTr } from './nationality';
 
 export type CaptureItem = KbsCapturedDocumentRow & { parsed: ParsedDocument | null };
 
@@ -14,6 +15,14 @@ export type CaptureStats = {
   total: number;
   today: number;
   week: number;
+};
+
+export type NationalityFilterOption = { code: string; label: string; count: number };
+
+export type PassportHotelBreakdown = {
+  hotelId: string;
+  hotelName: string;
+  count: number;
 };
 
 const ENSURE_MSG: Record<string, string> = {
@@ -95,24 +104,24 @@ type RawDoc = KbsCapturedDocumentRow & {
   guest: GuestJoin | GuestJoin[];
 };
 
-/** Kimlik çekim listesi — ops.guest_documents + personel + oda + otel adı. */
-export async function fetchCaptures(opts: {
+type FetchCapturesOpts = {
   hotelId?: string | null;
   limit?: number;
   hotelNameById?: Map<string, string>;
-}): Promise<CaptureItem[]> {
-  const limit = opts.limit ?? 300;
-  let query = supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select(SELECT_COLS)
-    .or('front_image_url.not.is.null,capture_source.eq.tc')
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  documentType?: 'passport' | null;
+};
 
-  if (opts.hotelId) {
-    query = query.eq('hotel_id', opts.hotelId);
+/** Kimlik çekim listesi — ops.guest_documents + personel + oda + otel adı. */
+export async function fetchCaptures(opts: FetchCapturesOpts): Promise<CaptureItem[]> {
+  const limit = opts.limit ?? 300;
+  let query = supabase.schema('ops').from('guest_documents').select(SELECT_COLS);
+  if (opts.documentType === 'passport') {
+    query = query.eq('document_type', 'passport').not('front_image_url', 'is', null);
+  } else {
+    query = query.or('front_image_url.not.is.null,capture_source.eq.tc');
   }
+  if (opts.hotelId) query = query.eq('hotel_id', opts.hotelId);
+  query = query.order('created_at', { ascending: false }).limit(limit);
 
   const { data: docs, error } = await query;
   if (error) throw new Error(error.message);
@@ -247,13 +256,17 @@ async function countCaptures(opts: {
   hotelId?: string | null;
   staffAuthId?: string | null;
   sinceIso?: string | null;
+  documentType?: 'passport' | null;
 }): Promise<number> {
   let query = supabase
     .schema('ops')
     .from('guest_documents')
-    .select('id', { count: 'exact', head: true })
-    .or('front_image_url.not.is.null,capture_source.eq.tc');
-
+    .select('id', { count: 'exact', head: true });
+  if (opts.documentType === 'passport') {
+    query = query.eq('document_type', 'passport').not('front_image_url', 'is', null);
+  } else {
+    query = query.or('front_image_url.not.is.null,capture_source.eq.tc');
+  }
   if (opts.hotelId) query = query.eq('hotel_id', opts.hotelId);
   if (opts.staffAuthId) query = query.eq('scanned_by_user_id', opts.staffAuthId);
   if (opts.sinceIso) query = query.gte('created_at', opts.sinceIso);
@@ -267,6 +280,7 @@ async function countCaptures(opts: {
 export async function fetchCaptureStats(opts: {
   hotelId?: string | null;
   staffAuthId?: string | null;
+  documentType?: 'passport' | null;
 }): Promise<CaptureStats> {
   const [total, today, week] = await Promise.all([
     countCaptures(opts),
@@ -274,6 +288,57 @@ export async function fetchCaptureStats(opts: {
     countCaptures({ ...opts, sinceIso: startOfWeekIso() }),
   ]);
   return { total, today, week };
+}
+
+/** Pasaport listesi — yalnızca document_type = passport ve görseli olan kayıtlar. */
+export async function fetchPassports(opts: {
+  hotelId?: string | null;
+  limit?: number;
+  hotelNameById?: Map<string, string>;
+}): Promise<CaptureItem[]> {
+  return fetchCaptures({ ...opts, documentType: 'passport' });
+}
+
+/** Erişilebilir otellerde bildirilen pasaport sayıları (keşif özeti). */
+export async function fetchPassportHotelBreakdown(
+  hotels: KbsWebHotel[]
+): Promise<PassportHotelBreakdown[]> {
+  const counts = await Promise.all(
+    hotels.map(async (h) => ({
+      hotelId: h.id,
+      hotelName: h.short_label,
+      count: await countCaptures({ hotelId: h.id, documentType: 'passport' }),
+    }))
+  );
+  return counts.filter((c) => c.count > 0).sort((a, b) => b.count - a.count || a.hotelName.localeCompare(b.hotelName, 'tr'));
+}
+
+export function nationalityCodeOf(item: CaptureItem): string {
+  const code =
+    item.nationality_code?.trim() ||
+    item.parsed?.nationalityCode?.trim() ||
+    item.issuing_country_code?.trim() ||
+    '';
+  return code ? code.toUpperCase() : '—';
+}
+
+/** Uyruk filtresi için pasaport listesinden seçenekler. */
+export function buildNationalityFilterOptions(items: CaptureItem[]): NationalityFilterOption[] {
+  const map = new Map<string, NationalityFilterOption>();
+  for (const it of items) {
+    const code = nationalityCodeOf(it);
+    const existing = map.get(code);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      map.set(code, {
+        code,
+        label: code === '—' ? 'Belirsiz' : formatIcao3ForTr(code),
+        count: 1,
+      });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'tr'));
 }
 
 function asPayloadObject(raw: unknown): Record<string, unknown> {

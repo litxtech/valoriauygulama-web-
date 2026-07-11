@@ -1,5 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { isOpsSchemaNotExposedError } from '@/lib/supabaseTransientErrors';
+import { withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
+
+const ENSURE_RPC_TIMEOUT_MS = 20_000;
 
 export const OPS_SCHEMA_NOT_EXPOSED_MSG =
   'Supabase Data API ayarında «ops» şeması açık değil. Dashboard → Project Settings → Data API → Exposed schemas listesine ops ekleyip kaydedin (1–2 dk bekleyin).';
@@ -35,7 +38,23 @@ export async function resolveOpsHotelIdForCaller(
   if (!uid) return { ok: false, message: 'Oturum yok', code: 'AUTH' };
 
   // ops şeması PostgREST'te expose değilse doğrudan .schema('ops') → 406 PGRST106 verir; yalnızca public RPC kullan.
-  const { data: rpc, error } = await supabase.rpc('ensure_my_ops_app_user');
+  let rpc: unknown;
+  let error: { code?: string; message?: string } | null;
+  try {
+    const res = await withPromiseTimeout(
+      supabase.rpc('ensure_my_ops_app_user'),
+      ENSURE_RPC_TIMEOUT_MS,
+      'Otel bağlamı zaman aşımı — bağlantınızı kontrol edip tekrar deneyin'
+    );
+    rpc = res.data;
+    error = res.error;
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Otel bağlamı alınamadı',
+      code: 'ENSURE_TIMEOUT',
+    };
+  }
   if (error) {
     if (isOpsSchemaNotExposedError(error)) {
       return { ok: false, message: ENSURE_MSG.PGRST106, code: 'PGRST106' };
@@ -43,7 +62,7 @@ export async function resolveOpsHotelIdForCaller(
     if (error.code === 'PGRST202' || /ensure_my_ops_app_user/i.test(error.message ?? '')) {
       return { ok: false, message: ENSURE_MSG.ENSURE_RPC_MISSING, code: 'ENSURE_RPC_MISSING' };
     }
-    return { ok: false, message: error.message, code: 'ENSURE_RPC' };
+    return { ok: false, message: error.message ?? 'Otel bağlamı alınamadı', code: 'ENSURE_RPC' };
   }
 
   const row = (rpc ?? {}) as EnsureRpc;

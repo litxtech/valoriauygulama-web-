@@ -14,6 +14,10 @@ import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 import { uriToArrayBuffer, getMimeAndExt, isLocalFileUriForUpload, copyUriToCacheForUpload } from '@/lib/uploadMedia';
 import { prepareCrossPlatformUploadImageUri, ensureCrossPlatformJpegUriForUpload, uriMayBeHeic } from '@/lib/crossPlatformImage';
 import { sanitizeSupabaseErrorMessage } from '@/lib/supabaseTransientErrors';
+import { withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
+
+/** Görsel yükleme (edge/base64 veya doğrudan Storage) — yavaş/takılı ağda sonsuz spinner'ı keser. */
+const IMAGE_UPLOAD_TIMEOUT_MS = 45_000;
 
 const EXPENSE_RECEIPT_BUCKET = 'expense-receipts';
 const EXPENSE_RECEIPT_MAX_WIDTH = 1600;
@@ -242,10 +246,14 @@ async function invokeUploadAppStorage(body: EdgeBody): Promise<{ publicUrl: stri
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error('Oturum gerekli');
 
-  const { data, error } = await supabase.functions.invoke('upload-app-storage', {
-    body,
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
+  const { data, error } = await withPromiseTimeout(
+    supabase.functions.invoke('upload-app-storage', {
+      body,
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    }),
+    IMAGE_UPLOAD_TIMEOUT_MS,
+    'Görsel yükleme zaman aşımı — bağlantınızı kontrol edip tekrar deneyin'
+  );
 
   if (error) throw new Error(error.message ?? 'Edge yükleme hatası');
   const d = data as { public_url?: string; path?: string; error?: string } | null;
@@ -363,10 +371,14 @@ export async function uploadUriToPublicBucket(params: {
     }
   }
 
-  const { error } = await supabase.storage.from(params.bucketId).upload(fileName, arrayBuffer, {
-    contentType: uploadMime,
-    upsert: false,
-  });
+  const { error } = await withPromiseTimeout(
+    supabase.storage.from(params.bucketId).upload(fileName, arrayBuffer, {
+      contentType: uploadMime,
+      upsert: false,
+    }),
+    IMAGE_UPLOAD_TIMEOUT_MS,
+    'Görsel yükleme zaman aşımı — bağlantınızı kontrol edip tekrar deneyin'
+  );
   if (error) {
     const storageMsg = sanitizeSupabaseErrorMessage(error.message);
     if (BUCKETS_PREFER_DIRECT_UPLOAD.has(params.bucketId)) {

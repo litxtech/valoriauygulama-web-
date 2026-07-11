@@ -144,9 +144,7 @@ export function parseKbsFromDocumentOcr(args: {
       documentType: mrzBest.parsed.documentType ?? 'passport',
       confidence: mrzBest.parsed.confidence ?? mrzBest.score / 100,
     };
-    if (!args.mrzFocused) {
-      parsed = enrichMrzParsedWithFrontOcr(parsed, frontFiltered);
-    }
+    parsed = enrichMrzParsedWithFrontOcr(parsed, frontFiltered);
   } else if (args.mrzFocused) {
     engine = KBS_OCR_ENGINE_FRONT_VISUAL;
     parsed = parseIdCardFromOcrLines(frontFiltered);

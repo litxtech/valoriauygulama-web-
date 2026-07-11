@@ -4,9 +4,11 @@ export function normalizeMrzOcrLine(raw: string): string {
     .replace(/[\r\n\u2028\u2029]/g, '')
     .replace(/\s+/g, '')
     .toUpperCase()
-    .replace(/«|»|‹|›/g, '<')
+    .replace(/«|»|‹|›|§/g, '<')
     .replace(/[|¦‖]/g, 'I')
     .replace(/[`'‘’"“”]/g, '')
+    .replace(/[Ww](?=[A-Z]{3}\d)/g, 'M')
+    .replace(/(?<=[A-Z]{3})\s+(?=\d)/g, '')
     .replace(/[^A-Z0-9<]/g, '');
 }
 
