@@ -5,10 +5,12 @@ import {
   buildStaffFilterOptions,
   captureDate,
   fetchCaptures,
+  fetchCaptureStats,
   listAccessibleHotels,
   resolveOpsContext,
   subscribeCaptures,
   type CaptureItem,
+  type CaptureStats,
   type KbsWebHotel,
 } from '../lib/captures';
 import { buildKbsCopyFields, kbsDisplayFullName } from '../lib/parse';
@@ -72,6 +74,7 @@ export function CapturesPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [visibleCount, setVisibleCount] = useState(36);
   const [freshnessTick, setFreshnessTick] = useState(0);
+  const [stats, setStats] = useState<CaptureStats>({ total: 0, today: 0, week: 0 });
   const [, startTransition] = useTransition();
 
   const defaultHotelRef = useRef<string | null>(null);
@@ -114,13 +117,21 @@ export function CapturesPage() {
         const fetchHotelId =
           activeFilter === 'all' ? (viewAll ? null : hotelId) : activeFilter;
 
-        const data = await fetchCaptures({
-          hotelId: fetchHotelId,
-          hotelNameById: nameMap,
-          limit: viewAll && activeFilter === 'all' ? 400 : 300,
-        });
+        const activeStaffAuthId = staffFilter === 'all' ? null : staffFilter;
+        const [data, exactStats] = await Promise.all([
+          fetchCaptures({
+            hotelId: fetchHotelId,
+            hotelNameById: nameMap,
+            limit: viewAll && activeFilter === 'all' ? 400 : 300,
+          }),
+          fetchCaptureStats({
+            hotelId: fetchHotelId,
+            staffAuthId: activeStaffAuthId,
+          }),
+        ]);
         startTransition(() => {
           setItems(data);
+          setStats(exactStats);
           setLastUpdated(new Date());
           setVisibleCount(36);
         });
@@ -132,7 +143,7 @@ export function CapturesPage() {
         setRefreshing(false);
       }
     },
-    [canViewAllHotels, hotelFilter]
+    [canViewAllHotels, hotelFilter, staffFilter]
   );
 
   const scheduleReload = useCallback(() => {
@@ -157,6 +168,12 @@ export function CapturesPage() {
     void load({ soft: true, hotelIdOverride: hotelFilter });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotelFilter]);
+
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    void load({ soft: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffFilter]);
 
   useEffect(() => {
     if (!defaultHotelRef.current && !items.length) return;
@@ -186,19 +203,6 @@ export function CapturesPage() {
   const familyIndex = useMemo(() => buildFamilyIndex(items), [items]);
 
   const staffOptions = useMemo(() => buildStaffFilterOptions(items), [items]);
-
-  const stats = useMemo(() => {
-    const todayStart = startOfToday();
-    const weekStart = startOfWeek();
-    let today = 0;
-    let week = 0;
-    for (const it of items) {
-      const t = captureDate(it).getTime();
-      if (t >= todayStart) today++;
-      if (t >= weekStart) week++;
-    }
-    return { total: items.length, today, week };
-  }, [items]);
 
   const filtered = useMemo(
     () =>
@@ -232,6 +236,11 @@ export function CapturesPage() {
   const handlePhoneSaved = useCallback((id: string, phone: string | null) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, guest_phone_submitted: phone } : it)));
     setSelected((cur) => (cur && cur.id === id ? { ...cur, guest_phone_submitted: phone } : cur));
+  }, []);
+
+  const handleReadRequested = useCallback((updated: CaptureItem) => {
+    setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+    setSelected((cur) => (cur && cur.id === updated.id ? updated : cur));
   }, []);
 
   const openCard = useCallback((item: CaptureItem) => {
@@ -435,6 +444,7 @@ export function CapturesPage() {
           onClose={() => setSelected(null)}
           onSelect={setSelected}
           onPhoneSaved={handlePhoneSaved}
+          onReadRequested={handleReadRequested}
         />
       ) : null}
     </div>

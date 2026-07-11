@@ -34,7 +34,7 @@ import {
   loadKbsCaptureHistoryCacheFromDisk,
   setKbsCaptureHistoryCache,
 } from '@/lib/kbsCaptureHistoryCache';
-import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete } from '@/lib/kbsCaptureParsedFields';
+import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete, isKbsTcOnlyCapture } from '@/lib/kbsCaptureParsedFields';
 import { buildKbsCaptureReportHtml } from '@/lib/kbsCaptureReportHtml';
 import { buildKbsCaptureListItems } from '@/lib/kbsCaptureListGroups';
 import {
@@ -144,6 +144,13 @@ function CaptureCard({
         >
           <Image source={{ uri: item.front_image_url }} style={styles.thumb} contentFit="cover" />
         </Pressable>
+      ) : isKbsTcOnlyCapture(parsed) ? (
+        <View style={styles.tcThumb}>
+          <Ionicons name="finger-print" size={26} color="#2563eb" />
+          <Text style={styles.tcThumbText} numberOfLines={1}>
+            {parsed?.documentNumber ?? 'T.C.'}
+          </Text>
+        </View>
       ) : (
         <View style={styles.thumbMask}>
           <Ionicons name="id-card-outline" size={28} color="#94a3b8" />
@@ -1100,6 +1107,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
+  },
+  tcThumb: {
+    width: 88,
+    height: 112,
+    borderRadius: 10,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 6,
+    gap: 6,
+  },
+  tcThumbText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1d4ed8',
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
   cardBody: { flex: 1, minWidth: 0 },
   name: { fontSize: 15, fontWeight: '800', color: theme.colors.text },

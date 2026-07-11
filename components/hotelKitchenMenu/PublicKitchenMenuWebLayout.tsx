@@ -19,6 +19,8 @@ import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/Publi
 import { PublicKitchenMenuCartBar } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartBar';
 import { PublicKitchenMenuCartSheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartSheet';
 import { PublicKitchenMenuWelcomeHero } from '@/components/hotelKitchenMenu/PublicKitchenMenuWelcomeHero';
+import { PublicKitchenMenuPremiumHome } from '@/components/hotelKitchenMenu/PublicKitchenMenuPremiumHome';
+import type { OrderMode } from '@/features/restaurant/components/RestaurantOrderModeChips';
 import { PublicKitchenMenuOrderHistorySheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuOrderHistorySheet';
 import {
   menuUi,
@@ -137,6 +139,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   const [menuTab, setMenuTab] = useState<'explore' | 'menu'>(
     menuTheme.landingMode === 'explore' ? 'explore' : 'menu'
   );
+  const [orderMode, setOrderMode] = useState<OrderMode>('table');
 
   const promoVideos = menuTheme.promoVideos;
 
@@ -302,27 +305,26 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         nestedScrollEnabled
         keyboardShouldPersistTaps="handled"
       >
-        <View
-          style={[
-            styles.welcomeViewport,
-            { minHeight: welcomeViewportH, height: welcomeViewportH },
-          ]}
-        >
-          <PublicKitchenMenuWelcomeHero
-            orgName={org.name}
-            heroTitle={heroTitle}
-            heroSubtitle={heroSubtitle}
-            accentColor={accent}
-            heroImage={heroImage}
-            promoVideos={promoVideos}
-            liveBadge={t('publicKitchenMenuLiveBadge')}
-            langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
-            onOrdersPress={() => setOrdersOpen(true)}
-            fullScreen
-            onEnterMenu={scrollToMenu}
-            safeTopInset={insets.top}
-          />
-        </View>
+        <PublicKitchenMenuPremiumHome
+          org={org}
+          items={items}
+          categoryChips={categoryChips}
+          categoryFilter={categoryFilter}
+          onPickCategory={pickCategory}
+          search={search}
+          onSearchChange={setSearch}
+          menuLang={menuLang}
+          menuTheme={menuTheme}
+          cartLines={cartLines}
+          onCartPress={() => setCartOpen(true)}
+          onOrdersPress={() => setOrdersOpen(true)}
+          onItemPress={setDetailItem}
+          onAddToCart={onAddToCart}
+          langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
+          orderMode={orderMode}
+          onOrderModeChange={setOrderMode}
+          showExplore={menuTab === 'explore'}
+        />
 
         <View
           style={styles.menuSection}
@@ -330,28 +332,6 @@ export function PublicKitchenMenuWebLayout(props: Props) {
             menuSectionY.current = e.nativeEvent.layout.y;
           }}
         >
-          <View style={[styles.heroWrap, { backgroundColor: menuUi.webSurface }]}>
-            <View style={{ maxWidth: maxW + 80, width: '100%', alignSelf: 'center', paddingHorizontal: 16 }}>
-              <View style={[styles.searchBoxLight, { borderColor: `${accent}22` }]}>
-                <View style={[styles.searchIconWrap, { backgroundColor: `${accent}14` }]}>
-                  <Ionicons name="search" size={16} color={accent} />
-                </View>
-                <TextInput
-                  style={styles.searchInputLight}
-                  placeholder={t('hotelKitchenMenuSearchPh')}
-                  placeholderTextColor="#94a3b8"
-                  value={search}
-                  onChangeText={setSearch}
-                />
-                {search ? (
-                  <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
-                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
-          </View>
-
         {/* Mobile filters strip */}
         {!wide && categoryChips.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mobileStrip} contentContainerStyle={styles.mobileStripInner}>

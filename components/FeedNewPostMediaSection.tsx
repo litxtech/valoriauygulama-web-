@@ -55,14 +55,21 @@ export function FeedNewPostMediaSection({
       </View>
 
       {mediaItems.length > 0 ? (
-        <View style={styles.previewShell}>
+        <View style={styles.previewShell} collapsable={false}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.multiPreviewRow}>
             {mediaItems.map((m, idx) => (
-              <View key={`${m.uri}-${idx}`} style={styles.multiPreviewCard}>
+              <View key={`${m.uri}-${idx}`} style={styles.multiPreviewCard} collapsable={false}>
                 {m.type === 'video' ? (
-                  <Video source={{ uri: m.uri }} style={styles.multiPreviewMedia} resizeMode={ResizeMode.COVER} shouldPlay={false} isLooping={false} />
+                  <Video
+                    key={m.uri}
+                    source={{ uri: m.uri }}
+                    style={styles.multiPreviewMedia}
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay={false}
+                    isLooping={false}
+                  />
                 ) : (
-                  <CachedImage uri={m.uri} style={styles.multiPreviewMedia} contentFit="cover" />
+                  <CachedImage key={m.uri} uri={m.uri} style={styles.multiPreviewMedia} contentFit="cover" />
                 )}
               </View>
             ))}
@@ -72,19 +79,21 @@ export function FeedNewPostMediaSection({
           </TouchableOpacity>
         </View>
       ) : imageUri ? (
-        <View style={styles.previewShell}>
-          <View style={styles.previewCard}>
+        <View style={styles.previewShell} collapsable={false}>
+          <View style={styles.previewCard} collapsable={false}>
             {mediaType === 'image' ? (
               <CachedImage
+                key={imageUri}
                 uri={imageUri}
                 style={styles.previewImage}
                 contentFit="cover"
               />
             ) : (
               <Video
+                key={imageUri}
                 source={{ uri: imageUri }}
                 style={styles.previewVideo}
-                resizeMode={ResizeMode.CONTAIN}
+                resizeMode={ResizeMode.COVER}
                 useNativeControls
                 isLooping
                 shouldPlay={false}
@@ -158,7 +167,7 @@ const styles = StyleSheet.create({
   },
   previewVideo: {
     width: '100%',
-    aspectRatio: 16 / 9,
+    aspectRatio: 9 / 16,
     backgroundColor: '#000',
   },
   typeBadge: {

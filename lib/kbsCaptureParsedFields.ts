@@ -253,6 +253,13 @@ export function buildKbsReportFields(
   return out;
 }
 
+export function isKbsTcOnlyCapture(
+  payload: ParsedDocument | Record<string, unknown> | null | undefined
+): boolean {
+  const w = (payload as ParsedDocument | null)?.warnings;
+  return Array.isArray(w) && w.includes('tc_only');
+}
+
 export function isKbsOcrPending(payload: ParsedDocument | Record<string, unknown> | null | undefined): boolean {
   const w = (payload as ParsedDocument | null)?.warnings;
   return Array.isArray(w) && w.includes('ocr_pending');
@@ -326,6 +333,9 @@ export function kbsCaptureCardStatus(
   parsed: ParsedDocument | null | undefined
 ): KbsCaptureCardStatus | null {
   if (!parsed) return null;
+  if (isKbsTcOnlyCapture(parsed) && parsed.documentNumber) {
+    return { label: 'T.C.', tone: 'ok' };
+  }
   if (isKbsOcrInProgress(parsed)) return null;
 
   if (kbsCaptureHasReadableData(parsed)) {

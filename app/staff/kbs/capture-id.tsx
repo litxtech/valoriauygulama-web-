@@ -17,7 +17,6 @@ import {
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useIsFocused, type NavigationProp, type ParamListBase } from '@react-navigation/native';
 import { useNavigation, usePathname, useRouter, type Href } from 'expo-router';
@@ -34,10 +33,15 @@ import { markKbsCapturesJustSaved } from '@/lib/kbsCaptureHistorySeen';
 import { useAuthStore } from '@/stores/authStore';
 import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
+import {
+  KbsCaptureQueuePanel,
+  type KbsCaptureQueueItem,
+} from '@/components/kbs/KbsCaptureQueuePanel';
 import { loadKbsCapturePictureSize, takeKbsIdPicture } from '@/lib/kbsCaptureCamera';
 import { autoSplitKbsSheetImage } from '@/lib/kbsCaptureSheetSplit';
 import { useTranslation } from 'react-i18next';
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
+import { isTcManualEntryAcceptable, normalizeTcInput } from '@/lib/kbsTcValidation';
 import {
   cancelKbsCapturePrewarm,
   clearKbsCapturePrewarmAll,
@@ -45,12 +49,14 @@ import {
   warmKbsCaptureOpsContext,
 } from '@/lib/kbsCapturePrewarm';
 
-type CaptureItem = {
-  id: string;
-  imageUri: string;
+type CaptureMode = 'front' | 'mrz_back' | 'tc';
+
+type CaptureImageItem = Extract<KbsCaptureQueueItem, { kind: 'image' }> & {
   captureSource: 'camera' | 'gallery';
   captureSide: KbsCaptureSide;
 };
+
+type QueueItem = CaptureImageItem | Extract<KbsCaptureQueueItem, { kind: 'tc' }>;
 
 const CAPTURE_HISTORY = '/staff/kbs/capture-history' as Href;
 const IS_ANDROID = Platform.OS === 'android';
@@ -98,7 +104,7 @@ export default function KbsCaptureIdScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
-  const [queue, setQueue] = useState<CaptureItem[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const [roomNoInput, setRoomNoInput] = useState('');
@@ -106,8 +112,15 @@ export default function KbsCaptureIdScreen() {
   const [roomModalVisible, setRoomModalVisible] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const [splitting, setSplitting] = useState(false);
-  const [captureSide, setCaptureSide] = useState<KbsCaptureSide>('front');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('front');
+  const [tcInput, setTcInput] = useState('');
+  const [tcNameInput, setTcNameInput] = useState('');
+  const [tcPhoneInput, setTcPhoneInput] = useState('');
+  const tcInputRef = useRef<TextInput | null>(null);
+  const tcNameInputRef = useRef<TextInput | null>(null);
+  const tcPhoneInputRef = useRef<TextInput | null>(null);
   const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
+  const [tcKeyboardInset, setTcKeyboardInset] = useState(0);
   const captureLockRef = useRef(false);
   const phoneInputRef = useRef<TextInput | null>(null);
 
@@ -115,26 +128,45 @@ export default function KbsCaptureIdScreen() {
     setPhoneInput(text.replace(/[^\d+()\s-]/g, '').slice(0, 24));
   }, []);
 
+  const onTcPhoneChange = useCallback((text: string) => {
+    setTcPhoneInput(text.replace(/[^\d+()\s-]/g, '').slice(0, 24));
+  }, []);
+
   const roomNoTrimmed = roomNoInput.trim();
   const phoneTrimmed = phoneInput.trim();
 
+  const captureSide: KbsCaptureSide = captureMode === 'mrz_back' ? 'mrz_back' : 'front';
+  const imageQueue = queue.filter((item): item is CaptureImageItem => item.kind === 'image');
+  const tcQueueCount = queue.filter((item) => item.kind === 'tc').length;
+
   const queueGalleryItems = useMemo(
     () =>
-      queue.map((item, index) => ({
+      imageQueue.map((item, index) => ({
         id: item.id,
         uri: item.imageUri,
         roomNumber: roomNoTrimmed || null,
         label: `Kimlik ${index + 1}`,
       })),
-    [queue, roomNoTrimmed]
+    [imageQueue, roomNoTrimmed]
   );
 
   const openQueueGallery = useCallback(
     (itemId: string) => {
-      const idx = queue.findIndex((item) => item.id === itemId);
+      const idx = imageQueue.findIndex((item) => item.id === itemId);
       if (idx >= 0) setGalleryIndex(idx);
     },
-    [queue]
+    [imageQueue]
+  );
+
+  const switchCaptureMode = useCallback(
+    (next: CaptureMode) => {
+      if (next === captureMode) return;
+      setCaptureMode(next);
+      if (next === 'tc') {
+        setTimeout(() => tcInputRef.current?.focus(), 280);
+      }
+    },
+    [captureMode]
   );
 
   const onRoomNoChange = useCallback((text: string) => {
@@ -183,23 +215,28 @@ export default function KbsCaptureIdScreen() {
     return () => clearTimeout(t);
   }, [roomModalVisible]);
 
-  /** Android: KeyboardAvoidingView height titremesini önlemek için klavye yüksekliği manuel. */
+  /** Android: oda modalı + T.C. girişi klavye yüksekliği. */
   useEffect(() => {
-    if (!IS_ANDROID || !roomModalVisible) {
+    if (!IS_ANDROID) return;
+    if (!roomModalVisible && captureMode !== 'tc') {
       setAndroidKeyboardInset(0);
+      setTcKeyboardInset(0);
       return;
     }
     const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
-      setAndroidKeyboardInset(Math.max(0, e.endCoordinates?.height ?? 0));
+      const h = Math.max(0, e.endCoordinates?.height ?? 0);
+      if (roomModalVisible) setAndroidKeyboardInset(h);
+      if (captureMode === 'tc') setTcKeyboardInset(h);
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
       setAndroidKeyboardInset(0);
+      setTcKeyboardInset(0);
     });
     return () => {
       showSub.remove();
       hideSub.remove();
     };
-  }, [roomModalVisible]);
+  }, [roomModalVisible, captureMode]);
 
   const goBack = useCallback(() => {
     navigateStaffBack(router, navigation as NavigationProp<ParamListBase>, pathname, STAFF_TABS_FALLBACK);
@@ -211,9 +248,10 @@ export default function KbsCaptureIdScreen() {
   }, [prefetchHistory, router]);
 
   const enqueueImageUris = useCallback(
-    (uris: string[], captureSource: CaptureItem['captureSource'], side: KbsCaptureSide) => {
+    (uris: string[], captureSource: CaptureImageItem['captureSource'], side: KbsCaptureSide) => {
       if (uris.length === 0) return;
-      const added = uris.map((imageUri) => ({
+      const added: CaptureImageItem[] = uris.map((imageUri) => ({
+        kind: 'image',
         id: newCaptureId(),
         imageUri,
         captureSource,
@@ -233,7 +271,7 @@ export default function KbsCaptureIdScreen() {
   );
 
   const enqueueCapturedImage = useCallback(
-    async (uri: string, captureSource: CaptureItem['captureSource'], opts?: { skipSplit?: boolean }) => {
+    async (uri: string, captureSource: CaptureImageItem['captureSource'], opts?: { skipSplit?: boolean }) => {
       setSplitting(true);
       try {
         const parts = opts?.skipSplit ? [uri] : await autoSplitKbsSheetImage(uri);
@@ -245,6 +283,46 @@ export default function KbsCaptureIdScreen() {
       }
     },
     [captureSide, enqueueImageUris]
+  );
+
+  const addTcToQueue = useCallback(
+    (override?: { tc?: string; fullName?: string; phone?: string }) => {
+      const tc = normalizeTcInput(override?.tc ?? tcInput);
+      const fullName = (override?.fullName ?? tcNameInput).trim();
+      const phone = (override?.phone ?? tcPhoneInput).trim();
+
+      if (!isTcManualEntryAcceptable(tc)) {
+        Alert.alert('Geçersiz T.C.', '11 haneli T.C. kimlik numarası girin (ilk rakam 0 olamaz).');
+        return;
+      }
+
+      let duplicate = false;
+      setQueue((q) => {
+        if (q.some((item) => item.kind === 'tc' && item.tc === tc)) {
+          duplicate = true;
+          return q;
+        }
+        const row: Extract<QueueItem, { kind: 'tc' }> = {
+          kind: 'tc',
+          id: newCaptureId(),
+          tc,
+          fullName,
+          phone,
+        };
+        return [...q, row];
+      });
+
+      if (duplicate) {
+        Alert.alert('Zaten listede', 'Bu T.C. numarası kuyrukta mevcut.');
+        return;
+      }
+
+      setTcInput('');
+      setTcNameInput('');
+      setTcPhoneInput('');
+      setTimeout(() => tcInputRef.current?.focus(), 120);
+    },
+    [tcInput, tcNameInput, tcPhoneInput]
   );
 
   const removeFromQueue = useCallback((itemId: string) => {
@@ -351,7 +429,7 @@ export default function KbsCaptureIdScreen() {
     const count = items.length;
     savingRef.current = true;
     setSaving(true);
-    setSaveStatus(`${count} kimlik kaydediliyor…`);
+    setSaveStatus(`${count} kayıt kaydediliyor…`);
     Keyboard.dismiss();
 
     try {
@@ -365,14 +443,27 @@ export default function KbsCaptureIdScreen() {
         roomPrefetchRef.current = { key: roomNoTrimmed, room };
       }
 
-      const saveItems: KbsCaptureSaveItem[] = items.map((item, index) => ({
-        imageUri: item.imageUri,
-        index,
-        clientId: item.id,
-        captureSource: item.captureSource,
-        captureSide: item.captureSide,
-        guestPhone: phoneTrimmed || null,
-      }));
+      const saveItems: KbsCaptureSaveItem[] = items.map((item, index) => {
+        if (item.kind === 'tc') {
+          return {
+            kind: 'tc',
+            tcNumber: item.tc,
+            fullName: item.fullName || null,
+            index,
+            clientId: item.id,
+            guestPhone: item.phone || phoneTrimmed || null,
+          };
+        }
+        return {
+          kind: 'image',
+          imageUri: item.imageUri,
+          index,
+          clientId: item.id,
+          captureSource: item.captureSource,
+          captureSide: item.captureSide,
+          guestPhone: phoneTrimmed || null,
+        };
+      });
 
       setSaveStatus(t('kbsSaveFinishing'));
       const saved = await saveKbsCaptureItemsParallel(saveItems, room, (msg) => setSaveStatus(msg));
@@ -383,6 +474,9 @@ export default function KbsCaptureIdScreen() {
       setQueue([]);
       setRoomNoInput('');
       setPhoneInput('');
+      setTcInput('');
+      setTcNameInput('');
+      setTcPhoneInput('');
       roomPrefetchRef.current = null;
       setRoomModalVisible(false);
 
@@ -404,31 +498,18 @@ export default function KbsCaptureIdScreen() {
     }
   };
 
-  const cameraActive = isFocused && !roomModalVisible && !saving && permission?.granted;
+  const cameraActive =
+    captureMode !== 'tc' && isFocused && !roomModalVisible && !saving && permission?.granted;
 
-  const queueStrip = (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.queueStrip}
-    >
-      {(queue ?? []).map((item, index) => (
-        <View key={item.id} style={styles.queueStripCard}>
-          <Pressable style={styles.queueStripThumbWrap} onPress={() => openQueueGallery(item.id)}>
-            <Image source={{ uri: item.imageUri }} style={styles.queueStripThumb} contentFit="cover" />
-            <Text style={styles.queueStripIndex}>{index + 1}</Text>
-          </Pressable>
-          <TouchableOpacity
-            style={styles.queueStripRemove}
-            onPress={() => removeFromQueue(item.id)}
-            hitSlop={8}
-            accessibilityLabel={t('kbsRemoveFromListA11y')}
-          >
-            <Ionicons name="close-circle" size={22} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      ))}
-    </ScrollView>
+  const queuePanel = (
+    <KbsCaptureQueuePanel
+      items={queue}
+      onOpenImage={openQueueGallery}
+      onRemove={removeFromQueue}
+      removeA11yLabel={t('kbsRemoveFromListA11y')}
+      layout={captureMode === 'tc' || queue.length > 2 ? 'list' : 'strip'}
+      maxListHeight={captureMode === 'tc' ? 320 : 220}
+    />
   );
 
   return (
@@ -452,8 +533,8 @@ export default function KbsCaptureIdScreen() {
           }}
         />
       ) : (
-        <View style={styles.cameraPlaceholder}>
-          {!permission?.granted ? (
+        <View style={[styles.cameraPlaceholder, captureMode === 'tc' && styles.tcBackdrop]}>
+          {captureMode === 'tc' ? null : !permission?.granted ? (
             <>
               <Text style={styles.placeholderText}>Kamera izni gerekli</Text>
               <TouchableOpacity style={styles.permBtn} onPress={() => void requestPermission()}>
@@ -467,89 +548,213 @@ export default function KbsCaptureIdScreen() {
       )}
 
       <View style={styles.overlay} pointerEvents="box-none">
-        <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
-          <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel="Geri">
-            <Ionicons name="chevron-back" size={30} color="#fff" />
-          </Pressable>
-          <Text style={styles.title}>Kimlik / Pasaport</Text>
-          <View style={styles.topBarRight}>
-            <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel={t('kbsCapturedListA11y')}>
-              <Ionicons name="albums" size={18} color="#fff" />
-              <Text style={styles.capturedListBtnText}>Çekilenler</Text>
+        <View style={styles.topControls}>
+          <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
+            <Pressable style={styles.iconBtn} onPress={goBack} accessibilityLabel="Geri">
+              <Ionicons name="chevron-back" size={30} color="#fff" />
             </Pressable>
+            <Text style={styles.title}>Kimlik / Pasaport</Text>
+            <View style={styles.topBarRight}>
+              <Pressable style={styles.capturedListBtn} onPress={openHistory} accessibilityLabel={t('kbsCapturedListA11y')}>
+                <Ionicons name="albums" size={18} color="#fff" />
+                <Text style={styles.capturedListBtnText}>Çekilenler</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.sideModeRow}>
+            <Pressable
+              style={[styles.sideModeBtn, captureMode === 'front' && styles.sideModeBtnActive]}
+              onPress={() => switchCaptureMode('front')}
+              accessibilityRole="button"
+              accessibilityState={{ selected: captureMode === 'front' }}
+            >
+              <Text style={[styles.sideModeBtnText, captureMode === 'front' && styles.sideModeBtnTextActive]}>
+                {t('kbsCaptureSideFront')}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.sideModeBtn, captureMode === 'mrz_back' && styles.sideModeBtnActive]}
+              onPress={() => switchCaptureMode('mrz_back')}
+              accessibilityRole="button"
+              accessibilityState={{ selected: captureMode === 'mrz_back' }}
+            >
+              <Text style={[styles.sideModeBtnText, captureMode === 'mrz_back' && styles.sideModeBtnTextActive]}>
+                {t('kbsCaptureSideMrz')}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.sideModeBtn, captureMode === 'tc' && styles.sideModeBtnActive]}
+              onPress={() => switchCaptureMode('tc')}
+              accessibilityRole="button"
+              accessibilityState={{ selected: captureMode === 'tc' }}
+            >
+              <Text style={[styles.sideModeBtnText, captureMode === 'tc' && styles.sideModeBtnTextActive]}>T.C.</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.stepBadge}>
+            <Text style={styles.stepBadgeText}>
+              {queue.length > 0
+                ? `${queue.length} kayıt${tcQueueCount > 0 ? ` (${tcQueueCount} T.C.)` : ''} · İleri: oda no`
+                : captureMode === 'tc'
+                  ? 'T.C. numarası girin — tek tek veya çoklu'
+                  : captureMode === 'mrz_back'
+                    ? t('kbsMrzFrameHint')
+                    : t('kbsFrontFrameHint')}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.sideModeRow}>
-          <Pressable
-            style={[styles.sideModeBtn, captureSide === 'front' && styles.sideModeBtnActive]}
-            onPress={() => setCaptureSide('front')}
-            accessibilityRole="button"
-            accessibilityState={{ selected: captureSide === 'front' }}
-          >
-            <Text style={[styles.sideModeBtnText, captureSide === 'front' && styles.sideModeBtnTextActive]}>
-              {t('kbsCaptureSideFront')}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.sideModeBtn, captureSide === 'mrz_back' && styles.sideModeBtnActive]}
-            onPress={() => setCaptureSide('mrz_back')}
-            accessibilityRole="button"
-            accessibilityState={{ selected: captureSide === 'mrz_back' }}
-          >
-            <Text style={[styles.sideModeBtnText, captureSide === 'mrz_back' && styles.sideModeBtnTextActive]}>
-              {t('kbsCaptureSideMrz')}
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.stepBadge}>
-          <Text style={styles.stepBadgeText}>
-            {queue.length > 0
-              ? `${queue.length} belge · İleri: oda no`
-              : captureSide === 'mrz_back'
-                ? t('kbsMrzFrameHint')
-                : t('kbsFrontFrameHint')}
-          </Text>
-        </View>
-
-        {captureSide === 'mrz_back' ? (
+        <View style={styles.overlayMiddle}>
+        {captureMode === 'mrz_back' ? (
           <View style={styles.mrzGuide} pointerEvents="none">
             <View style={styles.mrzGuideBand} />
           </View>
         ) : null}
 
-        {queueStrip}
+        {captureMode === 'tc' ? (
+          <View style={styles.tcModeShell}>
+            <KeyboardAvoidingView
+              style={styles.tcModeBody}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Math.max(insets.top, 12) + 48}
+            >
+            <ScrollView
+              style={styles.tcModeScroll}
+              contentContainerStyle={[
+                styles.tcModeScrollContent,
+                IS_ANDROID && tcKeyboardInset > 0 ? { paddingBottom: tcKeyboardInset + 12 } : null,
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.tcEntryCard}>
+                <Text style={styles.tcEntryTitle}>T.C. kimlik numarası</Text>
+                <Text style={styles.tcEntrySub}>Kimlik fotokopisi alınmayan misafirler için</Text>
+                <TextInput
+                  ref={tcInputRef}
+                  style={styles.tcEntryInput}
+                  value={tcInput}
+                  onChangeText={(text) => setTcInput(normalizeTcInput(text))}
+                  placeholder="11 haneli T.C. no"
+                  placeholderTextColor="rgba(148,163,184,0.9)"
+                  keyboardType="number-pad"
+                  maxLength={11}
+                  returnKeyType="next"
+                  onSubmitEditing={() => tcNameInputRef.current?.focus()}
+                  editable={!saving}
+                />
+                <Text style={styles.tcEntryLabel}>Ad soyad (isteğe bağlı)</Text>
+                <TextInput
+                  ref={tcNameInputRef}
+                  style={styles.tcEntryNameInput}
+                  value={tcNameInput}
+                  onChangeText={setTcNameInput}
+                  placeholder="Örn. Ayşe Yılmaz"
+                  placeholderTextColor="rgba(148,163,184,0.9)"
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                  onSubmitEditing={() => tcPhoneInputRef.current?.focus()}
+                  editable={!saving}
+                />
+                <Text style={styles.tcEntryLabel}>Telefon numarası (isteğe bağlı)</Text>
+                <View style={styles.tcEntryPhoneWrap}>
+                  <Ionicons name="call-outline" size={18} color="#94a3b8" style={styles.tcEntryPhoneIcon} />
+                  <TextInput
+                    ref={tcPhoneInputRef}
+                    style={styles.tcEntryPhoneInput}
+                    value={tcPhoneInput}
+                    onChangeText={onTcPhoneChange}
+                    placeholder="Örn. 0555 123 45 67"
+                    placeholderTextColor="rgba(148,163,184,0.9)"
+                    keyboardType="phone-pad"
+                    autoComplete="tel"
+                    textContentType="telephoneNumber"
+                    returnKeyType="done"
+                    onSubmitEditing={() =>
+                      addTcToQueue({ tc: tcInput, fullName: tcNameInput, phone: tcPhoneInput })
+                    }
+                    editable={!saving}
+                    maxLength={24}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.tcInlineAddBtn, (saving || tcInput.length < 11) && styles.tcInlineAddBtnDisabled]}
+                  onPress={() => addTcToQueue()}
+                  disabled={saving || tcInput.length < 11}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#fff" />
+                  <Text style={styles.tcInlineAddBtnText}>Listeye ekle</Text>
+                </TouchableOpacity>
+              </View>
 
-        <View style={[styles.bottomBar, { marginBottom: Math.max(insets.bottom + 96, 124) }]}>
-          <View style={styles.bottomSide}>
-            <TouchableOpacity
-              style={styles.galleryBtn}
-              onPress={() => void handlePickGallery()}
-              disabled={saving || splitting}
-              accessibilityLabel={t('kbsAddFromGalleryA11y')}
-            >
-              <Ionicons name="images-outline" size={22} color="#fff" />
-              <Text style={styles.galleryBtnLabel}>Galeri</Text>
-            </TouchableOpacity>
+              {queue.length > 0 ? queuePanel : (
+                <View style={styles.tcEmptyList}>
+                  <Ionicons name="list-outline" size={22} color="rgba(148,163,184,0.8)" />
+                  <Text style={styles.tcEmptyListText}>Eklenen T.C. ve kimlikler burada listelenir</Text>
+                </View>
+              )}
+            </ScrollView>
+            </KeyboardAvoidingView>
           </View>
-          <View style={styles.bottomCenter}>
-            <TouchableOpacity
-              style={styles.captureBtn}
-              onPress={() => void handleCapture()}
-              disabled={saving || splitting || !cameraReady || !cameraActive}
-              accessibilityLabel={t('kbsCaptureIdA11y')}
-            >
-              <View style={styles.captureInner} />
-            </TouchableOpacity>
-          </View>
-          <View style={[styles.bottomSide, styles.bottomSideEnd]}>
-            <TouchableOpacity style={styles.forwardBtn} onPress={openRoomModal} disabled={saving}>
-              <Ionicons name="arrow-forward" size={22} color="#fff" />
-              <Text style={styles.forwardText}>İleri</Text>
-            </TouchableOpacity>
-          </View>
+        ) : null}
+
+        {captureMode !== 'tc' ? queuePanel : null}
         </View>
+
+        {captureMode === 'tc' ? (
+          <View style={[styles.bottomBar, styles.bottomBarTc, { marginBottom: Math.max(insets.bottom + 8, 16) }]}>
+            <View style={styles.bottomSide} />
+            <View style={styles.bottomCenter}>
+              <TouchableOpacity
+                style={[styles.tcAddBtn, (saving || tcInput.length < 11) && styles.tcAddBtnDisabled]}
+                onPress={() => addTcToQueue()}
+                disabled={saving || tcInput.length < 11}
+                accessibilityLabel="T.C. ekle"
+              >
+                <Ionicons name="add-circle" size={28} color="#fff" />
+                <Text style={styles.tcAddBtnText}>Ekle</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.bottomSide, styles.bottomSideEnd]}>
+              <TouchableOpacity style={styles.forwardBtn} onPress={openRoomModal} disabled={saving}>
+                <Ionicons name="arrow-forward" size={22} color="#fff" />
+                <Text style={styles.forwardText}>İleri</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <View style={[styles.bottomBar, { marginBottom: Math.max(insets.bottom + 96, 124) }]}>
+            <View style={styles.bottomSide}>
+              <TouchableOpacity
+                style={styles.galleryBtn}
+                onPress={() => void handlePickGallery()}
+                disabled={saving || splitting}
+                accessibilityLabel={t('kbsAddFromGalleryA11y')}
+              >
+                <Ionicons name="images-outline" size={22} color="#fff" />
+                <Text style={styles.galleryBtnLabel}>Galeri</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.bottomCenter}>
+              <TouchableOpacity
+                style={styles.captureBtn}
+                onPress={() => void handleCapture()}
+                disabled={saving || splitting || !cameraReady || !cameraActive}
+                accessibilityLabel={t('kbsCaptureIdA11y')}
+              >
+                <View style={styles.captureInner} />
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.bottomSide, styles.bottomSideEnd]}>
+              <TouchableOpacity style={styles.forwardBtn} onPress={openRoomModal} disabled={saving}>
+                <Ionicons name="arrow-forward" size={22} color="#fff" />
+                <Text style={styles.forwardText}>İleri</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       {(saving || splitting) && !roomModalVisible ? (
@@ -599,7 +804,8 @@ export default function KbsCaptureIdScreen() {
               showsVerticalScrollIndicator={false}
             >
               <Text style={styles.roomSheetSub}>
-                {queue.length} kimlik — oda numarası zorunlu, telefon isteğe bağlı
+                {queue.length} kayıt — oda numarası zorunlu, telefon isteğe bağlı
+                {tcQueueCount > 0 ? ` (${tcQueueCount} T.C. kaydı)` : ''}
               </Text>
 
               <Text style={styles.roomLabel}>Oda numarası</Text>
@@ -701,7 +907,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   permBtnText: { color: '#fff', fontWeight: '800' },
-  overlay: { flex: 1, justifyContent: 'space-between' },
+  overlay: { flex: 1, justifyContent: 'flex-start' },
+  topControls: { width: '100%' },
+  overlayMiddle: { flex: 1, minHeight: 0, width: '100%' },
   topBar: {
     paddingHorizontal: 14,
     flexDirection: 'row',
@@ -743,7 +951,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignSelf: 'center',
     gap: 8,
-    marginTop: 10,
+    marginTop: 6,
     padding: 4,
     borderRadius: 22,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -758,6 +966,119 @@ const styles = StyleSheet.create({
   },
   sideModeBtnText: { color: 'rgba(255,255,255,0.75)', fontWeight: '800', fontSize: 13 },
   sideModeBtnTextActive: { color: '#fff' },
+  tcBackdrop: { backgroundColor: '#0f172a' },
+  tcModeShell: { flex: 1, minHeight: 0 },
+  tcModeBody: { flex: 1, minHeight: 0 },
+  tcModeScroll: { flex: 1 },
+  tcModeScrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    gap: 14,
+  },
+  tcEntryPanel: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  tcEntryCard: {
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: 'rgba(15,23,42,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.28)',
+    gap: 8,
+  },
+  tcEntryTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  tcEntrySub: { color: 'rgba(203,213,225,0.9)', fontSize: 12, lineHeight: 17, marginBottom: 4 },
+  tcEntryLabel: { color: 'rgba(226,232,240,0.92)', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  tcEntryInput: {
+    backgroundColor: 'rgba(30,41,59,0.95)',
+    borderWidth: 1,
+    borderColor: 'rgba(96,165,250,0.45)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 10,
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  tcEntryNameInput: {
+    backgroundColor: 'rgba(30,41,59,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 11 : 9,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  tcEntryPhoneWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(30,41,59,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    minHeight: 48,
+  },
+  tcEntryPhoneIcon: { marginRight: 8 },
+  tcEntryPhoneInput: {
+    flex: 1,
+    paddingVertical: Platform.OS === 'ios' ? 11 : 9,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  tcAddBtn: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 3,
+    borderColor: 'rgba(147,197,253,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(37,99,235,0.55)',
+    gap: 2,
+  },
+  tcAddBtnDisabled: { opacity: 0.45 },
+  tcAddBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  tcInlineAddBtn: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(37,99,235,0.9)',
+  },
+  tcInlineAddBtnDisabled: { opacity: 0.45 },
+  tcInlineAddBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  tcEmptyList: {
+    marginTop: 4,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.2)',
+    backgroundColor: 'rgba(30,41,59,0.45)',
+    paddingVertical: 22,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  tcEmptyListText: {
+    color: 'rgba(203,213,225,0.85)',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   mrzGuide: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'flex-end',
@@ -830,7 +1151,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     width: '100%',
+    marginTop: 'auto',
   },
+  bottomBarTc: { marginTop: 8 },
   bottomSide: { flex: 1, justifyContent: 'center', alignItems: 'flex-start' },
   bottomSideEnd: { alignItems: 'flex-end' },
   bottomCenter: { width: 96, alignItems: 'center', justifyContent: 'center' },

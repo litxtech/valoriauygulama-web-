@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
-import { familyMembersOf, isRecentlyAddedCapture, updateCaptureGuestPhone, type CaptureItem } from '../lib/captures';
+import {
+  familyMembersOf,
+  isRecentlyAddedCapture,
+  requestCaptureRead,
+  updateCaptureGuestPhone,
+  type CaptureItem,
+} from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
 import { ZoomLightbox } from './ZoomLightbox';
@@ -10,9 +16,17 @@ type Props = {
   onClose: () => void;
   onSelect: (item: CaptureItem) => void;
   onPhoneSaved?: (id: string, phone: string | null) => void;
+  onReadRequested?: (item: CaptureItem) => void;
 };
 
-export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPhoneSaved }: Props) {
+export function CaptureDetailModal({
+  item,
+  familyIndex,
+  onClose,
+  onSelect,
+  onPhoneSaved,
+  onReadRequested,
+}: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
@@ -24,10 +38,13 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   const [phone, setPhone] = useState(item.guest_phone_submitted ?? '');
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
+  const [readBusy, setReadBusy] = useState(false);
+  const [readMsg, setReadMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setPhone(item.guest_phone_submitted ?? '');
     setPhoneMsg(null);
+    setReadMsg(null);
     setZoom(null);
   }, [item.id, item.guest_phone_submitted]);
 
@@ -74,6 +91,24 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
   const copyAll = () => {
     const text = fields.map((f) => `${f.label}: ${f.value}`).join('\n');
     void copy('__all__', text);
+  };
+
+  const requestRead = async () => {
+    if (!item.front_image_url) {
+      setReadMsg('Görsel yok, okuma başlatılamaz.');
+      return;
+    }
+    setReadBusy(true);
+    setReadMsg(null);
+    try {
+      const updated = await requestCaptureRead(item);
+      onReadRequested?.(updated);
+      setReadMsg('Okuma kuyruğa alındı. Sonuç geldiğinde liste otomatik güncellenecek.');
+    } catch (e) {
+      setReadMsg(e instanceof Error ? e.message : 'Okuma başlatılamadı');
+    } finally {
+      setReadBusy(false);
+    }
   };
 
   const images = [item.front_image_url, item.back_image_url].filter(Boolean) as string[];
@@ -173,10 +208,21 @@ export function CaptureDetailModal({ item, familyIndex, onClose, onSelect, onPho
 
             <div className="fields-head">
               <h3>Kimlik Bilgileri</h3>
-              <button type="button" className="btn-ghost" onClick={copyAll}>
-                {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
-              </button>
+              <div className="fields-actions">
+                <button
+                  type="button"
+                  className="btn-primary btn-read"
+                  onClick={() => void requestRead()}
+                  disabled={readBusy || !item.front_image_url}
+                >
+                  {readBusy ? 'Okunuyor…' : 'Oku'}
+                </button>
+                <button type="button" className="btn-ghost" onClick={copyAll}>
+                  {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
+                </button>
+              </div>
             </div>
+            {readMsg ? <div className="read-msg">{readMsg}</div> : null}
 
             {fields.length === 0 ? (
               <p className="muted">Okunabilir alan yok. Belge yeniden çekilmeli.</p>

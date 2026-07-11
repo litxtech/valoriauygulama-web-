@@ -5,10 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  ScrollView,
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -23,6 +21,7 @@ import {
 } from '@/lib/storagePublicUpload';
 import { extractAndUploadFeedVideoThumbnail } from '@/lib/feedVideoThumbnail';
 import { FeedNewPostMediaSection } from '@/components/FeedNewPostMediaSection';
+import { FeedComposeLayout } from '@/components/feed/FeedComposeLayout';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { notifyGuestsOfNewFeedPost, notifyStaffOfNewFeedPost } from '@/lib/notifyNewFeedPost';
@@ -263,9 +262,34 @@ export default function NewFeedPostScreen() {
   if (!staff) return null;
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={88}>
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
-
+    <FeedComposeLayout
+      hasMedia={mediaItems.length > 0 || !!imageUri}
+      mediaSlot={
+        <FeedNewPostMediaSection
+          imageUri={imageUri}
+          mediaType={mediaType}
+          mediaItems={mediaItems}
+          uploading={uploading}
+          onCamera={takePhoto}
+          onGallery={pickImage}
+          onRemoveMedia={clearMedia}
+        />
+      }
+      footer={
+        <TouchableOpacity
+          style={[styles.submitBtn, uploading && styles.submitBtnDisabled]}
+          onPress={uploadAndPublish}
+          disabled={uploading}
+          activeOpacity={0.88}
+        >
+          {uploading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.submitBtnText}>{t('staffFeedPostShare')}</Text>
+          )}
+        </TouchableOpacity>
+      }
+    >
       <Text style={styles.label}>{t('feedTextLabel')}</Text>
       <TextInput
         style={[styles.input, styles.inputMultiline]}
@@ -279,16 +303,6 @@ export default function NewFeedPostScreen() {
         textAlignVertical="top"
       />
 
-      <FeedNewPostMediaSection
-        imageUri={imageUri}
-        mediaType={mediaType}
-        mediaItems={mediaItems}
-        uploading={uploading}
-        onCamera={takePhoto}
-        onGallery={pickImage}
-        onRemoveMedia={clearMedia}
-      />
-
       <FeedVisibilityPicker
         audience="staff"
         value={visibility}
@@ -296,18 +310,6 @@ export default function NewFeedPostScreen() {
         disabled={uploading}
       />
 
-      <TouchableOpacity
-        style={[styles.submitBtn, uploading && styles.submitBtnDisabled]}
-        onPress={uploadAndPublish}
-        disabled={uploading}
-        activeOpacity={0.88}
-      >
-        {uploading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.submitBtnText}>{t('staffFeedPostShare')}</Text>
-        )}
-      </TouchableOpacity>
       {uploading ? (
         <View style={styles.progressCard}>
           <Text style={styles.progressTitle}>{uploadStepLabel || t('loadingSub')}</Text>
@@ -315,7 +317,9 @@ export default function NewFeedPostScreen() {
             <View
               style={[
                 styles.progressFill,
-                { width: `${uploadTotal > 0 ? Math.min(100, Math.round((uploadCompleted / uploadTotal) * 100)) : 20}%` },
+                {
+                  width: `${uploadTotal > 0 ? Math.min(100, Math.round((uploadCompleted / uploadTotal) * 100)) : 20}%`,
+                },
               ]}
             />
           </View>
@@ -326,14 +330,11 @@ export default function NewFeedPostScreen() {
           </Text>
         </View>
       ) : null}
-    </ScrollView>
-    </KeyboardAvoidingView>
+    </FeedComposeLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 16, paddingBottom: 120 },
   label: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 8 },
   labelSpaced: { marginTop: 8 },
   input: {
@@ -367,7 +368,8 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 20,
+    marginHorizontal: 16,
+    marginBottom: Platform.OS === 'ios' ? 24 : 16,
   },
   submitBtnDisabled: { opacity: 0.7 },
   submitBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },

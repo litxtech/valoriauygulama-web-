@@ -184,3 +184,50 @@ export async function notifyPartnerCampaign(params: {
 
   return sent;
 }
+
+const VALORIA_BREAKFAST_VENUE = 'Valoria Hotel';
+
+/** Misafir QR'ı resepsiyonda okutulunca partner otel kullanıcılarına bildirim. */
+export async function notifyPartnerGuestPassRedeemed(params: {
+  partnerHotelId: string;
+  guestName: string;
+  roomNumber?: string | null;
+  passId?: string;
+}): Promise<void> {
+  const guestName = params.guestName.trim() || 'Misafir';
+  const roomHint = params.roomNumber?.trim() ? ` (Oda ${params.roomNumber.trim()})` : '';
+  const title = 'Misafir kahvaltıya başladı';
+  const body = `${guestName}${roomHint} QR okuttu — ${VALORIA_BREAKFAST_VENUE}'de kahvaltıya başladı.`;
+
+  const ids = await fetchPartnerUserIdsForHotel(params.partnerHotelId);
+  const passPath = params.passId
+    ? `/partner/guest-passes/${params.passId}`
+    : '/partner/guest-passes';
+
+  void sendPartnerPush({
+    partnerUserIds: ids,
+    title,
+    body,
+    data: {
+      notificationType: 'breakfast_guest_pass_redeemed',
+      screen: passPath,
+      url: passPath,
+      guestName,
+      roomNumber: params.roomNumber ?? null,
+      passId: params.passId ?? null,
+    },
+  });
+
+  void insertPartnerHotelNotification(
+    params.partnerHotelId,
+    'breakfast_guest_pass_redeemed',
+    title,
+    body,
+    {
+      guestName,
+      roomNumber: params.roomNumber ?? null,
+      passId: params.passId ?? null,
+      venue: VALORIA_BREAKFAST_VENUE,
+    }
+  );
+}

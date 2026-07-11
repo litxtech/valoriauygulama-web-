@@ -10,6 +10,12 @@ export type KbsWebHotel = { id: string; code: string; name: string; short_label:
 
 export type StaffFilterOption = { authId: string; name: string; count: number };
 
+export type CaptureStats = {
+  total: number;
+  today: number;
+  week: number;
+};
+
 const ENSURE_MSG: Record<string, string> = {
   PGRST106:
     'Supabase Data API ayarında «ops» şeması açık değil. Dashboard → Project Settings → Data API → Exposed schemas listesine ops ekleyin.',
@@ -100,7 +106,7 @@ export async function fetchCaptures(opts: {
     .schema('ops')
     .from('guest_documents')
     .select(SELECT_COLS)
-    .not('front_image_url', 'is', null)
+    .or('front_image_url.not.is.null,capture_source.eq.tc')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -221,6 +227,89 @@ export async function fetchCaptures(opts: {
     };
     return { ...row, parsed: parseRow(row, guest) };
   });
+}
+
+function startOfTodayIso(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+function startOfWeekIso(): string {
+  const d = new Date();
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+async function countCaptures(opts: {
+  hotelId?: string | null;
+  staffAuthId?: string | null;
+  sinceIso?: string | null;
+}): Promise<number> {
+  let query = supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select('id', { count: 'exact', head: true })
+    .or('front_image_url.not.is.null,capture_source.eq.tc');
+
+  if (opts.hotelId) query = query.eq('hotel_id', opts.hotelId);
+  if (opts.staffAuthId) query = query.eq('scanned_by_user_id', opts.staffAuthId);
+  if (opts.sinceIso) query = query.gte('created_at', opts.sinceIso);
+
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+/** Limitten bağımsız exact sayaçlar — kart listesi 300/400 ile sınırlı olsa bile doğru sayar. */
+export async function fetchCaptureStats(opts: {
+  hotelId?: string | null;
+  staffAuthId?: string | null;
+}): Promise<CaptureStats> {
+  const [total, today, week] = await Promise.all([
+    countCaptures(opts),
+    countCaptures({ ...opts, sinceIso: startOfTodayIso() }),
+    countCaptures({ ...opts, sinceIso: startOfWeekIso() }),
+  ]);
+  return { total, today, week };
+}
+
+function asPayloadObject(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {};
+}
+
+function withOcrPending(payload: unknown): Record<string, unknown> {
+  const next = asPayloadObject(payload);
+  const warningsRaw = next.warnings;
+  const warnings = Array.isArray(warningsRaw)
+    ? warningsRaw.filter((w): w is string => typeof w === 'string')
+    : [];
+  const cleaned = warnings.filter((w) => w !== 'ocr_failed' && w !== 'ocr_processing');
+  if (!cleaned.includes('ocr_pending')) cleaned.push('ocr_pending');
+  return { ...next, warnings: cleaned };
+}
+
+/**
+ * Web panelinden "Oku": kaydı OCR kuyruğuna alınmış gibi işaretler.
+ * Mobil/ops tarafındaki okuma işçisi bu bayrağı gördüğünde yeniden okuma yapabilir;
+ * web UI da anında "Okunuyor…" durumuna geçer.
+ */
+export async function requestCaptureRead(item: CaptureItem): Promise<CaptureItem> {
+  const nextPayload = withOcrPending(item.parsed_payload);
+  const { error } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .update({
+      parsed_payload: nextPayload,
+      scan_status: item.scan_status === 'ready_to_submit' ? item.scan_status : 'draft',
+    })
+    .eq('id', item.id);
+  if (error) throw new Error(error.message);
+
+  const nextRow: KbsCapturedDocumentRow = { ...item, parsed_payload: nextPayload };
+  return { ...nextRow, parsed: parseRow(nextRow) };
 }
 
 /** Personel filtresi için benzersiz çeken personel listesi. */

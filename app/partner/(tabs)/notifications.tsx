@@ -22,6 +22,7 @@ function notifIcon(type: string): keyof typeof Ionicons.glyphMap {
   if (type.includes('remind')) return 'alarm-outline';
   if (type.includes('suspended')) return 'pause-circle-outline';
   if (type.includes('breakfast_confirmation')) return 'cafe-outline';
+  if (type.includes('guest_pass')) return 'qr-code-outline';
   if (type.includes('camera')) return 'videocam-outline';
   return 'notifications-outline';
 }
@@ -125,7 +126,16 @@ export default function PartnerNotificationsScreen() {
           <NotifRow
             item={item}
             onPress={
-              item.notification_type.includes('breakfast_confirmation')
+              item.notification_type.includes('breakfast_guest_pass_redeemed')
+                ? () => {
+                    const passId = item.data?.passId ?? item.data?.pass_id;
+                    if (typeof passId === 'string' && passId) {
+                      router.push(`/partner/guest-passes/${passId}`);
+                    } else {
+                      router.push('/partner/guest-passes');
+                    }
+                  }
+                : item.notification_type.includes('breakfast_confirmation')
                 ? () => router.push('/partner/breakfast-confirmations')
                 : item.notification_type.includes('camera')
                   ? () => {

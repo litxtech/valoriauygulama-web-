@@ -3,6 +3,7 @@
  */
 import { supabase, supabaseMessaging } from '@/lib/supabase';
 import { getShareablePublicOrigin } from '@/lib/appPublicUrl';
+import { notifyPartnerGuestPassRedeemed } from '@/lib/breakfastPartnerNotify';
 import type { StaffPermissionSlice } from '@/lib/staffPermissions';
 
 const partnerDb = supabaseMessaging;
@@ -186,7 +187,14 @@ export async function redeemBreakfastGuestPass(
   });
   if (error) return { error: error.message };
   if (!data || typeof data !== 'object') return { error: 'QR onaylanamadı' };
-  return { pass: mapPassRow(data as Record<string, unknown>) };
+  const pass = mapPassRow(data as Record<string, unknown>);
+  void notifyPartnerGuestPassRedeemed({
+    partnerHotelId: pass.partnerHotelId,
+    guestName: pass.guestName,
+    roomNumber: pass.roomNumber,
+    passId: pass.id,
+  });
+  return { pass };
 }
 
 function mapPassDbRow(row: Record<string, unknown>): BreakfastGuestPass {

@@ -3,7 +3,7 @@ import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { isKbsPlaceholderName, mergeKbsOcrIntoExisting } from '@/lib/kbsCaptureOcrMerge';
-import { enrichKbsParsedFromSources } from '@/lib/kbsCaptureParsedFields';
+import { enrichKbsParsedFromSources, isKbsTcOnlyCapture } from '@/lib/kbsCaptureParsedFields';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
 import { findGuestDocumentByIdentity } from '@/lib/kbsGuestDocumentIdentity';
@@ -39,12 +39,12 @@ export async function fetchKbsCapturedDocuments(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
     .eq('hotel_id', ctx.hotelId)
-    .not('front_image_url', 'is', null)
+    .or('front_image_url.not.is.null,capture_source.eq.tc')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);
@@ -180,6 +180,10 @@ export function displayCapturedName(row: KbsCapturedDocumentRow): string {
 
   const label = kbsDisplayFullName(p);
   if (label && !isKbsPlaceholderName(p)) return label;
+
+  if (isKbsTcOnlyCapture(p) && p.documentNumber) {
+    return `T.C. ${p.documentNumber}`;
+  }
 
   return label || '—';
 }
@@ -471,7 +475,7 @@ export async function fetchKbsCapturedDocumentById(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -479,7 +483,8 @@ export async function fetchKbsCapturedDocumentById(
     .eq('id', docId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!doc?.front_image_url) return null;
+  const captureSource = (doc as { capture_source?: string | null } | null)?.capture_source ?? null;
+  if (!doc?.front_image_url && captureSource !== 'tc') return null;
 
   const row = doc as unknown as {
     id: string;

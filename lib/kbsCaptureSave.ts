@@ -13,8 +13,10 @@ import { type KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { kbsCaptureSideWarning } from '@/lib/kbsCaptureSideMeta';
 import { enqueueKbsCaptureOcrBatch, type KbsCaptureOcrJob } from '@/lib/kbsCaptureOcrQueue';
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
+import { isTcFormatValid } from '@/lib/kbsTcValidation';
 
-export type KbsCaptureSaveItem = {
+export type KbsCaptureImageSaveItem = {
+  kind: 'image';
   imageUri: string;
   index: number;
   captureSource: 'camera' | 'gallery';
@@ -28,6 +30,17 @@ export type KbsCaptureSaveItem = {
   /** İsteğe bağlı — oda onayında girilen müşteri telefon numarası (guest_phone_submitted). */
   guestPhone?: string | null;
 };
+
+export type KbsCaptureTcSaveItem = {
+  kind: 'tc';
+  tcNumber: string;
+  index: number;
+  clientId?: string;
+  fullName?: string | null;
+  guestPhone?: string | null;
+};
+
+export type KbsCaptureSaveItem = KbsCaptureImageSaveItem | KbsCaptureTcSaveItem;
 
 function buildFallbackParsed(
   _index: number,
@@ -90,11 +103,50 @@ function applyManualNames(
   return { ...fallback, firstName, lastName, fullName, warnings };
 }
 
+function splitOptionalFullName(fullName?: string | null): { firstName: string | null; lastName: string | null } {
+  const trimmed = fullName?.trim() ?? '';
+  if (!trimmed) return { firstName: null, lastName: null };
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: null, lastName: null };
+  if (parts.length === 1) return { firstName: sanitizePersonName(parts[0]!), lastName: null };
+  return {
+    firstName: sanitizePersonName(parts[0]!),
+    lastName: sanitizePersonName(parts.slice(1).join(' ')),
+  };
+}
+
+function buildTcOnlyParsed(tcNumber: string, fullName?: string | null): ParsedDocument {
+  const tc = tcNumber.trim();
+  const { firstName, lastName } = splitOptionalFullName(fullName);
+  const nameJoined = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+  const warnings: string[] = ['tc_only', 'manual_capture'];
+  if (nameJoined) warnings.push('manual_name');
+
+  return {
+    documentType: 'id_card',
+    fullName: nameJoined,
+    firstName,
+    lastName,
+    middleName: null,
+    documentNumber: tc,
+    personalNumber: tc,
+    nationalityCode: 'TUR',
+    issuingCountryCode: 'TUR',
+    birthDate: null,
+    expiryDate: null,
+    gender: null,
+    rawMrz: null,
+    confidence: null,
+    checksumsValid: null,
+    warnings,
+  };
+}
+
 export type KbsCaptureSaveResult = {
   guestDocumentId: string;
   guestId: string;
-  frontImageUrl: string;
-  localUri: string;
+  frontImageUrl: string | null;
+  localUri: string | null;
 };
 
 /** `ops.guest_documents.mrz_batch_key` — PostgreSQL uuid. */
@@ -135,14 +187,23 @@ export async function saveKbsCaptureItemsParallel(
 
   onProgress?.(`Kayıt tamamlanıyor (0/${total})…`);
 
-  type Pack = {
+  type ImagePack = {
     index: number;
     preparedUri: string;
     upload: { publicUrl: string };
   };
 
-  const packs: Pack[] = await Promise.all(
-    items.map(async (item, index) => {
+  const imageItems = items.filter((item): item is KbsCaptureImageSaveItem => item.kind === 'image');
+  const tcItems = items.filter((item): item is KbsCaptureTcSaveItem => item.kind === 'tc');
+
+  for (const tcItem of tcItems) {
+    if (!isTcFormatValid(tcItem.tcNumber.trim())) {
+      throw new Error(`Geçersiz T.C. kimlik no: ${tcItem.tcNumber}`);
+    }
+  }
+
+  const packs: ImagePack[] = await Promise.all(
+    imageItems.map(async (item) => {
       const clientId = item.clientId;
       let prewarm: KbsCapturePrewarmReady | null = null;
       if (clientId) {
@@ -151,7 +212,7 @@ export async function saveKbsCaptureItemsParallel(
 
       if (prewarm) {
         return {
-          index,
+          index: item.index,
           preparedUri: prewarm.preparedUri,
           upload: prewarm.upload,
         };
@@ -159,14 +220,43 @@ export async function saveKbsCaptureItemsParallel(
 
       const preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
       const upload = await uploadPassportPrivateFromUri({ uri: preparedUri, subfolder: 'kbs-documents' });
-      return { index, preparedUri, upload };
+      return { index: item.index, preparedUri, upload };
     })
   );
 
   onProgress?.(`Kayıtlar oluşturuluyor…`);
   const upserted = await Promise.all(
-    items.map(async (item, index) => {
-      const pack = packs.find((x) => x.index === index)!;
+    items.map(async (item) => {
+      if (item.kind === 'tc') {
+        const parsed = buildTcOnlyParsed(item.tcNumber, item.fullName);
+        const result = await upsertGuestDocumentLocal({
+          parsed,
+          scanConfidence: null,
+          rawMrz: null,
+          deferReady: false,
+          usageKind: 'konaklama',
+          kbsPersonKind: 'tc_citizen',
+          mrzBatchKey: batchKey,
+          guestPhone: item.guestPhone ?? null,
+          frontImageUrl: null,
+          backImageUrl: null,
+          captureSource: 'tc',
+          capturedAt,
+          ocrEngine: null,
+          opsContext: ctx,
+        });
+        if (!result.ok) throw new Error(result.message);
+        return {
+          item,
+          guestDocumentId: result.data.guestDocumentId,
+          guestId: result.data.guestId,
+          frontImageUrl: null as string | null,
+          localUri: null as string | null,
+        };
+      }
+
+      const pack = packs.find((x) => x.index === item.index);
+      if (!pack) throw new Error('Görsel yükleme paketi bulunamadı');
       const fallback = buildFallbackParsed(item.index, String(room.room_number), {
         firstName: item.firstName,
         lastName: item.lastName,
@@ -203,15 +293,20 @@ export async function saveKbsCaptureItemsParallel(
     })
   );
 
-  const ocrJobs: KbsCaptureOcrJob[] = upserted.map((row) => ({
-    docId: row.guestDocumentId,
-    guestId: row.guestId,
-    imageUrl: row.frontImageUrl,
-    localUri: row.localUri,
-    captureSide: row.item.captureSide ?? 'front',
-    captureSource: row.item.captureSource,
-  }));
-  enqueueKbsCaptureOcrBatch(ocrJobs);
+  const ocrJobs: KbsCaptureOcrJob[] = upserted
+    .filter((row) => row.item.kind === 'image' && row.frontImageUrl && row.localUri)
+    .map((row) => {
+      const imageItem = row.item as KbsCaptureImageSaveItem;
+      return {
+        docId: row.guestDocumentId,
+        guestId: row.guestId,
+        imageUrl: row.frontImageUrl!,
+        localUri: row.localUri!,
+        captureSide: imageItem.captureSide ?? 'front',
+        captureSource: imageItem.captureSource,
+      };
+    });
+  if (ocrJobs.length > 0) enqueueKbsCaptureOcrBatch(ocrJobs);
 
   onProgress?.(`Oda atanıyor…`);
   const assignRes = await assignKbsRoomsBatch({

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import * as ImagePicker from 'expo-image-picker';
@@ -11,6 +11,7 @@ import {
   FEED_MEDIA_UPLOAD_TIMEOUT_MS,
 } from '@/lib/storagePublicUpload';
 import { FeedNewPostMediaSection } from '@/components/FeedNewPostMediaSection';
+import { FeedComposeLayout } from '@/components/feed/FeedComposeLayout';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import {
@@ -200,47 +201,28 @@ export default function NewStoryScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 16}
-    >
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      >
-        <View style={styles.headerCard}>
-          <Text style={styles.title}>Yeni Story</Text>
-          <Text style={styles.subtitle}>{t('storyNewSubtitle')}</Text>
-        </View>
-
-        <FeedNewPostMediaSection
-          imageUri={imageUri}
-          mediaType={mediaType}
-          uploading={uploading}
-          onCamera={takeMedia}
-          onGallery={pickMedia}
-          onRemoveMedia={() => {
-            setImageUri(null);
-            setMediaType('image');
-          }}
-        />
-
-        <Text style={styles.label}>Kısa not (isteğe bağlı)</Text>
-        <TextInput
-          style={styles.input}
-          value={caption}
-          onChangeText={setCaption}
-          placeholder="Story notu..."
-          placeholderTextColor="#9ca3af"
-          maxLength={120}
-          editable={!uploading}
-        />
-
-        {uploadLabel ? <Text style={styles.uploadLabel}>{uploadLabel}</Text> : null}
-
+    <FeedComposeLayout
+      hasMedia={!!imageUri}
+      mediaSlot={
+        <>
+          <View style={styles.headerCard}>
+            <Text style={styles.title}>Yeni Story</Text>
+            <Text style={styles.subtitle}>{t('storyNewSubtitle')}</Text>
+          </View>
+          <FeedNewPostMediaSection
+            imageUri={imageUri}
+            mediaType={mediaType}
+            uploading={uploading}
+            onCamera={takeMedia}
+            onGallery={pickMedia}
+            onRemoveMedia={() => {
+              setImageUri(null);
+              setMediaType('image');
+            }}
+          />
+        </>
+      }
+      footer={
         <TouchableOpacity
           style={[styles.submitBtn, (uploading || !imageUri) && styles.submitBtnDisabled]}
           onPress={publishStory}
@@ -249,25 +231,40 @@ export default function NewStoryScreen() {
         >
           {uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Story Paylas</Text>}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      }
+    >
+      <Text style={styles.label}>Kısa not (isteğe bağlı)</Text>
+      <TextInput
+        style={styles.input}
+        value={caption}
+        onChangeText={setCaption}
+        placeholder="Story notu..."
+        placeholderTextColor="#9ca3af"
+        maxLength={120}
+        editable={!uploading}
+        returnKeyType="done"
+        blurOnSubmit
+      />
+
+      {uploadLabel ? <Text style={styles.uploadLabel}>{uploadLabel}</Text> : null}
+    </FeedComposeLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  content: { padding: 16, paddingBottom: 120 },
   headerCard: {
     backgroundColor: '#fff',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     padding: 14,
-    marginBottom: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
   },
   title: { fontSize: 22, fontWeight: '800', color: '#111827' },
   subtitle: { marginTop: 4, fontSize: 13, color: '#6b7280' },
-  label: { marginTop: 12, marginBottom: 8, fontSize: 14, fontWeight: '600', color: '#111827' },
+  label: { marginBottom: 8, fontSize: 14, fontWeight: '600', color: '#111827' },
   input: {
     backgroundColor: '#fff',
     borderWidth: 1,
@@ -285,7 +282,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   submitBtn: {
-    marginTop: 22,
+    marginHorizontal: 16,
+    marginBottom: Platform.OS === 'ios' ? 24 : 16,
     backgroundColor: '#b8860b',
     borderRadius: 12,
     paddingVertical: 15,

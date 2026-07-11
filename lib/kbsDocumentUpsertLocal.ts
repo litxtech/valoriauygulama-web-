@@ -45,7 +45,7 @@ export async function upsertGuestDocumentLocal(args: {
   motherName?: string | null;
   frontImageUrl?: string | null;
   backImageUrl?: string | null;
-  captureSource?: 'camera' | 'gallery' | 'mixed' | 'nfc' | null;
+  captureSource?: 'camera' | 'gallery' | 'mixed' | 'nfc' | 'tc' | null;
   capturedAt?: string | null;
   /** Toplu kayıtta tekrarlayan ensure_my_ops_app_user RPC çağrısını önler. */
   opsContext?: { hotelId: string; userId: string };
