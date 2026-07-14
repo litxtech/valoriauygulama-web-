@@ -92,11 +92,16 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       app.log.error({ err: e, transactionId: body.transactionId }, 'provider_checkin_failed');
+      // Asla boş/jenerik “Provider check-in failed” bırakma — teşhis için asıl mesaj.
+      const message =
+        detail && detail.trim() && detail.trim() !== 'Provider check-in failed'
+          ? detail.trim()
+          : `KBS check-in failed (ayrıntı yok). belge=${body.documentNumber ?? ''} ulke=${body.nationalityCode ?? ''} dogum=${body.birthDate ?? ''} oda=${body.roomNumber ?? ''} kind=${body.kbsPersonKind ?? ''}`;
       return reply.status(502).send({
         ok: false,
         error: {
           code: 'PROVIDER_ERROR',
-          message: detail && detail !== 'Provider check-in failed' ? detail : 'Provider check-in failed',
+          message,
         },
       });
     }

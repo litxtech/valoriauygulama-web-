@@ -26,6 +26,7 @@ export function buildApp() {
   app.get('/gateway/health', async () => ({
     ok: true,
     service: 'kbs-gateway-service',
+    build: '2026-07-15-wcf-alpha-order',
     ts: new Date().toISOString()
   }));
   /** Bilgi amaçlı — sabit IP zorunlu değil; Yetkisiz IP teşhisi için. */

@@ -245,10 +245,16 @@ function mapNotifyError(code: string, message: string): string {
     return `Pasaport zorunlu alanları eksik. Ad ve soyad dolu olmalı. (${message})`;
   }
   if (/provider check-in failed|provider_error|kbs check-in failed/i.test(lower)) {
-    return (
-      `Jandarma reddetti: ${detail}\n\n` +
-      'Kontrol: pasaport no (boşluksuz), uyruk (3 harf), doğum (GG.AA.YYYY), oda no.'
-    );
+    // Jenerik mesaj = genelde eski kbs-core veya WCF alan sırası; asıl Jandarma satırını göster.
+    if (/^provider check-in failed$/i.test(detail.trim())) {
+      return (
+        'Jandarma reddetti (ayrıntı gelmedi).\n\n' +
+        'Railway kbs-core yeniden deploy edilmeli. Admin → KBS ayarları → bağlantı testi; ' +
+        'health yanıtında build: 2026-07-15-wcf-alpha-order görünmeli.\n\n' +
+        'Alanlar dolu görünse de SOAP alan sırası / uyruk kodu (TC, UZB…) hatalı olabilir.'
+      );
+    }
+    return `Jandarma reddetti:\n${detail}`;
   }
   return message;
 }

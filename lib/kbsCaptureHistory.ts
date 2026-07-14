@@ -491,24 +491,20 @@ export function staffCanDeleteKbsCaptures(staff: {
   return staff.role === 'admin';
 }
 
-/** Admin: belge + yalnızca bu belgeye bağlı misafir (başka belge yoksa). */
+/** Admin: belge + bildirim işlemleri; başka belge yoksa misafir de silinir (RPC). */
 export async function deleteKbsCapturedDocument(
   docId: string,
   guestId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { error: docErr } = await supabase.schema('ops').from('guest_documents').delete().eq('id', docId);
-  if (docErr) return { ok: false, message: docErr.message };
+  const { data, error } = await supabase.rpc('kbs_delete_guest_document', {
+    p_guest_document_id: docId,
+    p_guest_id: guestId || null,
+  });
+  if (error) return { ok: false, message: error.message };
 
-  const { count, error: countErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('guest_id', guestId);
-  if (countErr) return { ok: true };
-
-  if ((count ?? 0) === 0) {
-    const { error: guestErr } = await supabase.schema('ops').from('guests').delete().eq('id', guestId);
-    if (guestErr) return { ok: false, message: guestErr.message };
+  const row = data as { ok?: boolean; error?: { message?: string } } | null;
+  if (row && row.ok === false) {
+    return { ok: false, message: row.error?.message ?? 'Silinemedi' };
   }
   return { ok: true };
 }

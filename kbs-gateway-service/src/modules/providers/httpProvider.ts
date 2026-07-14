@@ -81,6 +81,10 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       .replaceAll("'", '&apos;');
   }
 
+  /**
+   * WCF DataContractSerializer: Order yoksa alanlar alfabetik beklenir.
+   * Yanlış sıra → alanlar deserialize olmaz → boş belge/uyruk/doğum → reddedilir.
+   */
   private buildWcfDatacontractObjectXml(
     ns: string,
     fields: Record<string, string | null | undefined>,
@@ -89,7 +93,11 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const prefix = opts?.prefix ?? 'a';
     const iNs = 'http://www.w3.org/2001/XMLSchema-instance';
     const parts: string[] = [];
-    for (const [k, v] of Object.entries(fields)) {
+    const keys = Object.keys(fields)
+      .filter((k) => fields[k] !== undefined)
+      .sort((a, b) => a.localeCompare(b, 'en'));
+    for (const k of keys) {
+      const v = fields[k];
       if (v === undefined) continue;
       if (v === null) {
         parts.push(`<${prefix}:${k} xmlns:i="${iNs}" i:nil="true" />`);
@@ -98,6 +106,23 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       }
     }
     return `<musteri xmlns:${prefix}="${ns}" xmlns:i="${iNs}">${parts.join('')}</musteri>`;
+  }
+
+  /** OCR etiket sızıntısı: "Anne" / "Baba" gerçek isim değil → SOAP’a gönderme. */
+  private clipParentName(value: string | null | undefined): string | undefined {
+    const t = this.clipName(value);
+    if (!t) return undefined;
+    const fold = t
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^A-Z]/g, '');
+    if (
+      /^(?:ANNE|ANNEADI|BABA|BABAADI|MOTHER|FATHER|ANA|ATA|VALID|SURNAME|GIVENNAMES?)$/.test(fold)
+    ) {
+      return undefined;
+    }
+    return t;
   }
 
   /** Giriş/çıkış — KBS: "YYYY-MM-DD HH:MM:SS" (Türkiye saati). */
@@ -245,8 +270,8 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
         BELGESERI: seri || undefined,
         ADI: adi || undefined,
         SOYADI: soyadi || undefined,
-        BABAADI: this.clipName(payload.fatherName) || undefined,
-        ANAADI: this.clipName(payload.motherName) || undefined,
+        BABAADI: this.clipParentName(payload.fatherName),
+        ANAADI: this.clipParentName(payload.motherName),
         DOGUMTARIHI: dogum || undefined,
         ULKE: ulke || 'TC',
         CINSIYET: this.soapGender(payload.gender),
@@ -278,8 +303,8 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
         BELGESERI: seri,
         ADI: adi,
         SOYADI: soyadi,
-        BABAADI: this.clipName(payload.fatherName) || undefined,
-        ANAADI: this.clipName(payload.motherName) || undefined,
+        BABAADI: this.clipParentName(payload.fatherName),
+        ANAADI: this.clipParentName(payload.motherName),
         DOGUMTARIHI: dogum,
         ULKE: ulke,
         CINSIYET: this.soapGender(payload.gender),

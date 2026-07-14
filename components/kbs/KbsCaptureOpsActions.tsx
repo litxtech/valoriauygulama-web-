@@ -214,8 +214,16 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
       nationalityCode: form.nationality.trim() || null,
       issuingCountryCode: form.issuingCountry.trim() || null,
       gender: toGender(),
-      motherName: form.motherName.trim() || null,
-      fatherName: form.fatherName.trim() || null,
+      motherName: (() => {
+        const m = form.motherName.trim();
+        if (!m || /^(anne|anne\s*ad[ıi]|mother)$/i.test(m)) return null;
+        return m;
+      })(),
+      fatherName: (() => {
+        const m = form.fatherName.trim();
+        if (!m || /^(baba|baba\s*ad[ıi]|father)$/i.test(m)) return null;
+        return m;
+      })(),
       expiryDate: form.expiryDate.trim() || null,
       documentSeries: form.documentSeries.trim() || null,
       placeOfBirth: form.placeOfBirth.trim() || null,
