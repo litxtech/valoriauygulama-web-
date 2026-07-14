@@ -198,41 +198,54 @@ export function enrichKbsParsedFromSources(
   };
 }
 
-export function buildKbsCopyFields(parsed: ParsedDocument | null | undefined): KbsCopyField[] {
+export function buildKbsCopyFields(
+  parsed: ParsedDocument | null | undefined,
+  opts?: { showEmpty?: boolean }
+): KbsCopyField[] {
   if (!parsed) return [];
+  const showEmpty = opts?.showEmpty === true;
   const out: KbsCopyField[] = [];
   const push = (key: string, label: string, raw: string | null | undefined) => {
     const value = str(raw);
     if (value) out.push({ key, label, value });
+    else if (showEmpty) out.push({ key, label, value: '—' });
   };
 
-  if (isUsablePersonName(parsed.lastName)) push('lastName', 'Soyad', parsed.lastName);
-  if (isUsablePersonName(parsed.firstName)) push('firstName', 'Ad', parsed.firstName);
-
-  const tamAd = kbsDisplayFullName(parsed);
-  if (tamAd) push('fullName', 'Tam ad', tamAd);
+  push('lastName', 'Soyad', isUsablePersonName(parsed.lastName) ? parsed.lastName : null);
+  push('firstName', 'Ad', isUsablePersonName(parsed.firstName) ? parsed.firstName : null);
+  push('middleName', 'İkinci ad', parsed.middleName);
+  push('fullName', 'Tam ad', kbsDisplayFullName(parsed));
 
   push('documentNumber', 'Kimlik / pasaport no', parsed.documentNumber);
   push('documentSeries', 'Seri no', parsed.documentSeries);
+  push('personalNumber', 'Kişisel / ulusal no', parsed.personalNumber);
 
-  const birthTr = formatKbsTrDate(parsed.birthDate);
-  if (birthTr) push('birthDate', 'Doğum tarihi', birthTr);
+  push('birthDate', 'Doğum tarihi', formatKbsTrDate(parsed.birthDate) ?? parsed.birthDate);
+  push('placeOfBirth', 'Doğum yeri', parsed.placeOfBirth);
 
   const age = kbsAgeYearsFromBirthDate(parsed.birthDate);
-  if (age != null) push('age', 'Yaş', String(age));
+  push('age', 'Yaş', age != null ? String(age) : null);
 
-  const uyruk = formatKbsNationality(parsed.nationalityCode);
-  if (uyruk) push('nationalityCode', 'Uyruk', uyruk);
+  push(
+    'nationalityCode',
+    'Ülke / Uyruk',
+    formatKbsNationality(parsed.nationalityCode) ?? parsed.nationalityCode
+  );
+  push(
+    'issuingCountryCode',
+    'Veren ülke',
+    formatKbsNationality(parsed.issuingCountryCode) ?? parsed.issuingCountryCode
+  );
+  push('expiryDate', 'Son geçerlilik', formatKbsTrDate(parsed.expiryDate) ?? parsed.expiryDate);
 
-  const expiryTr = formatKbsTrDate(parsed.expiryDate);
-  if (expiryTr) push('expiryDate', 'Son kullanım tarihi', expiryTr);
-
-  if (parsed.gender) push('gender', 'Cinsiyet', GENDER_LABEL[parsed.gender] ?? parsed.gender);
-  if (parsed.maritalStatus) {
-    push('maritalStatus', 'Medeni hal', MARITAL_LABEL[parsed.maritalStatus] ?? parsed.maritalStatus);
-  }
-  if (isUsablePersonName(parsed.motherName)) push('motherName', 'Anne adı', parsed.motherName);
-  if (isUsablePersonName(parsed.fatherName)) push('fatherName', 'Baba adı', parsed.fatherName);
+  push('gender', 'Cinsiyet', parsed.gender ? GENDER_LABEL[parsed.gender] ?? parsed.gender : null);
+  push(
+    'maritalStatus',
+    'Medeni hal',
+    parsed.maritalStatus ? MARITAL_LABEL[parsed.maritalStatus] ?? parsed.maritalStatus : null
+  );
+  push('motherName', 'Anne adı', isUsablePersonName(parsed.motherName) ? parsed.motherName : null);
+  push('fatherName', 'Baba adı', isUsablePersonName(parsed.fatherName) ? parsed.fatherName : null);
 
   const docType =
     parsed.documentType === 'passport'
@@ -245,9 +258,6 @@ export function buildKbsCopyFields(parsed: ParsedDocument | null | undefined): K
             ? 'Diğer belge'
             : null;
   push('documentType', 'Belge türü', docType);
-
-  const issuing = formatKbsNationality(parsed.issuingCountryCode);
-  if (issuing && issuing !== uyruk) push('issuingCountryCode', 'Veren ülke', issuing);
 
   return out;
 }

@@ -83,6 +83,20 @@ export async function submitCheckIn(guestDocumentId: string) {
   return kbsOpsPost<{ transactionId: string }>('/submissions/check-in', { guestDocumentId });
 }
 
+/** Edge → kbs-core HMAC (Railway JWT / Unauthorized yok). */
+export async function submitCheckInEdge(
+  guestDocumentId: string
+): Promise<ApiResult<{ transactionId: string; idempotent?: boolean }>> {
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: { code: 'AUTH', message: 'Oturum gerekli' } };
+  const { data, error } = await supabase.functions.invoke('kbs-staff-ops', {
+    body: { action: 'submit_check_in', guestDocumentId },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (error) return { ok: false, error: { code: 'EDGE', message: error.message } };
+  return coerceResult(data);
+}
+
 export async function submitCheckOut(guestDocumentId: string) {
   return kbsOpsPost<{ transactionId: string }>('/submissions/check-out', { guestDocumentId });
 }
@@ -94,18 +108,25 @@ export async function notifyCaptureToKbs(args: {
   const assign = await assignOpsRoom(args.guestDocumentId, args.roomId);
   if (!assign.ok) return assign;
 
+  const submit = await submitCheckInEdge(args.guestDocumentId);
+  if (submit.ok) return { ok: true, data: { transactionId: submit.data.transactionId } };
+
+  // Yedek: eski Railway yolu
   await supabase
     .schema('ops')
     .from('guest_documents')
     .update({ scan_status: 'ready_to_submit' })
     .eq('id', args.guestDocumentId);
-
-  const mark = await markReady([args.guestDocumentId]);
-  if (!mark.ok) {
-    // local status already set
+  await markReady([args.guestDocumentId]);
+  const bridge = await submitCheckIn(args.guestDocumentId);
+  if (!bridge.ok) {
+    return {
+      ok: false,
+      error: {
+        code: submit.error.code,
+        message: `${submit.error.message}\n\n(Köprü yedek: ${bridge.error.message})`,
+      },
+    };
   }
-
-  const submit = await submitCheckIn(args.guestDocumentId);
-  if (!submit.ok) return submit;
-  return { ok: true, data: { transactionId: submit.data.transactionId } };
+  return { ok: true, data: { transactionId: bridge.data.transactionId } };
 }

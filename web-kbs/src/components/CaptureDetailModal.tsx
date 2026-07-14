@@ -37,7 +37,7 @@ export function CaptureDetailModal({
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
-  const fields = buildKbsCopyFields(parsed);
+  const fields = buildKbsCopyFields(parsed, { showEmpty: true });
   const [copied, setCopied] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
   const [, startTransition] = useTransition();

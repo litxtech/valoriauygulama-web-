@@ -5,8 +5,12 @@ import {
   markKbsCaptureOcrState,
 } from '@/lib/kbsCaptureHistory';
 import { parseIdCardImageUriGalleryDeep } from '@/lib/kbsCaptureGalleryDeepOcr';
+import { parseIdCardImageUriProfessional } from '@/lib/kbsCaptureProfessionalOcr';
 import { parseKbsCaptureSideFromWarnings } from '@/lib/kbsCaptureSideMeta';
-import { listCoreMissingIdFields, normalizeKbsParsedPayload } from '@/lib/kbsCaptureParsedFields';
+import {
+  listCoreMissingIdFields,
+  normalizeKbsParsedPayload,
+} from '@/lib/kbsCaptureParsedFields';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
@@ -24,13 +28,18 @@ function buildCorrectionParsed(existing: ParsedDocument, ocrParsed: ParsedDocume
   return next;
 }
 
+function collectOcrLines(parsed: ParsedDocument): string[] {
+  return parsed.rawMrz
+    ? parsed.rawMrz.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean)
+    : [];
+}
+
 /**
- * Yanlış okunan pasaport/kimlik — tam belge taraması + ad/soyad düzeltmesi.
- * Yalnızca kullanıcı "Düzelt" dediğinde çalışır.
+ * Okunmayan / eksik pasaport-kimlik — önce hızlı OCR, çekirdek eksikse derin tarama.
  */
 export async function correctKbsCapturedDocument(
   row: KbsCapturedDocumentRow,
-  opts?: { localUri?: string | null }
+  opts?: { localUri?: string | null; deep?: boolean }
 ): Promise<{ ok: true; coreComplete: boolean } | { ok: false; message: string }> {
   const url = row.front_image_url?.trim();
   if (!url) return { ok: false, message: 'Görsel bulunamadı' };
@@ -51,13 +60,28 @@ export async function correctKbsCapturedDocument(
     const prepared = await prepareProfessionalKbsOcrUri(local);
     const warnings = (row.parsed_payload as ParsedDocument | null)?.warnings;
     const captureSide = parseKbsCaptureSideFromWarnings(warnings);
+    const existing = normalizeKbsParsedPayload(row.parsed_payload);
 
-    const ocr = await parseIdCardImageUriGalleryDeep(prepared, { captureSide });
-    const allLines = ocr.parsed.rawMrz
-      ? ocr.parsed.rawMrz.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean)
-      : [];
-    const existing = normalizeKbsParsedPayload(row.parsed_payload) ?? ocr.parsed;
-    const corrected = buildCorrectionParsed(existing, ocr.parsed, allLines);
+    // 1) Hızlı profesyonel tarama
+    let ocr = await parseIdCardImageUriProfessional(prepared, {
+      captureSide,
+      imagePrepared: true,
+      fast: true,
+    });
+    let lines = collectOcrLines(ocr.parsed);
+    let corrected = buildCorrectionParsed(existing ?? ocr.parsed, ocr.parsed, lines);
+    let coreMissing = listCoreMissingIdFields(corrected);
+
+    // 2) Eksik çekirdek alan varsa derin tarama
+    if (opts?.deep === true || coreMissing.length > 0) {
+      const deep = await parseIdCardImageUriGalleryDeep(prepared, { captureSide });
+      const deepLines = collectOcrLines(deep.parsed);
+      const deepParsed = buildCorrectionParsed(corrected, deep.parsed, deepLines);
+      corrected = deepParsed;
+      ocr = deep;
+      lines = deepLines;
+      coreMissing = listCoreMissingIdFields(corrected);
+    }
 
     const res = await applyKbsCaptureOcrCorrection(
       row.id,
@@ -71,7 +95,7 @@ export async function correctKbsCapturedDocument(
       return res;
     }
 
-    const coreComplete = listCoreMissingIdFields(corrected).length === 0;
+    const coreComplete = coreMissing.length === 0;
     if (!coreComplete) {
       await markKbsCaptureOcrState(row.id, 'failed');
     }

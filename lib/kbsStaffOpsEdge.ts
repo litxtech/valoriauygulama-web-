@@ -100,7 +100,6 @@ export async function deactivateKbsOpsRoom(roomId: string): Promise<ApiResult<{ 
 
   if (!error) return { ok: true, data: { id } };
 
-  // RLS / expose yoksa Edge üzerinden
   const edge = await invokeStaffOps<{ id: string }>({ action: 'deactivate_room', roomId: id });
   if (edge.ok) return edge;
 
@@ -161,4 +160,14 @@ export async function assignKbsRoom(args: {
       message: `${edge.error.message}\n\n(Köprü yedek: ${bridge.error.message})`,
     },
   };
+}
+
+/** Check-in Bildir — Edge → kbs-core (Railway JWT / Unauthorized yok). */
+export async function submitKbsCheckInEdge(args: {
+  guestDocumentId: string;
+}): Promise<ApiResult<{ transactionId: string; idempotent?: boolean }>> {
+  return invokeStaffOps<{ transactionId: string; idempotent?: boolean }>({
+    action: 'submit_check_in',
+    guestDocumentId: args.guestDocumentId,
+  });
 }

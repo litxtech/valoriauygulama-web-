@@ -1,10 +1,10 @@
 import { supabase } from '@/lib/supabase';
-import { apiPost } from '@/lib/kbsApi';
-import { assignKbsRoom } from '@/lib/kbsStaffOpsEdge';
+import { assignKbsRoom, submitKbsCheckInEdge } from '@/lib/kbsStaffOpsEdge';
 import {
   enrichKbsParsedFromSources,
   normalizeKbsParsedPayload,
 } from '@/lib/kbsCaptureParsedFields';
+import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
@@ -14,14 +14,19 @@ export type KbsCaptureManualEdit = {
   documentNumber?: string | null;
   birthDate?: string | null;
   nationalityCode?: string | null;
+  issuingCountryCode?: string | null;
   gender?: 'M' | 'F' | 'X' | null;
   motherName?: string | null;
   fatherName?: string | null;
   expiryDate?: string | null;
   documentSeries?: string | null;
+  maritalStatus?: 'married' | 'single' | null;
+  placeOfBirth?: string | null;
+  personalNumber?: string | null;
+  middleName?: string | null;
 };
 
-/** Elle düzeltme: parsed_payload + guests + document_number. */
+/** Elle düzeltme: parsed_payload + guests + belge sütunları (KBS bağlamına yazılır). */
 export async function updateKbsCaptureManualFields(
   row: KbsCapturedDocumentRow,
   edit: KbsCaptureManualEdit
@@ -47,6 +52,7 @@ export async function updateKbsCaptureManualFields(
 
   const firstName = edit.firstName !== undefined ? edit.firstName?.trim() || null : base.firstName;
   const lastName = edit.lastName !== undefined ? edit.lastName?.trim() || null : base.lastName;
+  const middleName = edit.middleName !== undefined ? edit.middleName?.trim() || null : base.middleName;
   const documentNumber =
     edit.documentNumber !== undefined ? edit.documentNumber?.trim() || null : base.documentNumber;
   const birthDateRaw = edit.birthDate !== undefined ? edit.birthDate?.trim() || null : base.birthDate;
@@ -55,6 +61,10 @@ export async function updateKbsCaptureManualFields(
     edit.nationalityCode !== undefined
       ? edit.nationalityCode?.trim().toUpperCase() || null
       : base.nationalityCode;
+  const issuingCountryCode =
+    edit.issuingCountryCode !== undefined
+      ? edit.issuingCountryCode?.trim().toUpperCase() || null
+      : base.issuingCountryCode;
   const gender = edit.gender !== undefined ? edit.gender : base.gender;
   const motherName = edit.motherName !== undefined ? edit.motherName?.trim() || null : base.motherName;
   const fatherName = edit.fatherName !== undefined ? edit.fatherName?.trim() || null : base.fatherName;
@@ -62,32 +72,51 @@ export async function updateKbsCaptureManualFields(
   const expiryDate = expiryRaw && expiryRaw.length >= 10 ? expiryRaw.slice(0, 10) : expiryRaw;
   const documentSeries =
     edit.documentSeries !== undefined ? edit.documentSeries?.trim() || null : base.documentSeries;
+  const maritalStatus = edit.maritalStatus !== undefined ? edit.maritalStatus : base.maritalStatus;
+  const placeOfBirth =
+    edit.placeOfBirth !== undefined ? edit.placeOfBirth?.trim() || null : base.placeOfBirth;
+  const personalNumber =
+    edit.personalNumber !== undefined ? edit.personalNumber?.trim() || null : base.personalNumber;
 
   const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || base.fullName;
   const payload: ParsedDocument = {
     ...base,
     firstName,
     lastName,
+    middleName,
     fullName,
     documentNumber,
     documentSeries,
     birthDate,
     expiryDate,
     nationalityCode,
+    issuingCountryCode,
     gender,
     motherName: motherName ?? undefined,
     fatherName: fatherName ?? undefined,
+    maritalStatus: maritalStatus ?? undefined,
+    placeOfBirth: placeOfBirth ?? undefined,
+    personalNumber: personalNumber ?? undefined,
     warnings: (base.warnings ?? []).filter(
       (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
     ),
   };
 
+  const kind = inferKbsPersonKind(payload);
+  const seriesForDb =
+    documentSeries ||
+    (kind !== 'tc_citizen' && documentNumber ? documentNumber : null);
+
   const coreReady = !!(documentNumber && fullName);
   const docPatch: Record<string, unknown> = {
     parsed_payload: payload,
     document_number: documentNumber,
+    document_series: seriesForDb,
     nationality_code: nationalityCode,
+    issuing_country_code: issuingCountryCode,
     expiry_date: expiryDate,
+    kbs_person_kind: kind,
+    document_type: payload.documentType,
     scan_status: coreReady ? 'ready_to_submit' : row.scan_status ?? 'draft',
   };
 
@@ -102,6 +131,7 @@ export async function updateKbsCaptureManualFields(
     const guestPatch: Record<string, string | null> = {
       first_name: firstName,
       last_name: lastName,
+      middle_name: middleName,
       full_name: fullName,
       nationality_code: nationalityCode,
       gender: gender,
@@ -120,7 +150,22 @@ export async function updateKbsCaptureManualFields(
   return { ok: true };
 }
 
-/** Oda ata → hazır işaretle → check-in bildir. */
+function mapNotifyError(code: string, message: string): string {
+  const lower = `${code} ${message}`.toLowerCase();
+  if (/unauthorized|invalid.?signature|gateway_sign|invalid token|not authenticated/i.test(lower)) {
+    return (
+      'KBS bildirimi yetki/imza hatası. Oturumu yenileyin; ' +
+      'Edge kbs-staff-ops + KBS_CORE_URL / GATEWAY_SHARED_SECRET kontrol edin. ' +
+      `(${message})`
+    );
+  }
+  if (/forbidden|izin|permission|kbs_bildir/i.test(lower)) {
+    return `Bildir izni yok. Admin → Personel → KBS Bildir açın. (${message})`;
+  }
+  return message;
+}
+
+/** Oda ata → Edge üzerinden check-in (Railway JWT yok). */
 export async function notifyKbsCaptureToKbs(args: {
   guestDocumentId: string;
   roomId: string;
@@ -132,24 +177,10 @@ export async function notifyKbsCaptureToKbs(args: {
   });
   if (!assign.ok) return { ok: false, message: assign.error.message };
 
-  const status = args.currentStatus ?? '';
-  if (status === 'scanned' || status === 'draft' || status === 'incomplete' || !status) {
-    const mark = await apiPost<{ updated?: number }>('/documents/mark-ready', {
-      guestDocumentIds: [args.guestDocumentId],
-    });
-    if (!mark.ok) {
-      const { error } = await supabase
-        .schema('ops')
-        .from('guest_documents')
-        .update({ scan_status: 'ready_to_submit' })
-        .eq('id', args.guestDocumentId);
-      if (error) return { ok: false, message: mark.error.message };
-    }
+  // Edge: scan_status + Jandarma; Railway path kullanılmaz (Unauthorized).
+  const submit = await submitKbsCheckInEdge({ guestDocumentId: args.guestDocumentId });
+  if (!submit.ok) {
+    return { ok: false, message: mapNotifyError(submit.error.code, submit.error.message) };
   }
-
-  const submit = await apiPost<{ transactionId: string; idempotent?: boolean }>('/submissions/check-in', {
-    guestDocumentId: args.guestDocumentId,
-  });
-  if (!submit.ok) return { ok: false, message: submit.error.message };
   return { ok: true, transactionId: submit.data.transactionId };
 }

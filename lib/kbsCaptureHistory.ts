@@ -7,6 +7,7 @@ import { enrichKbsParsedFromSources, isKbsTcOnlyCapture } from '@/lib/kbsCapture
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
 import { findGuestDocumentByIdentity } from '@/lib/kbsGuestDocumentIdentity';
+import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
 import { log } from '@/lib/logger';
 
 export type KbsCapturedDocumentRow = {
@@ -163,6 +164,11 @@ async function commitKbsCaptureOcrPatch(
       ? Math.max(scanConfidence, payload.confidence ?? 0)
       : payload.confidence ?? scanConfidence;
 
+  const kind = inferKbsPersonKind(payload);
+  const series =
+    payload.documentSeries?.trim() ||
+    (kind !== 'tc_citizen' && docNo ? docNo : null);
+
   const patch: Record<string, unknown> = {
     parsed_payload: payload,
     scan_confidence: effectiveConfidence,
@@ -171,6 +177,9 @@ async function commitKbsCaptureOcrPatch(
     nationality_code: payload.nationalityCode,
     expiry_date: expiryDate,
     raw_mrz: payload.rawMrz,
+    document_series: series,
+    kbs_person_kind: kind,
+    document_type: payload.documentType,
     scan_status: coreReady ? 'ready_to_submit' : payload.rawMrz ? 'scanned' : 'draft',
   };
   if (writeDocumentNumber) {

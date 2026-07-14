@@ -61,14 +61,24 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
       (guest.birth_date ? String(guest.birth_date) : null);
     const gender = (typeof parsed.gender === 'string' ? parsed.gender : null) ?? (guest.gender ? String(guest.gender) : null);
     const middleFromParsed = typeof parsed.middleName === 'string' ? parsed.middleName : null;
+    const seriesFromParsed =
+      typeof parsed.documentSeries === 'string'
+        ? parsed.documentSeries
+        : typeof parsed.document_series === 'string'
+          ? parsed.document_series
+          : null;
+    const documentNumber = doc.document_number ?? (typeof parsed.documentNumber === 'string' ? parsed.documentNumber : null);
+    let documentSeries = doc.document_series ?? seriesFromParsed;
+    // Pasaport / yabancı: seri yoksa belge no (BELGESERI)
+    if (!documentSeries && documentNumber) documentSeries = documentNumber;
 
     return {
       fullName: guest.full_name ?? null,
       firstName: guest.first_name ?? null,
       lastName: guest.last_name ?? null,
       middleName: guest.middle_name ?? middleFromParsed,
-      documentNumber: doc.document_number ?? null,
-      documentSeries: doc.document_series ?? null,
+      documentNumber,
+      documentSeries,
       nationalityCode: doc.nationality_code ?? guest.nationality_code ?? null,
       issuingCountryCode: doc.issuing_country_code ?? null,
       birthDate,

@@ -22,6 +22,7 @@ import {
   notifyKbsCaptureToKbs,
   updateKbsCaptureManualFields,
 } from '@/lib/kbsCaptureNotify';
+import { validateCaptureNotifyForm } from '@/lib/kbsCaptureNotifyValidate';
 import { correctKbsCapturedDocument } from '@/lib/kbsCaptureOcrCorrection';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
@@ -34,32 +35,42 @@ type Props = {
 type FormState = {
   firstName: string;
   lastName: string;
+  middleName: string;
   docNo: string;
   birthDate: string;
   nationality: string;
+  issuingCountry: string;
   gender: string;
   motherName: string;
   fatherName: string;
   expiryDate: string;
   documentSeries: string;
+  placeOfBirth: string;
+  personalNumber: string;
+  maritalStatus: string;
 };
 
 function formFromParsed(p: ParsedDocument | null): FormState {
   return {
     firstName: p?.firstName ?? '',
     lastName: p?.lastName ?? '',
+    middleName: p?.middleName ?? '',
     docNo: p?.documentNumber ?? '',
     birthDate: p?.birthDate?.slice(0, 10) ?? '',
     nationality: p?.nationalityCode ?? '',
+    issuingCountry: p?.issuingCountryCode ?? '',
     gender: p?.gender ?? '',
     motherName: p?.motherName ?? '',
     fatherName: p?.fatherName ?? '',
     expiryDate: p?.expiryDate?.slice(0, 10) ?? '',
     documentSeries: p?.documentSeries ?? '',
+    placeOfBirth: p?.placeOfBirth ?? '',
+    personalNumber: p?.personalNumber ?? '',
+    maritalStatus:
+      p?.maritalStatus === 'married' ? 'EVLI' : p?.maritalStatus === 'single' ? 'BEKAR' : '',
   };
 }
 
-/** Kullanıcının dokunmadığı alanları OCR ile güncelle; elle değişenler korunur. */
 function softMergeForm(prev: FormState, next: FormState, dirty: Set<keyof FormState>): FormState {
   const out = { ...prev };
   (Object.keys(next) as (keyof FormState)[]).forEach((k) => {
@@ -82,7 +93,6 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const [reading, setReading] = useState(false);
 
   const ocrBusy = isKbsOcrInProgress(parsed) || reading;
-  const hasData = kbsCaptureHasReadableData(parsed);
 
   const patchField = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     dirtyRef.current.add(key);
@@ -93,7 +103,6 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
     const p = enrichKbsParsedFromSources(row.parsed_payload);
     const next = formFromParsed(p);
     setForm((prev) => {
-      // Yeni kayıt: dirty yoksa tamamen OCR ile doldur
       if (dirtyRef.current.size === 0) return next;
       return softMergeForm(prev, next, dirtyRef.current);
     });
@@ -142,7 +151,6 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const runReadRef = useRef(runRead);
   runReadRef.current = runRead;
 
-  // Eski sistem: açılınca otomatik oku (boş / bekleyen OCR).
   useEffect(() => {
     if (autoReadDoneRef.current === row.id) return;
     if (!row.front_image_url) {
@@ -160,29 +168,39 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
 
   const roomChips = useMemo(() => rooms.slice(0, 48), [rooms]);
 
+  const toGender = (): 'M' | 'F' | 'X' | null => {
+    const genderRaw = form.gender.trim().toUpperCase();
+    if (genderRaw === 'M' || genderRaw === 'E' || genderRaw === 'ERKEK') return 'M';
+    if (genderRaw === 'F' || genderRaw === 'K' || genderRaw === 'KADIN') return 'F';
+    if (genderRaw === 'X') return 'X';
+    return null;
+  };
+
+  const toMarital = (): 'married' | 'single' | null => {
+    const m = form.maritalStatus.trim().toUpperCase();
+    if (m === 'EVLI' || m === 'MARRIED' || m === 'E') return 'married';
+    if (m === 'BEKAR' || m === 'SINGLE' || m === 'B') return 'single';
+    return null;
+  };
+
   const saveFields = async (): Promise<boolean> => {
     setSaving(true);
-    const genderRaw = form.gender.trim().toUpperCase();
-    const gender =
-      genderRaw === 'M' || genderRaw === 'E' || genderRaw === 'ERKEK'
-        ? ('M' as const)
-        : genderRaw === 'F' || genderRaw === 'K' || genderRaw === 'KADIN'
-          ? ('F' as const)
-          : genderRaw === 'X'
-            ? ('X' as const)
-            : null;
-
     const res = await updateKbsCaptureManualFields(row, {
       firstName: form.firstName,
       lastName: form.lastName,
+      middleName: form.middleName.trim() || null,
       documentNumber: form.docNo,
       birthDate: form.birthDate.trim() || null,
       nationalityCode: form.nationality.trim() || null,
-      gender,
+      issuingCountryCode: form.issuingCountry.trim() || null,
+      gender: toGender(),
       motherName: form.motherName.trim() || null,
       fatherName: form.fatherName.trim() || null,
       expiryDate: form.expiryDate.trim() || null,
       documentSeries: form.documentSeries.trim() || null,
+      placeOfBirth: form.placeOfBirth.trim() || null,
+      personalNumber: form.personalNumber.trim() || null,
+      maritalStatus: toMarital(),
     });
     setSaving(false);
     if (!res.ok) {
@@ -201,14 +219,23 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
 
   const onNotify = async () => {
     if (!canNotify) return;
-    if (!roomId) {
-      Alert.alert('Oda seç', 'Bildirmeden önce oda seçin.');
+    const gate = validateCaptureNotifyForm(
+      {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        docNo: form.docNo,
+        documentSeries: form.documentSeries,
+        birthDate: form.birthDate,
+        nationality: form.nationality,
+        roomSelected: !!roomId,
+      },
+      enrichKbsParsedFromSources(row.parsed_payload)
+    );
+    if (!gate.ok) {
+      Alert.alert('KBS zorunlu alanlar', gate.message);
       return;
     }
-    if (!form.docNo.trim() || (!form.firstName.trim() && !form.lastName.trim())) {
-      Alert.alert('Eksik alan', 'Ad/soyad ve belge numarası gerekli. Önce Oku veya elle doldurun.');
-      return;
-    }
+
     setNotifying(true);
     const saved = await saveFields();
     if (!saved) {
@@ -217,7 +244,7 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
     }
     const res = await notifyKbsCaptureToKbs({
       guestDocumentId: row.id,
-      roomId,
+      roomId: roomId!,
       currentStatus: row.scan_status,
     });
     setNotifying(false);
@@ -233,11 +260,17 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   };
 
   const busy = saving || notifying || reading;
+  const docTypeLabel =
+    parsed?.documentType === 'passport'
+      ? 'Pasaport'
+      : parsed?.documentType === 'id_card'
+        ? 'Kimlik'
+        : 'Belge';
 
   return (
     <View style={styles.wrap}>
       <View style={styles.titleRow}>
-        <Text style={styles.title}>Okunan bilgiler</Text>
+        <Text style={styles.title}>Okunan bilgiler ({docTypeLabel})</Text>
         <Pressable
           style={[styles.readBtn, busy && styles.btnDisabled]}
           onPress={() => void runRead()}
@@ -255,15 +288,20 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
       </View>
       <Text style={styles.hint}>
         {ocrBusy
-          ? 'Belge okunuyor… Bittiğinde alanlar dolar; yanlışsa düzeltip kaydedin.'
-          : 'OCR ile doldurulur. Yanlışsa değiştirin, kaydedin' +
-            (canNotify ? ' veya oda seçip Bildir’e basın.' : '.')}
+          ? 'Belge okunuyor… Tüm alanlar doldurulacak; yanlışsa düzeltin.'
+          : 'Tüm okunan alanlar aşağıda. Yanlışsa değiştirin. Bildir yalnızca KBS zorunlu alanları gönderir.'}
       </Text>
 
       <Field label="Ad" value={form.firstName} onChangeText={(t) => patchField('firstName', t)} editable={!busy} />
       <Field label="Soyad" value={form.lastName} onChangeText={(t) => patchField('lastName', t)} editable={!busy} />
       <Field
-        label="Belge / pasaport no"
+        label="İkinci ad"
+        value={form.middleName}
+        onChangeText={(t) => patchField('middleName', t)}
+        editable={!busy}
+      />
+      <Field
+        label="Kimlik / pasaport no"
         value={form.docNo}
         onChangeText={(t) => patchField('docNo', t)}
         editable={!busy}
@@ -277,11 +315,24 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
         autoCap="characters"
       />
       <Field
+        label="Kişisel / ulusal no"
+        value={form.personalNumber}
+        onChangeText={(t) => patchField('personalNumber', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
+      <Field
         label="Doğum tarihi (YYYY-MM-DD)"
         value={form.birthDate}
         onChangeText={(t) => patchField('birthDate', t)}
         editable={!busy}
         keyboardType="numbers-and-punctuation"
+      />
+      <Field
+        label="Doğum yeri"
+        value={form.placeOfBirth}
+        onChangeText={(t) => patchField('placeOfBirth', t)}
+        editable={!busy}
       />
       <Field
         label="Son geçerlilik (YYYY-MM-DD)"
@@ -291,9 +342,16 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
         keyboardType="numbers-and-punctuation"
       />
       <Field
-        label="Uyruk (ISO)"
+        label="Ülke / Uyruk (ISO)"
         value={form.nationality}
         onChangeText={(t) => patchField('nationality', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
+      <Field
+        label="Veren ülke (ISO)"
+        value={form.issuingCountry}
+        onChangeText={(t) => patchField('issuingCountry', t)}
         editable={!busy}
         autoCap="characters"
       />
@@ -301,6 +359,13 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
         label="Cinsiyet (E/K veya M/F)"
         value={form.gender}
         onChangeText={(t) => patchField('gender', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
+      <Field
+        label="Medeni hal (EVLI/BEKAR)"
+        value={form.maritalStatus}
+        onChangeText={(t) => patchField('maritalStatus', t)}
         editable={!busy}
         autoCap="characters"
       />
@@ -334,7 +399,10 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
 
       {canNotify ? (
         <View style={styles.notifyBlock}>
-          <Text style={styles.title}>Bildir (KBS)</Text>
+          <Text style={styles.title}>Bildir (KBS zorunlu alanlar)</Text>
+          <Text style={styles.hint}>
+            Sistemde tüm bilgileri görürsünüz; Jandarma’ya yalnızca zorunlu alanlar gider.
+          </Text>
           {roomsLoading ? (
             <ActivityIndicator color={theme.colors.primary} />
           ) : roomChips.length === 0 ? (
