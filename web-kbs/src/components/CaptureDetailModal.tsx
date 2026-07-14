@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import {
   familyMembersOf,
   isRecentlyAddedCapture,
@@ -57,6 +57,7 @@ export function CaptureDetailModal({
   const [roomId, setRoomId] = useState<string | null>(null);
   const [opsBusy, setOpsBusy] = useState(false);
   const [opsMsg, setOpsMsg] = useState<string | null>(null);
+  const dirtyKeys = useRef(new Set<string>());
 
   useEffect(() => {
     setPhone(item.guest_phone_submitted ?? '');
@@ -64,13 +65,25 @@ export function CaptureDetailModal({
     setReadMsg(null);
     setOpsMsg(null);
     setZoom(null);
+    setRoomId(null);
+    dirtyKeys.current = new Set();
     setFirstName(item.parsed?.firstName ?? '');
     setLastName(item.parsed?.lastName ?? '');
     setDocNo(item.parsed?.documentNumber ?? '');
     setBirthDate(item.parsed?.birthDate?.slice(0, 10) ?? '');
     setNationality(item.parsed?.nationalityCode ?? '');
-    setRoomId(null);
-  }, [item.id, item.guest_phone_submitted, item.parsed]);
+  }, [item.id]);
+
+  // OCR sonucu gelince boş/elle dokunulmayan alanları doldur
+  useEffect(() => {
+    const p = item.parsed;
+    if (!p) return;
+    if (!dirtyKeys.current.has('firstName')) setFirstName(p.firstName ?? '');
+    if (!dirtyKeys.current.has('lastName')) setLastName(p.lastName ?? '');
+    if (!dirtyKeys.current.has('docNo')) setDocNo(p.documentNumber ?? '');
+    if (!dirtyKeys.current.has('birthDate')) setBirthDate(p.birthDate?.slice(0, 10) ?? '');
+    if (!dirtyKeys.current.has('nationality')) setNationality(p.nationalityCode ?? '');
+  }, [item.parsed]);
 
   useEffect(() => {
     if (!canNotify) return;
@@ -78,6 +91,11 @@ export function CaptureDetailModal({
       if (res.ok) setRooms(res.data);
     });
   }, [canNotify, item.id]);
+
+  const setDirty = (key: string, value: string, setter: (v: string) => void) => {
+    dirtyKeys.current.add(key);
+    setter(value);
+  };
 
   const savePhone = async () => {
     const next = phone.trim() ? phone.trim() : null;
@@ -292,30 +310,62 @@ export function CaptureDetailModal({
             </div>
 
             <div className="ops-edit-block">
-              <h3>Manuel düzeltme</h3>
+              <div className="ops-edit-head">
+                <h3>Okunan bilgiler</h3>
+                <button
+                  type="button"
+                  className="btn-primary btn-read"
+                  onClick={() => void requestRead()}
+                  disabled={readBusy || opsBusy || !item.front_image_url}
+                >
+                  {readBusy ? 'Okunuyor…' : 'Oku'}
+                </button>
+              </div>
               <p className="muted ops-hint">
-                Alanları düzeltin{canNotify ? ', kaydedin veya oda seçip Bildir’e basın' : ' ve kaydedin'}.
+                OCR ile doldurulur. Yanlışsa değiştirin
+                {canNotify ? ', kaydedin veya oda seçip Bildir’e basın' : ' ve kaydedin'}.
               </p>
+              {readMsg ? <div className="read-msg">{readMsg}</div> : null}
               <div className="ops-grid">
                 <label>
                   Ad
-                  <input value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={opsBusy} />
+                  <input
+                    value={firstName}
+                    onChange={(e) => setDirty('firstName', e.target.value, setFirstName)}
+                    disabled={opsBusy}
+                  />
                 </label>
                 <label>
                   Soyad
-                  <input value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={opsBusy} />
+                  <input
+                    value={lastName}
+                    onChange={(e) => setDirty('lastName', e.target.value, setLastName)}
+                    disabled={opsBusy}
+                  />
                 </label>
                 <label>
                   Belge no
-                  <input value={docNo} onChange={(e) => setDocNo(e.target.value)} disabled={opsBusy} />
+                  <input
+                    value={docNo}
+                    onChange={(e) => setDirty('docNo', e.target.value, setDocNo)}
+                    disabled={opsBusy}
+                  />
                 </label>
                 <label>
                   Doğum (YYYY-MM-DD)
-                  <input value={birthDate} onChange={(e) => setBirthDate(e.target.value)} disabled={opsBusy} />
+                  <input
+                    value={birthDate}
+                    onChange={(e) => setDirty('birthDate', e.target.value, setBirthDate)}
+                    disabled={opsBusy}
+                  />
                 </label>
                 <label>
                   Uyruk
-                  <input value={nationality} onChange={(e) => setNationality(e.target.value)} disabled={opsBusy} />
+                  <input
+                    value={nationality}
+                    onChange={(e) => setDirty('nationality', e.target.value, setNationality)}
+                    disabled={opsBusy}
+                  />
                 </label>
               </div>
               <div className="ops-actions">
@@ -357,25 +407,16 @@ export function CaptureDetailModal({
             </div>
 
             <div className="fields-head">
-              <h3>Kimlik Bilgileri</h3>
+              <h3>Kopyalanabilir alanlar</h3>
               <div className="fields-actions">
-                <button
-                  type="button"
-                  className="btn-primary btn-read"
-                  onClick={() => void requestRead()}
-                  disabled={readBusy || !item.front_image_url}
-                >
-                  {readBusy ? 'Okunuyor…' : 'Oku'}
-                </button>
                 <button type="button" className="btn-ghost" onClick={copyAll}>
                   {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
                 </button>
               </div>
             </div>
-            {readMsg ? <div className="read-msg">{readMsg}</div> : null}
 
             {fields.length === 0 ? (
-              <p className="muted">Okunabilir alan yok. Belge yeniden çekilmeli.</p>
+              <p className="muted">Henüz okunabilir alan yok — üstteki Oku ile başlatın veya alanları elle girin.</p>
             ) : (
               <ul className="field-list">
                 {fields.map((f) => (

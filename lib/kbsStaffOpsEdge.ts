@@ -85,6 +85,34 @@ export async function ensureKbsOpsRoom(roomNumber: string): Promise<ApiResult<Kb
   return invokeStaffOps<KbsOpsRoom>({ action: 'ensure_room', roomNumber: trimmed });
 }
 
+/** Odayı pasifleştir (listeden kaldır). FK güvenli soft-delete. */
+export async function deactivateKbsOpsRoom(roomId: string): Promise<ApiResult<{ id: string }>> {
+  const id = roomId.trim();
+  if (!id) {
+    return { ok: false, error: { code: 'BAD_REQUEST', message: 'Oda id gerekli' } };
+  }
+
+  const { error } = await supabase
+    .schema('ops')
+    .from('rooms')
+    .update({ is_active: false })
+    .eq('id', id);
+
+  if (!error) return { ok: true, data: { id } };
+
+  // RLS / expose yoksa Edge üzerinden
+  const edge = await invokeStaffOps<{ id: string }>({ action: 'deactivate_room', roomId: id });
+  if (edge.ok) return edge;
+
+  return {
+    ok: false,
+    error: {
+      code: edge.error.code,
+      message: error.message || edge.error.message,
+    },
+  };
+}
+
 /** Toplu oda ataması — tek Edge çağrısı (kayıt hızlandırma). */
 export async function assignKbsRoomsBatch(args: {
   roomId: string;

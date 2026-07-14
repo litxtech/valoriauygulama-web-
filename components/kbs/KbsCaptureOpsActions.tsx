@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,12 +12,18 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
-import { enrichKbsParsedFromSources } from '@/lib/kbsCaptureParsedFields';
+import {
+  enrichKbsParsedFromSources,
+  isKbsOcrInProgress,
+  kbsCaptureHasReadableData,
+} from '@/lib/kbsCaptureParsedFields';
 import { fetchKbsOpsRooms } from '@/lib/kbsStaffOpsEdge';
 import {
   notifyKbsCaptureToKbs,
   updateKbsCaptureManualFields,
 } from '@/lib/kbsCaptureNotify';
+import { correctKbsCapturedDocument } from '@/lib/kbsCaptureOcrCorrection';
+import type { ParsedDocument } from '@/lib/scanner/types';
 
 type Props = {
   row: KbsCapturedDocumentRow;
@@ -25,28 +31,79 @@ type Props = {
   onUpdated: () => void;
 };
 
+type FormState = {
+  firstName: string;
+  lastName: string;
+  docNo: string;
+  birthDate: string;
+  nationality: string;
+  gender: string;
+  motherName: string;
+  fatherName: string;
+  expiryDate: string;
+  documentSeries: string;
+};
+
+function formFromParsed(p: ParsedDocument | null): FormState {
+  return {
+    firstName: p?.firstName ?? '',
+    lastName: p?.lastName ?? '',
+    docNo: p?.documentNumber ?? '',
+    birthDate: p?.birthDate?.slice(0, 10) ?? '',
+    nationality: p?.nationalityCode ?? '',
+    gender: p?.gender ?? '',
+    motherName: p?.motherName ?? '',
+    fatherName: p?.fatherName ?? '',
+    expiryDate: p?.expiryDate?.slice(0, 10) ?? '',
+    documentSeries: p?.documentSeries ?? '',
+  };
+}
+
+/** Kullanıcının dokunmadığı alanları OCR ile güncelle; elle değişenler korunur. */
+function softMergeForm(prev: FormState, next: FormState, dirty: Set<keyof FormState>): FormState {
+  const out = { ...prev };
+  (Object.keys(next) as (keyof FormState)[]).forEach((k) => {
+    if (dirty.has(k)) return;
+    out[k] = next[k];
+  });
+  return out;
+}
+
 export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const parsed = enrichKbsParsedFromSources(row.parsed_payload);
-  const [firstName, setFirstName] = useState(parsed?.firstName ?? '');
-  const [lastName, setLastName] = useState(parsed?.lastName ?? '');
-  const [docNo, setDocNo] = useState(parsed?.documentNumber ?? '');
-  const [birthDate, setBirthDate] = useState(parsed?.birthDate?.slice(0, 10) ?? '');
-  const [nationality, setNationality] = useState(parsed?.nationalityCode ?? '');
+  const [form, setForm] = useState<FormState>(() => formFromParsed(parsed));
+  const dirtyRef = useRef<Set<keyof FormState>>(new Set());
+  const autoReadDoneRef = useRef<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [rooms, setRooms] = useState<{ id: string; room_number: string }[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notifying, setNotifying] = useState(false);
+  const [reading, setReading] = useState(false);
+
+  const ocrBusy = isKbsOcrInProgress(parsed) || reading;
+  const hasData = kbsCaptureHasReadableData(parsed);
+
+  const patchField = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
+    dirtyRef.current.add(key);
+    setForm((f) => ({ ...f, [key]: value }));
+  }, []);
 
   useEffect(() => {
     const p = enrichKbsParsedFromSources(row.parsed_payload);
-    setFirstName(p?.firstName ?? '');
-    setLastName(p?.lastName ?? '');
-    setDocNo(p?.documentNumber ?? '');
-    setBirthDate(p?.birthDate?.slice(0, 10) ?? '');
-    setNationality(p?.nationalityCode ?? '');
-    setRoomId(null);
+    const next = formFromParsed(p);
+    setForm((prev) => {
+      // Yeni kayıt: dirty yoksa tamamen OCR ile doldur
+      if (dirtyRef.current.size === 0) return next;
+      return softMergeForm(prev, next, dirtyRef.current);
+    });
   }, [row.id, row.parsed_payload]);
+
+  useEffect(() => {
+    dirtyRef.current = new Set();
+    autoReadDoneRef.current = null;
+    setRoomId(null);
+  }, [row.id]);
 
   const loadRooms = useCallback(async () => {
     if (!canNotify) return;
@@ -60,22 +117,79 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
     void loadRooms();
   }, [loadRooms]);
 
+  const runRead = useCallback(async () => {
+    if (reading) return;
+    setReading(true);
+    try {
+      const res = await correctKbsCapturedDocument(row);
+      if (!res.ok) {
+        Alert.alert('Oku', res.message);
+        return;
+      }
+      dirtyRef.current = new Set();
+      onUpdated();
+      if (!res.coreComplete) {
+        Alert.alert(
+          'Kısmi okuma',
+          'Belge okundu. Eksik veya hatalı alanları aşağıdan düzeltebilirsiniz.'
+        );
+      }
+    } finally {
+      setReading(false);
+    }
+  }, [onUpdated, reading, row]);
+
+  const runReadRef = useRef(runRead);
+  runReadRef.current = runRead;
+
+  // Eski sistem: açılınca otomatik oku (boş / bekleyen OCR).
+  useEffect(() => {
+    if (autoReadDoneRef.current === row.id) return;
+    if (!row.front_image_url) {
+      autoReadDoneRef.current = row.id;
+      return;
+    }
+    const p = enrichKbsParsedFromSources(row.parsed_payload);
+    if (kbsCaptureHasReadableData(p) && !isKbsOcrInProgress(p)) {
+      autoReadDoneRef.current = row.id;
+      return;
+    }
+    autoReadDoneRef.current = row.id;
+    void runReadRef.current();
+  }, [row.id, row.front_image_url, row.parsed_payload]);
+
   const roomChips = useMemo(() => rooms.slice(0, 48), [rooms]);
 
   const saveFields = async (): Promise<boolean> => {
     setSaving(true);
+    const genderRaw = form.gender.trim().toUpperCase();
+    const gender =
+      genderRaw === 'M' || genderRaw === 'E' || genderRaw === 'ERKEK'
+        ? ('M' as const)
+        : genderRaw === 'F' || genderRaw === 'K' || genderRaw === 'KADIN'
+          ? ('F' as const)
+          : genderRaw === 'X'
+            ? ('X' as const)
+            : null;
+
     const res = await updateKbsCaptureManualFields(row, {
-      firstName,
-      lastName,
-      documentNumber: docNo,
-      birthDate: birthDate.trim() || null,
-      nationalityCode: nationality.trim() || null,
+      firstName: form.firstName,
+      lastName: form.lastName,
+      documentNumber: form.docNo,
+      birthDate: form.birthDate.trim() || null,
+      nationalityCode: form.nationality.trim() || null,
+      gender,
+      motherName: form.motherName.trim() || null,
+      fatherName: form.fatherName.trim() || null,
+      expiryDate: form.expiryDate.trim() || null,
+      documentSeries: form.documentSeries.trim() || null,
     });
     setSaving(false);
     if (!res.ok) {
       Alert.alert('Düzelt', res.message);
       return false;
     }
+    dirtyRef.current = new Set();
     onUpdated();
     return true;
   };
@@ -91,8 +205,8 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
       Alert.alert('Oda seç', 'Bildirmeden önce oda seçin.');
       return;
     }
-    if (!docNo.trim() || (!firstName.trim() && !lastName.trim())) {
-      Alert.alert('Eksik alan', 'Ad/soyad ve belge numarası gerekli.');
+    if (!form.docNo.trim() || (!form.firstName.trim() && !form.lastName.trim())) {
+      Alert.alert('Eksik alan', 'Ad/soyad ve belge numarası gerekli. Önce Oku veya elle doldurun.');
       return;
     }
     setNotifying(true);
@@ -118,29 +232,89 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
     onUpdated();
   };
 
-  const busy = saving || notifying;
+  const busy = saving || notifying || reading;
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>Manuel düzeltme</Text>
-      <Text style={styles.hint}>Alanları düzeltin, kaydedin{canNotify ? ' veya oda seçip Bildir’e basın' : ''}.</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Okunan bilgiler</Text>
+        <Pressable
+          style={[styles.readBtn, busy && styles.btnDisabled]}
+          onPress={() => void runRead()}
+          disabled={busy || !row.front_image_url}
+        >
+          {ocrBusy ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="scan-outline" size={16} color="#fff" />
+              <Text style={styles.readBtnText}>Oku</Text>
+            </>
+          )}
+        </Pressable>
+      </View>
+      <Text style={styles.hint}>
+        {ocrBusy
+          ? 'Belge okunuyor… Bittiğinde alanlar dolar; yanlışsa düzeltip kaydedin.'
+          : 'OCR ile doldurulur. Yanlışsa değiştirin, kaydedin' +
+            (canNotify ? ' veya oda seçip Bildir’e basın.' : '.')}
+      </Text>
 
-      <Field label="Ad" value={firstName} onChangeText={setFirstName} editable={!busy} />
-      <Field label="Soyad" value={lastName} onChangeText={setLastName} editable={!busy} />
-      <Field label="Belge no" value={docNo} onChangeText={setDocNo} editable={!busy} autoCap="characters" />
+      <Field label="Ad" value={form.firstName} onChangeText={(t) => patchField('firstName', t)} editable={!busy} />
+      <Field label="Soyad" value={form.lastName} onChangeText={(t) => patchField('lastName', t)} editable={!busy} />
+      <Field
+        label="Belge / pasaport no"
+        value={form.docNo}
+        onChangeText={(t) => patchField('docNo', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
+      <Field
+        label="Seri no"
+        value={form.documentSeries}
+        onChangeText={(t) => patchField('documentSeries', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
       <Field
         label="Doğum tarihi (YYYY-MM-DD)"
-        value={birthDate}
-        onChangeText={setBirthDate}
+        value={form.birthDate}
+        onChangeText={(t) => patchField('birthDate', t)}
+        editable={!busy}
+        keyboardType="numbers-and-punctuation"
+      />
+      <Field
+        label="Son geçerlilik (YYYY-MM-DD)"
+        value={form.expiryDate}
+        onChangeText={(t) => patchField('expiryDate', t)}
         editable={!busy}
         keyboardType="numbers-and-punctuation"
       />
       <Field
         label="Uyruk (ISO)"
-        value={nationality}
-        onChangeText={setNationality}
+        value={form.nationality}
+        onChangeText={(t) => patchField('nationality', t)}
         editable={!busy}
         autoCap="characters"
+      />
+      <Field
+        label="Cinsiyet (E/K veya M/F)"
+        value={form.gender}
+        onChangeText={(t) => patchField('gender', t)}
+        editable={!busy}
+        autoCap="characters"
+      />
+      <Field
+        label="Anne adı"
+        value={form.motherName}
+        onChangeText={(t) => patchField('motherName', t)}
+        editable={!busy}
+      />
+      <Field
+        label="Baba adı"
+        value={form.fatherName}
+        onChangeText={(t) => patchField('fatherName', t)}
+        editable={!busy}
       />
 
       <Pressable
@@ -228,6 +402,7 @@ function Field({
         autoCapitalize={autoCap ?? 'words'}
         keyboardType={keyboardType ?? 'default'}
         placeholderTextColor={theme.colors.textMuted}
+        placeholder="—"
       />
     </View>
   );
@@ -243,8 +418,19 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 14,
   },
-  title: { fontSize: 15, fontWeight: '900', color: theme.colors.text },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  title: { fontSize: 15, fontWeight: '900', color: theme.colors.text, flex: 1 },
   hint: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 18 },
+  readBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  readBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
   field: { gap: 4 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary },
   input: {

@@ -1388,10 +1388,18 @@ const translation = {
         'Personel KBS sekmesi kapalı. Ayarları buradan kaydedebilirsiniz; sekmeyi açmak için EXPO_PUBLIC_KBS_UI_ENABLED=true ile yeniden derleyin.',
       adminKbsServiceActiveLabel: 'KBS servisi aktif',
       adminKbsOpsRoomsEmptyShort: 'Henüz oda yok. Aşağıdan ekleyin.',
+      adminKbsOpsRoomsCount: '{{count}} oda',
+      adminKbsRoomFloorLabel: 'Kat {{floor}}',
+      adminKbsRoomNoFloor: 'Kat belirtilmedi',
+      adminKbsRemoveRoomTitle: 'Odayı kaldır',
+      adminKbsRemoveRoomBody:
+        'Oda {{room}} listeden kaldırılacak (pasif). Mevcut konaklamalar bozulmaz; yeniden ekleyebilirsiniz.',
+      adminKbsRemoveRoomConfirm: 'Kaldır',
+      adminKbsRemoveRoomFailedTitle: 'Oda kaldırılamadı',
       adminKbsAdvancedSection: 'Gelişmiş',
-      adminKbsOpsRoomsTitle: 'KBS odaları (ops.rooms)',
+      adminKbsOpsRoomsTitle: 'KBS odaları',
       adminKbsOpsRoomsSub:
-        'Personelin “Bildirime hazır” ekranında oda ataması bu listeden yapılır; otel uygulamasındaki genel oda yönetimi ile ayrıdır.',
+        'Bildirim için kullanılacak oda listesi. Ekle / kaldır — soft silme (pasifleştirme).',
       adminKbsOpsRoomsEmpty:
         'Henüz KBS odası yok. Aşağıdan ekleyin veya Supabase’de ops.bootstrap_demo_hotel() çalıştırın.',
       adminKbsRoomLineFloor: ' — kat {{floor}}',

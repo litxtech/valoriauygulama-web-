@@ -1344,6 +1344,15 @@ button {
 
 .ops-hint { margin: 0; font-size: 13px; }
 
+.ops-edit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ops-edit-head h3 { margin: 0; }
+
 .ops-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

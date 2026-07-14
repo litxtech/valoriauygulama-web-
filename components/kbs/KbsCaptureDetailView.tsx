@@ -267,63 +267,68 @@ export function KbsCaptureDetailView({
 
       {opsActions}
 
-      <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
-      {canSeeImage && row.front_image_url && onCorrect ? (
-        <Pressable
-          style={[styles.correctBtn, correctBusy && styles.correctBtnDisabled]}
-          onPress={onCorrect}
-          disabled={correctBusy || ocrInProgress}
-        >
-          {correctBusy || ocrInProgress ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="scan-outline" size={18} color="#fff" />
-          )}
-          <Text style={styles.correctBtnText}>
-            {correctBusy ? 'Belge taranıyor…' : ocrInProgress ? 'Okunuyor…' : 'Düzelt — yeniden tara'}
-          </Text>
-        </Pressable>
-      ) : null}
-      {fields.length > 0 ? (
-        <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
-      ) : null}
-
-      {ocrInProgress ? (
-        <View style={styles.ocrProgressBox}>
-          <ActivityIndicator size="small" color={theme.colors.primary} />
-          <Text style={styles.ocrProgressText}>Kimlik okunuyor…</Text>
-        </View>
-      ) : null}
-
-      {fields.length === 0 && !ocrInProgress ? (
-        <View style={styles.emptyBox}>
-          <Text style={styles.emptyText}>Belge henüz okunmadı veya okunabilir alan çıkarılamadı.</Text>
-        </View>
-      ) : fields.length > 0 ? (
-        <View style={styles.fieldList}>
-          {fields.map((f) => (
+      {/* opsActions varken düzenlenebilir form asıl kimlik bloğudur. */}
+      {!opsActions ? (
+        <>
+          <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
+          {canSeeImage && row.front_image_url && onCorrect ? (
             <Pressable
-              key={f.key}
-              style={({ pressed }) => [styles.fieldRow, pressed && styles.fieldRowPressed]}
-              onPress={() => void copyValue(f.label, f.value)}
+              style={[styles.correctBtn, correctBusy && styles.correctBtnDisabled]}
+              onPress={onCorrect}
+              disabled={correctBusy || ocrInProgress}
             >
-              <View style={styles.fieldTextCol}>
-                <Text style={styles.fieldLabel}>{f.label}</Text>
-                <Text style={styles.fieldValue} selectable>
-                  {f.value}
-                </Text>
-              </View>
-              <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
+              {correctBusy || ocrInProgress ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="scan-outline" size={18} color="#fff" />
+              )}
+              <Text style={styles.correctBtnText}>
+                {correctBusy ? 'Belge taranıyor…' : ocrInProgress ? 'Okunuyor…' : 'Düzelt — yeniden tara'}
+              </Text>
             </Pressable>
-          ))}
-        </View>
-      ) : null}
+          ) : null}
+          {fields.length > 0 ? (
+            <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
+          ) : null}
 
-      {fields.length > 0 ? (
-        <Pressable style={styles.copyAllBtn} onPress={() => void copyAll()}>
-          <Ionicons name="clipboard-outline" size={20} color="#fff" />
-          <Text style={styles.copyAllText}>Tümünü kopyala</Text>
-        </Pressable>
+          {ocrInProgress ? (
+            <View style={styles.ocrProgressBox}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text style={styles.ocrProgressText}>Kimlik okunuyor…</Text>
+            </View>
+          ) : null}
+
+          {fields.length === 0 && !ocrInProgress ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>Belge henüz okunmadı veya okunabilir alan çıkarılamadı.</Text>
+            </View>
+          ) : fields.length > 0 ? (
+            <View style={styles.fieldList}>
+              {fields.map((f) => (
+                <Pressable
+                  key={f.key}
+                  style={({ pressed }) => [styles.fieldRow, pressed && styles.fieldRowPressed]}
+                  onPress={() => void copyValue(f.label, f.value)}
+                >
+                  <View style={styles.fieldTextCol}>
+                    <Text style={styles.fieldLabel}>{f.label}</Text>
+                    <Text style={styles.fieldValue} selectable>
+                      {f.value}
+                    </Text>
+                  </View>
+                  <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {fields.length > 0 ? (
+            <Pressable style={styles.copyAllBtn} onPress={() => void copyAll()}>
+              <Ionicons name="clipboard-outline" size={20} color="#fff" />
+              <Text style={styles.copyAllText}>Tümünü kopyala</Text>
+            </Pressable>
+          ) : null}
+        </>
       ) : null}
 
       {showExportActions ? (

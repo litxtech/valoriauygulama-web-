@@ -113,6 +113,30 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, data: env.data ?? null });
     }
 
+    if (action === "deactivate_room") {
+      const roomId = meta.roomId;
+      if (!roomId) {
+        return json({ ok: false, error: { code: "BAD_REQUEST", message: "roomId gerekli" } });
+      }
+      const { data, error } = await admin.rpc("kbs_edge_deactivate_room", {
+        p_user_id: userId,
+        p_room_id: roomId,
+      });
+      if (error) {
+        return json({
+          ok: false,
+          error: {
+            code: "RPC",
+            message: `${error.message}. SQL: supabase/migrations/532_kbs_edge_deactivate_room.sql`,
+          },
+        });
+      }
+      const fail = fromRpcEnvelope(data);
+      if (fail) return fail;
+      const env = data as RpcEnvelope;
+      return json({ ok: true, data: env.data ?? { id: roomId } });
+    }
+
     if (action === "assign_room") {
       const guestDocumentId = meta.guestDocumentId;
       const roomId = meta.roomId;
@@ -180,7 +204,7 @@ Deno.serve(async (req: Request) => {
 
     return json({
       ok: false,
-      error: { code: "BAD_REQUEST", message: "action: list_rooms | ensure_room | assign_room | assign_rooms_batch" },
+      error: { code: "BAD_REQUEST", message: "action: list_rooms | ensure_room | deactivate_room | assign_room | assign_rooms_batch" },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

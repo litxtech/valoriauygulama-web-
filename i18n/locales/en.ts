@@ -1377,10 +1377,18 @@ const translation = {
         'Staff KBS tab is off. Save settings here; set EXPO_PUBLIC_KBS_UI_ENABLED=true and rebuild to enable the tab.',
       adminKbsServiceActiveLabel: 'KBS service active',
       adminKbsOpsRoomsEmptyShort: 'No rooms yet. Add one below.',
+      adminKbsOpsRoomsCount: '{{count}} rooms',
+      adminKbsRoomFloorLabel: 'Floor {{floor}}',
+      adminKbsRoomNoFloor: 'No floor set',
+      adminKbsRemoveRoomTitle: 'Remove room',
+      adminKbsRemoveRoomBody:
+        'Room {{room}} will be removed from the list (deactivated). Existing stays stay intact; you can add it again later.',
+      adminKbsRemoveRoomConfirm: 'Remove',
+      adminKbsRemoveRoomFailedTitle: 'Could not remove room',
       adminKbsAdvancedSection: 'Advanced',
-      adminKbsOpsRoomsTitle: 'KBS rooms (ops.rooms)',
+      adminKbsOpsRoomsTitle: 'KBS rooms',
       adminKbsOpsRoomsSub:
-        'Room assignment on staff “Ready to notify” uses this list; it is separate from general room management in the hotel app.',
+        'Rooms used for KBS notify. Add / remove uses soft delete (deactivate).',
       adminKbsOpsRoomsEmpty:
         'No KBS rooms yet. Add one below or run ops.bootstrap_demo_hotel() in Supabase.',
       adminKbsRoomLineFloor: ' — floor {{floor}}',

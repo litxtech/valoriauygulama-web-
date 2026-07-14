@@ -22,12 +22,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme as T } from '@/constants/adminTheme';
 import { AdminButton } from '@/components/admin';
-import { apiGet, apiPost, getLastApiDebug, kbsOpsBridgeLabel } from '@/lib/kbsApi';
+import { apiGet, getLastApiDebug, kbsOpsBridgeLabel } from '@/lib/kbsApi';
 import {
   kbsAdminCredentialsGet,
   kbsAdminCredentialsSave,
   kbsAdminCredentialsTestConnection,
 } from '@/lib/kbsAdminCredentialsApi';
+import { ensureKbsOpsRoom, fetchKbsOpsRooms, deactivateKbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import { isDnsOrUnreachableBridgeError, isPlaceholderKbsGatewayError } from '@/lib/kbsBridgeErrors';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import { supabase } from '@/lib/supabase';
@@ -78,6 +80,7 @@ export default function AdminKbsSettingsScreen() {
   const [newOpsRoom, setNewOpsRoom] = useState('');
   const [newOpsFloor, setNewOpsFloor] = useState('');
   const [addingRoom, setAddingRoom] = useState(false);
+  const [removingRoomId, setRemovingRoomId] = useState<string | null>(null);
   const [hasPassword, setHasPassword] = useState(false);
   const [lastTestedAt, setLastTestedAt] = useState<string | null>(null);
 
@@ -172,12 +175,21 @@ export default function AdminKbsSettingsScreen() {
   const loadOpsRooms = async () => {
     setOpsRoomsLoading(true);
     try {
-      const res = await apiGet<OpsRoomRow[]>('/admin/ops-rooms');
+      await resolveOpsHotelIdForCaller();
+      const res = await fetchKbsOpsRooms();
       if (!res.ok) {
         setOpsRooms([]);
         return;
       }
-      setOpsRooms(Array.isArray(res.data) ? res.data : []);
+      setOpsRooms(
+        (res.data ?? []).map((r) => ({
+          id: r.id,
+          room_number: r.room_number,
+          floor: r.floor ?? null,
+          capacity: r.capacity ?? null,
+          is_active: true,
+        }))
+      );
     } catch {
       setOpsRooms([]);
     } finally {
@@ -381,13 +393,17 @@ export default function AdminKbsSettingsScreen() {
     }
     setAddingRoom(true);
     try {
-      const res = await apiPost('/admin/ops-rooms', {
-        roomNumber: n,
-        floor: newOpsFloor.trim() || null,
-      });
+      const ensured = await resolveOpsHotelIdForCaller();
+      if (!ensured.ok) {
+        Alert.alert(t('kbsRoomAddFailedTitle'), ensured.message);
+        return;
+      }
+
+      // Railway köprüsü yerine Edge RPC (ops.app_users JWT ile otomatik oluşur).
+      const res = await ensureKbsOpsRoom(n);
       if (!res.ok) {
         refreshLastApiInfo();
-        const msg = formatApiError(res);
+        const msg = res.error.message;
         if (/zaten kayıtlı|23505|conflict/i.test(msg)) {
           Alert.alert(t('kbsRoomAddFailedTitle'), t('kbsRoomDuplicateBody'));
         } else {
@@ -395,6 +411,12 @@ export default function AdminKbsSettingsScreen() {
         }
         return;
       }
+
+      const floor = newOpsFloor.trim();
+      if (floor && res.data?.id) {
+        await supabase.schema('ops').from('rooms').update({ floor }).eq('id', res.data.id);
+      }
+
       setNewOpsRoom('');
       setNewOpsFloor('');
       await loadOpsRooms();
@@ -404,6 +426,36 @@ export default function AdminKbsSettingsScreen() {
     } finally {
       setAddingRoom(false);
     }
+  };
+
+  const onRemoveOpsRoom = (room: OpsRoomRow) => {
+    Alert.alert(
+      t('adminKbsRemoveRoomTitle'),
+      t('adminKbsRemoveRoomBody', { room: room.room_number }),
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('adminKbsRemoveRoomConfirm'),
+          style: 'destructive',
+          onPress: async () => {
+            setRemovingRoomId(room.id);
+            try {
+              await resolveOpsHotelIdForCaller();
+              const res = await deactivateKbsOpsRoom(room.id);
+              if (!res.ok) {
+                Alert.alert(t('adminKbsRemoveRoomFailedTitle'), res.error.message);
+                return;
+              }
+              setOpsRooms((prev) => prev.filter((r) => r.id !== room.id));
+            } catch (e) {
+              Alert.alert(t('adminKbsRemoveRoomFailedTitle'), formatUnknownError(e));
+            } finally {
+              setRemovingRoomId(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const onTest = async () => {
@@ -687,56 +739,99 @@ export default function AdminKbsSettingsScreen() {
 
       <View style={styles.card}>
         <SectionHeader icon="bed-outline" title={t('adminKbsOpsRoomsTitle')} />
+        <Text style={styles.roomsSub}>{t('adminKbsOpsRoomsSub')}</Text>
+
+        <View style={styles.roomsMetaRow}>
+          <View style={styles.roomsCountBadge}>
+            <Ionicons name="grid-outline" size={14} color={T.colors.accent} />
+            <Text style={styles.roomsCountText}>
+              {opsRoomsLoading ? '…' : t('adminKbsOpsRoomsCount', { count: opsRooms.length })}
+            </Text>
+          </View>
+        </View>
 
         {opsRoomsLoading ? (
           <ActivityIndicator color={T.colors.accent} style={styles.roomLoader} />
         ) : opsRooms.length === 0 ? (
-          <Text style={styles.emptyRooms}>{t('adminKbsOpsRoomsEmptyShort')}</Text>
+          <View style={styles.emptyRoomsBox}>
+            <Ionicons name="bed-outline" size={28} color={T.colors.textMuted} />
+            <Text style={styles.emptyRooms}>{t('adminKbsOpsRoomsEmptyShort')}</Text>
+          </View>
         ) : (
-          <View style={styles.roomChips}>
-            {opsRooms.map((r) => (
-              <View key={r.id} style={styles.roomChip}>
-                <Text style={styles.roomChipText}>{r.room_number}</Text>
-                {r.floor ? <Text style={styles.roomChipSub}>{r.floor}</Text> : null}
-              </View>
-            ))}
+          <View style={styles.roomList}>
+            {[...opsRooms]
+              .sort((a, b) =>
+                String(a.room_number).localeCompare(String(b.room_number), 'tr', { numeric: true })
+              )
+              .map((r) => {
+                const busy = removingRoomId === r.id;
+                return (
+                  <View key={r.id} style={styles.roomRow}>
+                    <View style={styles.roomRowIcon}>
+                      <Ionicons name="home-outline" size={18} color={T.colors.accent} />
+                    </View>
+                    <View style={styles.roomRowBody}>
+                      <Text style={styles.roomRowTitle}>{r.room_number}</Text>
+                      <Text style={styles.roomRowSub}>
+                        {r.floor ? t('adminKbsRoomFloorLabel', { floor: r.floor }) : t('adminKbsRoomNoFloor')}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.roomRemoveBtn, busy && styles.roomRemoveBtnBusy]}
+                      onPress={() => onRemoveOpsRoom(r)}
+                      disabled={busy || addingRoom}
+                      hitSlop={8}
+                      accessibilityLabel={t('adminKbsRemoveRoomConfirm')}
+                    >
+                      {busy ? (
+                        <ActivityIndicator size="small" color="#b91c1c" />
+                      ) : (
+                        <Ionicons name="trash-outline" size={18} color="#b91c1c" />
+                      )}
+                    </Pressable>
+                  </View>
+                );
+              })}
           </View>
         )}
 
-        <View style={styles.roomAddRow}>
-          <View style={styles.roomAddField}>
-            <FieldLabel>{t('adminKbsNewRoomNumberLabel')}</FieldLabel>
-            <TextInput
-              value={newOpsRoom}
-              onChangeText={setNewOpsRoom}
-              style={styles.input}
-              placeholder="101"
-              placeholderTextColor={T.colors.textMuted}
-              onFocus={onRoomFieldFocus}
-              returnKeyType="next"
-            />
+        <View style={styles.roomAddCard}>
+          <Text style={styles.roomAddTitle}>{t('adminKbsAddRoomButton')}</Text>
+          <View style={styles.roomAddRow}>
+            <View style={styles.roomAddField}>
+              <FieldLabel>{t('adminKbsNewRoomNumberLabel')}</FieldLabel>
+              <TextInput
+                value={newOpsRoom}
+                onChangeText={setNewOpsRoom}
+                style={styles.input}
+                placeholder="101"
+                placeholderTextColor={T.colors.textMuted}
+                onFocus={onRoomFieldFocus}
+                returnKeyType="next"
+              />
+            </View>
+            <View style={[styles.roomAddField, styles.roomAddFieldNarrow]}>
+              <FieldLabel>{t('adminKbsFloorOptionalLabel')}</FieldLabel>
+              <TextInput
+                value={newOpsFloor}
+                onChangeText={setNewOpsFloor}
+                style={styles.input}
+                placeholder="1"
+                placeholderTextColor={T.colors.textMuted}
+                onFocus={onRoomFieldFocus}
+                returnKeyType="done"
+              />
+            </View>
           </View>
-          <View style={[styles.roomAddField, styles.roomAddFieldNarrow]}>
-            <FieldLabel>{t('adminKbsFloorOptionalLabel')}</FieldLabel>
-            <TextInput
-              value={newOpsFloor}
-              onChangeText={setNewOpsFloor}
-              style={styles.input}
-              placeholder="1"
-              placeholderTextColor={T.colors.textMuted}
-              onFocus={onRoomFieldFocus}
-              returnKeyType="done"
-            />
-          </View>
+          <AdminButton
+            title={addingRoom ? t('adminKbsAddingRoom') : t('adminKbsAddRoomButton')}
+            onPress={onAddOpsRoom}
+            variant="secondary"
+            fullWidth
+            disabled={addingRoom || removingRoomId != null}
+            leftIcon={<Ionicons name="add-circle-outline" size={18} color={T.colors.text} />}
+          />
         </View>
-        <AdminButton
-          title={addingRoom ? t('adminKbsAddingRoom') : t('adminKbsAddRoomButton')}
-          onPress={onAddOpsRoom}
-          variant="secondary"
-          fullWidth
-          disabled={addingRoom}
-          leftIcon={<Ionicons name="add-circle-outline" size={18} color={T.colors.text} />}
-        />
       </View>
 
       <Pressable style={styles.advancedToggle} onPress={() => setShowAdvanced((v) => !v)}>
@@ -893,8 +988,72 @@ const styles = StyleSheet.create({
   },
   webUrlText: { flex: 1, fontSize: 14, fontWeight: '700', color: T.colors.accent },
   webBtnRow: { gap: T.spacing.sm, marginBottom: T.spacing.xs },
-  emptyRooms: { fontSize: 14, color: T.colors.textMuted, marginBottom: T.spacing.sm },
+  emptyRooms: { fontSize: 14, color: T.colors.textMuted, textAlign: 'center' },
+  emptyRoomsBox: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+    marginBottom: T.spacing.sm,
+    borderRadius: T.radius.md,
+    backgroundColor: T.colors.surfaceTertiary,
+  },
+  roomsSub: { fontSize: 13, lineHeight: 19, color: T.colors.textMuted, marginBottom: T.spacing.sm },
+  roomsMetaRow: { flexDirection: 'row', marginBottom: T.spacing.sm },
+  roomsCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: T.radius.full,
+    backgroundColor: T.colors.warningLight,
+  },
+  roomsCountText: { fontSize: 12, fontWeight: '800', color: T.colors.text },
   roomLoader: { marginVertical: T.spacing.sm },
+  roomList: { gap: 8, marginBottom: T.spacing.md },
+  roomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: T.radius.md,
+    backgroundColor: T.colors.surfaceTertiary,
+    borderWidth: 1,
+    borderColor: T.colors.border,
+  },
+  roomRowIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: T.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomRowBody: { flex: 1, gap: 2 },
+  roomRowTitle: { fontSize: 16, fontWeight: '900', color: T.colors.text },
+  roomRowSub: { fontSize: 12, color: T.colors.textMuted, fontWeight: '600' },
+  roomRemoveBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  roomRemoveBtnBusy: { opacity: 0.7 },
+  roomAddCard: {
+    marginTop: 4,
+    padding: 12,
+    borderRadius: T.radius.md,
+    borderWidth: 1,
+    borderColor: T.colors.border,
+    backgroundColor: T.colors.surface,
+    gap: 8,
+  },
+  roomAddTitle: { fontSize: 14, fontWeight: '800', color: T.colors.text },
   roomChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: T.spacing.sm },
   roomChip: {
     flexDirection: 'row',

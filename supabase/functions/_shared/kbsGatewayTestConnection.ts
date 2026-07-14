@@ -1,6 +1,6 @@
 /**
- * KBS bağlantı testi — Edge → Railway kbs-ops → kbs-core → Jandarma.
- * HTTP / error.code’a göre mesaj üretir; Edge log’a durum özeti basar.
+ * KBS bağlantı testi — Edge → kbs-core (HMAC) → Jandarma.
+ * Railway kbs-ops JWT / ops.app_users oturumuna bağımlı değil.
  */
 
 import { normalizeGatewayBase, validateKbsGatewayBase } from "./kbsGatewayUrl.ts";
@@ -9,9 +9,8 @@ export type KbsGatewayTestResult = {
   ok: boolean;
   message: string;
   via: string;
-  /** HTTP status from Railway ops (if reached). */
   httpStatus?: number;
-  /** Machine code for UI hints: AUTH | GATEWAY_TOKEN | CONFIG | TIMEOUT | UPSTREAM | KBS */
+  /** Machine code: AUTH | GATEWAY_TOKEN | CONFIG | TIMEOUT | UPSTREAM | KBS | OK */
   code?: string;
 };
 
@@ -27,8 +26,7 @@ function enrichIpHint(message: string): string {
   if (!/yetkisiz|unauthorized|ip|forbidden|jandarma/i.test(message)) return message;
   return (
     `${message} ` +
-    "Jandarma isteği Railway kbs-core çıkış IP’sinden gider; panelde o IP kayıtlı olmalı. " +
-    "Supabase Edge doğrudan Jandarma’ya bağlanmaz."
+    "Jandarma isteği Railway kbs-core çıkış IP’sinden gider; panelde o IP kayıtlı olmalı."
   );
 }
 
@@ -39,7 +37,34 @@ function logStep(level: "info" | "warn" | "error", payload: Record<string, unkno
   else console.log(line);
 }
 
-function mapByStatus(args: {
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+async function hmacSha256Base64(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return bytesToBase64(new Uint8Array(sig));
+}
+
+function resolveCoreBase(): string {
+  const raw =
+    Deno.env.get("KBS_CORE_URL") ??
+    Deno.env.get("GATEWAY_BASE_URL") ??
+    Deno.env.get("KBS_SOAP_GATEWAY_URL") ??
+    "";
+  return normalizeGatewayBase(raw);
+}
+
+function mapFailure(args: {
   status: number;
   bodyCode?: string;
   bodyMessage: string;
@@ -47,25 +72,11 @@ function mapByStatus(args: {
   const { status, bodyCode, bodyMessage } = args;
   const lower = `${bodyCode ?? ""} ${bodyMessage}`.toLowerCase();
 
-  // Token mismatch → 403 FORBIDDEN + gateway token text
-  if (
-    status === 403 ||
-    bodyCode === "FORBIDDEN" ||
-    /gateway token|invalid or missing gateway/i.test(bodyMessage)
-  ) {
+  if (status === 401 || bodyCode === "INVALID_SIGNATURE" || /invalid.?signature|unauthorized/i.test(lower)) {
     return {
       code: "GATEWAY_TOKEN",
       message:
-        "KBS köprü token reddetti (HTTP 403). Supabase secret KBS_GATEWAY_TOKEN ile Railway kbs-ops Variables birebir aynı olmalı; ardından Edge redeploy / ops restart.",
-    };
-  }
-
-  // Session / JWT → 401
-  if (status === 401 || bodyCode === "UNAUTHORIZED" || /invalid token|missing bearer|user not provisioned/i.test(lower)) {
-    return {
-      code: "AUTH",
-      message:
-        "KBS köprü oturum reddetti (HTTP 401). Çıkış yapıp yeniden giriş edin; ops.app_users kaydınız aktif olmalı.",
+        "KBS core imza reddetti (HTTP 401). Supabase GATEWAY_SHARED_SECRET ile Railway kbs-core Variables birebir aynı olmalı.",
     };
   }
 
@@ -73,68 +84,86 @@ function mapByStatus(args: {
     return {
       code: "UPSTREAM",
       message:
-        "KBS köprü yolu bulunamadı (HTTP 404). KBS_GATEWAY_URL = https://kbs-ops-production.up.railway.app olmalı; Root Directory railway-service.",
+        "KBS core yolu bulunamadı (HTTP 404). Secret KBS_CORE_URL = https://kbs-core-production.up.railway.app olmalı.",
     };
   }
 
   if (status === 502 || status === 503 || status === 504) {
     return {
       code: "UPSTREAM",
-      message: `KBS köprü geçici olarak yanıt vermiyor (HTTP ${status}). Railway kbs-ops / kbs-core deploy loglarına bakın.`,
+      message: `KBS core geçici olarak yanıt vermiyor (HTTP ${status}). Railway kbs-core deploy loglarına bakın.`,
     };
   }
 
   if (status >= 500) {
     return {
       code: "UPSTREAM",
-      message: enrichIpHint(bodyMessage || `KBS köprü sunucu hatası (HTTP ${status}).`),
+      message: enrichIpHint(bodyMessage || `KBS core sunucu hatası (HTTP ${status}).`),
     };
   }
 
   return {
     code: "KBS",
-    message: enrichIpHint(bodyMessage || `KBS köprü hatası (HTTP ${status}).`),
+    message: enrichIpHint(bodyMessage || `KBS hatası (HTTP ${status}).`),
   };
 }
 
-export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsGatewayTestResult> {
-  const raw = Deno.env.get("KBS_GATEWAY_URL") ?? Deno.env.get("OPS_VPS_URL") ?? "";
-  const base = normalizeGatewayBase(raw);
+/**
+ * @param hotelId ops hotel UUID (kbs_edge_get_credentials_for_test → hotel_id)
+ */
+export async function testKbsConnectionViaGateway(hotelId: string): Promise<KbsGatewayTestResult> {
+  const base = resolveCoreBase();
   const check = validateKbsGatewayBase(base);
-  const gatewayToken = (Deno.env.get("KBS_GATEWAY_TOKEN") ?? "").trim();
+  const sharedSecret = (Deno.env.get("GATEWAY_SHARED_SECRET") ?? "").trim();
   const host = base ? hostOf(base) : "(empty)";
+  const path = "/gateway/test-connection";
 
   logStep("info", {
     event: "start",
     host,
-    hasGatewayUrl: Boolean(base),
-    hasGatewayToken: gatewayToken.length > 0,
-    gatewayTokenLen: gatewayToken.length,
-    jwtLen: userJwt?.length ?? 0,
+    hasCoreUrl: Boolean(base),
+    hasSharedSecret: sharedSecret.length > 0,
+    hotelIdLen: hotelId?.length ?? 0,
   });
+
+  if (!hotelId || !/^[0-9a-f-]{36}$/i.test(hotelId)) {
+    return {
+      ok: false,
+      code: "CONFIG",
+      message: "Bağlantı testi için hotel_id eksik. DB migration 533 uygulayın.",
+      via: "gateway_config",
+    };
+  }
 
   if (!check.ok) {
     logStep("warn", { event: "config_invalid", host, message: check.message });
     return {
       ok: false,
       code: "CONFIG",
-      message: `${check.message} Supabase secret KBS_GATEWAY_URL = Railway kbs-ops HTTPS URL olmalı (sonunda / yok).`,
+      message:
+        `${check.message} Supabase secret KBS_CORE_URL = https://kbs-core-production.up.railway.app (sonunda / yok).`,
       via: "gateway_config",
     };
   }
 
-  if (!gatewayToken) {
-    logStep("warn", { event: "missing_token", host });
+  if (sharedSecret.length < 16) {
+    logStep("warn", { event: "missing_shared_secret", host });
     return {
       ok: false,
-      code: "GATEWAY_TOKEN",
+      code: "CONFIG",
       message:
-        "Supabase secret KBS_GATEWAY_TOKEN boş. Railway kbs-ops Variables’daki ile aynı değeri yazıp Edge’i güncelleyin.",
+        "Supabase secret GATEWAY_SHARED_SECRET boş veya kısa. Railway kbs-core / kbs-ops ile aynı değeri yazın.",
       via: "gateway_config",
     };
   }
 
-  const url = `${base}/admin/kbs-settings/test-connection`;
+  const payload = { hotelId };
+  const body = JSON.stringify(payload);
+  const ts = Date.now();
+  const message = `${ts}.POST.${path}.${body}`;
+  const signature = await hmacSha256Base64(sharedSecret, message);
+
+  const url = `${base}${path}`;
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 28_000);
 
@@ -142,11 +171,11 @@ export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsG
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${userJwt}`,
         "Content-Type": "application/json",
-        "x-kbs-gateway-token": gatewayToken,
+        "x-gw-ts": String(ts),
+        "x-gw-signature": signature,
       },
-      body: "{}",
+      body,
       signal: controller.signal,
     });
 
@@ -165,13 +194,13 @@ export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsG
         ok: false,
         code: "UPSTREAM",
         httpStatus: res.status,
-        message: `KBS köprü geçersiz yanıt (HTTP ${res.status}, JSON değil). ${host} /health JSON dönmeli.`,
-        via: "railway_gateway",
+        message: `KBS core geçersiz yanıt (HTTP ${res.status}, JSON değil). ${host}/gateway/health JSON dönmeli.`,
+        via: "kbs_core",
       };
     }
 
     const err = parsed.error as { code?: string; message?: string } | undefined;
-    const data = parsed.data as { message?: string } | undefined;
+    const data = parsed.data as { ok?: boolean; message?: string } | undefined;
     const bodyMessage =
       (typeof err?.message === "string" && err.message) ||
       (typeof data?.message === "string" && data.message) ||
@@ -179,19 +208,30 @@ export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsG
       "";
     const bodyCode = typeof err?.code === "string" ? err.code : undefined;
 
+    // Gateway envelope: { ok: true, data: { ok, message } }
     if (parsed.ok === true) {
+      const innerOk = data?.ok !== false;
       const msg =
         (typeof data?.message === "string" && data.message) ||
-        "KBS bağlantısı başarılı (Railway köprüsü üzerinden).";
-      logStep("info", { event: "ok", host, httpStatus: res.status, bodyCode });
-      return { ok: true, message: msg, via: "railway_gateway", httpStatus: res.status, code: "OK" };
+        (innerOk ? "KBS bağlantısı başarılı." : "KBS bağlantı testi başarısız.");
+      if (!innerOk) {
+        logStep("warn", { event: "kbs_rejected", host, httpStatus: res.status, msg: msg.slice(0, 200) });
+        return {
+          ok: false,
+          message: enrichIpHint(msg),
+          code: "KBS",
+          httpStatus: res.status,
+          via: "kbs_core",
+        };
+      }
+      logStep("info", { event: "ok", host, httpStatus: res.status });
+      return { ok: true, message: msg, via: "kbs_core", httpStatus: res.status, code: "OK" };
     }
 
-    // HTTP 200 but ok:false (biznes hatası) — yine map
-    const mapped = mapByStatus({
-      status: res.ok ? (bodyCode === "FORBIDDEN" ? 403 : bodyCode === "UNAUTHORIZED" ? 401 : res.status) : res.status,
+    const mapped = mapFailure({
+      status: res.status,
       bodyCode,
-      bodyMessage: bodyMessage || `KBS köprü hatası (HTTP ${res.status})`,
+      bodyMessage: bodyMessage || `KBS core hatası (HTTP ${res.status})`,
     });
 
     logStep("warn", {
@@ -208,7 +248,7 @@ export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsG
       message: mapped.message,
       code: mapped.code,
       httpStatus: res.status,
-      via: "railway_gateway",
+      via: "kbs_core",
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -218,16 +258,16 @@ export async function testKbsConnectionViaGateway(userJwt: string): Promise<KbsG
         ok: false,
         code: "TIMEOUT",
         message:
-          "KBS köprü yanıt vermedi (28 sn). Railway kbs-ops ayakta mı? /health — Supabase KBS_GATEWAY_URL doğru mu?",
-        via: "railway_gateway",
+          "KBS core yanıt vermedi (28 sn). Railway kbs-core ayakta mı? /gateway/health — KBS_CORE_URL doğru mu?",
+        via: "kbs_core",
       };
     }
     logStep("error", { event: "network", host, error: msg.slice(0, 200) });
     return {
       ok: false,
       code: "UPSTREAM",
-      message: enrichIpHint(`KBS köprü erişim hatası: ${msg}`),
-      via: "railway_gateway",
+      message: enrichIpHint(`KBS core erişim hatası: ${msg}`),
+      via: "kbs_core",
     };
   } finally {
     clearTimeout(t);

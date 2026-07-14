@@ -178,7 +178,10 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
     const credFail = fromRpcEnvelope(credData);
     if (credFail) return credFail;
 
-    const cred = (credData as RpcEnvelope).data as { is_active?: boolean };
+    const cred = (credData as RpcEnvelope).data as {
+      is_active?: boolean;
+      hotel_id?: string;
+    };
     if (cred.is_active === false) {
       return json({
         ok: false,
@@ -186,7 +189,19 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
       });
     }
 
-    const testRes = await testKbsConnectionViaGateway(token);
+    const hotelId = typeof cred.hotel_id === "string" ? cred.hotel_id : "";
+    if (!hotelId) {
+      return json({
+        ok: false,
+        error: {
+          code: "CONFIG",
+          message: "hotel_id eksik. supabase/migrations/533_kbs_edge_test_connection_hotel_id.sql uygulayın.",
+        },
+      });
+    }
+
+    // JWT / Railway ops oturumu yok — doğrudan kbs-core HMAC.
+    const testRes = await testKbsConnectionViaGateway(hotelId);
     console.log(
       JSON.stringify({
         scope: "kbs-admin-credentials",

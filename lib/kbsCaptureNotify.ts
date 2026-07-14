@@ -17,6 +17,8 @@ export type KbsCaptureManualEdit = {
   gender?: 'M' | 'F' | 'X' | null;
   motherName?: string | null;
   fatherName?: string | null;
+  expiryDate?: string | null;
+  documentSeries?: string | null;
 };
 
 /** Elle düzeltme: parsed_payload + guests + document_number. */
@@ -56,6 +58,10 @@ export async function updateKbsCaptureManualFields(
   const gender = edit.gender !== undefined ? edit.gender : base.gender;
   const motherName = edit.motherName !== undefined ? edit.motherName?.trim() || null : base.motherName;
   const fatherName = edit.fatherName !== undefined ? edit.fatherName?.trim() || null : base.fatherName;
+  const expiryRaw = edit.expiryDate !== undefined ? edit.expiryDate?.trim() || null : base.expiryDate;
+  const expiryDate = expiryRaw && expiryRaw.length >= 10 ? expiryRaw.slice(0, 10) : expiryRaw;
+  const documentSeries =
+    edit.documentSeries !== undefined ? edit.documentSeries?.trim() || null : base.documentSeries;
 
   const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || base.fullName;
   const payload: ParsedDocument = {
@@ -64,7 +70,9 @@ export async function updateKbsCaptureManualFields(
     lastName,
     fullName,
     documentNumber,
+    documentSeries,
     birthDate,
+    expiryDate,
     nationalityCode,
     gender,
     motherName: motherName ?? undefined,
@@ -79,6 +87,7 @@ export async function updateKbsCaptureManualFields(
     parsed_payload: payload,
     document_number: documentNumber,
     nationality_code: nationalityCode,
+    expiry_date: expiryDate,
     scan_status: coreReady ? 'ready_to_submit' : row.scan_status ?? 'draft',
   };
 
