@@ -5,7 +5,11 @@ import {
   normalizeKbsParsedPayload,
 } from '@/lib/kbsCaptureParsedFields';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
+import { looksLikeAlphanumericPassportNo } from '@/lib/kbsDocumentNumberValidate';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
+import { parseKbsDateInputToIso } from '@/lib/kbsDisplayFormat';
+import { normalizeGuestDocumentNumber } from '@/lib/kbsGuestDocumentIdentity';
+import { mapNationalityTextToCode } from '@/lib/kbsNationalityMap';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { fetchKbsCaptureNotifyStaffIds } from '@/lib/kbsCaptureSettings';
@@ -93,22 +97,32 @@ export async function updateKbsCaptureManualFields(
   const lastName = edit.lastName !== undefined ? edit.lastName?.trim() || null : base.lastName;
   const middleName = edit.middleName !== undefined ? edit.middleName?.trim() || null : base.middleName;
   const documentNumber =
-    edit.documentNumber !== undefined ? edit.documentNumber?.trim() || null : base.documentNumber;
+    edit.documentNumber !== undefined
+      ? normalizeGuestDocumentNumber(edit.documentNumber)
+      : normalizeGuestDocumentNumber(base.documentNumber) ?? base.documentNumber;
   const birthDateRaw = edit.birthDate !== undefined ? edit.birthDate?.trim() || null : base.birthDate;
-  const birthDate = birthDateRaw && birthDateRaw.length >= 10 ? birthDateRaw.slice(0, 10) : birthDateRaw;
+  const birthDate =
+    edit.birthDate !== undefined
+      ? parseKbsDateInputToIso(birthDateRaw)
+      : parseKbsDateInputToIso(base.birthDate) ?? base.birthDate;
   const nationalityCode =
     edit.nationalityCode !== undefined
-      ? edit.nationalityCode?.trim().toUpperCase() || null
-      : base.nationalityCode;
+      ? mapNationalityTextToCode(edit.nationalityCode) ??
+        (edit.nationalityCode?.trim().toUpperCase() || null)
+      : mapNationalityTextToCode(base.nationalityCode) ?? base.nationalityCode;
   const issuingCountryCode =
     edit.issuingCountryCode !== undefined
-      ? edit.issuingCountryCode?.trim().toUpperCase() || null
-      : base.issuingCountryCode;
+      ? mapNationalityTextToCode(edit.issuingCountryCode) ??
+        (edit.issuingCountryCode?.trim().toUpperCase() || null)
+      : mapNationalityTextToCode(base.issuingCountryCode) ?? base.issuingCountryCode;
   const gender = edit.gender !== undefined ? edit.gender : base.gender;
   const motherName = edit.motherName !== undefined ? edit.motherName?.trim() || null : base.motherName;
   const fatherName = edit.fatherName !== undefined ? edit.fatherName?.trim() || null : base.fatherName;
   const expiryRaw = edit.expiryDate !== undefined ? edit.expiryDate?.trim() || null : base.expiryDate;
-  const expiryDate = expiryRaw && expiryRaw.length >= 10 ? expiryRaw.slice(0, 10) : expiryRaw;
+  const expiryDate =
+    edit.expiryDate !== undefined
+      ? parseKbsDateInputToIso(expiryRaw)
+      : parseKbsDateInputToIso(base.expiryDate) ?? base.expiryDate;
   const documentSeries =
     edit.documentSeries !== undefined ? edit.documentSeries?.trim() || null : base.documentSeries;
   const maritalStatus = edit.maritalStatus !== undefined ? edit.maritalStatus : base.maritalStatus;
@@ -141,23 +155,28 @@ export async function updateKbsCaptureManualFields(
     ),
   };
 
-  const kind = inferKbsPersonKind(payload);
+  const documentType =
+    looksLikeAlphanumericPassportNo(documentNumber) && payload.documentType !== 'passport'
+      ? 'passport'
+      : payload.documentType;
+  const payloadTyped = { ...payload, documentType };
+  const kind = inferKbsPersonKind(payloadTyped);
   const seriesForDb = resolveKbsDocumentSeries({
     documentSeries: documentSeries,
     documentNumber,
-    documentType: payload.documentType,
+    documentType,
   });
 
   const coreReady = !!(documentNumber && fullName);
   const docPatch: Record<string, unknown> = {
-    parsed_payload: { ...payload, documentSeries: seriesForDb },
+    parsed_payload: { ...payloadTyped, documentSeries: seriesForDb },
     document_number: documentNumber,
     document_series: seriesForDb,
     nationality_code: nationalityCode,
     issuing_country_code: issuingCountryCode,
     expiry_date: expiryDate,
     kbs_person_kind: kind,
-    document_type: payload.documentType,
+    document_type: documentType,
     scan_status: coreReady ? 'ready_to_submit' : row.scan_status ?? 'draft',
   };
 
@@ -201,6 +220,7 @@ export async function updateKbsCaptureManualFields(
 }
 
 function mapNotifyError(code: string, message: string): string {
+  const detail = message.replace(/^KBS check-in failed:\s*/i, '').trim() || message;
   const lower = `${code} ${message}`.toLowerCase();
   if (/unauthorized|invalid.?signature|gateway_sign|invalid token|not authenticated/i.test(lower)) {
     return (
@@ -216,13 +236,19 @@ function mapNotifyError(code: string, message: string): string {
     return `Pasaport seri/belge no KBS’e eksik gitti. Seri veya pasaport numarasını kontrol edip tekrar bildirin. (${message})`;
   }
   if (/doğum|dogumtarihi|birth/i.test(lower)) {
-    return `Doğum tarihi KBS formatında değil veya eksik (YYYY-MM-DD). Kontrol edip tekrar bildirin. (${message})`;
+    return `Doğum tarihi hatalı. Örnek: 01.01.1990 (gün.ay.yıl). (${message})`;
   }
-  if (/adı zorunlu|soyadı zorunlu|ulke zorunlu|ülke zorunlu/i.test(lower)) {
-    return `Pasaport zorunlu alanları eksik. Ad, soyad ve uyruk dolu olmalı. (${message})`;
+  if (/ülke\/uyruk kbs|ulke zorunlu|ülke zorunlu|geçersiz/i.test(lower)) {
+    return `Uyruk KBS kodu geçersiz. 3 harfli kod kullanın (UZB, SAU, DEU…). Türkiye için TC/TUR. Jandarma: ${detail}`;
+  }
+  if (/adı zorunlu|soyadı zorunlu/i.test(lower)) {
+    return `Pasaport zorunlu alanları eksik. Ad ve soyad dolu olmalı. (${message})`;
   }
   if (/provider check-in failed|provider_error|kbs check-in failed/i.test(lower)) {
-    return `Jandarma KBS check-in reddetti. Pasaport no, uyruk, doğum tarihi ve odayı kontrol edin. (${message})`;
+    return (
+      `Jandarma reddetti: ${detail}\n\n` +
+      'Kontrol: pasaport no (boşluksuz), uyruk (3 harf), doğum (GG.AA.YYYY), oda no.'
+    );
   }
   return message;
 }

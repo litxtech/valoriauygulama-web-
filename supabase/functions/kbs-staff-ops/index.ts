@@ -371,21 +371,40 @@ Deno.serve(async (req: Request) => {
           : typeof parsed.document_series === "string"
             ? parsed.document_series
             : null;
-      const documentNumber = doc.document_number ??
+      const rawDocNo = doc.document_number ??
         (typeof parsed.documentNumber === "string" ? parsed.documentNumber : null);
+      const documentNumber = rawDocNo
+        ? String(rawDocNo).trim().toUpperCase().replace(/[\s\-]/g, "")
+        : null;
       let documentSeries = doc.document_series ?? seriesFromParsed;
+      if (documentSeries) {
+        documentSeries = String(documentSeries).trim().toUpperCase().replace(/[\s\-]/g, "");
+      }
       // Pasaportta seri yoksa belge no ile doldur (KBS BELGESERI).
       if (!documentSeries && documentNumber) documentSeries = documentNumber;
 
-      let kbsPersonKind = doc.kbs_person_kind ? String(doc.kbs_person_kind) : null;
-      if (!kbsPersonKind) {
-        const docType = String(doc.document_type ?? parsed.documentType ?? "");
-        const digits = String(documentNumber ?? "").replace(/\D/g, "");
-        if (docType === "passport") kbsPersonKind = "foreign";
-        else if (digits.startsWith("99") && digits.length >= 9) kbsPersonKind = "ykn_foreign";
-        else if (/^[1-9]\d{10}$/.test(digits)) kbsPersonKind = "tc_citizen";
-        else kbsPersonKind = "foreign";
+      const docType = String(doc.document_type ?? parsed.documentType ?? "");
+      const digitsOnly = String(documentNumber ?? "").replace(/\D/g, "");
+      const hasLetters = /[A-Z]/i.test(String(documentNumber ?? ""));
+      // AP902390 vb. alfanümerik → her zaman yabancı (DB’de yanlış tc_citizen olsa bile).
+      let kbsPersonKind: string;
+      if (docType === "passport" || (hasLetters && digitsOnly.length >= 4)) {
+        kbsPersonKind = "foreign";
+      } else if (doc.kbs_person_kind) {
+        kbsPersonKind = String(doc.kbs_person_kind);
+      } else if (digitsOnly.startsWith("99") && digitsOnly.length >= 9) {
+        kbsPersonKind = "ykn_foreign";
+      } else if (/^[1-9]\d{10}$/.test(digitsOnly)) {
+        kbsPersonKind = "tc_citizen";
+      } else {
+        kbsPersonKind = "foreign";
       }
+
+      // Edge’de temizle; gateway TUR→TC / doğum günü vb. map’ler.
+      const natRaw = doc.nationality_code ?? guest.nationality_code ?? null;
+      const issRaw = doc.issuing_country_code ?? null;
+      const nationalityCode = natRaw ? String(natRaw).trim().toUpperCase() : null;
+      const issuingCountryCode = issRaw ? String(issRaw).trim().toUpperCase() : null;
 
       const gwPayload = {
         hotelId,
@@ -400,8 +419,8 @@ Deno.serve(async (req: Request) => {
           (typeof parsed.middleName === "string" ? parsed.middleName : null),
         documentNumber,
         documentSeries,
-        nationalityCode: doc.nationality_code ?? guest.nationality_code ?? null,
-        issuingCountryCode: doc.issuing_country_code ?? null,
+        nationalityCode,
+        issuingCountryCode,
         birthDate,
         gender,
         roomNumber: room.room_number ?? null,

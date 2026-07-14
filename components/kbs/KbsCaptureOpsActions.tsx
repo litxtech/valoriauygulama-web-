@@ -30,6 +30,7 @@ import {
 } from '@/lib/kbsSubmissionBoard';
 import { isKbsDocInOcrQueue } from '@/lib/kbsCaptureOcrQueue';
 import { isKbsOcrPending } from '@/lib/kbsCaptureParsedFields';
+import { formatKbsTrDate } from '@/lib/kbsDisplayFormat';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
@@ -71,13 +72,13 @@ function formFromParsed(p: ParsedDocument | null): FormState {
     lastName: p?.lastName ?? '',
     middleName: p?.middleName ?? '',
     docNo,
-    birthDate: p?.birthDate?.slice(0, 10) ?? '',
+    birthDate: formatKbsTrDate(p?.birthDate) ?? '',
     nationality: p?.nationalityCode ?? '',
     issuingCountry: p?.issuingCountryCode ?? '',
     gender: p?.gender ?? '',
     motherName: p?.motherName ?? '',
     fatherName: p?.fatherName ?? '',
-    expiryDate: p?.expiryDate?.slice(0, 10) ?? '',
+    expiryDate: formatKbsTrDate(p?.expiryDate) ?? '',
     documentSeries: series,
     placeOfBirth: p?.placeOfBirth ?? '',
     personalNumber: p?.personalNumber ?? '',
@@ -360,11 +361,12 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
         autoCap="characters"
       />
       <Field
-        label="Doğum tarihi (YYYY-MM-DD)"
+        label="Doğum tarihi (GG.AA.YYYY)"
         value={form.birthDate}
         onChangeText={(t) => patchField('birthDate', t)}
         editable={!busy}
         keyboardType="numbers-and-punctuation"
+        placeholder="01.01.1990"
       />
       <Field
         label="Doğum yeri"
@@ -373,11 +375,12 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
         editable={!busy}
       />
       <Field
-        label="Son geçerlilik (YYYY-MM-DD)"
+        label="Son geçerlilik (GG.AA.YYYY)"
         value={form.expiryDate}
         onChangeText={(t) => patchField('expiryDate', t)}
         editable={!busy}
         keyboardType="numbers-and-punctuation"
+        placeholder="01.01.2030"
       />
       <Field
         label="Ülke / Uyruk (ISO)"
@@ -489,6 +492,7 @@ function Field({
   editable,
   autoCap,
   keyboardType,
+  placeholder,
 }: {
   label: string;
   value: string;
@@ -496,6 +500,7 @@ function Field({
   editable: boolean;
   autoCap?: 'characters' | 'words' | 'none';
   keyboardType?: 'default' | 'numbers-and-punctuation';
+  placeholder?: string;
 }) {
   return (
     <View style={styles.field}>
@@ -508,7 +513,7 @@ function Field({
         autoCapitalize={autoCap ?? 'words'}
         keyboardType={keyboardType ?? 'default'}
         placeholderTextColor={theme.colors.textMuted}
-        placeholder="—"
+        placeholder={placeholder ?? '—'}
       />
     </View>
   );

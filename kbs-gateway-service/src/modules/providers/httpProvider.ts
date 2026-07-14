@@ -8,6 +8,14 @@ import type {
   SubmitDeletePayload
 } from './types.js';
 import { detectEgressIpv4 } from '../../shared/utils/egressIp.js';
+import {
+  looksLikeAlphanumericPassportNo,
+  normalizeKbsBirthDate,
+  normalizeKbsDocNo,
+  normalizeKbsRoomNo,
+  normalizeKbsUlkeCode,
+  resolveKbsBelgeSeri
+} from '../../shared/utils/kbsFieldNormalize.js';
 
 /**
  * Jandarma KBS SOAP (SrvShsYtkTml).
@@ -112,22 +120,9 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
   }
 
-  /** Doğum tarihi — KBS: "YYYY-MM-DD" (ISO datetime gönderme). */
+  /** Doğum tarihi — KBS: "YYYY-MM-DD". */
   private normalizeDateOnly(value: string | null | undefined): string | null {
-    if (!value) return null;
-    const s = String(value).trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return null;
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Europe/Istanbul',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).formatToParts(d);
-    const get = (type: Intl.DateTimeFormatPartTypes) =>
-      parts.find((p) => p.type === type)?.value ?? '01';
-    return `${get('year')}-${get('month')}-${get('day')}`;
+    return normalizeKbsBirthDate(value);
   }
 
   /** KBS alan limitleri — fazla uzun ad/soyad reddedilmesin. */
@@ -138,9 +133,7 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
   }
 
   private clipDoc(value: string | null | undefined, max = 20): string | null {
-    const t = (value ?? '').trim().replace(/\s+/g, '');
-    if (!t) return null;
-    return t.length > max ? t.slice(0, max) : t;
+    return normalizeKbsDocNo(value, max);
   }
 
   private credsNumeric(credentials: ProviderCredentials) {
@@ -152,7 +145,14 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     return { userTc, tssKod };
   }
 
-  private personKind(payload: { kbsPersonKind?: string | null }) {
+  private personKind(payload: {
+    kbsPersonKind?: string | null;
+    documentNumber?: string | null;
+  }) {
+    // AP902390 vb. — asla T.C. sayma (harfler KIMLIKNO’da silinmesin).
+    if (looksLikeAlphanumericPassportNo(payload.documentNumber)) {
+      return 'foreign' as const;
+    }
     const k = String(payload.kbsPersonKind ?? 'foreign');
     if (k === 'tc_citizen') return 'tc_citizen' as const;
     if (k === 'ykn_foreign') return 'ykn_foreign' as const;
@@ -213,19 +213,26 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const { userTc, tssKod } = this.credsNumeric(credentials);
     const kind = this.personKind(payload);
     const { adi, soyadi } = this.nameParts(payload);
-    const room = this.clipName(payload.roomNumber, 50);
+    const room = normalizeKbsRoomNo(payload.roomNumber);
     const giris =
       this.normalizeDateTime(payload.checkInAt) ?? this.normalizeDateTime(new Date().toISOString());
     if (!giris) throw new Error('Giriş tarihi zorunlu (KBS)');
-    // Doğum: yalnızca gün (datetime KBS’de sık “Provider check-in failed” üretir).
+    // Doğum: yalnızca gün (datetime / yanlış dilim KBS’de sık reddedilir).
     const dogum = this.normalizeDateOnly(payload.birthDate);
-    const ulke = (payload.nationalityCode || payload.issuingCountryCode || '').trim().toUpperCase() || null;
+    // Jandarma ülke tablosu: Türkiye = TC (ICAO TUR kabul edilmez).
+    const ulke = normalizeKbsUlkeCode(payload.nationalityCode, payload.issuingCountryCode);
     const kimlikOrBelge = this.clipDoc(payload.documentNumber);
-    // Pasaportta ayrı seri yoksa belge no (max 20).
-    const seri = this.clipDoc(payload.documentSeries) || kimlikOrBelge;
+    // Pasaport: BELGENO = tam no (AP902390); BELGESERI = harf öneki veya ayrı seri.
+    const seri =
+      kind === 'foreign' || kind === 'ykn_foreign'
+        ? resolveKbsBelgeSeri(kimlikOrBelge, payload.documentSeries)
+        : this.clipDoc(payload.documentSeries) || kimlikOrBelge;
 
     if (!room) throw new Error('Oda No zorunlu (KBS)');
     if (!kimlikOrBelge) throw new Error(kind === 'tc_citizen' ? 'Kimlik No (T.C.) zorunlu' : 'Kimlik/Belge No zorunlu');
+    if (kind === 'tc_citizen' && /[A-Z]/.test(kimlikOrBelge)) {
+      throw new Error('Alfanümerik pasaport no T.C. girişi ile gönderilemez (örn. AP902390 → yabancı).');
+    }
 
     let opName: string;
     let musteriFields: Record<string, string | null | undefined>;
@@ -241,7 +248,7 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
         BABAADI: this.clipName(payload.fatherName) || undefined,
         ANAADI: this.clipName(payload.motherName) || undefined,
         DOGUMTARIHI: dogum || undefined,
-        ULKE: ulke || 'TUR',
+        ULKE: ulke || 'TC',
         CINSIYET: this.soapGender(payload.gender),
         MEDENIHAL: this.soapMarital(payload.maritalStatus),
         ODANO: room,
@@ -256,12 +263,16 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       opName = 'MusteriYabanciGiris';
       if (!adi) throw new Error('Adı zorunlu (KBS)');
       if (!soyadi) throw new Error('Soyadı zorunlu (KBS)');
-      if (!dogum) throw new Error('Doğum Tarihi zorunlu (KBS)');
-      if (!ulke) throw new Error('Ülke zorunlu (KBS)');
+      if (!dogum) throw new Error('Doğum Tarihi zorunlu (KBS) — YYYY-MM-DD');
+      if (!ulke) {
+        throw new Error(
+          'Ülke/uyruk KBS kodu geçersiz. ICAO-3 (örn. UZB, SAU) veya ülke adı girin; Türkiye için TC.'
+        );
+      }
       if (!seri) throw new Error('Belge Seri No zorunlu (KBS)');
 
       musteriFields = {
-        // YKN kolunda kimlik no YKN; yabancıda BELGENO pasaport/belge.
+        // YKN kolunda kimlik no YKN; yabancıda yalnız BELGENO (KIMLIKNO gönderme).
         KIMLIKNO: kind === 'ykn_foreign' ? kimlikOrBelge : undefined,
         BELGENO: kimlikOrBelge,
         BELGESERI: seri,
@@ -290,7 +301,12 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const xmlText = await this.soapCall({ action: `http://tempuri.org/ISrvShsYtkTml/${opName}`, bodyXml });
     const sonuc = this.extractSonuc(xmlText);
     if (!sonuc.basarili) {
-      throw new Error(`KBS check-in failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
+      const tip = `${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim();
+      throw new Error(
+        `KBS check-in failed: ${tip} [belge=${kimlikOrBelge} seri=${seri ?? ''} ulke=${ulke ?? ''} dogum=${dogum ?? ''} oda=${room} kind=${kind}]`
+          .replace(/\s+/g, ' ')
+          .trim()
+      );
     }
     return {
       summary: { kbs: 'jandarma', action: opName, kind, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } }
@@ -299,8 +315,9 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
 
   async submitCheckOut(payload: SubmitCheckOutPayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
     const { userTc, tssKod } = this.credsNumeric(credentials);
-    if (!payload.documentNumber) throw new Error('documentNumber required for check-out');
-    const kind = this.personKind(payload);
+    const belgeno = this.clipDoc(payload.documentNumber);
+    if (!belgeno) throw new Error('documentNumber required for check-out');
+    const kind = this.personKind({ ...payload, documentNumber: belgeno });
     const opName = kind === 'tc_citizen' ? 'MusteriKimlikNoCikis' : 'MusteriYabanciCikis';
 
     const cikis =
@@ -310,12 +327,12 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const musteriFields: Record<string, string | null | undefined> =
       kind === 'tc_citizen'
         ? {
-            KIMLIKNO: payload.documentNumber.replace(/\D/g, ''),
+            KIMLIKNO: belgeno.replace(/\D/g, ''),
             CKSTRH: cikis,
             CKSTIP: 'TESISTENCIKIS'
           }
         : {
-            BELGENO: payload.documentNumber,
+            BELGENO: belgeno,
             CKSTRH: cikis,
             CKSTIP: 'TESISTENCIKIS'
           };
@@ -335,14 +352,15 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
 
   async submitDelete(payload: SubmitDeletePayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
     const { userTc, tssKod } = this.credsNumeric(credentials);
-    if (!payload.documentNumber) throw new Error('documentNumber required for delete');
-    const kind = this.personKind(payload);
+    const belgeno = this.clipDoc(payload.documentNumber);
+    if (!belgeno) throw new Error('documentNumber required for delete');
+    const kind = this.personKind({ ...payload, documentNumber: belgeno });
     const opName = kind === 'tc_citizen' ? 'MusteriTCSIil' : 'MusteriYabanciSil';
 
     const musteriFields: Record<string, string | null | undefined> =
       kind === 'tc_citizen'
-        ? { KIMLIKNO: payload.documentNumber.replace(/\D/g, '') }
-        : { BELGENO: payload.documentNumber };
+        ? { KIMLIKNO: belgeno.replace(/\D/g, '') }
+        : { BELGENO: belgeno };
 
     const musteriXml = this.buildWcfDatacontractObjectXml(
       'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',

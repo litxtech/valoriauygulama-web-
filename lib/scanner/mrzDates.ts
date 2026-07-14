@@ -1,6 +1,6 @@
 /**
  * MRZ tarih alanları genelde YYMMDD (6 rakam) string olarak gelir.
- * Depolama için ISO (YYYY-MM-DD); gösterim için DD.MM.YYYY kullanın.
+ * Depolama için ISO (YYYY-MM-DD); gösterim için GG.AA.YYYY (01.01.2020).
  */
 
 export function mrzSixDigitsToIso(yymmdd: string | null | undefined, kind: 'birth' | 'expiry'): string | null {
@@ -42,7 +42,7 @@ export function isoDateToMrzSix(iso: string | null | undefined): string | null {
   return `${m[1]!.slice(2)}${m[2]}${m[3]}`;
 }
 
-/** YYYY-MM-DD → DD.MM.YYYY (Türkçe gösterim) */
+/** YYYY-MM-DD → GG.AA.YYYY (ör. 01.01.2020 — KBS; yıl önde değil) */
 export function formatIsoDateTr(iso: string | null | undefined): string {
   if (!iso) return '—';
   const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);

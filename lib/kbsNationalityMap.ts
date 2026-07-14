@@ -175,11 +175,27 @@ export function mapNationalityTextToCode(raw: string | null | undefined): string
   const t = (raw ?? '').trim();
   if (!t) return null;
   const up = t.toUpperCase();
+  // MRZ istisna / kısa kodlar
+  if (up === 'D') return 'DEU';
+  if (up === 'TR' || up === 'TC') return 'TUR';
   if (/^[A-Z]{3}$/.test(up) && ICAO3_SET.has(up)) return up;
+  // Bilinen 3 harf (listede yoksa da MRZ’den gelebilir — sakla)
+  if (/^[A-Z]{3}$/.test(up)) return up;
   const folded = foldTr(t);
   if (NAME_TO_ICAO[folded]) return NAME_TO_ICAO[folded]!;
   if (/^TC$|^TURK/.test(folded)) return 'TUR';
   return null;
+}
+
+/**
+ * Jandarma ULKE alanı — ülke tablosunda Türkiye = TC (ICAO TUR değil).
+ * DB’de TUR tutulabilir; SOAP’a gitmeden önce bu kullanılır.
+ */
+export function toKbsUlkeCode(raw: string | null | undefined): string | null {
+  const mapped = mapNationalityTextToCode(raw);
+  if (!mapped) return null;
+  if (mapped === 'TUR' || mapped === 'TR' || mapped === 'TC') return 'TC';
+  return mapped;
 }
 
 export function formatKbsNationalityCode(code: string | null | undefined): string | null {
