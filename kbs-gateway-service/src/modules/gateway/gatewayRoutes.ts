@@ -33,7 +33,8 @@ const BaseSchema = z.object({
   phone: z.string().nullable().optional(),
   forwardDated: z.boolean().optional(),
   fatherName: z.string().nullable().optional(),
-  motherName: z.string().nullable().optional()
+  motherName: z.string().nullable().optional(),
+  maritalStatus: z.string().nullable().optional()
 });
 
 function createProvider(app: any): OfficialSubmissionProvider {

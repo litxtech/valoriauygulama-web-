@@ -114,9 +114,25 @@ export default function StaffCamerasScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.primary} />
         }
         ListHeaderComponent={
-          cameras.length === 0 ? null : (
-            <Text style={styles.sectionTitle}>Yetkili kameralar</Text>
-          )
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.uploadRecordingBtn}
+              onPress={() => router.push('/staff/security-recordings/new' as never)}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+              <Text style={styles.uploadRecordingBtnText}>Önemli kayıt yükle</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.archiveLink}
+              onPress={() => router.push('/staff/security-recordings' as never)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.archiveLinkText}>Yüklenen kayıtlar</Text>
+              <Ionicons name="chevron-forward" size={16} color="#0f766e" />
+            </TouchableOpacity>
+            {cameras.length > 0 ? <Text style={styles.sectionTitle}>Yetkili kameralar</Text> : null}
+          </View>
         }
         renderItem={({ item }) => (
           <CameraCard
@@ -166,6 +182,26 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   row: { marginBottom: GAP },
+  headerActions: { marginBottom: 4 },
+  uploadRecordingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#0f766e',
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  uploadRecordingBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  archiveLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginBottom: 12,
+  },
+  archiveLinkText: { color: '#0f766e', fontWeight: '700', fontSize: 13 },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',

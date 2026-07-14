@@ -82,7 +82,7 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
       ok: false,
       error: {
         code: "CONFIG",
-        message: "KBS_CREDENTIAL_SECRET Edge secret tanımlı değil (VPS .env ile aynı, min 16 karakter).",
+        message: "KBS_CREDENTIAL_SECRET Edge secret tanımlı değil (Railway Variables ile aynı, min 16 karakter).",
       },
     });
   }
@@ -187,6 +187,17 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
     }
 
     const testRes = await testKbsConnectionViaGateway(token);
+    console.log(
+      JSON.stringify({
+        scope: "kbs-admin-credentials",
+        action: "test_connection",
+        userId,
+        ok: testRes.ok,
+        code: testRes.code ?? null,
+        httpStatus: testRes.httpStatus ?? null,
+        via: testRes.via,
+      })
+    );
 
     if (testRes.ok) {
       await admin.rpc("kbs_edge_touch_kbs_tested", { p_user_id: userId });
@@ -195,13 +206,20 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
     if (!testRes.ok) {
       return json({
         ok: false,
-        error: { code: "KBS_GATEWAY", message: testRes.message },
+        error: {
+          code: testRes.code ?? "KBS_GATEWAY",
+          message: testRes.message,
+          details: {
+            httpStatus: testRes.httpStatus ?? null,
+            via: testRes.via,
+          },
+        },
       });
     }
 
     return json({
       ok: true,
-      data: { message: testRes.message, via: testRes.via },
+      data: { message: testRes.message, via: testRes.via, code: testRes.code },
     });
   }
 

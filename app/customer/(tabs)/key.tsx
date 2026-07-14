@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Alert, TextInput, ActivityIndicator, Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import * as FileSystem from 'expo-file-system';
@@ -6,10 +6,8 @@ import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { FramedQR, type QRCodeRef, type QRFrameStyle, qrFrameLabel } from '@/components/DesignableQR';
-import { readNfcTagForDoor, isNfcAvailable, startAutoNfcDoorListener } from '@/lib/nfcDoor';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BarcodeScannerView } from '@/components/BarcodeScannerView';
-import { useFocusEffect } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
 import { buildCheckinQrUrl, fetchPublicQrSettings, type PublicQrSettings } from '@/lib/appPublicUrl';
@@ -31,20 +29,10 @@ export default function DigitalKeyScreen() {
   const [qrDrawerVisible, setQrDrawerVisible] = useState(false);
   const [selectedQrType, setSelectedQrType] = useState<'checkin' | 'contract'>('checkin');
   const [selectedFrame, setSelectedFrame] = useState<QRFrameStyle>('modern');
-  const [nfcAvailable, setNfcAvailable] = useState(false);
-  const [nfcLoading, setNfcLoading] = useState(false);
-  const [nfcListening, setNfcListening] = useState(false);
   const insets = useSafeAreaInsets();
-  const openDoorWithRoomRef = useRef<(roomNum: string) => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
     void fetchPublicQrSettings(true).then(setQrSettings).catch(() => setQrSettings(null));
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') {
-      isNfcAvailable().then(setNfcAvailable);
-    }
   }, []);
 
   const FRAME_OPTIONS: QRFrameStyle[] = ['minimal', 'bordered', 'modern', 'elegant'];
@@ -114,22 +102,6 @@ export default function DigitalKeyScreen() {
 
   const isValid = !!roomToken;
 
-  useFocusEffect(
-    useCallback(() => {
-      if (Platform.OS === 'web' || !isValid || !nfcAvailable || openDoorLoading) return;
-      setNfcListening(true);
-      const listener = startAutoNfcDoorListener((result) => {
-        setNfcListening(false);
-        if (!result?.room) return;
-        openDoorWithRoomRef.current(result.room);
-      });
-      return () => {
-        listener.stop();
-        setNfcListening(false);
-      };
-    }, [isValid, nfcAvailable, openDoorLoading])
-  );
-
   const downloadQrAsImage = useCallback(async (ref: QRCodeRef, label: string) => {
     if (!ref?.toDataURL) {
       if (Platform.OS === 'web') Alert.alert(t('info'), t('qrDownloadWebRightClick'));
@@ -161,26 +133,6 @@ export default function DigitalKeyScreen() {
     downloadQrAsImage(ref, which === 'checkin' ? 'checkin' : 'sozlesme');
   };
 
-  const openDoorByNfc = async () => {
-    setNfcLoading(true);
-    try {
-      const result = await readNfcTagForDoor();
-      if (!result) {
-        Alert.alert(t('cancelled'), t('nfcTagReadCancelled'));
-        return;
-      }
-      if (!result.room) {
-        Alert.alert(t('invalidTagTitle'), t('invalidTagNoRoomInfo', { raw: result.raw || '(empty)' }));
-        return;
-      }
-      await openDoorWithRoom(result.room);
-    } catch (e) {
-      Alert.alert(t('error'), (e as Error)?.message ?? t('nfcReadFailed'));
-    } finally {
-      setNfcLoading(false);
-    }
-  };
-
   const openDoorWithRoom = useCallback(async (roomNum: string) => {
     setOpenDoorLoading(true);
     try {
@@ -200,9 +152,7 @@ export default function DigitalKeyScreen() {
     } finally {
       setOpenDoorLoading(false);
     }
-  }, []);
-
-  openDoorWithRoomRef.current = openDoorWithRoom;
+  }, [t]);
 
   const openDoor = async () => {
     const num = doorRoomInput.trim() || (roomNumber !== '—' ? roomNumber : '');
@@ -259,29 +209,6 @@ export default function DigitalKeyScreen() {
               <Text style={styles.openDoorBtnText}>{t('openDoorBtn')}</Text>
             )}
           </TouchableOpacity>
-          {!nfcAvailable && Platform.OS !== 'web' && (
-            <Text style={styles.nfcUnavailableHint}>
-              {t('nfcUnavailableHint')}
-            </Text>
-          )}
-          {nfcAvailable && (
-            <>
-              {nfcListening && (
-                <Text style={styles.nfcListeningHint}>{t('nfcListeningHint')}</Text>
-              )}
-              <TouchableOpacity
-                style={[styles.nfcBtn, (nfcLoading || openDoorLoading) && styles.openDoorBtnDisabled]}
-                onPress={openDoorByNfc}
-                disabled={nfcLoading || openDoorLoading}
-              >
-                {nfcLoading ? (
-                  <ActivityIndicator color="#1a365d" size="small" />
-                ) : (
-                  <Text style={styles.nfcBtnText}>{t('openDoorWithNfcManualBtn')}</Text>
-                )}
-              </TouchableOpacity>
-            </>
-          )}
         </View>
       )}
 
@@ -461,8 +388,4 @@ const styles = StyleSheet.create({
   openDoorBtn: { backgroundColor: '#059669', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
   openDoorBtnDisabled: { opacity: 0.7 },
   openDoorBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  nfcListeningHint: { marginTop: 8, fontSize: 13, color: theme.colors.primary, textAlign: 'center' },
-  nfcUnavailableHint: { marginTop: 10, fontSize: 13, color: '#6b7280', textAlign: 'center', lineHeight: 18 },
-  nfcBtn: { marginTop: 10, paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 2, borderColor: '#1a365d', backgroundColor: 'transparent' },
-  nfcBtnText: { color: '#1a365d', fontWeight: '700', fontSize: 15 },
 });

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
+import { canKbsCheckin, canKbsCheckout } from '@/lib/kbsStaysPermissions';
 import { useTranslation } from 'react-i18next';
 
 function Tile(props: { title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
@@ -27,6 +28,8 @@ export default function StaffKbsTab() {
   const staff = useAuthStore((s) => s.staff);
   const showIdCapture = canStaffUseIdCapture(staff);
   const showCaptureHistory = canStaffViewKbsCaptureHistory(staff);
+  const canNotify = canKbsCheckin(staff);
+  const canCheckout = canKbsCheckout(staff);
 
   return (
     <View style={styles.container}>
@@ -38,37 +41,52 @@ export default function StaffKbsTab() {
       </View>
 
       {showIdCapture ? (
+        <Tile
+          title="Kimlik/Pasaport Çekim"
+          subtitle="Çek → düzelt → oda seç → Bildir."
+          icon="camera-outline"
+          onPress={() => router.push('/staff/kbs/capture-id' as never)}
+        />
+      ) : null}
+      {showCaptureHistory ? (
         <>
           <Tile
-            title="Kimlik/Pasaport Çekim"
-            subtitle="Tam ekran çek, AI tarasın, oda ata, anlık bildir."
-            icon="camera-outline"
-            onPress={() => router.push('/staff/kbs/capture-id' as never)}
+            title="Canlı Kimlik Listesi"
+            subtitle="Düzelt, oda ata ve Bildir — filtre, önizleme."
+            icon="albums-outline"
+            onPress={() => router.push('/staff/kbs/capture-history' as never)}
           />
           <Tile
-            title={t('kbsNfcCaptureTileTitle')}
-            subtitle={t('kbsNfcCaptureTileSub')}
-            icon="hardware-chip-outline"
-            onPress={() => router.push('/staff/(tabs)/nfc' as never)}
+            title="Pasaport Keşfeti"
+            subtitle="İşletme bazlı bildirilen pasaportlar, uyruk ve otel özeti."
+            icon="earth-outline"
+            onPress={() => router.push('/staff/kbs/passport-explore' as never)}
           />
         </>
       ) : null}
-      {showCaptureHistory ? (
+      {canNotify ? (
         <Tile
-          title="Canlı Kimlik Listesi"
-          subtitle={staff?.role === 'admin' ? 'Tüm personelin çekimleri — filtre, önizleme, paylaş.' : 'Günlük/haftalık/aylık filtre, önizleme, paylaş-yazdır.'}
-          icon="albums-outline"
-          onPress={() => router.push('/staff/kbs/capture-history' as never)}
+          title={t('kbsNavReady')}
+          subtitle={t('kbsTabReadySub')}
+          icon="paper-plane-outline"
+          onPress={() => router.push('/staff/kbs/ready')}
         />
       ) : null}
-      <Tile
-        title={t('kbsLodgersTitle')}
-        subtitle={t('kbsLodgersTileSub')}
-        icon="bed-outline"
-        onPress={() => router.push('/staff/kbs/lodgers' as never)}
-      />
-      <Tile title={t('kbsNavReady')} subtitle={t('kbsTabReadySub')} icon="paper-plane-outline" onPress={() => router.push('/staff/kbs/ready')} />
-      <Tile title={t('kbsNavSubmitted')} subtitle={t('kbsTabSubmittedSub')} icon="list-outline" onPress={() => router.push('/staff/kbs/submitted')} />
+      {canCheckout ? (
+        <Tile
+          title={t('kbsLodgersTitle')}
+          subtitle="İçeridekiler — çıkış ve düzelt / yeniden bildir."
+          icon="exit-outline"
+          onPress={() => router.push('/staff/kbs/lodgers' as never)}
+        />
+      ) : (
+        <Tile
+          title={t('kbsLodgersTitle')}
+          subtitle={t('kbsLodgersTileSub')}
+          icon="bed-outline"
+          onPress={() => router.push('/staff/kbs/lodgers' as never)}
+        />
+      )}
       <Tile title={t('kbsNavRooms')} subtitle={t('kbsTabRoomsSub')} icon="bed-outline" onPress={() => router.push('/staff/kbs/rooms')} />
       <Tile title={t('kbsNavFailed')} subtitle={t('kbsTabFailedSub')} icon="alert-circle-outline" onPress={() => router.push('/staff/kbs/failed')} />
     </View>

@@ -3,10 +3,7 @@ import * as FileSystem from 'expo-file-system';
 import { Image } from 'react-native';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
-import { ocrLinesFromImage } from '@/lib/scanner/ocrLinesFromImage';
-import { analyzeOcrLinesForMrzLive } from '@/lib/scanner/mrzLiveEngine';
 import {
-  parseIdCardFromOcrLines,
   enrichParsedWithIdCardOcr,
   galleryParsedHasMinimumFields,
 } from '@/lib/guestScan/idCardOcrParser';
@@ -65,7 +62,7 @@ function buildGalleryPayload(
   };
 }
 
-/** Galeriden tek belge seç → MRZ veya kimlik OCR; geçici dosya silinir. */
+/** Galeriden tek belge seç → derin MRZ + ön yüz OCR; geçici dosya silinir. */
 export async function scanDocumentFromGallery(): Promise<GalleryScanResult> {
   const ok = await ensureMediaLibraryPermission({
     title: 'Galeri izni',
@@ -95,52 +92,27 @@ export async function scanDocumentFromGallery(): Promise<GalleryScanResult> {
       };
     }
 
-    const { lines: rawLines } = await ocrLinesFromImage(uri, {
-      document: true,
-      fast: true,
-      imagePrepared: true,
-    });
-    const lines = normalizeOcrLines(rawLines);
-    if (!lines.length) {
+    const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
+    const ocr = await parseIdCardImageUriMaximum(uri, { captureSide: 'front' });
+    const parsed = ocr.parsed;
+
+    if (!parsed.documentNumber && !parsed.rawMrz && (parsed.confidence ?? 0) < 0.35) {
       return {
         ok: false,
         code: 'no_document',
-        message: 'Belgede okunabilir metin bulunamadı. Daha net ve düz çekilmiş bir fotoğraf seçin.',
+        message: 'Kimlik veya pasaport bilgileri okunamadı. Belgeyi düz, iyi ışıkta ve tam kadrajda çekin.',
       };
     }
 
-    const mrz = analyzeOcrLinesForMrzLive(rawLines);
-    let payload: GuestScanLockPayload;
-
-    if (mrz.phase === 'locking' && mrz.locked) {
-      payload = buildGalleryPayload(mrz.locked.parsed, rawLines, mrz.locked.mrz);
-    } else {
-      const idParsed = parseIdCardFromOcrLines(rawLines);
-      if (!idParsed.documentNumber && (idParsed.confidence ?? 0) < 0.4) {
-        return {
-          ok: false,
-          code: 'no_document',
-          message: 'Kimlik veya pasaport bilgileri okunamadı. Belgeyi düz, iyi ışıkta ve tam kadrajda çekin.',
-        };
-      }
-      payload = buildGalleryPayload(idParsed, rawLines, null);
-    }
+    let payload = buildGalleryPayload(parsed, [], parsed.rawMrz);
 
     if (!galleryParsedHasMinimumFields(payload.parsed)) {
-      const idRetry = parseIdCardFromOcrLines(rawLines);
-      payload = buildGalleryPayload(
-        { ...payload.parsed, ...idRetry, documentType: payload.parsed.documentType },
-        rawLines,
-        payload.mrz
-      );
-      if (!galleryParsedHasMinimumFields(payload.parsed)) {
-        return {
-          ok: false,
-          code: 'no_document',
-          message:
-            'Ad, soyad veya belge numarası okunamadı. Ön yüz + MRZ şeridi görünecek şekilde net bir fotoğraf seçin.',
-        };
-      }
+      return {
+        ok: false,
+        code: 'no_document',
+        message:
+          'Ad, soyad veya belge numarası okunamadı. Pasaportta ön yüz + alt MRZ şeridi net görünsün; kimlikte ön yüz tam kadrajda olsun.',
+      };
     }
 
     return { ok: true, payload };

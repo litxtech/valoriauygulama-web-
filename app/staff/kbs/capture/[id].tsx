@@ -18,9 +18,11 @@ import {
 } from '@/lib/kbsCaptureHistorySeen';
 import { isKbsCaptureRowNew } from '@/lib/kbsCaptureHistoryMrzTargets';
 import { KbsCaptureDetailView } from '@/components/kbs/KbsCaptureDetailView';
+import { KbsCaptureOpsActions } from '@/components/kbs/KbsCaptureOpsActions';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { buildKbsCaptureGalleryItems } from '@/lib/kbsCaptureGallery';
 import { correctKbsCapturedDocument } from '@/lib/kbsCaptureOcrCorrection';
+import { canKbsCheckin } from '@/lib/kbsStaysPermissions';
 import { Redirect } from 'expo-router';
 
 export default function KbsCaptureDetailScreen() {
@@ -180,6 +182,13 @@ export default function KbsCaptureDetailScreen() {
         onCorrect={() => void handleCorrect()}
         correctBusy={correctBusy}
         onSavePhone={handleSavePhone}
+        opsActions={
+          <KbsCaptureOpsActions
+            row={row}
+            canNotify={canKbsCheckin(staff)}
+            onUpdated={() => void load()}
+          />
+        }
       />
       <KbsZoomImageModal
         items={galleryItems}

@@ -114,11 +114,33 @@ export default function AdminKbsSettingsScreen() {
     const code = String(res?.error?.code ?? '');
     const detailsObj = res?.error?.details;
     const details = sanitizeDetailsForAlert(detailsObj);
+    const httpStatus =
+      detailsObj && typeof detailsObj === 'object' && detailsObj.httpStatus != null
+        ? Number(detailsObj.httpStatus)
+        : null;
+
+    if (__DEV__) {
+      console.warn('[kbs-settings] api error', { code, httpStatus, message: String(message).slice(0, 240) });
+    }
 
     let hint = '';
-    if (/gateway token|Invalid or missing gateway/i.test(message)) hint += t('kbsApiHintGatewayToken');
-    if (/User not provisioned|Invalid token|Missing bearer/i.test(message) || code === 'AUTH') hint += t('kbsApiHintAuth');
-    if (/ops\.app_users|admin veya manager|Admin only|FORBIDDEN|yalnızca admin/i.test(message) || code === 'FORBIDDEN') {
+    if (
+      code === 'GATEWAY_TOKEN' ||
+      /gateway token|köprü token|Invalid or missing gateway/i.test(message)
+    ) {
+      hint += t('kbsApiHintGatewayToken');
+    }
+    if (
+      code === 'AUTH' ||
+      code === 'UNAUTHORIZED' ||
+      /User not provisioned|Invalid token|Missing bearer|oturum reddetti|yeniden giriş/i.test(message)
+    ) {
+      hint += t('kbsApiHintAuth');
+    }
+    if (
+      code === 'FORBIDDEN' ||
+      /ops\.app_users|admin veya manager|Admin only|FORBIDDEN|yalnızca admin|User inactive/i.test(message)
+    ) {
       hint += t('kbsApiHintForbidden');
     }
     if (code === 'TIMEOUT' || /yanıt vermedi/i.test(message)) hint += t('kbsApiHintTimeout');
@@ -135,6 +157,7 @@ export default function AdminKbsSettingsScreen() {
     if (
       !missingCredSecret &&
       (code === 'CONFIG' ||
+        code === 'UPSTREAM' ||
         /senin_sunucu|KBS_GATEWAY_URL|failed to lookup|name or service not known/i.test(message) ||
         isPlaceholderKbsGatewayError(message) ||
         isDnsOrUnreachableBridgeError(message))
@@ -142,7 +165,8 @@ export default function AdminKbsSettingsScreen() {
       hint += t('kbsApiHintBadGatewayUrl');
     }
 
-    return `${message}${details}${hint}`;
+    const statusLine = httpStatus != null && Number.isFinite(httpStatus) ? `\n[HTTP ${httpStatus} · ${code || 'ERR'}]` : code ? `\n[${code}]` : '';
+    return `${message}${statusLine}${details}${hint}`;
   };
 
   const loadOpsRooms = async () => {

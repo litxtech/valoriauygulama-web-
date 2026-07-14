@@ -566,6 +566,7 @@ const translation = {
       kbsNfcDetailTitle: 'Chip read details',
       kbsNfcDetailA11y: 'Show passport details',
       kbsPersonTc: 'Turkish citizen',
+      kbsPersonKindLabel: 'Guest type',
       kbsPersonYkn: 'Foreigner with YKN',
       kbsPersonForeign: 'Foreign',
       kbsGuestFirstName: 'First name',
@@ -615,6 +616,7 @@ const translation = {
       kbsGuestMissingFirstName: 'First name required',
       kbsGuestMissingLastName: 'Last name required',
       kbsGuestMissingBirthDate: 'Birth date required',
+      kbsGuestMissingUsage: 'Usage type required',
       kbsLodgersTitle: 'Current guests',
       kbsLodgersTileSub: 'Live KBS notifications, checkout, corrections',
       kbsLodgersDetail: 'Guest detail',
@@ -1143,7 +1145,7 @@ const translation = {
       staffAssetsTitle: 'Assets',
       staffAssetsNewTitle: 'Add asset',
       staffAssetsDetailTitle: 'Asset detail',
-      kbsTabHeaderDesc: 'Batch scan -> room assignment -> single/bulk submit -> checkout. Permission based.',
+      kbsTabHeaderDesc: 'Edit → Notify → In-house checkout. Permission-based (KBS Notify / KBS Checkout).',
       kbsTabScanSub: 'Scan passport/ID MRZ and create draft',
       kbsTabReadySub: 'Single/bulk/room/group based submit',
       kbsTabSubmittedSub: 'Track submitted and checkout states',
@@ -1442,17 +1444,17 @@ const translation = {
       requestFailed: 'Request failed',
       kbsApiErrorHtmlSnippetHidden: '\n\n(Server returned HTML; long output hidden.)',
       kbsApiHintGatewayToken:
-        '\n\n• Supabase KBS_GATEWAY_TOKEN must match Railway kbs-ops.\n• Was ops-proxy redeployed?',
+        '\n\n• Supabase KBS_GATEWAY_TOKEN must match Railway kbs-ops Variables exactly.\n• Redeploy kbs-admin-credentials + ops-proxy.\n• Restart/redeploy Railway kbs-ops.',
       kbsApiHintAuth:
-        '\n\n• Is your session valid (try signing in again)?\n• This user needs an ops.app_users row in Supabase (auth user id = id).',
+        '\n\n• This is SESSION auth, not the gateway token.\n• Sign out and sign back in.\n• ops.app_users must exist (id=auth user id, is_active=true).',
       kbsApiHintForbidden:
-        '\n\n• Even if you look like an admin in the app, the OPS API checks ops.app_users.role: it must be admin or manager.\n• If missing, add ops.app_users with the service role.',
+        '\n\n• User may be inactive or hotel account insufficient for this action.\n• Ensure your staff account is active.',
       kbsApiHintNonJson:
-        '\n\n• Is Railway kbs-ops /health OK?\n• KBS_GATEWAY_URL must not contain stray spaces.',
+        '\n\n• https://kbs-ops-production.up.railway.app/health must return JSON.\n• KBS_GATEWAY_URL must not end with / or spaces.',
       kbsApiHintGatewayHtml:
-        '\n\n• Railway Root Directory should be `railway-service`; redeploy.',
+        '\n\n• Railway kbs-ops root must be the railway-service upload (or rootDirectory set correctly).',
       kbsApiHintBadGatewayUrl:
-        '\n\n• KBS_GATEWAY_URL = Railway kbs-ops HTTPS URL\n• KBS_GATEWAY_TOKEN = Railway Variables\n• `supabase functions deploy ops-proxy`',
+        '\n\n• KBS_GATEWAY_URL = https://kbs-ops-production.up.railway.app\n• KBS_GATEWAY_TOKEN = Railway Variables\n• `supabase functions deploy ops-proxy`',
       kbsApiHintCredentialSecret:
         '\n\n1) Match KBS_CREDENTIAL_SECRET on Railway + Supabase Edge\n2) Deploy kbs-admin-credentials\n3) Save again.',
       kbsApiHintTimeout: '\n\nKBS bridge timed out. Check Railway kbs-ops and KBS_GATEWAY_URL.',

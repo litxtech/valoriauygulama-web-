@@ -414,6 +414,76 @@ export async function updateCaptureGuestPhone(docId: string, phone: string | nul
   if (error) throw new Error(error.message);
 }
 
+export type CaptureManualEdit = {
+  firstName: string;
+  lastName: string;
+  documentNumber: string;
+  birthDate: string;
+  nationalityCode: string;
+};
+
+/** Elle alan düzeltmesi — parsed_payload + guests. */
+export async function updateCaptureManualFields(item: CaptureItem, edit: CaptureManualEdit): Promise<CaptureItem> {
+  const firstName = edit.firstName.trim() || null;
+  const lastName = edit.lastName.trim() || null;
+  const documentNumber = edit.documentNumber.trim() || null;
+  const birthDate = edit.birthDate.trim().slice(0, 10) || null;
+  const nationalityCode = edit.nationalityCode.trim().toUpperCase() || null;
+  const fullName = [firstName, lastName].filter(Boolean).join(' ') || null;
+  const prev = (item.parsed_payload ?? {}) as Record<string, unknown>;
+  const payload = {
+    ...prev,
+    firstName,
+    lastName,
+    fullName,
+    documentNumber,
+    birthDate,
+    nationalityCode,
+  };
+  const coreReady = !!(documentNumber && fullName);
+
+  const { error: docErr } = await supabase
+    .schema('ops')
+    .from('guest_documents')
+    .update({
+      parsed_payload: payload,
+      document_number: documentNumber,
+      nationality_code: nationalityCode,
+      scan_status: coreReady ? 'ready_to_submit' : item.scan_status,
+    })
+    .eq('id', item.id);
+  if (docErr) throw new Error(docErr.message);
+
+  if (item.guest_id) {
+    const { error: guestErr } = await supabase
+      .schema('ops')
+      .from('guests')
+      .update({
+        first_name: firstName,
+        last_name: lastName,
+        full_name: fullName,
+        birth_date: birthDate,
+        nationality_code: nationalityCode,
+      })
+      .eq('id', item.guest_id);
+    if (guestErr) throw new Error(guestErr.message);
+  }
+
+  return {
+    ...item,
+    parsed_payload: payload,
+    document_number: documentNumber,
+    nationality_code: nationalityCode,
+    scan_status: coreReady ? 'ready_to_submit' : item.scan_status,
+    parsed: parseRow({
+      ...item,
+      parsed_payload: payload,
+      document_number: documentNumber,
+      nationality_code: nationalityCode,
+    }),
+  };
+}
+
 export function buildFamilyIndex(items: CaptureItem[]): Map<string, CaptureItem[]> {
   const map = new Map<string, CaptureItem[]>();
   for (const it of items) {

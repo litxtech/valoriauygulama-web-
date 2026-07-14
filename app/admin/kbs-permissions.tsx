@@ -17,6 +17,7 @@ import { theme } from '@/constants/theme';
 import { apiGet, apiPost } from '@/lib/kbsApi';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import { kbsQueryOptions } from '@/lib/kbsReactQuery';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import { AdminButton } from '@/components/admin';
 
 type PermissionCatalogItem = { code: string; name: string; description?: string | null };
@@ -37,6 +38,8 @@ export default function AdminKbsPermissionsScreen() {
   const catalogQ = useQuery({
     queryKey: ['kbs', 'admin', 'permission_catalog'],
     queryFn: async () => {
+      const ensured = await resolveOpsHotelIdForCaller();
+      if (!ensured.ok) throw new Error(ensured.message);
       const res = await apiGet<PermissionCatalogItem[]>('/admin/permission-catalog');
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
@@ -47,6 +50,8 @@ export default function AdminKbsPermissionsScreen() {
   const usersQ = useQuery({
     queryKey: ['kbs', 'admin', 'users_with_permissions'],
     queryFn: async () => {
+      const ensured = await resolveOpsHotelIdForCaller();
+      if (!ensured.ok) throw new Error(ensured.message);
       const res = await apiGet<UserRow[]>('/admin/users-with-permissions');
       if (!res.ok) throw new Error(res.error.message);
       return res.data;
@@ -55,6 +60,17 @@ export default function AdminKbsPermissionsScreen() {
   });
 
   const codes = useMemo(() => (catalogQ.data ?? []).map((p) => p.code), [catalogQ.data]);
+  const highlightCodes = useMemo(
+    () =>
+      new Set([
+        'kbs.submit.single',
+        'kbs.submit.bulk',
+        'kbs.checkout.single',
+        'kbs.checkout.bulk',
+        'kbs.checkout.by_room',
+      ]),
+    []
+  );
   const catalogByCode = useMemo(() => {
     const m = new Map<string, PermissionCatalogItem>();
     for (const p of catalogQ.data ?? []) m.set(p.code, p);
@@ -105,6 +121,9 @@ export default function AdminKbsPermissionsScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>{t('adminKbsPermissionsTitle')}</Text>
       <Text style={styles.p}>{t('adminKbsPermissionsIntro')}</Text>
+      <Text style={styles.p}>
+        Personel detayından «KBS Bildir» / «KBS Çıkış» açıldığında OPS submit/checkout yetkileri otomatik senkronlanır.
+      </Text>
       {!kbsUi ? <Text style={styles.banner}>{t('adminKbsStaffTabDisabledBanner')}</Text> : null}
 
       {initialLoading ? (
@@ -159,7 +178,12 @@ export default function AdminKbsPermissionsScreen() {
                   return (
                     <TouchableOpacity
                       key={code}
-                      style={[styles.pill, allowed ? styles.pillOn : styles.pillOff, savingUserId === item.id && { opacity: 0.65 }]}
+                      style={[
+                        styles.pill,
+                        allowed ? styles.pillOn : styles.pillOff,
+                        highlightCodes.has(code) && styles.pillHighlight,
+                        savingUserId === item.id && { opacity: 0.65 },
+                      ]}
                       onPress={() => toggle(item, code)}
                       disabled={savingUserId != null}
                       activeOpacity={0.85}
@@ -223,6 +247,7 @@ const styles = StyleSheet.create({
   pill: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 10, borderWidth: 1, width: '48%' },
   pillOn: { backgroundColor: '#e6f7ee', borderColor: '#bde7cf' },
   pillOff: { backgroundColor: '#f6f6f6', borderColor: theme.colors.borderLight },
+  pillHighlight: { borderWidth: 2, borderColor: theme.colors.primary },
   pillText: { fontWeight: '900' },
   pillTextOn: { color: '#0f5132' },
   pillTextOff: { color: theme.colors.text },

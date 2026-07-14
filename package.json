@@ -1,6 +1,6 @@
 {
   "name": "valoria-hotel",
-  "version": "3.0.0",
+  "version": "3.2.0",
   "main": "index.js",
   "scripts": {
     "start": "node scripts/start-local-or-gateway.js",
@@ -33,10 +33,9 @@
     "submit:dev:ios": "eas submit --profile development --platform ios --latest",
     "submit:dev:android": "eas submit --profile development --platform android --latest",
     "submit:dev": "eas submit --profile development --platform all --latest",
-    "postinstall": "patch-package && node scripts/patch-eid-reader-nfc.js"
+    "postinstall": "patch-package"
   },
   "dependencies": {
-    "@2060.io/react-native-eid-reader": "^0.3.1",
     "@expo/vector-icons": "^15.0.3",
     "@hookform/resolvers": "^5.2.2",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -88,7 +87,6 @@
     "react-i18next": "^15.0.0",
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",
-    "react-native-nfc-manager": "^3.17.2",
     "react-native-nitro-image": "^0.13.1",
     "react-native-nitro-modules": "^0.35.4",
     "react-native-qrcode-svg": "^6.3.0",

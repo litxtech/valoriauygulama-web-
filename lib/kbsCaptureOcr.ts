@@ -4,6 +4,8 @@ import {
   shouldPreferKbsFrontIdParse,
 } from '@/lib/guestScan/idCardOcrParser';
 import { listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
+import { isUsablePersonName } from '@/lib/guestScan/personNameUtils';
+import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { filterKbsOcrLines, filterMrzOnlyOcrLines } from '@/lib/kbsOcrDocumentFocus';
 import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
@@ -258,23 +260,20 @@ export async function parseIdCardImageUriWithFallback(
     return pickBetterKbsOcrResult(primary, fallback);
   }
 
-  if (hasMrz && coreMissing <= 1) return primary;
   if (coreMissing === 0) return primary;
-  if (options?.fast !== false) {
-    if (coreMissing <= 2) return primary;
-    if (hasMrz && coreMissing <= 3) return primary;
-    return primary;
-  }
 
-  if (!hasMrz && coreMissing >= 4) {
-    const fallback = await parseIdCardImageUriAiFallback(uri, options);
-    return pickBetterKbsOcrResult(primary, fallback);
-  }
-  if (!hasMrz || coreMissing >= 3) {
-    const fallback = await parseIdCardImageUriAiFallback(uri, options);
-    return pickBetterKbsOcrResult(primary, fallback);
-  }
-  return primary;
+  const weakNames =
+    !isUsablePersonName(primary.parsed.firstName) || !isUsablePersonName(primary.parsed.lastName);
+  const weakDoc = !hasPlausibleKbsDocumentNumber(
+    primary.parsed.documentNumber,
+    primary.parsed.documentType
+  );
+  const needsFallback = coreMissing >= 2 || weakNames || (!hasMrz && weakDoc);
+
+  if (options?.fast !== false && !needsFallback) return primary;
+
+  const fallback = await parseIdCardImageUriAiFallback(uri, options);
+  return pickBetterKbsOcrResult(primary, fallback);
 }
 
 function ocrQualityScore(result: KbsOcrResult): number {

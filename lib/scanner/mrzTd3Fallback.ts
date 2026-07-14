@@ -1,7 +1,7 @@
 import { isKnownIcao3 } from '@/lib/kbsNationalityMap';
 import { mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { normalizeMrzOcrLine } from '@/lib/scanner/mrzOcrNormalize';
-import { finalizeMrzPersonNames } from '@/lib/scanner/mrzPersonNames';
+import { finalizeMrzPersonNames, mrzNamesLookValid } from '@/lib/scanner/mrzPersonNames';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 const TD3_LEN = 44;
@@ -177,15 +177,27 @@ export function mergeTd3FallbackFields(
   parsed: ParsedDocument,
   rawMrz: string
 ): ParsedDocument {
-  const needs =
-    parsed.documentType === 'passport' &&
-    (!parsed.documentNumber || !parsed.birthDate || !parsed.expiryDate || !parsed.nationalityCode);
-  if (!needs) return parsed;
-
   const fallback = parseTd3MrzFallback(rawMrz);
   if (!fallback) return parsed;
 
+  const checksumBad = parsed.checksumsValid === false;
+  const namesWeak =
+    !parsed.firstName ||
+    !parsed.lastName ||
+    !mrzNamesLookValid(parsed.firstName, parsed.lastName);
+
+  const needs =
+    parsed.documentType === 'passport' &&
+    (!parsed.documentNumber ||
+      !parsed.birthDate ||
+      !parsed.expiryDate ||
+      !parsed.nationalityCode ||
+      (checksumBad && namesWeak));
+
+  if (!needs) return parsed;
+
   const warnings = [...new Set([...(parsed.warnings ?? []), ...(fallback.warnings ?? [])])];
+  const keepParsedNames = !namesWeak;
 
   return {
     ...parsed,
@@ -196,9 +208,9 @@ export function mergeTd3FallbackFields(
     birthDate: parsed.birthDate ?? fallback.birthDate,
     expiryDate: parsed.expiryDate ?? fallback.expiryDate,
     gender: parsed.gender ?? fallback.gender,
-    firstName: parsed.firstName ?? fallback.firstName,
-    lastName: parsed.lastName ?? fallback.lastName,
-    fullName: parsed.fullName ?? fallback.fullName,
+    firstName: keepParsedNames ? parsed.firstName : parsed.firstName ?? fallback.firstName,
+    lastName: keepParsedNames ? parsed.lastName : parsed.lastName ?? fallback.lastName,
+    fullName: keepParsedNames ? parsed.fullName : parsed.fullName ?? fallback.fullName,
     middleName: parsed.middleName ?? fallback.middleName,
     checksumsValid: parsed.checksumsValid,
     warnings,

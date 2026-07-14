@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +33,8 @@ type Props = {
   correctBusy?: boolean;
   /** Müşteri numarasını kaydeder. Dönüş: başarı + mesaj. */
   onSavePhone?: (phone: string | null) => Promise<{ ok: boolean; message?: string }>;
+  /** Manuel düzeltme + Bildir paneli (opsiyonel). */
+  opsActions?: ReactNode;
 };
 
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
@@ -58,6 +60,7 @@ export function KbsCaptureDetailView({
   onCorrect,
   correctBusy = false,
   onSavePhone,
+  opsActions,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const parsed = asParsed(row);
@@ -261,6 +264,8 @@ export function KbsCaptureDetailView({
           ) : null}
         </View>
       ) : null}
+
+      {opsActions}
 
       <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
       {canSeeImage && row.front_image_url && onCorrect ? (

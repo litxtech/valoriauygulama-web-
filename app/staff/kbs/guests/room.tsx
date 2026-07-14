@@ -22,10 +22,13 @@ import { submitGuestGroupToKbs } from '@/lib/guestScan/submitGroupToKbs';
 import { validateGuestScanItem } from '@/lib/guestScan/validateGuestItem';
 import type { GuestGroupSubmitProgress } from '@/lib/guestScan/submitGroupToKbs';
 import { playKbsScanSound } from '@/lib/kbsScanSounds';
+import { useAuthStore } from '@/stores/authStore';
+import { canKbsCheckin } from '@/lib/kbsStaysPermissions';
 
 export default function KbsGuestRoomScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const staff = useAuthStore((s) => s.staff);
   const session = useGuestScanSessionStore((s) => s.session);
   const setStayInfo = useGuestScanSessionStore((s) => s.setStayInfo);
   const setLastSubmitResults = useGuestScanSessionStore((s) => s.setLastSubmitResults);
@@ -82,6 +85,10 @@ export default function KbsGuestRoomScreen() {
 
   const startSubmit = async () => {
     if (!selectedRoomId || !session || submitting) return;
+    if (!canKbsCheckin(staff)) {
+      Alert.alert(t('kbsNotifyTitle'), t('noPermission'));
+      return;
+    }
 
     for (const it of items) {
       const issues = validateGuestScanItem(it);

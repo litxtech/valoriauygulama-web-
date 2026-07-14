@@ -5,7 +5,7 @@ import {
   type KbsOcrOptions,
   type KbsOcrResult,
 } from '@/lib/kbsCaptureOcr';
-import { shouldPreferKbsFrontIdParse } from '@/lib/guestScan/idCardOcrParser';
+import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { buildKbsCopyFields, listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 import { prepareProfessionalKbsOcrUriCached } from '@/lib/kbsOcrSessionCache';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
@@ -30,7 +30,7 @@ export function kbsOcrQualityScore(result: KbsOcrResult): number {
   if (p.rawMrz) s += 28;
   if (p.checksumsValid === true) s += 22;
   if (p.checksumsValid === false) s -= 12;
-  if (p.documentNumber?.replace(/\D/g, '').length >= 6) s += 12;
+  if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) s += 12;
   if (p.firstName && p.lastName) s += 10;
   if (p.birthDate) s += 8;
   if (p.expiryDate) s += 8;
@@ -178,8 +178,7 @@ export function hasKbsOcrApplyableData(result: KbsOcrResult): boolean {
   if (buildKbsCopyFields(result.parsed).length >= 1) return true;
   const p = result.parsed;
   if (p.rawMrz) return true;
-  const docDigits = (p.documentNumber ?? '').replace(/\D/g, '');
-  return docDigits.length >= 6;
+  if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) return true;
 }
 
 export function shouldApplyKbsOcrResult(result: KbsOcrResult): boolean {

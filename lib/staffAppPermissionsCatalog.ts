@@ -124,6 +124,20 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
   // —— Teknik & güvenlik ——
   { key: 'kbs_mrz_scan', label: 'Pasaport / MRZ tarama (KBS)', section: 'technical_security', defaultEnabled: false },
   { key: 'id_capture', label: 'Kimlik / pasaport çekim', section: 'technical_security', defaultEnabled: false },
+  {
+    key: 'kbs_bildir',
+    label: 'KBS Bildir (Jandarma)',
+    description: 'Kimlik / pasaport kaydını KBS’ye bildirme (check-in).',
+    section: 'technical_security',
+    defaultEnabled: false,
+  },
+  {
+    key: 'kbs_cikis',
+    label: 'KBS Çıkış',
+    description: 'Bildirilmiş konaklayanları KBS’den çıkış yapma.',
+    section: 'technical_security',
+    defaultEnabled: false,
+  },
   { key: 'teknik_varlik_yonetimi', label: 'Akıllı tesis envanteri yönetimi', section: 'technical_security', defaultEnabled: false },
   { key: 'teknik_varliklar', label: 'Teknik QR (müdahale)', section: 'technical_security', defaultEnabled: false },
   { key: 'teknik_varliklar_okuma', label: 'Teknik QR (salt okunur)', section: 'technical_security', defaultEnabled: false },

@@ -1329,3 +1329,121 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* ---------- KBS ops: duzelt / bildir / iceride ---------- */
+.ops-edit-block {
+  margin: 14px 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ops-hint { margin: 0; font-size: 13px; }
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ops-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.ops-grid input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ops-actions { display: flex; gap: 8px; }
+
+.ops-notify {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ops-notify h3 { margin: 0; font-size: 15px; }
+
+.ops-rooms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-btn {
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+.chip-btn.on {
+  border-color: var(--primary);
+  background: rgba(79, 124, 255, 0.2);
+  color: #c7d7ff;
+}
+
+.ops-bildir { width: 100%; padding: 12px; font-weight: 900; }
+
+.ops-msg {
+  font-size: 13px;
+  color: var(--ok-text);
+  background: var(--ok-bg);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.inhouse-page { padding: 16px 18px 40px; display: flex; flex-direction: column; gap: 12px; }
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-head h1 { margin: 0 0 4px; font-size: 22px; }
+
+.inhouse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inhouse-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.inhouse-card .tiny { font-size: 12px; margin-top: 2px; }
+
+@media (max-width: 640px) {
+  .ops-grid { grid-template-columns: 1fr; }
+}

@@ -243,6 +243,11 @@ export function CapturesPage() {
     setSelected((cur) => (cur && cur.id === updated.id ? updated : cur));
   }, []);
 
+  const handleCaptureUpdated = useCallback((updated: CaptureItem) => {
+    setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+    setSelected((cur) => (cur && cur.id === updated.id ? updated : cur));
+  }, []);
+
   const openCard = useCallback((item: CaptureItem) => {
     setSelected(item);
   }, []);
@@ -445,6 +450,7 @@ export function CapturesPage() {
           onSelect={setSelected}
           onPhoneSaved={handlePhoneSaved}
           onReadRequested={handleReadRequested}
+          onCaptureUpdated={handleCaptureUpdated}
         />
       ) : null}
     </div>

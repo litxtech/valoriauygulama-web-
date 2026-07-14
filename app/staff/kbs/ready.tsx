@@ -6,10 +6,14 @@ import { apiGet, apiPost } from '@/lib/kbsApi';
 import { assignKbsRoom, fetchKbsOpsRooms } from '@/lib/kbsStaffOpsEdge';
 import { kbsQueryOptions } from '@/lib/kbsReactQuery';
 import { useTranslation } from 'react-i18next';
+import { useAuthStore } from '@/stores/authStore';
+import { canKbsCheckin } from '@/lib/kbsStaysPermissions';
 
 export default function ReadyToSubmitScreen() {
   const router = useRouter();
   const { t } = useTranslation();
+  const staff = useAuthStore((s) => s.staff);
+  const canNotify = canKbsCheckin(staff);
   const roomsQ = useQuery({
     queryKey: ['kbs', 'rooms'],
     queryFn: async () => {
@@ -54,6 +58,10 @@ export default function ReadyToSubmitScreen() {
   };
 
   const submit = async (guestDocumentId: string) => {
+    if (!canNotify) {
+      Alert.alert(t('kbsNotifyTitle'), t('noPermission'));
+      return;
+    }
     const res = await apiPost<{ transactionId: string; idempotent?: boolean }>('/submissions/check-in', { guestDocumentId });
     if (!res.ok) {
       Alert.alert(t('kbsNotifyTitle'), res.error.message);
@@ -110,12 +118,11 @@ export default function ReadyToSubmitScreen() {
               <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: '#374151' }]} onPress={() => assignRoom(item.id)}>
                 <Text style={styles.btnText}>{t('kbsAssignRoom')}</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, { flex: 1 }]}
-                onPress={() => submit(item.id)}
-              >
-                <Text style={styles.btnText}>{t('kbsNotifyTitle')}</Text>
-              </TouchableOpacity>
+              {canNotify ? (
+                <TouchableOpacity style={[styles.btn, { flex: 1 }]} onPress={() => submit(item.id)}>
+                  <Text style={styles.btnText}>{t('kbsNotifyTitle')}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         )}

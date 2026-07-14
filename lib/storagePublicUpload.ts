@@ -26,7 +26,13 @@ const EXPENSE_RECEIPT_MAX_WIDTH = 1600;
 const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
 
 /** Edge deploy/522 sorunlarında doğrudan Storage yeterli (RLS: authenticated insert). */
-const BUCKETS_PREFER_DIRECT_UPLOAD = new Set(['facility-journal', 'fault-records', 'expense-receipts', 'breakfast-partner-camera']);
+const BUCKETS_PREFER_DIRECT_UPLOAD = new Set([
+  'facility-journal',
+  'fault-records',
+  'expense-receipts',
+  'breakfast-partner-camera',
+  'security-camera-recordings',
+]);
 
 /** `feed-media` bucket `file_size_limit` (155_feed_media_bucket_file_size_limit.sql) ile aynı */
 const FEED_MEDIA_MAX_BYTES = 157286400;

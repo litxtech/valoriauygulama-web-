@@ -5,13 +5,22 @@ export type KbsPersonKind = 'tc_citizen' | 'ykn_foreign' | 'foreign';
 
 export type UsageKind = 'konaklama' | 'gunluk' | 'afetzede';
 
+/**
+ * YKN: genelde 99 ile başlar; haneye/başlangıç rakamına sıkı bağlanılmaz.
+ * TC: klasik 11 hane. Pasaport → yabancı.
+ */
 export function inferKbsPersonKind(
   parsed: Pick<ParsedDocument, 'documentType' | 'nationalityCode' | 'documentNumber' | 'issuingCountryCode'>
 ): KbsPersonKind {
   const docDigits = (parsed.documentNumber ?? '').replace(/\D/g, '');
+
   if (parsed.documentType === 'passport') return 'foreign';
-  if (/^99\d{9}$/.test(docDigits)) return 'ykn_foreign';
-  if (/^[1-9]\d{10}$/.test(docDigits)) return 'tc_citizen';
+
+  // YKN: 99 ile başlayan kimlik no (uzunluk sabit değil)
+  if (docDigits.startsWith('99') && docDigits.length >= 9) return 'ykn_foreign';
+
+  // T.C. 11 hane
+  if (/^[1-9]\d{10}$/.test(docDigits) && !docDigits.startsWith('99')) return 'tc_citizen';
 
   const nat = (parsed.nationalityCode ?? '').toUpperCase();
   const iss = (parsed.issuingCountryCode ?? '').toUpperCase();
@@ -19,6 +28,6 @@ export function inferKbsPersonKind(
 
   if (parsed.documentType === 'id_card' && turkish) return 'tc_citizen';
   if (turkish && parsed.documentType !== 'passport') return 'tc_citizen';
-  if (parsed.documentType === 'id_card') return 'foreign';
-  return 'ykn_foreign';
+  if (parsed.documentType === 'id_card') return 'ykn_foreign';
+  return 'foreign';
 }

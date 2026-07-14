@@ -1,7 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Animated,
-  Dimensions,
   Easing,
   Modal,
   Platform,
@@ -11,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -78,10 +78,8 @@ type Props = {
 const OPEN_MS = Platform.OS === 'android' ? 0 : 120;
 const CLOSE_MS = Platform.OS === 'android' ? 0 : 100;
 
-/** Sol drawer + sağda ince son-kullanılan ikon şeridi */
-const SCREEN_W = Dimensions.get('window').width;
+/** Sağda ince son-kullanılan ikon şeridi — sabit; ana panel runtime genişlikten hesaplanır. */
 const FLYOUT_W = 50;
-const DRAWER_W = SCREEN_W - FLYOUT_W;
 const DRAWER_RADIUS = 26;
 const H_PAD = 16;
 const SEARCH_MIN_ITEMS = 6;
@@ -533,6 +531,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   onSignOutPress,
 }: Props) {
   const { t } = useTranslation();
+  const { width: windowWidth } = useWindowDimensions();
   const palette = usePersonelDesign();
   const menuTheme = useMemo((): ResolvedStaffHamburgerTheme => {
     try {
@@ -541,6 +540,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
       return getDefaultResolvedStaffHamburgerTheme();
     }
   }, [menuThemeProp]);
+  const showRecentFlyout = menuTheme.showRecentFlyout !== false;
+  const panelWidth = windowWidth > 0 ? windowWidth : 390;
+  const drawerWidth = showRecentFlyout ? Math.max(0, panelWidth - FLYOUT_W) : panelWidth;
   const effectivePalette = useMemo(
     (): PersonelDesignPalette =>
       ({
@@ -740,7 +742,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
     return () => task.cancel();
   }, [visible, instant, backdrop, drawer]);
 
-  const panelOffscreenX = -SCREEN_W;
+  const panelOffscreenX = -panelWidth;
   const drawerTranslateX = drawer.interpolate({
     inputRange: [0, 1],
     outputRange: [panelOffscreenX, 0],
@@ -755,7 +757,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
     styles.menuPanel,
     IS_ANDROID && styles.menuPanelAndroid,
     {
-      width: SCREEN_W,
+      width: panelWidth,
       backgroundColor: drawerBg,
       borderColor: effectivePalette.cardBorder,
       borderTopRightRadius: menuTheme.drawerBorderRadius,
@@ -1024,10 +1026,17 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
         </View>
       )}
       <View style={styles.panelBody}>
-        <View style={[styles.panelDrawerCol, { width: menuTheme.showRecentFlyout ? DRAWER_W : SCREEN_W }]}>
+        <View
+          style={[
+            styles.panelDrawerCol,
+            showRecentFlyout
+              ? { width: drawerWidth, flexGrow: 0, flexShrink: 0 }
+              : styles.panelDrawerColFull,
+          ]}
+        >
           {menuScroll}
         </View>
-        {menuTheme.showRecentFlyout ? (
+        {showRecentFlyout ? (
           <View style={[styles.panelFlyoutCol, { width: FLYOUT_W, borderLeftColor: effectivePalette.cardBorder }]}>
             <StaffHamburgerRecentFlyout
               items={recentItems}
@@ -1184,9 +1193,12 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   panelDrawerCol: {
-    flex: 1,
     minHeight: 0,
     flexDirection: 'column',
+  },
+  panelDrawerColFull: {
+    flex: 1,
+    minWidth: 0,
   },
   signOutFooter: {
     marginTop: 8,

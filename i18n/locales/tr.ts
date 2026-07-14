@@ -575,6 +575,7 @@ const translation = {
       kbsNfcDetailTitle: 'Çip okuma detayları',
       kbsNfcDetailA11y: 'Pasaport bilgilerini göster',
       kbsPersonTc: 'TC Vatandaşı',
+      kbsPersonKindLabel: 'Müşteri tipi',
       kbsPersonYkn: 'YKN Olan Yabancı',
       kbsPersonForeign: 'Yabancı',
       kbsGuestFirstName: 'Ad',
@@ -624,8 +625,9 @@ const translation = {
       kbsGuestMissingFirstName: 'Ad gerekli',
       kbsGuestMissingLastName: 'Soyad gerekli',
       kbsGuestMissingBirthDate: 'Doğum tarihi gerekli',
+      kbsGuestMissingUsage: 'Kullanım şekli gerekli',
       kbsLodgersTitle: 'Konaklayanlar',
-      kbsLodgersTileSub: 'Anlık KBS bildirimleri, çıkış, düzeltme',
+      kbsLodgersTileSub: 'İçeridekiler — çıkış ve düzelt / yeniden bildir',
       kbsLodgersDetail: 'Misafir detayı',
       kbsLodgersFilterActive: 'Konaklayan',
       kbsLodgersFilterToday: 'Bugün giriş',
@@ -1154,7 +1156,7 @@ const translation = {
       staffAssetsTitle: 'Demirbaslar',
       staffAssetsNewTitle: 'Demirbas ekle',
       staffAssetsDetailTitle: 'Demirbas detayi',
-      kbsTabHeaderDesc: 'Seri tarama -> oda atama -> tekli/toplu bildirim -> cikis. Yetki bazlidir.',
+      kbsTabHeaderDesc: 'Düzelt → Bildir → İçeride çıkış. Yetki bazlıdır (KBS Bildir / KBS Çıkış).',
       kbsTabScanSub: 'Pasaport/ID MRZ oku, taslak olustur',
       kbsTabReadySub: 'Tekli/toplu/oda/grup bazli gonderim',
       kbsTabSubmittedSub: 'Bildirilen ve checkout durumlarini izle',
@@ -1453,17 +1455,17 @@ const translation = {
       requestFailed: 'İstek başarısız',
       kbsApiErrorHtmlSnippetHidden: '\n\n(Sunucu HTML döndü; uzun çıktı gizlendi.)',
       kbsApiHintGatewayToken:
-        '\n\n• Supabase KBS_GATEWAY_TOKEN = Railway kbs-ops ile aynı.\n• ops-proxy deploy edildi mi?',
+        '\n\n• Supabase KBS_GATEWAY_TOKEN = Railway kbs-ops Variables ile birebir aynı.\n• Edge: kbs-admin-credentials + ops-proxy deploy.\n• Railway kbs-ops restart/redeploy.',
       kbsApiHintAuth:
-        '\n\n• Giriş oturumu geçerli mi (yeniden giriş deneyin).\n• Bu kullanıcı için Supabase’de ops.app_users satırı olmalı (auth user id = id).',
+        '\n\n• Bu hata TOKEN değil, OTURUM.\n• Çıkış → tekrar giriş.\n• ops.app_users kaydınız oluşmalı (id=auth user id, is_active=true).',
       kbsApiHintForbidden:
-        '\n\n• Uygulamada admin görünseniz bile OPS API ops.app_users.role alanına bakar: admin veya manager olmalı.\n• Kayıt yoksa service role ile ops.app_users ekleyin.',
+        '\n\n• Kullanıcı pasif olabilir veya bu işlem için otel hesabınız yetersiz.\n• Personel kaydınızın aktif olduğundan emin olun.',
       kbsApiHintNonJson:
-        '\n\n• Railway kbs-ops /health JSON dönüyor mu?\n• KBS_GATEWAY_URL sonunda / ve boşluk olmamalı.',
+        '\n\n• https://kbs-ops-production.up.railway.app/health JSON dönmeli.\n• KBS_GATEWAY_URL sonunda / ve boşluk olmamalı.',
       kbsApiHintGatewayHtml:
-        '\n\n• Railway Root Directory `railway-service` olmalı; yeniden deploy edin.',
+        '\n\n• Railway kbs-ops Root Directory boş (railway up klasörden) veya railway-service olmalı.',
       kbsApiHintBadGatewayUrl:
-        '\n\n• KBS_GATEWAY_URL = Railway ops HTTPS URL (ör. https://valoriahotel-production.up.railway.app)\n• KBS_GATEWAY_TOKEN = Railway kbs-ops Variables\n• `supabase functions deploy ops-proxy`',
+        '\n\n• KBS_GATEWAY_URL = https://kbs-ops-production.up.railway.app\n• KBS_GATEWAY_TOKEN = Railway kbs-ops Variables\n• `supabase functions deploy ops-proxy`',
       kbsApiHintCredentialSecret:
         '\n\n1) Railway Variables + Supabase Edge: KBS_CREDENTIAL_SECRET aynı (min 16)\n2) `supabase functions deploy kbs-admin-credentials`\n3) Tekrar Kaydet.',
       kbsApiHintTimeout: '\n\nKBS köprüsü zaman aşımı. Railway kbs-ops ve KBS_GATEWAY_URL kontrol edin.',

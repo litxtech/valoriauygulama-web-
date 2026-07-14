@@ -66,6 +66,7 @@ function buildRowSearchBlob(row: KbsCapturedDocumentRow): string {
     parsed?.fatherName,
     kbsAgeYearsFromBirthDate(parsed?.birthDate)?.toString(),
     row.room_number,
+    row.hotel_name,
     row.captured_by_staff_name,
     ...fields.map((f) => `${f.label} ${f.value}`),
     fields.map((f) => f.value).join(' '),

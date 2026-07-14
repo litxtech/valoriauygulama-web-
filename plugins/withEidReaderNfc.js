@@ -42,7 +42,7 @@ module.exports = function withEidReaderNfc(config) {
 
   config = withEntitlementsPlist(config, (cfg) => {
     const key = 'com.apple.developer.nfc.readersession.formats';
-    cfg.modResults[key] = addUnique(cfg.modResults[key], ['NDEF', 'TAG']);
+    cfg.modResults[key] = addUnique(cfg.modResults[key], ['TAG']);
     return cfg;
   });
 

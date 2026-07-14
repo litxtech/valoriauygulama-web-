@@ -32,6 +32,7 @@ export type SubmitCheckInPayload = {
   forwardDated?: boolean;
   fatherName?: string | null;
   motherName?: string | null;
+  maritalStatus?: 'married' | 'single' | string | null;
 };
 
 export type SubmitCheckOutPayload = {
@@ -42,6 +43,8 @@ export type SubmitCheckOutPayload = {
   documentNumber?: string | null;
   roomNumber?: string | null;
   checkOutAt?: string | null; // ISO datetime preferred
+  /** tc_citizen | ykn_foreign | foreign */
+  kbsPersonKind?: string | null;
 };
 
 export type SubmitDeletePayload = {

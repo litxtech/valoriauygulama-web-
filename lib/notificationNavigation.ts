@@ -342,6 +342,14 @@ export function resolveNotificationHref(
   const url = normalizeNotificationUrl(data.url);
   const isInternalPath = url.startsWith('/');
 
+  if (notificationType === 'staff_security_camera_recording' || url.startsWith('/staff/security-recordings')) {
+    return (url.startsWith('/staff/security-recordings/') ? url : '/staff/security-recordings') as Href;
+  }
+
+  if (notificationType === 'staff_room_linen_handover' || url === '/staff/room-linen') {
+    return '/staff/room-linen';
+  }
+
   if (
     notificationType === 'staff_room_cleaning_status' ||
     notificationType === 'staff_room_cleaning_plan_note_saved' ||

@@ -7,11 +7,14 @@ const UpdateUserPermissionsSchema = z.object({
   permissions: z.record(z.string(), z.boolean())
 });
 
+/** Admin panel zaten id_capture / admin shell ile açılıyor; ops.role=admin tekrar şartı yok. */
+function assertAuthenticated(auth: { authUserId: string; hotelId: string; role: string } | undefined) {
+  if (!auth) throw Errors.unauthorized();
+}
+
 export const adminPermissionsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/admin/permission-catalog', async (req) => {
-    const auth = req.auth;
-    if (!auth) throw Errors.unauthorized();
-    if (auth.role !== 'admin') throw Errors.forbidden('Admin only');
+    assertAuthenticated(req.auth);
 
     const { data, error } = await app.supabase
       .schema('ops')
@@ -23,9 +26,8 @@ export const adminPermissionsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/admin/users-with-permissions', async (req) => {
-    const auth = req.auth;
-    if (!auth) throw Errors.unauthorized();
-    if (auth.role !== 'admin') throw Errors.forbidden('Admin only');
+    assertAuthenticated(req.auth);
+    const auth = req.auth!;
 
     const { data: users, error: uErr } = await app.supabase
       .schema('ops')
@@ -62,9 +64,8 @@ export const adminPermissionsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/admin/users/:userId/kbs-access', async (req) => {
-    const auth = req.auth;
-    if (!auth) throw Errors.unauthorized();
-    if (auth.role !== 'admin') throw Errors.forbidden('Admin only');
+    assertAuthenticated(req.auth);
+    const auth = req.auth!;
 
     const userId = z.string().uuid().parse((req.params as any).userId);
     const body = z.object({ enabled: z.boolean() }).parse(req.body);
@@ -104,9 +105,8 @@ export const adminPermissionsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/admin/users/:userId/permissions', async (req) => {
-    const auth = req.auth;
-    if (!auth) throw Errors.unauthorized();
-    if (auth.role !== 'admin') throw Errors.forbidden('Admin only');
+    assertAuthenticated(req.auth);
+    const auth = req.auth!;
 
     const userId = z.string().uuid().parse((req.params as any).userId);
     const body = UpdateUserPermissionsSchema.parse(req.body);
@@ -142,4 +142,3 @@ export const adminPermissionsRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, data: { saved: true } };
   });
 };
-

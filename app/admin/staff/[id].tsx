@@ -42,6 +42,7 @@ import {
   type StaffMenuCatalogSection,
 } from '@/lib/staffMenuCatalog';
 import { mergeStaffAppPermissions, staffAppPermissionLabels } from '@/lib/staffAppPermissionsCatalog';
+import { syncStaffKbsPermsToOps } from '@/lib/kbsStaffOpsPermissionSync';
 import { StaffAppPermissionsEditor } from '@/components/admin/StaffAppPermissionsEditor';
 
 const WARN_SEVERITY_LEVELS: StaffPersonnelWarningSeverity[] = [
@@ -162,6 +163,7 @@ type StaffDetail = {
   hidden_menu_item_ids?: unknown;
   account_locked?: boolean | null;
   account_lock_reason?: string | null;
+  auth_id?: string | null;
 };
 
 type StaffRelatedDocument = {
@@ -388,7 +390,7 @@ export default function EditStaffScreen() {
     if (!id) return;
     (async () => {
       const STAFF_BASE =
-        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin, tips_enabled';
+        'id, full_name, email, role, department, position, phone, birth_date, id_number, address, hire_date, personnel_no, salary, sgk_no, app_permissions, work_days, shift_type, notes, is_active, office_location, bio, achievements, emergency_contact_name, emergency_contact_phone, emergency_contact2_name, emergency_contact2_phone, previous_work_experience, whatsapp, verification_badge, organization_id, contract_type, termination_date, internal_extension, certifications_summary, kvkk_consent_at, drives_vehicle, profile_hidden_by_admin, tips_enabled, auth_id';
       const isSchemaColMissing = (errMsg: string, col: string) =>
         errMsg.includes(col) ||
         errMsg.includes('does not exist') ||
@@ -905,6 +907,13 @@ export default function EditStaffScreen() {
           notificationType: 'staff_permission_updated',
           category: 'staff',
           data: { screen: 'notifications', changedKeys: changedPermissionKeys },
+        });
+      }
+      const kbsPermChanged = changedPermissionKeys.some((k) => k === 'kbs_bildir' || k === 'kbs_cikis');
+      if (kbsPermChanged || app_permissions.kbs_bildir === true || app_permissions.kbs_cikis === true) {
+        void syncStaffKbsPermsToOps({
+          staffAuthId: staff.auth_id,
+          permissions: app_permissions,
         });
       }
       Alert.alert('Başarılı', 'Çalışan bilgileri güncellendi.', [

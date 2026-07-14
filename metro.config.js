@@ -26,12 +26,6 @@ const workletsCoreEntry = path.join(
   'node_modules/react-native-worklets-core/lib/module/index.js'
 );
 
-/** eid-reader package.json "react-native": "src/index" → codegen modül 4838 hatası; derlenmiş JS kullan. */
-const eidReaderEntry = path.join(
-  projectRoot,
-  'node_modules/@2060.io/react-native-eid-reader/lib/commonjs/index.js'
-);
-
 const defaultResolveRequest = config.resolver.resolveRequest;
 
 const ALIAS_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.json'];
@@ -70,12 +64,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'react-native-worklets-core') {
     return { filePath: workletsCoreEntry, type: 'sourceFile' };
-  }
-  if (
-    moduleName === '@2060.io/react-native-eid-reader' ||
-    moduleName.startsWith('@2060.io/react-native-eid-reader/')
-  ) {
-    return { filePath: eidReaderEntry, type: 'sourceFile' };
   }
   const aliasHit = resolveProjectAlias(moduleName);
   if (aliasHit) return aliasHit;

@@ -4,9 +4,12 @@ import {
   isRecentlyAddedCapture,
   requestCaptureRead,
   updateCaptureGuestPhone,
+  updateCaptureManualFields,
   type CaptureItem,
 } from '../lib/captures';
 import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
+import { fetchOpsRooms, notifyCaptureToKbs, type OpsRoom } from '../lib/kbsOpsApi';
+import { useAuth } from '../auth/AuthContext';
 import { StatusBadge } from './StatusBadge';
 import { ZoomLightbox } from './ZoomLightbox';
 
@@ -17,6 +20,7 @@ type Props = {
   onSelect: (item: CaptureItem) => void;
   onPhoneSaved?: (id: string, phone: string | null) => void;
   onReadRequested?: (item: CaptureItem) => void;
+  onCaptureUpdated?: (item: CaptureItem) => void;
 };
 
 export function CaptureDetailModal({
@@ -26,7 +30,10 @@ export function CaptureDetailModal({
   onSelect,
   onPhoneSaved,
   onReadRequested,
+  onCaptureUpdated,
 }: Props) {
+  const { staffPerms } = useAuth();
+  const canNotify = staffPerms?.kbs_bildir === true;
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed);
@@ -41,12 +48,36 @@ export function CaptureDetailModal({
   const [readBusy, setReadBusy] = useState(false);
   const [readMsg, setReadMsg] = useState<string | null>(null);
 
+  const [firstName, setFirstName] = useState(parsed?.firstName ?? '');
+  const [lastName, setLastName] = useState(parsed?.lastName ?? '');
+  const [docNo, setDocNo] = useState(parsed?.documentNumber ?? '');
+  const [birthDate, setBirthDate] = useState(parsed?.birthDate?.slice(0, 10) ?? '');
+  const [nationality, setNationality] = useState(parsed?.nationalityCode ?? '');
+  const [rooms, setRooms] = useState<OpsRoom[]>([]);
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [opsBusy, setOpsBusy] = useState(false);
+  const [opsMsg, setOpsMsg] = useState<string | null>(null);
+
   useEffect(() => {
     setPhone(item.guest_phone_submitted ?? '');
     setPhoneMsg(null);
     setReadMsg(null);
+    setOpsMsg(null);
     setZoom(null);
-  }, [item.id, item.guest_phone_submitted]);
+    setFirstName(item.parsed?.firstName ?? '');
+    setLastName(item.parsed?.lastName ?? '');
+    setDocNo(item.parsed?.documentNumber ?? '');
+    setBirthDate(item.parsed?.birthDate?.slice(0, 10) ?? '');
+    setNationality(item.parsed?.nationalityCode ?? '');
+    setRoomId(null);
+  }, [item.id, item.guest_phone_submitted, item.parsed]);
+
+  useEffect(() => {
+    if (!canNotify) return;
+    void fetchOpsRooms().then((res) => {
+      if (res.ok) setRooms(res.data);
+    });
+  }, [canNotify, item.id]);
 
   const savePhone = async () => {
     const next = phone.trim() ? phone.trim() : null;
@@ -64,6 +95,60 @@ export function CaptureDetailModal({
       setPhoneMsg(e instanceof Error ? e.message : 'Kaydedilemedi');
     } finally {
       setPhoneSaving(false);
+    }
+  };
+
+  const saveManual = async () => {
+    setOpsBusy(true);
+    setOpsMsg(null);
+    try {
+      const updated = await updateCaptureManualFields(item, {
+        firstName,
+        lastName,
+        documentNumber: docNo,
+        birthDate,
+        nationalityCode: nationality,
+      });
+      onCaptureUpdated?.(updated);
+      setOpsMsg('Düzeltmeler kaydedildi');
+    } catch (e) {
+      setOpsMsg(e instanceof Error ? e.message : 'Kaydedilemedi');
+    } finally {
+      setOpsBusy(false);
+    }
+  };
+
+  const onNotify = async () => {
+    if (!canNotify) return;
+    if (!roomId) {
+      setOpsMsg('Bildirmeden önce oda seçin');
+      return;
+    }
+    setOpsBusy(true);
+    setOpsMsg(null);
+    try {
+      const saved = await updateCaptureManualFields(item, {
+        firstName,
+        lastName,
+        documentNumber: docNo,
+        birthDate,
+        nationalityCode: nationality,
+      });
+      onCaptureUpdated?.(saved);
+      const res = await notifyCaptureToKbs({ guestDocumentId: item.id, roomId });
+      if (!res.ok) {
+        setOpsMsg(res.error.message);
+        return;
+      }
+      setOpsMsg(
+        res.data.transactionId
+          ? `Bildirildi · ${String(res.data.transactionId).slice(0, 8)}…`
+          : 'KBS bildirimi alındı'
+      );
+    } catch (e) {
+      setOpsMsg(e instanceof Error ? e.message : 'Bildirim başarısız');
+    } finally {
+      setOpsBusy(false);
     }
   };
 
@@ -204,6 +289,71 @@ export function CaptureDetailModal({
                 </button>
               </div>
               {phoneMsg ? <div className="phone-msg">{phoneMsg}</div> : null}
+            </div>
+
+            <div className="ops-edit-block">
+              <h3>Manuel düzeltme</h3>
+              <p className="muted ops-hint">
+                Alanları düzeltin{canNotify ? ', kaydedin veya oda seçip Bildir’e basın' : ' ve kaydedin'}.
+              </p>
+              <div className="ops-grid">
+                <label>
+                  Ad
+                  <input value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={opsBusy} />
+                </label>
+                <label>
+                  Soyad
+                  <input value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={opsBusy} />
+                </label>
+                <label>
+                  Belge no
+                  <input value={docNo} onChange={(e) => setDocNo(e.target.value)} disabled={opsBusy} />
+                </label>
+                <label>
+                  Doğum (YYYY-MM-DD)
+                  <input value={birthDate} onChange={(e) => setBirthDate(e.target.value)} disabled={opsBusy} />
+                </label>
+                <label>
+                  Uyruk
+                  <input value={nationality} onChange={(e) => setNationality(e.target.value)} disabled={opsBusy} />
+                </label>
+              </div>
+              <div className="ops-actions">
+                <button type="button" className="btn-ghost" onClick={() => void saveManual()} disabled={opsBusy}>
+                  {opsBusy ? '…' : 'Düzeltmeleri kaydet'}
+                </button>
+              </div>
+              {canNotify ? (
+                <div className="ops-notify">
+                  <h3>Bildir (KBS)</h3>
+                  <div className="ops-rooms">
+                    {rooms.length === 0 ? (
+                      <p className="muted">OPS odası yok.</p>
+                    ) : (
+                      rooms.slice(0, 48).map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className={`chip-btn${roomId === r.id ? ' on' : ''}`}
+                          onClick={() => setRoomId(r.id)}
+                          disabled={opsBusy}
+                        >
+                          {r.room_number}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary ops-bildir"
+                    onClick={() => void onNotify()}
+                    disabled={opsBusy || !roomId}
+                  >
+                    {opsBusy ? 'Gönderiliyor…' : 'Bildir'}
+                  </button>
+                </div>
+              ) : null}
+              {opsMsg ? <div className="ops-msg">{opsMsg}</div> : null}
             </div>
 
             <div className="fields-head">

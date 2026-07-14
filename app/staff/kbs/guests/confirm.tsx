@@ -13,6 +13,8 @@ import { useTranslation } from 'react-i18next';
 import { theme } from '@/constants/theme';
 import { useGuestScanSessionStore } from '@/stores/guestScanSessionStore';
 import { validateGuestScanItem } from '@/lib/guestScan/validateGuestItem';
+import { KBS_REQUIRED_BY_KIND, type KbsFormField } from '@/lib/kbsRequiredFields';
+import type { KbsPersonKind } from '@/lib/kbsInferPersonKind';
 import { playKbsScanSound } from '@/lib/kbsScanSounds';
 import type { GuestScanItem } from '@/lib/guestScan/types';
 import { formatIsoDateTr } from '@/lib/scanner/mrzDates';
@@ -22,6 +24,10 @@ import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 const SOUND_KEY = 'kbs_mrz_scan_sound_enabled';
+
+function star(label: string, required: boolean) {
+  return required ? `${label} *` : label;
+}
 
 function FieldRow(props: {
   label: string;
@@ -66,6 +72,10 @@ export default function KbsGuestConfirmScreen() {
 
   const issues = useMemo(() => (draft ? validateGuestScanItem(draft) : []), [draft]);
   const issueFields = new Set(issues.map((i) => i.field));
+  const required = useMemo(() => {
+    const kind = (draft?.guestType ?? 'foreign') as KbsPersonKind;
+    return new Set<KbsFormField>(KBS_REQUIRED_BY_KIND[kind]);
+  }, [draft?.guestType]);
 
   if (!draft) return null;
 
@@ -173,6 +183,27 @@ export default function KbsGuestConfirmScreen() {
       <Text style={styles.h1}>{t('kbsGuestConfirmReadTitle')}</Text>
       <Text style={styles.meta}>{sourceLabel} · {personKindLabel}</Text>
 
+      <Text style={styles.section}>{t('kbsPersonKindLabel') || 'Müşteri tipi'}</Text>
+      <View style={styles.chipRow}>
+        {(['tc_citizen', 'ykn_foreign', 'foreign'] as const).map((k) => (
+          <TouchableOpacity
+            key={k}
+            style={[styles.chip, draft.guestType === k && styles.chipOn]}
+            onPress={() =>
+              patch({
+                guestType: k,
+                documentType: k === 'tc_citizen' ? 'tc_id' : k === 'foreign' ? 'passport' : 'foreign_id',
+              })
+            }
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.chipText, draft.guestType === k && styles.chipTextOn]}>
+              {k === 'tc_citizen' ? t('kbsPersonTc') : k === 'ykn_foreign' ? t('kbsPersonYkn') : t('kbsPersonForeign')}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {issues.length > 0 ? (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>{t('kbsGuestMissingTitle')}</Text>
@@ -180,21 +211,21 @@ export default function KbsGuestConfirmScreen() {
       ) : null}
 
       <FieldRow
-        label={t('kbsGuestFirstName')}
+        label={star(t('kbsGuestFirstName'), required.has('firstName'))}
         value={draft.firstName ?? ''}
         onChange={(v) => patch({ firstName: v })}
         issue={issueFields.has('firstName')}
         warn={draft.lowConfidenceFields.includes('name')}
       />
       <FieldRow
-        label={t('kbsGuestLastName')}
+        label={star(t('kbsGuestLastName'), required.has('lastName'))}
         value={draft.lastName ?? ''}
         onChange={(v) => patch({ lastName: v })}
         issue={issueFields.has('lastName')}
         warn={draft.lowConfidenceFields.includes('name')}
       />
       <FieldRow
-        label={t('kbsGuestIdentityNo')}
+        label={star(t('kbsGuestIdentityNo'), required.has('identityNo') || required.has('passportNo'))}
         value={draft.identityNo ?? draft.passportNo ?? ''}
         onChange={(v) =>
           patch(
@@ -207,19 +238,19 @@ export default function KbsGuestConfirmScreen() {
         warn={draft.lowConfidenceFields.includes('documentNumber')}
       />
       <FieldRow
-        label={t('kbsGuestSerialNo')}
+        label={star(t('kbsGuestSerialNo'), required.has('documentSerialNo'))}
         value={draft.documentSerialNo ?? ''}
         onChange={(v) => patch({ documentSerialNo: v })}
         issue={issueFields.has('documentSerialNo')}
       />
       <FieldRow
-        label={t('kbsGuestBirthDate')}
+        label={star(t('kbsGuestBirthDate'), required.has('birthDate'))}
         value={draft.birthDate ? formatIsoDateTr(draft.birthDate) : ''}
         onChange={(v) => patch({ birthDate: v })}
         issue={issueFields.has('birthDate')}
       />
       <FieldRow
-        label={t('kbsGuestNationality')}
+        label={star(t('kbsGuestNationality'), required.has('country') || required.has('nationality'))}
         value={draft.nationality ?? draft.country ?? ''}
         onChange={(v) => patch({ nationality: v, country: v })}
         issue={issueFields.has('nationality')}
@@ -232,21 +263,19 @@ export default function KbsGuestConfirmScreen() {
           issue={issueFields.has('passportExpiryDate')}
         />
       ) : null}
-      {draft.guestType === 'foreign' ? (
-        <FieldRow
-          label={t('kbsGuestGender')}
-          value={
-            draft.gender === 'M' ? 'E' : draft.gender === 'F' ? 'K' : draft.gender === 'X' ? 'X' : ''
-          }
-          onChange={(v) => {
-            const u = v.trim().toUpperCase();
-            const g =
-              u === 'E' || u === 'M' || u === 'ERKEK' ? 'M' : u === 'K' || u === 'F' || u === 'KADIN' ? 'F' : u === 'X' ? 'X' : null;
-            patch({ gender: g });
-          }}
-          issue={issueFields.has('gender')}
-        />
-      ) : null}
+      <FieldRow
+        label={star(t('kbsGuestGender'), required.has('gender'))}
+        value={
+          draft.gender === 'M' ? 'E' : draft.gender === 'F' ? 'K' : draft.gender === 'X' ? 'X' : ''
+        }
+        onChange={(v) => {
+          const u = v.trim().toUpperCase();
+          const g =
+            u === 'E' || u === 'M' || u === 'ERKEK' ? 'M' : u === 'K' || u === 'F' || u === 'KADIN' ? 'F' : u === 'X' ? 'X' : null;
+          patch({ gender: g });
+        }}
+        issue={issueFields.has('gender')}
+      />
       <FieldRow
         label={t('kbsGuestFather')}
         value={draft.fatherName ?? ''}
@@ -300,6 +329,18 @@ const styles = StyleSheet.create({
   banner: { backgroundColor: '#fef2f2', padding: 12, borderRadius: 10, marginBottom: 12 },
   bannerText: { color: '#b91c1c', fontWeight: '700' },
   section: { fontSize: 16, fontWeight: '800', marginTop: 16, marginBottom: 8, color: theme.colors.text },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
+  },
+  chipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  chipText: { fontSize: 13, fontWeight: '700', color: theme.colors.text },
+  chipTextOn: { color: '#fff' },
   field: { marginBottom: 10 },
   label: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary, marginBottom: 4 },
   input: {

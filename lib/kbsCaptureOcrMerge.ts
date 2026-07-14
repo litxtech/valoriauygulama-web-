@@ -1,5 +1,6 @@
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
 import { isNationalityLikeText } from '@/lib/kbsNationalityMap';
+import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { listCoreMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 import { mrzNamesLookValid, parseChevronNamesFromMrz, stripSurnameFromGivenNames, trimMrzPersonNameTokens } from '@/lib/scanner/mrzPersonNames';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -57,11 +58,8 @@ function isLikelyOcrNoiseName(raw: string | null | undefined): boolean {
   return false;
 }
 
-function isValidDocNumber(raw: string | null | undefined): boolean {
-  const digits = (raw ?? '').replace(/\D/g, '');
-  if (digits.length === 11 && /^[1-9]/.test(digits)) return true;
-  if (digits.length === 11 && digits.startsWith('99')) return true;
-  return digits.length >= 6 && digits.length <= 14;
+function isValidDocNumber(raw: string | null | undefined, documentType?: ParsedDocument['documentType']): boolean {
+  return hasPlausibleKbsDocumentNumber(raw, documentType);
 }
 
 function hasManualName(parsed: ParsedDocument): boolean {
@@ -81,7 +79,7 @@ function hasTrustedName(parsed: ParsedDocument): boolean {
 }
 
 function hasTrustedDocNumber(parsed: ParsedDocument): boolean {
-  return isValidDocNumber(parsed.documentNumber);
+  return isValidDocNumber(parsed.documentNumber, parsed.documentType);
 }
 
 /** OCR çıktısından şüpheli / alakasız alanları temizle (kayıttan önce). */
@@ -94,8 +92,14 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
   const tcDigits = (p.documentNumber ?? '').replace(/\D/g, '');
   const isTurkishIdFront =
     p.documentType === 'id_card' && /^[1-9]\d{10}$/.test(tcDigits) && !p.rawMrz;
+  const frontPassportNamesOk =
+    frontOnly &&
+    p.documentType === 'passport' &&
+    mrzNamesLookValid(p.firstName, p.lastName) &&
+    !isLikelyOcrNoiseName(p.firstName) &&
+    !isLikelyOcrNoiseName(p.lastName);
 
-  if (!mrzTrusted) {
+  if (!mrzTrusted && !frontPassportNamesOk) {
     if (isLikelyOcrNoiseName(p.firstName) || !isUsablePersonName(p.firstName)) p.firstName = null;
     if (isLikelyOcrNoiseName(p.lastName) || !isUsablePersonName(p.lastName)) p.lastName = null;
 
@@ -112,7 +116,7 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
     }
   }
 
-  if (!isValidDocNumber(p.documentNumber)) p.documentNumber = null;
+  if (!isValidDocNumber(p.documentNumber, p.documentType)) p.documentNumber = null;
 
   if (p.birthDate && !isPlausibleBirthDate(p.birthDate)) p.birthDate = null;
   if (p.expiryDate && !isPlausibleExpiryDate(p.expiryDate)) p.expiryDate = null;
@@ -289,9 +293,17 @@ export function mergeKbsOcrIntoExisting(
     warnings.push('manual_capture');
   }
 
+  const mergedRawMrz = ex.rawMrz ?? inc.rawMrz;
+  // TD3 pasaport MRZ'si varsa ön yüz OCR 'id_card' tahminini ezer.
+  const mergedDocumentType = /^P[A-Z<]/.test(mergedRawMrz ?? '')
+    ? 'passport'
+    : ex.documentType !== 'other'
+      ? ex.documentType
+      : inc.documentType;
+
   return {
     ...ex,
-    documentType: ex.documentType !== 'other' ? ex.documentType : inc.documentType,
+    documentType: mergedDocumentType,
     firstName,
     lastName,
     fullName,
@@ -306,7 +318,7 @@ export function mergeKbsOcrIntoExisting(
     motherName: ex.motherName ?? inc.motherName,
     fatherName: ex.fatherName ?? inc.fatherName,
     maritalStatus: ex.maritalStatus ?? inc.maritalStatus,
-    rawMrz: ex.rawMrz ?? inc.rawMrz,
+    rawMrz: mergedRawMrz,
     confidence: Math.max(ex.confidence ?? 0, inc.confidence ?? 0) || inc.confidence || ex.confidence,
     checksumsValid: ex.checksumsValid ?? inc.checksumsValid,
     warnings,

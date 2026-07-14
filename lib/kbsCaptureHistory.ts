@@ -12,6 +12,8 @@ import { log } from '@/lib/logger';
 export type KbsCapturedDocumentRow = {
   id: string;
   guest_id: string;
+  hotel_id?: string | null;
+  hotel_name?: string | null;
   captured_at: string | null;
   created_at: string;
   front_image_url: string | null;
@@ -32,110 +34,8 @@ export async function fetchKbsCapturedDocuments(
   limit = 300,
   knownAuthUserId?: string | null
 ): Promise<KbsCapturedDocumentRow[]> {
-  const ctx = await resolveOpsHotelIdForCaller(knownAuthUserId);
-  if (!ctx.ok) throw new Error(ctx.message);
-
-  const { data: docs, error } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select(
-      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
-      document_number, nationality_code, issuing_country_code, expiry_date, document_type,
-      guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
-    )
-    .eq('hotel_id', ctx.hotelId)
-    .or('front_image_url.not.is.null,capture_source.eq.tc')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw new Error(error.message);
-
-  const list = (docs ?? []) as unknown as {
-    id: string;
-    guest_id: string;
-    captured_at: string | null;
-    created_at: string;
-    front_image_url: string | null;
-    parsed_payload: KbsCapturedDocumentRow['parsed_payload'];
-    scan_status: string;
-    ocr_engine: string | null;
-    mrz_batch_key: string | null;
-    scanned_by_user_id: string | null;
-    guest_phone_submitted: string | null;
-    document_number: string | null;
-    nationality_code: string | null;
-    issuing_country_code: string | null;
-    expiry_date: string | null;
-    document_type: string | null;
-    guest: {
-      first_name: string | null;
-      last_name: string | null;
-      birth_date: string | null;
-      gender: string | null;
-      nationality_code: string | null;
-    } | null;
-  }[];
-  if (list.length === 0) return [];
-
-  const scannerAuthIds = [...new Set(list.map((d) => d.scanned_by_user_id).filter(Boolean))] as string[];
-  const guestIds = [...new Set(list.map((d) => d.guest_id))];
-
-  // Personel adları ve konaklama bilgileri birbirinden bağımsız — paralel çek.
-  const [staffResult, stayResult] = await Promise.all([
-    scannerAuthIds.length > 0
-      ? supabase.from('staff').select('auth_id, full_name').in('auth_id', scannerAuthIds)
-      : Promise.resolve({ data: [], error: null } as const),
-    guestIds.length > 0
-      ? supabase
-          .schema('ops')
-          .from('stay_assignments')
-          .select('guest_id, updated_at, room:room_id(room_number)')
-          .eq('hotel_id', ctx.hotelId)
-          .in('guest_id', guestIds)
-          .in('stay_status', ['assigned', 'checked_in', 'checkout_pending'])
-          .order('updated_at', { ascending: false })
-      : Promise.resolve({ data: [], error: null } as const),
-  ]);
-
-  if (staffResult.error) throw new Error(staffResult.error.message);
-  const nameByAuthId = new Map(
-    (staffResult.data ?? []).map((s) => [String(s.auth_id), String(s.full_name ?? '').trim() || '—'])
-  );
-
-  const { data: stays, error: stayErr } = stayResult;
-  if (stayErr) throw new Error(stayErr.message);
-
-  const roomByGuest = new Map<string, string>();
-  for (const s of stays ?? []) {
-    const gid = s.guest_id as string;
-    if (roomByGuest.has(gid)) continue;
-    const room = s.room as { room_number?: string | number | null } | null;
-    if (room?.room_number != null) roomByGuest.set(gid, String(room.room_number));
-  }
-
-  return list.map((d) => ({
-    id: d.id,
-    guest_id: d.guest_id,
-    captured_at: d.captured_at,
-    created_at: d.created_at,
-    front_image_url: d.front_image_url,
-    parsed_payload: enrichKbsParsedFromSources(d.parsed_payload, {
-      document_number: d.document_number,
-      nationality_code: d.nationality_code,
-      issuing_country_code: d.issuing_country_code,
-      expiry_date: d.expiry_date,
-      document_type: d.document_type,
-      guest: d.guest,
-    }),
-    scan_status: d.scan_status,
-    ocr_engine: d.ocr_engine ?? null,
-    room_number: roomByGuest.get(d.guest_id) ?? null,
-    mrz_batch_key: d.mrz_batch_key ?? null,
-    scanned_by_user_id: d.scanned_by_user_id ?? null,
-    captured_by_staff_name: d.scanned_by_user_id
-      ? nameByAuthId.get(d.scanned_by_user_id) ?? 'Personel'
-      : null,
-    guest_phone_submitted: d.guest_phone_submitted ?? null,
-  }));
+  const { fetchKbsBrowseDocuments } = await import('@/lib/kbsMultiHotelCaptures');
+  return fetchKbsBrowseDocuments(knownAuthUserId, { limit });
 }
 
 /** Rakam, +, boşluk, tire, parantez dışını temizler; boşsa null. */

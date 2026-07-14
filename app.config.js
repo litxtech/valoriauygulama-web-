@@ -6,9 +6,9 @@ const devClientScheme = 'exp+valoria-hotel';
  * Mağaza sürümleri — görünen sürüm adı (APP_VERSION) burada; bundle no EAS remote.
  * ANDROID_VERSION_CODE / IOS_BUILD_NUMBER: ilk remote değer (300). Sonraki production
  * build’lerde eas.json autoIncrement ile EAS sunucusunda otomatik artar — Play çakışması olmaz.
- * Önceki: 2.6.0 / versionCode 34 · Yeni taban: 3.0.0 / 300.
+ * Önceki: 3.1.0 · Yeni: 3.2.0 (NFC kapalı, oda malzeme, kamera kayıtları).
  */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.2.0';
 const ANDROID_VERSION_CODE = 300;
 const IOS_BUILD_NUMBER = '300';
 
@@ -41,24 +41,12 @@ const baseConfig = {
     bundleIdentifier: 'com.valoria.hotel',
     buildNumber: IOS_BUILD_NUMBER,
     newArchEnabled: true,
-    entitlements: {
-      /** Apple NFC Tag Reading capability — yalnız formats entitlement’tır. */
-      'com.apple.developer.nfc.readersession.formats': ['TAG', 'NDEF'],
-    },
     infoPlist: {
       /** iPad’de yalnızca dikey (telefon uyumluluk penceresi); tablet UI yok */
       'UISupportedInterfaceOrientations~ipad': ['UIInterfaceOrientationPortrait'],
       UIBackgroundModes: ['remote-notification'],
       NSCameraUsageDescription:
         'Pasaport/kimlik MRZ canlı okuma, barkod ve belge taraması için kamera kullanılır.',
-      NFCReaderUsageDescription:
-        'Pasaport çipi NFC okuma ve kapı etiketi okuma için NFC kullanılır.',
-      /** ISO7816 AID listesi Info.plist anahtarıdır; entitlements’a konursa Xcode imza red eder. */
-      'com.apple.developer.nfc.readersession.iso7816.select-identifiers': [
-        'A0000002471001',
-        'A0000002472001',
-        '00000000000000',
-      ],
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
       NSLocationWhenInUseUsageDescription:
         'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
@@ -84,11 +72,7 @@ const baseConfig = {
       backgroundColor: '#0c1222',
     },
     package: 'com.valoria.hotel',
-    /**
-     * İzinler çoğunlukla expo-camera / expo-location / expo-image-picker / expo-notifications
-     * plugin’lerinden gelir; burada yalnızca ek paketler (NFC) listelenir.
-     */
-    permissions: ['android.permission.NFC'],
+    permissions: [],
     /**
      * Bağımlılıkların manifest’e eklediği gereksiz / riskli izinleri kesin olarak engelle.
      * Play Console’da görünmeleri bile inceleme ve Data safety sorununa yol açabilir.
@@ -223,16 +207,6 @@ const baseConfig = {
     ],
     './plugins/withPlaySafeManifest.js',
     './plugins/withGoogleModularHeaders.js',
-    './plugins/withEidReaderNfc.js',
-    [
-      'react-native-nfc-manager',
-      {
-        nfcPermission:
-          'Pasaport çipi okuma ve dijital anahtar kapı etiketi için NFC kullanılır.',
-        selectIdentifiers: ['A0000002471001', 'A0000002472001', '00000000000000'],
-        includeNdefEntitlement: true,
-      },
-    ],
   ],
   experiments: {
     typedRoutes: true,

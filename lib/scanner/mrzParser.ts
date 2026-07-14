@@ -96,7 +96,8 @@ function detectDocumentType(res: { format?: string; fields?: Record<string, unkn
     .toUpperCase()
     .replace(/[^A-Z]/g, '');
 
-  if (docTypeRaw.includes('td3') || code === 'P') return 'passport';
+  // ICAO 9303: pasaport belge kodu 'P' ile başlar (P, PK, PD…)
+  if (docTypeRaw.includes('td3') || code.startsWith('P')) return 'passport';
   if (docTypeRaw.includes('td1') || docTypeRaw.includes('td2') || code === 'I' || code === 'A' || code === 'C') {
     return 'id_card';
   }

@@ -818,7 +818,7 @@ export default function KbsScanScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <Text style={styles.reviewLabel}>Belge seri no (KBS, isteğe bağlı)</Text>
+              <Text style={styles.reviewLabel}>Belge seri no {kbsPersonKind !== 'tc_citizen' ? '*' : '(isteğe bağlı)'}</Text>
               <TextInput
                 value={documentSeries}
                 onChangeText={setDocumentSeries}

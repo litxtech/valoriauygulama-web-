@@ -1,4 +1,5 @@
 import { isUsablePersonName } from '@/lib/guestScan/personNameUtils';
+import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { formatKbsNationality, formatKbsTrDate, kbsAgeYearsFromBirthDate, kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { isKbsPlaceholderName } from '@/lib/kbsCaptureOcrMerge';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -281,8 +282,9 @@ export function listCoreMissingIdFields(parsed: ParsedDocument): string[] {
   const missing: string[] = [];
   if (!isUsablePersonName(parsed.firstName)) missing.push('Ad');
   if (!isUsablePersonName(parsed.lastName)) missing.push('Soyad');
-  const docDigits = (parsed.documentNumber ?? '').replace(/\D/g, '');
-  if (docDigits.length < 6) missing.push('Kimlik / pasaport no');
+  if (!hasPlausibleKbsDocumentNumber(parsed.documentNumber, parsed.documentType)) {
+    missing.push('Kimlik / pasaport no');
+  }
   if (!parsed.birthDate) missing.push('Doğum tarihi');
   if (!parsed.nationalityCode) missing.push('Uyruk');
   if (!parsed.expiryDate) missing.push('Son kullanım tarihi');

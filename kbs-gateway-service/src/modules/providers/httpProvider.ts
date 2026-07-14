@@ -8,6 +8,13 @@ import type {
   SubmitDeletePayload
 } from './types.js';
 
+/**
+ * Jandarma KBS SOAP (SrvShsYtkTml).
+ * Üç müşteri kolu:
+ *  - tc_citizen  → MusteriKimlikNoGiris / Cikis / TCSIil
+ *  - ykn_foreign → MusteriYabanciGiris (KimlikNo = YKN)
+ *  - foreign     → MusteriYabanciGiris (BelgeNo = pasaport)
+ */
 export class HttpOfficialProvider implements OfficialSubmissionProvider {
   constructor(private readonly baseUrl: string) {}
 
@@ -38,9 +45,12 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     }
   }
 
-  private extractSonuc(xmlText: string): { basarili: boolean; mesaj?: string | null; hataKodu?: string | null; raw: { xml: string } } {
-    // Minimal parsing (WCF SOAP). We only need Sonuc.{Basarili,Mesaj,HataKodu}.
-    // Keep raw XML for debugging, but truncate to avoid huge logs.
+  private extractSonuc(xmlText: string): {
+    basarili: boolean;
+    mesaj?: string | null;
+    hataKodu?: string | null;
+    raw: { xml: string };
+  } {
     const xml = xmlText ?? '';
     const basariliMatch = xml.match(/<\s*(?:\w+:)?Basarili\s*>\s*(true|false)\s*<\s*\/\s*(?:\w+:)?Basarili\s*>/i);
     const mesajMatch = xml.match(/<\s*(?:\w+:)?Mesaj\s*>\s*([\s\S]*?)\s*<\s*\/\s*(?:\w+:)?Mesaj\s*>/i);
@@ -62,12 +72,16 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       .replaceAll("'", '&apos;');
   }
 
-  private buildWcfDatacontractObjectXml(ns: string, fields: Record<string, string | null | undefined>, opts?: { prefix?: string }) {
+  private buildWcfDatacontractObjectXml(
+    ns: string,
+    fields: Record<string, string | null | undefined>,
+    opts?: { prefix?: string }
+  ) {
     const prefix = opts?.prefix ?? 'a';
     const iNs = 'http://www.w3.org/2001/XMLSchema-instance';
     const parts: string[] = [];
     for (const [k, v] of Object.entries(fields)) {
-      if (v === undefined) continue; // omit
+      if (v === undefined) continue;
       if (v === null) {
         parts.push(`<${prefix}:${k} xmlns:i="${iNs}" i:nil="true" />`);
       } else {
@@ -84,135 +98,223 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     return d.toISOString();
   }
 
-  async submitCheckIn(payload: SubmitCheckInPayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
-    // Real endpoint (WCF SOAP): https://vatandas.jandarma.gov.tr/KBS_Tesis_Servis/SrvShsYtkTml.svc
-    // Real operations (SOAP actions): MusteriYabanciGiris / MusteriYabanciCikis / ...
-    // NOTE: We implement the "Yabanci" path (passport/MRZ) here.
-
-    const userTc = Number(credentials.username);
-    const tssKod = Number(credentials.facilityCode);
-    if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) throw new Error('KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)');
-    if (!payload.documentNumber) throw new Error('documentNumber required for check-in');
-
-    const gender = payload.gender === 'M' ? 'ERKEK' : payload.gender === 'F' ? 'KADIN' : 'TANIMSIZ';
-    const fullName = (payload.fullName ??
-      (([payload.firstName, payload.lastName].filter(Boolean).join(' ').trim() || null) as string | null)) as string | null;
-    const firstName = payload.firstName ?? (fullName ? fullName.split(' ')[0] : null);
-    const lastName = payload.lastName ?? null;
-    const adiFromParts = [firstName, payload.middleName].filter((x) => x != null && String(x).trim().length > 0).join(' ').trim();
-    const adi = adiFromParts || firstName || null;
-
-    const musteriFields: Record<string, string | null | undefined> = {
-      ADI: adi,
-      SOYADI: lastName ?? null,
-      BELGENO: payload.documentNumber,
-      DOGUMTARIHI: payload.birthDate ? this.normalizeDateTime(payload.birthDate) : null,
-      GRSTRH: this.normalizeDateTime(payload.checkInAt) ?? new Date().toISOString(),
-      ODANO: payload.roomNumber ?? null,
-      CINSIYET: gender
-      // Ek KBS alanları (seri, kullanım, plaka, telefon vb.) resmi WSDL ile doğrulanana kadar SOAP’a eklenmez;
-      // gateway yükünde taşınır ve log / ileri entegrasyon için kullanılabilir.
-    };
-
-    const musteriXml = this.buildWcfDatacontractObjectXml('http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis', musteriFields);
-
-    const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <MusteriYabanciGiris xmlns="http://tempuri.org/">
-      <KullaniciTC>${userTc}</KullaniciTC>
-      <TssKod>${tssKod}</TssKod>
-      <Sifre>${HttpOfficialProvider.esc(credentials.password)}</Sifre>
-      ${musteriXml}
-    </MusteriYabanciGiris>
-  </soap:Body>
-</soap:Envelope>`;
-
-    const xmlText = await this.soapCall({ action: 'http://tempuri.org/ISrvShsYtkTml/MusteriYabanciGiris', bodyXml });
-    const sonuc = this.extractSonuc(xmlText);
-    if (!sonuc.basarili) throw new Error(`KBS check-in failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
-    return { summary: { kbs: 'jandarma', action: 'MusteriYabanciGiris', sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
+  private normalizeDateOnly(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const s = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
   }
 
-  async submitCheckOut(payload: SubmitCheckOutPayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
-    const userTc = Number(credentials.username);
-    const tssKod = Number(credentials.facilityCode);
-    if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) throw new Error('KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)');
-    if (!payload.documentNumber) throw new Error('documentNumber required for check-out');
-
-    const musteriFields: Record<string, string | null | undefined> = {
-      BELGENO: payload.documentNumber,
-      CKSTRH: this.normalizeDateTime(payload.checkOutAt) ?? new Date().toISOString(),
-      CKSTIP: 'TESISTENCIKIS'
-    };
-    const musteriXml = this.buildWcfDatacontractObjectXml('http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis', musteriFields);
-
-    const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <MusteriYabanciCikis xmlns="http://tempuri.org/">
-      <KullaniciTC>${userTc}</KullaniciTC>
-      <TssKod>${tssKod}</TssKod>
-      <Sifre>${HttpOfficialProvider.esc(credentials.password)}</Sifre>
-      ${musteriXml}
-    </MusteriYabanciCikis>
-  </soap:Body>
-</soap:Envelope>`;
-
-    const xmlText = await this.soapCall({ action: 'http://tempuri.org/ISrvShsYtkTml/MusteriYabanciCikis', bodyXml });
-    const sonuc = this.extractSonuc(xmlText);
-    if (!sonuc.basarili) throw new Error(`KBS check-out failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
-    return { summary: { kbs: 'jandarma', action: 'MusteriYabanciCikis', sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
-  }
-
-  /**
-   * KBS kayıt silme — yabancı: MusteriYabanciSil; T.C.: MusteriTCSIil (belge no = BELGENO).
-   */
-  async submitDelete(payload: SubmitDeletePayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
+  private credsNumeric(credentials: ProviderCredentials) {
     const userTc = Number(credentials.username);
     const tssKod = Number(credentials.facilityCode);
     if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) {
       throw new Error('KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)');
     }
-    if (!payload.documentNumber) throw new Error('documentNumber required for delete');
+    return { userTc, tssKod };
+  }
 
-    const isTc = payload.kbsPersonKind === 'tc_citizen';
-    const opName = isTc ? 'MusteriTCSIil' : 'MusteriYabanciSil';
-    const action = `http://tempuri.org/ISrvShsYtkTml/${opName}`;
+  private personKind(payload: { kbsPersonKind?: string | null }) {
+    const k = String(payload.kbsPersonKind ?? 'foreign');
+    if (k === 'tc_citizen') return 'tc_citizen' as const;
+    if (k === 'ykn_foreign') return 'ykn_foreign' as const;
+    return 'foreign' as const;
+  }
 
-    const musteriFields: Record<string, string | null | undefined> = {
-      BELGENO: payload.documentNumber
-    };
-    const musteriXml = this.buildWcfDatacontractObjectXml(
-      'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',
-      musteriFields
-    );
+  private soapGender(g: string | null | undefined): string {
+    if (g === 'M') return 'ERKEK';
+    if (g === 'F') return 'KADIN';
+    return 'TANIMSIZ';
+  }
 
-    const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
+  private soapUsage(usage: string | null | undefined): string {
+    const u = String(usage ?? 'konaklama').toLowerCase();
+    if (u === 'gunluk') return 'GUNLUK';
+    if (u === 'afetzede') return 'AFETZEDE';
+    return 'KONAKLAMA';
+  }
+
+  private soapMarital(m: string | null | undefined): string | undefined {
+    if (m === 'married') return 'EVLI';
+    if (m === 'single') return 'BEKAR';
+    return undefined;
+  }
+
+  private nameParts(payload: SubmitCheckInPayload) {
+    const fullName =
+      (payload.fullName ??
+        ([payload.firstName, payload.lastName].filter(Boolean).join(' ').trim() || null)) as string | null;
+    const firstName = payload.firstName ?? (fullName ? fullName.split(' ')[0] : null);
+    const lastName = payload.lastName ?? null;
+    const adiFromParts = [firstName, payload.middleName]
+      .filter((x) => x != null && String(x).trim().length > 0)
+      .join(' ')
+      .trim();
+    return { adi: adiFromParts || firstName || null, soyadi: lastName };
+  }
+
+  private envelope(opName: string, userTc: number, tssKod: number, password: string, musteriXml: string) {
+    return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <${opName} xmlns="http://tempuri.org/">
       <KullaniciTC>${userTc}</KullaniciTC>
       <TssKod>${tssKod}</TssKod>
-      <Sifre>${HttpOfficialProvider.esc(credentials.password)}</Sifre>
+      <Sifre>${HttpOfficialProvider.esc(password)}</Sifre>
       ${musteriXml}
     </${opName}>
   </soap:Body>
 </soap:Envelope>`;
+  }
 
-    const xmlText = await this.soapCall({ action, bodyXml });
+  async submitCheckIn(payload: SubmitCheckInPayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
+    const { userTc, tssKod } = this.credsNumeric(credentials);
+    const kind = this.personKind(payload);
+    const { adi, soyadi } = this.nameParts(payload);
+    const room = payload.roomNumber?.trim() || null;
+    const giris = this.normalizeDateTime(payload.checkInAt) ?? new Date().toISOString();
+    const dogum = this.normalizeDateTime(payload.birthDate) ?? this.normalizeDateOnly(payload.birthDate);
+    const ulke = (payload.nationalityCode || payload.issuingCountryCode || '').trim().toUpperCase() || null;
+    const seri = payload.documentSeries?.trim() || null;
+    const kimlikOrBelge = payload.documentNumber?.trim() || null;
+
+    if (!room) throw new Error('Oda No zorunlu (KBS)');
+    if (!kimlikOrBelge) throw new Error(kind === 'tc_citizen' ? 'Kimlik No (T.C.) zorunlu' : 'Kimlik/Belge No zorunlu');
+
+    let opName: string;
+    let musteriFields: Record<string, string | null | undefined>;
+
+    if (kind === 'tc_citizen') {
+      // T.C.: Kimlik No ile sistem bilgi çeker; konaklama alanları zorunlu.
+      opName = 'MusteriKimlikNoGiris';
+      musteriFields = {
+        KIMLIKNO: kimlikOrBelge.replace(/\D/g, ''),
+        BELGESERI: seri || undefined,
+        ADI: adi || undefined,
+        SOYADI: soyadi || undefined,
+        BABAADI: payload.fatherName?.trim() || undefined,
+        ANAADI: payload.motherName?.trim() || undefined,
+        DOGUMTARIHI: dogum || undefined,
+        ULKE: ulke || 'TUR',
+        CINSIYET: payload.gender ? this.soapGender(payload.gender) : undefined,
+        MEDENIHAL: this.soapMarital(payload.maritalStatus),
+        ODANO: room,
+        PLAKA: payload.plateNumber?.trim() || undefined,
+        TELEFON: payload.phone?.replace(/\D/g, '') || undefined,
+        KULLANIMSEKLI: this.soapUsage(payload.usageKind),
+        GRSTRH: giris,
+        ILERITARIHLI: payload.forwardDated ? 'true' : undefined
+      };
+    } else {
+      // YKN olan yabancı + Yabancı — MusteriYabanciGiris
+      opName = 'MusteriYabanciGiris';
+      if (!adi) throw new Error('Adı zorunlu (KBS)');
+      if (!soyadi) throw new Error('Soyadı zorunlu (KBS)');
+      if (!dogum) throw new Error('Doğum Tarihi zorunlu (KBS)');
+      if (!ulke) throw new Error('Ülke zorunlu (KBS)');
+      if (!seri) throw new Error('Belge Seri No zorunlu (KBS)');
+
+      musteriFields = {
+        // YKN kolunda kimlik no YKN; yabancıda BELGENO pasaport/belge.
+        KIMLIKNO: kind === 'ykn_foreign' ? kimlikOrBelge : undefined,
+        BELGENO: kimlikOrBelge,
+        BELGESERI: seri,
+        ADI: adi,
+        SOYADI: soyadi,
+        BABAADI: payload.fatherName?.trim() || undefined,
+        ANAADI: payload.motherName?.trim() || undefined,
+        DOGUMTARIHI: dogum,
+        ULKE: ulke,
+        CINSIYET: this.soapGender(payload.gender),
+        MEDENIHAL: this.soapMarital(payload.maritalStatus),
+        ODANO: room,
+        PLAKA: payload.plateNumber?.trim() || undefined,
+        TELEFON: payload.phone?.replace(/\D/g, '') || undefined,
+        KULLANIMSEKLI: this.soapUsage(payload.usageKind),
+        GRSTRH: giris,
+        ILERITARIHLI: payload.forwardDated ? 'true' : undefined
+      };
+    }
+
+    const musteriXml = this.buildWcfDatacontractObjectXml(
+      'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',
+      musteriFields
+    );
+    const bodyXml = this.envelope(opName, userTc, tssKod, credentials.password, musteriXml);
+    const xmlText = await this.soapCall({ action: `http://tempuri.org/ISrvShsYtkTml/${opName}`, bodyXml });
+    const sonuc = this.extractSonuc(xmlText);
+    if (!sonuc.basarili) {
+      throw new Error(`KBS check-in failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
+    }
+    return {
+      summary: { kbs: 'jandarma', action: opName, kind, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } }
+    };
+  }
+
+  async submitCheckOut(payload: SubmitCheckOutPayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
+    const { userTc, tssKod } = this.credsNumeric(credentials);
+    if (!payload.documentNumber) throw new Error('documentNumber required for check-out');
+    const kind = this.personKind(payload);
+    const opName = kind === 'tc_citizen' ? 'MusteriKimlikNoCikis' : 'MusteriYabanciCikis';
+
+    const musteriFields: Record<string, string | null | undefined> =
+      kind === 'tc_citizen'
+        ? {
+            KIMLIKNO: payload.documentNumber.replace(/\D/g, ''),
+            CKSTRH: this.normalizeDateTime(payload.checkOutAt) ?? new Date().toISOString(),
+            CKSTIP: 'TESISTENCIKIS'
+          }
+        : {
+            BELGENO: payload.documentNumber,
+            CKSTRH: this.normalizeDateTime(payload.checkOutAt) ?? new Date().toISOString(),
+            CKSTIP: 'TESISTENCIKIS'
+          };
+
+    const musteriXml = this.buildWcfDatacontractObjectXml(
+      'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',
+      musteriFields
+    );
+    const bodyXml = this.envelope(opName, userTc, tssKod, credentials.password, musteriXml);
+    const xmlText = await this.soapCall({ action: `http://tempuri.org/ISrvShsYtkTml/${opName}`, bodyXml });
+    const sonuc = this.extractSonuc(xmlText);
+    if (!sonuc.basarili) {
+      throw new Error(`KBS check-out failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
+    }
+    return { summary: { kbs: 'jandarma', action: opName, kind, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
+  }
+
+  async submitDelete(payload: SubmitDeletePayload, credentials: ProviderCredentials): Promise<ProviderResponse> {
+    const { userTc, tssKod } = this.credsNumeric(credentials);
+    if (!payload.documentNumber) throw new Error('documentNumber required for delete');
+    const kind = this.personKind(payload);
+    const opName = kind === 'tc_citizen' ? 'MusteriTCSIil' : 'MusteriYabanciSil';
+
+    const musteriFields: Record<string, string | null | undefined> =
+      kind === 'tc_citizen'
+        ? { KIMLIKNO: payload.documentNumber.replace(/\D/g, '') }
+        : { BELGENO: payload.documentNumber };
+
+    const musteriXml = this.buildWcfDatacontractObjectXml(
+      'http://schemas.datacontract.org/2004/07/KBS_Tesis_Servis',
+      musteriFields
+    );
+    const bodyXml = this.envelope(opName, userTc, tssKod, credentials.password, musteriXml);
+    const xmlText = await this.soapCall({ action: `http://tempuri.org/ISrvShsYtkTml/${opName}`, bodyXml });
     const sonuc = this.extractSonuc(xmlText);
     if (!sonuc.basarili) {
       throw new Error(`KBS delete failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim());
     }
-    return { summary: { kbs: 'jandarma', action: opName, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
+    return { summary: { kbs: 'jandarma', action: opName, kind, sonuc: { hataKodu: sonuc.hataKodu, mesaj: sonuc.mesaj } } };
   }
 
   async testConnection(credentials: ProviderCredentials): Promise<ProviderTestResponse> {
-    // Lowest-risk "connectivity" check: call ParametreListele (no guest payload).
     const userTc = Number(credentials.username);
     const tssKod = Number(credentials.facilityCode);
-    if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) return { ok: false, message: 'KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)' };
+    if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) {
+      return { ok: false, message: 'KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)' };
+    }
 
     const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -226,13 +328,22 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
 </soap:Envelope>`;
 
     try {
-      const xmlText = await this.soapCall({ action: 'http://tempuri.org/ISrvShsYtkTml/ParametreListele', bodyXml, timeoutMs: 20_000 });
+      const xmlText = await this.soapCall({
+        action: 'http://tempuri.org/ISrvShsYtkTml/ParametreListele',
+        bodyXml,
+        timeoutMs: 20_000
+      });
       const sonuc = this.extractSonuc(xmlText);
-      if (!sonuc.basarili) return { ok: false, message: `KBS connection failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim(), details: sonuc.raw };
+      if (!sonuc.basarili) {
+        return {
+          ok: false,
+          message: `KBS connection failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim(),
+          details: sonuc.raw
+        };
+      }
       return { ok: true, message: 'KBS connection ok' };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : 'KBS connection failed' };
     }
   }
 }
-

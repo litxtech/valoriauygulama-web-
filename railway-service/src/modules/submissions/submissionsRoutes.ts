@@ -82,7 +82,13 @@ export const submissionsRoutes: FastifyPluginAsync = async (app) => {
       phone: doc.guest_phone_submitted ?? null,
       forwardDated: Boolean(doc.forward_dated),
       fatherName: guest.father_name ?? null,
-      motherName: guest.mother_name ?? null
+      motherName: guest.mother_name ?? null,
+      maritalStatus:
+        typeof parsed.maritalStatus === 'string'
+          ? parsed.maritalStatus
+          : typeof parsed.marital_status === 'string'
+            ? parsed.marital_status
+            : null
     };
   }
 

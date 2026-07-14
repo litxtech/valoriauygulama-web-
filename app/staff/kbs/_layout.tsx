@@ -10,12 +10,16 @@ import { KbsCaptureWatermarkHost } from '@/components/kbs/KbsCaptureWatermarkHos
 
 function isIdCaptureWriteRoute(pathname: string | null | undefined): boolean {
   const p = pathname ?? '';
-  return p.includes('/kbs/capture-id') || p.includes('/kbs/capture-nfc');
+  return p.includes('/kbs/capture-id');
 }
 
 function isIdCaptureReadRoute(pathname: string | null | undefined): boolean {
   const p = pathname ?? '';
-  return p.includes('/kbs/capture-history') || /\/kbs\/capture\/[^/]+/.test(p);
+  return (
+    p.includes('/kbs/capture-history') ||
+    p.includes('/kbs/passport-explore') ||
+    /\/kbs\/capture\/[^/]+/.test(p)
+  );
 }
 
 export default function KbsLayout() {
@@ -70,13 +74,18 @@ export default function KbsLayout() {
         options={{ title: 'Kimlik/Pasaport Çekim', headerShown: false, contentStyle: { backgroundColor: '#000' } }}
       />
       <Stack.Screen
-        name="capture-nfc"
-        options={{ title: 'Pasaport NFC', headerShown: false, contentStyle: { backgroundColor: '#0b1220' } }}
-      />
-      <Stack.Screen
         name="capture-history"
         options={{
           title: 'Çekilen Kimlikler',
+          headerLeft: () => (
+            <StaffStackBackButton fallback={'/staff/(tabs)' as Href} accessibilityLabel={t('back')} />
+          ),
+        }}
+      />
+      <Stack.Screen
+        name="passport-explore"
+        options={{
+          title: 'Pasaport Keşfeti',
           headerLeft: () => (
             <StaffStackBackButton fallback={'/staff/(tabs)' as Href} accessibilityLabel={t('back')} />
           ),

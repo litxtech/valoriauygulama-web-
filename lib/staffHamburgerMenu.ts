@@ -110,6 +110,7 @@ const ACCENTS: Record<string, string> = {
   my_stock: '#0d9488',
   facility_journal: '#0f766e',
   fault_records: '#ea580c',
+  security_recordings: '#0f766e',
   debts: '#0369a1',
   mrz: '#ca8a04',
   contracts: '#6366f1',
@@ -424,6 +425,13 @@ export function buildStaffHamburgerMenuSections(
     icon: 'checkbox-outline',
     accent: ACCENTS.cleaning,
   });
+  push('staff', {
+    id: 'room_linen',
+    label: t('staffMenu_roomLinen'),
+    href: '/staff/room-linen',
+    icon: 'bed-outline',
+    accent: ACCENTS.cleaning,
+  });
   if (canAccessAdminRoute(staff, '/admin/rooms/cleaning-plan')) {
     push('staff', {
       id: 'cleaning_plan_admin',
@@ -549,13 +557,6 @@ export function buildStaffHamburgerMenuSections(
       icon: 'camera-outline',
       accent: ACCENTS.kbs,
     });
-    push('hotel', {
-      id: 'nfc_capture',
-      label: t('kbsNfcCaptureTileTitle'),
-      href: '/staff/kbs/capture-nfc',
-      icon: 'hardware-chip-outline',
-      accent: ACCENTS.kbs,
-    });
   }
   if (canStaffViewKbsCaptureHistory(staff)) {
     push('hotel', {
@@ -563,6 +564,13 @@ export function buildStaffHamburgerMenuSections(
       label: t('staffKitchenIdCapturedList'),
       href: '/staff/kbs/capture-history',
       icon: 'albums-outline',
+      accent: ACCENTS.kbs,
+    });
+    push('hotel', {
+      id: 'passport_explore',
+      label: t('staffKitchenPassportExplore'),
+      href: '/staff/kbs/passport-explore',
+      icon: 'earth-outline',
       accent: ACCENTS.kbs,
     });
   }
@@ -605,6 +613,20 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.blacklist,
     });
   }
+  push('hotel', {
+    id: 'security_recordings_new',
+    label: t('staffMenu_security_recordings_new'),
+    href: '/staff/security-recordings/new',
+    icon: 'cloud-upload-outline',
+    accent: ACCENTS.security_recordings,
+  });
+  push('hotel', {
+    id: 'security_recordings',
+    label: t('staffMenu_security_recordings'),
+    href: '/staff/security-recordings',
+    icon: 'videocam-outline',
+    accent: ACCENTS.security_recordings,
+  });
   if (hasStaffAppPermission(staff, 'misafir_talepleri')) {
     push('hotel', {
       id: 'guest_service_requests',

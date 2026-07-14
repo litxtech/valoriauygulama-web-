@@ -20,11 +20,18 @@ import { useFocusEffect } from '@react-navigation/native';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseIdCapture, canStaffViewAllKbsCaptures, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
+import { KbsBrowseTabBar } from '@/components/kbs/KbsBrowseTabBar';
+import { KbsHotelFilterBar } from '@/components/kbs/KbsHotelFilterBar';
+import {
+  fetchKbsBrowseDocuments,
+  listAccessibleHotels,
+  resolveKbsMultiHotelContext,
+  type KbsOpsHotel,
+} from '@/lib/kbsMultiHotelCaptures';
 import {
   capturedAtTs,
   deleteKbsCapturedDocument,
   displayCapturedName,
-  fetchKbsCapturedDocuments,
   filterKbsCapturesForViewer,
   staffCanDeleteKbsCaptures,
   type KbsCapturedDocumentRow,
@@ -91,6 +98,7 @@ type CaptureCardProps = {
   groupPosition?: 'first' | 'middle' | 'last' | 'only';
   isNew?: boolean;
   showCapturedBy?: boolean;
+  showHotel?: boolean;
   selectionMode?: boolean;
   selected?: boolean;
 };
@@ -107,6 +115,7 @@ function CaptureCard({
   groupPosition = 'only',
   isNew = false,
   showCapturedBy = false,
+  showHotel = false,
   selectionMode = false,
   selected = false,
 }: CaptureCardProps) {
@@ -173,6 +182,9 @@ function CaptureCard({
           ) : null}
         </View>
         {!inGroup ? <Text style={styles.meta}>Oda {item.room_number ?? '—'}</Text> : null}
+        {showHotel && item.hotel_name ? (
+          <Text style={styles.metaHotel}>🏨 {item.hotel_name}</Text>
+        ) : null}
         {showCapturedBy && (item.captured_by_staff_name || item.scanned_by_user_id) ? (
           <Text style={styles.metaStaff}>
             Yükleyen: {item.captured_by_staff_name?.trim() || 'Personel'}
@@ -215,6 +227,9 @@ export default function KbsCaptureHistoryScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [hotels, setHotels] = useState<KbsOpsHotel[]>([]);
+  const [canViewAllHotels, setCanViewAllHotels] = useState(false);
+  const [hotelFilter, setHotelFilter] = useState('all');
   const reloadSeqRef = useRef(0);
   const lastFocusReloadAtRef = useRef(0);
 
@@ -231,7 +246,21 @@ export default function KbsCaptureHistoryScreen() {
     const seq = ++reloadSeqRef.current;
     try {
       setError(null);
-      const data = await fetchKbsCapturedDocuments(300, authId);
+      const ctx = await resolveKbsMultiHotelContext(authId);
+      if (!ctx.ok) throw new Error(ctx.message);
+      if (seq !== reloadSeqRef.current) return;
+
+      const hotelList = await listAccessibleHotels();
+      setHotels(hotelList);
+      setCanViewAllHotels(ctx.canViewAllHotels);
+
+      const fetchHotelId =
+        hotelFilter === 'all' ? (ctx.canViewAllHotels ? null : ctx.hotelId) : hotelFilter;
+
+      const data = await fetchKbsBrowseDocuments(authId, {
+        hotelId: fetchHotelId,
+        limit: ctx.canViewAllHotels && hotelFilter === 'all' ? 400 : 300,
+      });
       if (seq !== reloadSeqRef.current) return;
       const scoped = filterKbsCapturesForViewer(data, staff, staff?.auth_id);
       setRows(scoped);
@@ -247,7 +276,7 @@ export default function KbsCaptureHistoryScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [rows.length, staff, user?.id, t]);
+  }, [hotelFilter, rows.length, staff, user?.id, t]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -279,6 +308,12 @@ export default function KbsCaptureHistoryScreen() {
       };
     }, [reload])
   );
+
+  useEffect(() => {
+    if (!user?.id && !staff?.auth_id) return;
+    setRefreshing(true);
+    void reload();
+  }, [hotelFilter, user?.id, staff?.auth_id, reload]);
 
   const combined = useMemo(
     () =>
@@ -510,6 +545,15 @@ export default function KbsCaptureHistoryScreen() {
 
   return (
     <View style={styles.container}>
+      <KbsBrowseTabBar active="captures" />
+
+      <KbsHotelFilterBar
+        hotels={hotels}
+        canViewAll={canViewAllHotels}
+        value={hotelFilter}
+        onChange={setHotelFilter}
+      />
+
       <TouchableOpacity
         style={styles.captureLink}
         onPress={() => router.push(CAPTURE_ID_ROUTE as never)}
@@ -694,6 +738,7 @@ export default function KbsCaptureHistoryScreen() {
                 canDelete={canDelete}
                 isNew={isRowNew(row)}
                 showCapturedBy
+                showHotel={canViewAllHotels}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(row.id)}
                 onPress={() => openRow(row)}
@@ -771,6 +816,7 @@ export default function KbsCaptureHistoryScreen() {
                         canDelete={canDelete}
                         isNew={isRowNew(row)}
                         showCapturedBy
+                        showHotel={canViewAllHotels}
                         inGroup
                         groupPosition={pos}
                         selectionMode={selectionMode}
@@ -1131,6 +1177,7 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
   meta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   metaStaff: { fontSize: 12, color: '#0f766e', marginTop: 2, fontWeight: '700' },
+  metaHotel: { fontSize: 12, color: '#0d9488', marginTop: 2, fontWeight: '700' },
   parsedLine: { fontSize: 11, color: theme.colors.text, marginTop: 6, lineHeight: 15 },
   parsedHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontStyle: 'italic' },
   missingLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '700' },

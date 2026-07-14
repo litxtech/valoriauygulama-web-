@@ -21,6 +21,7 @@ import {
   mapNationalityTextToCode,
 } from '@/lib/kbsNationalityMap';
 import { resolveBestPassportNames } from '@/lib/kbsPassportNameResolve';
+import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { parseTd3MrzFallback } from '@/lib/scanner/mrzTd3Fallback';
 
 const TC_RE = /\b([1-9]\d{10})\b/;
@@ -1107,7 +1108,13 @@ export function extractGenderFromOcr(lines: string[]): 'M' | 'F' | 'X' | null {
 }
 
 function detectPassportFromOcr(lines: string[]): boolean {
-  const j = normLines(lines).join(' ').toUpperCase();
+  const L = normLines(lines);
+  const j = L.join(' ').toUpperCase();
+  if (/\bP<[A-Z]{3}\b/.test(j)) return true;
+  if (/\bTYPE\s*P\b/.test(j) || /\bDOC(?:UMENT)?\s*TYPE\s*P\b/.test(j)) return true;
+  const hasSurnameLabel = L.some((line) => PASSPORT_SURNAME_LINE_RE.test(line) || PASSPORT_SURNAME_INLINE_RE.test(line));
+  const hasGivenLabel = L.some((line) => PASSPORT_GIVEN_LINE_RE.test(line) || PASSPORT_GIVEN_INLINE_RE.test(line));
+  if (hasSurnameLabel && hasGivenLabel) return true;
   return (
     /\bPASSPORT\b/.test(j) ||
     /\bPASAPORT\b/.test(j) ||
@@ -1465,7 +1472,11 @@ export function enrichParsedWithIdCardOcr(
 
 /** Galeri sonucu yeterli alan içeriyor mu. */
 export function galleryParsedHasMinimumFields(parsed: ParsedDocument): boolean {
-  const hasId = !!(parsed.documentNumber && String(parsed.documentNumber).replace(/\D/g, '').length >= 6);
+  const hasId = hasPlausibleKbsDocumentNumber(parsed.documentNumber, parsed.documentType);
   const hasNames = isUsablePersonName(parsed.firstName) && isUsablePersonName(parsed.lastName);
-  return hasId && hasNames;
+  const hasMrz = !!parsed.rawMrz?.trim();
+  if (hasNames && hasId) return true;
+  if (hasMrz && hasNames) return true;
+  if (hasNames && parsed.birthDate && (hasId || parsed.expiryDate)) return true;
+  return false;
 }

@@ -509,31 +509,6 @@ function StaffMainTabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="nfc"
-        options={{
-          href: canIdCapture ? tabHrefs.nfc : null,
-          title: t('kbsNfcCaptureTitle'),
-          headerShown: false,
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('staffTabNfc'),
-          tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 4 },
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'hardware-chip' : 'hardware-chip-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
-        }}
-        listeners={{
-          tabPress: () => {
-            hapticSelection();
-          },
-        }}
-      />
-      <Tabs.Screen
         name="id-capture"
         options={{
           href: canIdCapture ? undefined : null,

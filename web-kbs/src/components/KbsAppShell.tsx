@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { CapturesPage } from './CapturesPage';
 import { PassportExplorePage } from './PassportExplorePage';
+import { InHousePage } from './InHousePage';
 
-export type KbsTab = 'captures' | 'passports';
+export type KbsTab = 'captures' | 'inhouse' | 'passports';
 
 export function KbsAppShell() {
   const [tab, setTab] = useState<KbsTab>('captures');
@@ -15,7 +16,14 @@ export function KbsAppShell() {
           className={`kbs-tab${tab === 'captures' ? ' active' : ''}`}
           onClick={() => setTab('captures')}
         >
-          Çekilen Kimlikler
+          Çekilenler
+        </button>
+        <button
+          type="button"
+          className={`kbs-tab${tab === 'inhouse' ? ' active' : ''}`}
+          onClick={() => setTab('inhouse')}
+        >
+          İçeride
         </button>
         <button
           type="button"
@@ -25,7 +33,9 @@ export function KbsAppShell() {
           Pasaport Keşfeti
         </button>
       </nav>
-      {tab === 'captures' ? <CapturesPage /> : <PassportExplorePage />}
+      {tab === 'captures' ? <CapturesPage /> : null}
+      {tab === 'inhouse' ? <InHousePage /> : null}
+      {tab === 'passports' ? <PassportExplorePage /> : null}
     </div>
   );
 }
