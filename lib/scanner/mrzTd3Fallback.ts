@@ -10,7 +10,7 @@ const TD3_LEN = 44;
 const RECEPTION_ICAO = new Set([
   'SAU', 'ARE', 'QAT', 'OMN', 'KWT', 'BHR', 'IRQ', 'IRN', 'JOR', 'LBN', 'SYR', 'PSE', 'EGY', 'YEM',
   'TUR', 'ISR', 'CYP', 'LBY', 'TUN', 'DZA', 'MAR', 'SDN',
-  'DEU', 'GBR', 'FRA', 'RUS', 'UKR', 'USA', 'IND', 'PAK', 'AFG',
+  'DEU', 'GBR', 'FRA', 'RUS', 'UKR', 'USA', 'IND', 'PAK', 'AFG', 'UZB', 'KAZ', 'KGZ', 'TJK', 'TKM', 'AZE',
 ]);
 
 function isNameLine(line: string): boolean {

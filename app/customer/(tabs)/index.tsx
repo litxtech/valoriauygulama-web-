@@ -694,7 +694,7 @@ export default function CustomerHome() {
         setMyLikes(new Set(myLikeIds));
         setCommentsByPost({});
         if (guestId) {
-          void recordGuestFeedPostViews(ids, guestId);
+          await recordGuestFeedPostViews(ids, guestId);
           const myPostIds = postsWithMedia.filter((p) => p.guest_id === guestId).map((p) => p.id);
           if (myPostIds.length > 0) {
             setMyGuestViewCounts(await getMyGuestFeedPostViewCounts(myPostIds));

@@ -7,6 +7,7 @@ import type {
   SubmitCheckOutPayload,
   SubmitDeletePayload
 } from './types.js';
+import { detectEgressIpv4 } from '../../shared/utils/egressIp.js';
 
 /**
  * Jandarma KBS SOAP (SrvShsYtkTml).
@@ -91,20 +92,55 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     return `<musteri xmlns:${prefix}="${ns}" xmlns:i="${iNs}">${parts.join('')}</musteri>`;
   }
 
+  /** Giriş/çıkış — KBS: "YYYY-MM-DD HH:MM:SS" (Türkiye saati). */
   private normalizeDateTime(value: string | null | undefined): string | null {
     if (!value) return null;
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Istanbul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).formatToParts(d);
+    const get = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((p) => p.type === type)?.value ?? '00';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
   }
 
+  /** Doğum tarihi — KBS: "YYYY-MM-DD" (ISO datetime gönderme). */
   private normalizeDateOnly(value: string | null | undefined): string | null {
     if (!value) return null;
     const s = String(value).trim();
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
     const d = new Date(s);
     if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Istanbul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(d);
+    const get = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((p) => p.type === type)?.value ?? '01';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+
+  /** KBS alan limitleri — fazla uzun ad/soyad reddedilmesin. */
+  private clipName(value: string | null | undefined, max = 80): string | null {
+    const t = (value ?? '').trim().replace(/\s+/g, ' ');
+    if (!t) return null;
+    return t.length > max ? t.slice(0, max).trim() : t;
+  }
+
+  private clipDoc(value: string | null | undefined, max = 20): string | null {
+    const t = (value ?? '').trim().replace(/\s+/g, '');
+    if (!t) return null;
+    return t.length > max ? t.slice(0, max) : t;
   }
 
   private credsNumeric(credentials: ProviderCredentials) {
@@ -123,10 +159,11 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     return 'foreign' as const;
   }
 
-  private soapGender(g: string | null | undefined): string {
+  private soapGender(g: string | null | undefined): string | undefined {
     if (g === 'M') return 'ERKEK';
     if (g === 'F') return 'KADIN';
-    return 'TANIMSIZ';
+    // Yabancıda cinsiyet zorunlu değil; TANIMSIZ KBS’de sık hata verir → gönderme.
+    return undefined;
   }
 
   private soapUsage(usage: string | null | undefined): string {
@@ -152,7 +189,10 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       .filter((x) => x != null && String(x).trim().length > 0)
       .join(' ')
       .trim();
-    return { adi: adiFromParts || firstName || null, soyadi: lastName };
+    return {
+      adi: this.clipName(adiFromParts || firstName || null),
+      soyadi: this.clipName(lastName)
+    };
   }
 
   private envelope(opName: string, userTc: number, tssKod: number, password: string, musteriXml: string) {
@@ -173,12 +213,16 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const { userTc, tssKod } = this.credsNumeric(credentials);
     const kind = this.personKind(payload);
     const { adi, soyadi } = this.nameParts(payload);
-    const room = payload.roomNumber?.trim() || null;
-    const giris = this.normalizeDateTime(payload.checkInAt) ?? new Date().toISOString();
-    const dogum = this.normalizeDateTime(payload.birthDate) ?? this.normalizeDateOnly(payload.birthDate);
+    const room = this.clipName(payload.roomNumber, 50);
+    const giris =
+      this.normalizeDateTime(payload.checkInAt) ?? this.normalizeDateTime(new Date().toISOString());
+    if (!giris) throw new Error('Giriş tarihi zorunlu (KBS)');
+    // Doğum: yalnızca gün (datetime KBS’de sık “Provider check-in failed” üretir).
+    const dogum = this.normalizeDateOnly(payload.birthDate);
     const ulke = (payload.nationalityCode || payload.issuingCountryCode || '').trim().toUpperCase() || null;
-    const seri = payload.documentSeries?.trim() || null;
-    const kimlikOrBelge = payload.documentNumber?.trim() || null;
+    const kimlikOrBelge = this.clipDoc(payload.documentNumber);
+    // Pasaportta ayrı seri yoksa belge no (max 20).
+    const seri = this.clipDoc(payload.documentSeries) || kimlikOrBelge;
 
     if (!room) throw new Error('Oda No zorunlu (KBS)');
     if (!kimlikOrBelge) throw new Error(kind === 'tc_citizen' ? 'Kimlik No (T.C.) zorunlu' : 'Kimlik/Belge No zorunlu');
@@ -194,11 +238,11 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
         BELGESERI: seri || undefined,
         ADI: adi || undefined,
         SOYADI: soyadi || undefined,
-        BABAADI: payload.fatherName?.trim() || undefined,
-        ANAADI: payload.motherName?.trim() || undefined,
+        BABAADI: this.clipName(payload.fatherName) || undefined,
+        ANAADI: this.clipName(payload.motherName) || undefined,
         DOGUMTARIHI: dogum || undefined,
         ULKE: ulke || 'TUR',
-        CINSIYET: payload.gender ? this.soapGender(payload.gender) : undefined,
+        CINSIYET: this.soapGender(payload.gender),
         MEDENIHAL: this.soapMarital(payload.maritalStatus),
         ODANO: room,
         PLAKA: payload.plateNumber?.trim() || undefined,
@@ -223,8 +267,8 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
         BELGESERI: seri,
         ADI: adi,
         SOYADI: soyadi,
-        BABAADI: payload.fatherName?.trim() || undefined,
-        ANAADI: payload.motherName?.trim() || undefined,
+        BABAADI: this.clipName(payload.fatherName) || undefined,
+        ANAADI: this.clipName(payload.motherName) || undefined,
         DOGUMTARIHI: dogum,
         ULKE: ulke,
         CINSIYET: this.soapGender(payload.gender),
@@ -259,16 +303,20 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
     const kind = this.personKind(payload);
     const opName = kind === 'tc_citizen' ? 'MusteriKimlikNoCikis' : 'MusteriYabanciCikis';
 
+    const cikis =
+      this.normalizeDateTime(payload.checkOutAt) ?? this.normalizeDateTime(new Date().toISOString());
+    if (!cikis) throw new Error('Çıkış tarihi zorunlu (KBS)');
+
     const musteriFields: Record<string, string | null | undefined> =
       kind === 'tc_citizen'
         ? {
             KIMLIKNO: payload.documentNumber.replace(/\D/g, ''),
-            CKSTRH: this.normalizeDateTime(payload.checkOutAt) ?? new Date().toISOString(),
+            CKSTRH: cikis,
             CKSTIP: 'TESISTENCIKIS'
           }
         : {
             BELGENO: payload.documentNumber,
-            CKSTRH: this.normalizeDateTime(payload.checkOutAt) ?? new Date().toISOString(),
+            CKSTRH: cikis,
             CKSTIP: 'TESISTENCIKIS'
           };
 
@@ -312,8 +360,13 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
   async testConnection(credentials: ProviderCredentials): Promise<ProviderTestResponse> {
     const userTc = Number(credentials.username);
     const tssKod = Number(credentials.facilityCode);
+    const egressIp = await detectEgressIpv4();
     if (!Number.isFinite(userTc) || !Number.isFinite(tssKod)) {
-      return { ok: false, message: 'KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)' };
+      return {
+        ok: false,
+        message: 'KBS credentials must be numeric (username=KullaniciTC, facilityCode=TssKod)',
+        egressIp
+      };
     }
 
     const bodyXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -335,15 +388,22 @@ export class HttpOfficialProvider implements OfficialSubmissionProvider {
       });
       const sonuc = this.extractSonuc(xmlText);
       if (!sonuc.basarili) {
+        const base = `KBS connection failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim();
+        const ipHint =
+          /yetkisiz\s*ip/i.test(base) && egressIp
+            ? ` (Railway çıkış IP bilgisi: ${egressIp} — sabit IP zorunlu değil; paneldeki kayıtlı IP ile uyuşmuyorsa güncelleyin veya temizleyin.)`
+            : '';
         return {
           ok: false,
-          message: `KBS connection failed: ${sonuc.hataKodu ?? 'UNKNOWN'} ${sonuc.mesaj ?? ''}`.trim(),
-          details: sonuc.raw
+          message: `${base}${ipHint}`,
+          details: sonuc.raw,
+          egressIp
         };
       }
-      return { ok: true, message: 'KBS connection ok' };
+      return { ok: true, message: 'KBS connection ok', egressIp };
     } catch (e) {
-      return { ok: false, message: e instanceof Error ? e.message : 'KBS connection failed' };
+      const base = e instanceof Error ? e.message : 'KBS connection failed';
+      return { ok: false, message: base, egressIp };
     }
   }
 }

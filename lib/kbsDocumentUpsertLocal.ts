@@ -7,6 +7,7 @@ import {
   findGuestDocumentByIdentity,
   normalizeGuestDocumentNumber,
 } from '@/lib/kbsGuestDocumentIdentity';
+import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 
 export type UpsertOk = { guestId: string; guestDocumentId: string; scanStatus: string };
 
@@ -94,6 +95,11 @@ export async function upsertGuestDocumentLocal(args: {
   }
 
   const normalizedDocNo = normalizeGuestDocumentNumber(parsed.documentNumber);
+  const series = resolveKbsDocumentSeries({
+    documentSeries: documentSeries ?? parsed.documentSeries,
+    documentNumber: normalizedDocNo,
+    documentType: parsed.documentType,
+  });
   const fullName =
     parsed.fullName ??
     (([parsed.firstName, parsed.lastName].filter(Boolean).join(' ').trim() || null) as string | null);
@@ -116,14 +122,16 @@ export async function upsertGuestDocumentLocal(args: {
   const kbsExtras = {
     kbs_person_kind: kbsPersonKind ?? null,
     usage_kind: usageKind ?? 'konaklama',
-    document_series: documentSeries ?? null,
+    document_series: series,
     plate_number: plateNumber ?? null,
     guest_phone_submitted: guestPhone ?? null,
     forward_dated: forwardDated ?? false,
     mrz_batch_key: mrzBatchKey ?? null
   };
 
-  const payloadJson = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  const payloadJson = JSON.parse(
+    JSON.stringify({ ...parsed, documentSeries: series, documentNumber: normalizedDocNo })
+  ) as Record<string, unknown>;
   // Kimliği yükleyen personel her zaman yazılır (MRZ olsun olmasın).
   const mrzAudit = isMrzPayload(effectiveRaw)
     ? {
@@ -137,56 +145,64 @@ export async function upsertGuestDocumentLocal(args: {
         scanned_by_user_id: uid,
       };
 
+  const applyUpdate = async (existing: {
+    id: string;
+    guest_id: string;
+  }): Promise<{ ok: true; data: UpsertOk } | { ok: false; message: string; code?: string }> => {
+    const { data: updated, error: updErr } = await supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update({
+        document_number: normalizedDocNo,
+        document_type: parsed.documentType,
+        issuing_country_code: parsed.issuingCountryCode,
+        nationality_code: parsed.nationalityCode,
+        expiry_date: expiryDate,
+        raw_mrz: parsed.rawMrz ?? rawMrz ?? null,
+        parsed_payload: payloadJson,
+        scan_confidence: scanConfidence ?? parsed.confidence ?? null,
+        scan_status: scanStatus,
+        front_image_url: frontImageUrl ?? null,
+        back_image_url: backImageUrl ?? null,
+        capture_source: captureSource ?? null,
+        captured_at: capturedAt ?? new Date().toISOString(),
+        ...kbsExtras,
+        ...mrzAudit
+      })
+      .eq('id', existing.id)
+      .select('id, guest_id, scan_status')
+      .single();
+    if (updErr || !updated) {
+      return { ok: false, message: mapOpsTableError(updErr), code: updErr?.code };
+    }
+
+    const guestUp: Record<string, unknown> = {
+      full_name: fullName ?? 'UNKNOWN',
+      first_name: parsed.firstName,
+      last_name: parsed.lastName,
+      middle_name: parsed.middleName,
+      nationality_code: parsed.nationalityCode,
+      gender: parsed.gender,
+      birth_date: birthDate
+    };
+    if (fatherName !== undefined) guestUp.father_name = fatherName;
+    if (motherName !== undefined) guestUp.mother_name = motherName;
+    await supabase.schema('ops').from('guests').update(guestUp).eq('id', existing.guest_id).eq('hotel_id', hotelId);
+
+    return {
+      ok: true,
+      data: {
+        guestId: updated.guest_id,
+        guestDocumentId: updated.id,
+        scanStatus: updated.scan_status
+      }
+    };
+  };
+
   if (normalizedDocNo) {
     const existing = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
     if (existing) {
-      const { data: updated, error: updErr } = await supabase
-        .schema('ops')
-        .from('guest_documents')
-        .update({
-          document_number: normalizedDocNo,
-          issuing_country_code: parsed.issuingCountryCode,
-          nationality_code: parsed.nationalityCode,
-          expiry_date: expiryDate,
-          raw_mrz: parsed.rawMrz ?? rawMrz ?? null,
-          parsed_payload: payloadJson,
-          scan_confidence: scanConfidence ?? parsed.confidence ?? null,
-          scan_status: scanStatus,
-          front_image_url: frontImageUrl ?? null,
-          back_image_url: backImageUrl ?? null,
-          capture_source: captureSource ?? null,
-          captured_at: capturedAt ?? new Date().toISOString(),
-          ...kbsExtras,
-          ...mrzAudit
-        })
-        .eq('id', existing.id)
-        .select('id, guest_id, scan_status')
-        .single();
-      if (updErr || !updated) {
-        return { ok: false, message: mapOpsTableError(updErr), code: updErr?.code };
-      }
-
-      const guestUp: Record<string, unknown> = {
-        full_name: fullName ?? 'UNKNOWN',
-        first_name: parsed.firstName,
-        last_name: parsed.lastName,
-        middle_name: parsed.middleName,
-        nationality_code: parsed.nationalityCode,
-        gender: parsed.gender,
-        birth_date: birthDate
-      };
-      if (fatherName !== undefined) guestUp.father_name = fatherName;
-      if (motherName !== undefined) guestUp.mother_name = motherName;
-      await supabase.schema('ops').from('guests').update(guestUp).eq('id', existing.guest_id).eq('hotel_id', hotelId);
-
-      return {
-        ok: true,
-        data: {
-          guestId: updated.guest_id,
-          guestDocumentId: updated.id,
-          scanStatus: updated.scan_status
-        }
-      };
+      return applyUpdate(existing);
     }
   }
 
@@ -242,15 +258,14 @@ export async function upsertGuestDocumentLocal(args: {
     if (normalizedDocNo && dErr?.code === '23505') {
       const again = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
       if (again) {
-        return {
-          ok: true,
-          data: {
-            guestId: again.guest_id,
-            guestDocumentId: again.id,
-            scanStatus: again.scan_status,
-          },
-        };
+        return applyUpdate(again);
       }
+      return {
+        ok: false,
+        message:
+          'Bu pasaport / kimlik numarası zaten kayıtlı. Listeyi yenileyin veya mevcut kaydı açın.',
+        code: '23505',
+      };
     }
     return { ok: false, message: mapOpsTableError(dErr), code: dErr?.code };
   }

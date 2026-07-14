@@ -86,11 +86,12 @@ export async function loadFeedPostViewers(postId: string): Promise<{
   if (!error) {
     return { rows: mapRpcViewerRows((data ?? []) as Record<string, unknown>[]), error: null };
   }
-  if (error.code === 'PGRST202' || error.message?.includes('get_feed_post_viewers')) {
-    log.warn('loadFeedPostViewers', 'RPC missing, falling back to direct select', error.code);
-    return loadFeedPostViewersDirect(postId);
+  // Eski RPC misafir yazarlı gönderiyi reddedebilir (P0002/P0003) — RLS güncel ise doğrudan okuma yedekler.
+  log.warn('loadFeedPostViewers', 'RPC failed, falling back to direct select', error.code, error.message);
+  const fallback = await loadFeedPostViewersDirect(postId);
+  if (fallback.rows.length > 0 || !fallback.error) {
+    return fallback;
   }
-  log.warn('loadFeedPostViewers', error.message, error.code);
   return { rows: [], error };
 }
 
@@ -148,6 +149,36 @@ export async function getMyGuestFeedPostViewCounts(
   const out: Record<string, number> = {};
   for (const row of (data ?? []) as { post_id: string; view_count: number }[]) {
     out[row.post_id] = Number(row.view_count) || 0;
+  }
+  return out;
+}
+
+/** Personel: gönderi görüntülenme sayıları (RPC; hata olursa doğrudan sayım). */
+export async function getFeedPostViewCounts(postIds: string[]): Promise<Record<string, number>> {
+  if (!postIds.length) return {};
+  const out: Record<string, number> = {};
+  const { data, error } = await supabase.rpc('get_feed_post_view_counts', { post_ids: postIds });
+  if (!error) {
+    for (const row of (data ?? []) as { post_id?: string; view_count?: number | string; viewCount?: number | string }[]) {
+      const pid = row.post_id != null ? String(row.post_id) : '';
+      if (!pid) continue;
+      out[pid] = Number(row.view_count ?? row.viewCount ?? 0) || 0;
+    }
+    return out;
+  }
+  log.warn('getFeedPostViewCounts', 'RPC failed, falling back to select', error.code, error.message);
+  const { data: rows, error: selErr } = await supabase
+    .from('feed_post_views')
+    .select('post_id')
+    .in('post_id', postIds);
+  if (selErr) {
+    log.warn('getFeedPostViewCounts', 'fallback select failed', selErr.message, selErr.code);
+    return {};
+  }
+  for (const r of rows ?? []) {
+    const pid = r.post_id != null ? String(r.post_id) : '';
+    if (!pid) continue;
+    out[pid] = (out[pid] ?? 0) + 1;
   }
   return out;
 }

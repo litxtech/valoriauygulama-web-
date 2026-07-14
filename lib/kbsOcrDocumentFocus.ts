@@ -7,7 +7,7 @@ const SURFACE_NOISE_RE =
 
 const MRZ_CHARS_RE = /^[A-Z0-9<][A-Z0-9<\s]{18,}$/i;
 const LABEL_RE =
-  /(?:soyad|surname|family|given\s*name|ad[ıi]|do[gğ]um|birth|uyruk|nationality|kimlik|pasaport|passport|valid|geçerl|seri|anne|baba|mother|father|cinsiyet|sex|gender|medeni|<<<|IDTUR|IDTUR|t\.?\s*c\.?\s*kimlik)/i;
+  /(?:soyad|surname|family|given\s*name|ad[ıi]|do[gğ]um|birth|uyruk|nationality|kimlik|pasaport|passport|valid|geçerl|seri|anne|baba|mother|father|cinsiyet|sex|gender|medeni|<<<|IDTUR|familiya|ismi|fuqarolig|tug.?ilgan|amal\s*qilish|expiry|<<<)/i;
 const TC_RE = /\b[1-9]\d{10}\b/;
 const YKN_RE = /\b99\d{9}\b/;
 const DATE_RE = /\b\d{2}[./]\d{2}[./]\d{4}\b/;
@@ -15,13 +15,16 @@ const SERIAL_RE = /\b[A-Z]{1,3}\s*\d{5,9}\b/i;
 
 function isDocumentRelevantLine(line: string): boolean {
   const t = line.trim();
-  if (t.length < 2) return false;
+  if (t.length < 1) return false;
   if (SURFACE_NOISE_RE.test(t)) return false;
   const compact = t.replace(/\s/g, '');
   if (compact.includes('<<') || MRZ_CHARS_RE.test(t)) return true;
   if (LABEL_RE.test(t)) return true;
   if (TC_RE.test(t) || YKN_RE.test(t) || DATE_RE.test(t)) return true;
   if (SERIAL_RE.test(t)) return true;
+  // OCR tarih parçaları: "16" "11" "2002" / "16 11"
+  if (/^\d{1,2}$/.test(t) || /^\d{4}$/.test(t) || /^\d{1,2}\s+\d{1,2}$/.test(t)) return true;
+  if (/^\d{1,2}\s+\d{1,2}\s+\d{4}$/.test(t)) return true;
   if (t.length > 80) return false;
   if (/^[A-Za-zÇĞİÖŞÜçğıöşü\s'.-]+$/.test(t)) {
     const letters = (t.match(/[A-Za-zÇĞİÖŞÜçğıöşü]/g) || []).length;

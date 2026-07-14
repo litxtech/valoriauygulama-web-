@@ -65,6 +65,8 @@ export type ProviderTestResponse = {
   ok: boolean;
   message: string;
   details?: unknown;
+  /** Railway kbs-core çıkış IPv4 (bilgi; sabit IP zorunlu değil). */
+  egressIp?: string | null;
 };
 
 export interface OfficialSubmissionProvider {

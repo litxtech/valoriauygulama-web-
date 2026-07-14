@@ -1,6 +1,7 @@
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
 import { isNationalityLikeText } from '@/lib/kbsNationalityMap';
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
+import { sanitizeParsedDocumentSeries } from '@/lib/kbsDocumentSeries';
 import { listCoreMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 import { mrzNamesLookValid, parseChevronNamesFromMrz, stripSurnameFromGivenNames, trimMrzPersonNameTokens } from '@/lib/scanner/mrzPersonNames';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -13,7 +14,7 @@ export type KbsOcrPassMergeInput = {
 const PLACEHOLDER_FIRST = 'MISAFIR';
 
 const OCR_NOISE_NAME_RE =
-  /^(?:TÜRKİYE|TURKEY|REPUBLIC|CUMHURİYET|CUMHURIYET|KİMLİK|KIMLIK|IDENTITY|CARD|DOCUMENT|NÜFUS|NUFUS|PASAPORT|PASSPORT|PASSEPORT|PASAPORTE|UYRUK|NATIONALITY|VATANDAŞ|VATANDAS|GEÇİCİ|GECICI|KORUMA|BELGESİ|BELGESI|VALID|SERİ|SERI|CİLT|CILT|MAHALLE|KAYIT|İLÇE|ILCE|CİNSİYET|CINSIYET|ERKEK|KADIN|MEDENİ|MEDENI|DOGUM|DOĞUM|MASA|TEZGAH|TABLE|DESK|HOTEL|OTEL|RESEPSİYON|RECEPTION|VALORIA|WIFI|MENÜ|MENU|KAHOVE|COFFEE|RESTORAN|INSTAGRAM|FACEBOOK|WHATSAPP|SPECIMEN|TYPE|REISE|REISEPASS)/i;
+  /^(?:TÜRKİYE|TURKEY|REPUBLIC|CUMHURIYET|CUMHURIYET|KİMLİK|KIMLIK|IDENTITY|CARD|DOCUMENT|NÜFUS|NUFUS|PASAPORT|PASSPORT|PASSEPORT|PASAPORTE|UYRUK|NATIONALITY|VATANDAŞ|VATANDAS|GEÇİCİ|GECICI|KORUMA|BELGESİ|BELGESI|VALID|SERİ|SERI|CİLT|CILT|MAHALLE|KAYIT|İLÇE|ILCE|CİNSİYET|CINSIYET|ERKEK|KADIN|MEDENİ|MEDENI|DOGUM|DOĞUM|MASA|TEZGAH|TABLE|DESK|HOTEL|OTEL|RESEPSİYON|RECEPTION|VALORIA|WIFI|MENÜ|MENU|KAHOVE|COFFEE|RESTORAN|INSTAGRAM|FACEBOOK|WHATSAPP|SPECIMEN|TYPE|REISE|REISEPASS|AUTHORITY|BERILGAN|TOMONIDAN|OTASINING|FATHER|MOTHER|SIGNATURE|HOLDERS|FUQAROLIG|SAMARKAND|REGION|UZBEKISTAN|OZBEKISTON|KIM\s+TOMONIDAN)/i;
 
 /** OCR’da etiketin değer sanılması — "SURNAME", "GIVEN NAMES" vb. tamamı etiket kelimesi. */
 const OCR_LABEL_ONLY_NAME_RE =
@@ -52,6 +53,9 @@ function isLikelyOcrNoiseName(raw: string | null | undefined): boolean {
   const s = sanitizePersonName(raw);
   if (!s) return true;
   if (OCR_NOISE_NAME_RE.test(s)) return true;
+  if (/AUTHORITY|TOMONIDAN|OTASINING|FATHER'?S?\s*NAME|GIVEN\s*NAMES|SURNAME|FUQAROLIG|NATIONALITY/i.test(s)) {
+    return true;
+  }
   if (OCR_LABEL_ONLY_NAME_RE.test(s.replace(/\s+/g, ' ').trim())) return true;
   if (isNationalityLikeText(s)) return true;
   if (s.length > 48) return true;
@@ -141,7 +145,8 @@ export function sanitizeKbsOcrForApply(parsed: ParsedDocument): ParsedDocument {
   const ln = isUsablePersonName(p.lastName) ? sanitizePersonName(p.lastName) : null;
   p.fullName = fn && ln ? `${fn} ${ln}`.trim() : fn || ln || null;
 
-  return p;
+  // Pasaport no asla Seri alanına düşmesin.
+  return sanitizeParsedDocumentSeries(p);
 }
 
 function pickString(
@@ -251,25 +256,32 @@ export function mergeKbsOcrIntoExisting(
     [firstName, lastName].filter(Boolean).join(' ').trim() ||
     pickString(ex.fullName, inc.fullName, incNamesTrusted);
 
-  const documentNumber = hasTrustedDocNumber(ex)
-    ? ex.documentNumber
-    : hasTrustedDocNumber(inc)
+  const documentNumber =
+    opts?.correction && hasTrustedDocNumber(inc)
       ? inc.documentNumber
-      : pickString(ex.documentNumber, inc.documentNumber, !!inc.rawMrz);
+      : hasTrustedDocNumber(ex)
+        ? ex.documentNumber
+        : hasTrustedDocNumber(inc)
+          ? inc.documentNumber
+          : pickString(ex.documentNumber, inc.documentNumber, !!inc.rawMrz);
 
   const birthDate =
-    ex.birthDate && isPlausibleBirthDate(ex.birthDate)
-      ? ex.birthDate
-      : inc.birthDate && isPlausibleBirthDate(inc.birthDate)
-        ? inc.birthDate
-        : null;
+    opts?.correction && inc.birthDate && isPlausibleBirthDate(inc.birthDate)
+      ? inc.birthDate
+      : ex.birthDate && isPlausibleBirthDate(ex.birthDate)
+        ? ex.birthDate
+        : inc.birthDate && isPlausibleBirthDate(inc.birthDate)
+          ? inc.birthDate
+          : null;
 
   const expiryDate =
-    ex.expiryDate && isPlausibleExpiryDate(ex.expiryDate)
-      ? ex.expiryDate
-      : inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
-        ? inc.expiryDate
-        : null;
+    opts?.correction && inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
+      ? inc.expiryDate
+      : ex.expiryDate && isPlausibleExpiryDate(ex.expiryDate)
+        ? ex.expiryDate
+        : inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
+          ? inc.expiryDate
+          : null;
 
   const mergedWarnings = [
     ...(ex.warnings ?? []).filter(

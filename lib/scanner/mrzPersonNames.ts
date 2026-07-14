@@ -81,19 +81,25 @@ function stripIcaoMrzNameLinePrefix(alpha: string): string {
   return alpha;
 }
 
-/** MRZ / OCR ad-soyad — baştaki/sondaki gürültü kelimeleri ve fazla tokenları kes. */
+/** MRZ / OCR ad-soyad — baştaki/sondaki gürültü kelimeleri kes; pasaporta yazılanı koru. */
 export function trimMrzPersonNameTokens(
   raw: string | null | undefined,
   opts?: { maxWords?: number; role?: 'surname' | 'given' }
 ): string | null {
-  const maxWords = opts?.maxWords ?? (opts?.role === 'surname' ? 3 : 10);
+  // Soyad: AL GHAMDI / BIN ABDUL… gibi bileşikler; ad: uzun Körfez verilen adları.
+  const maxWords = opts?.maxWords ?? (opts?.role === 'surname' ? 5 : 14);
   let s = sanitizePersonName(raw);
   if (!s) return null;
   let words = s.split(/\s+/).filter(Boolean);
 
   while (words.length > 0) {
     const w = words[0]!;
-    if (w.length === 1 || MRZ_NAME_NOISE_WORDS.has(w)) {
+    if (MRZ_NAME_NOISE_WORDS.has(w)) {
+      words.shift();
+      continue;
+    }
+    // Baştaki tek harf genelde OCR artığı; ortadaki/sondaki initials (M, A) korunur.
+    if (w.length === 1 && words.length > 1) {
       words.shift();
       continue;
     }
@@ -107,14 +113,103 @@ export function trimMrzPersonNameTokens(
   const kept: string[] = [];
   for (const w of words) {
     if (MRZ_NAME_NOISE_WORDS.has(w)) break;
-    if (w.length === 1) break;
     if (/^\d{4,}$/.test(w)) break;
+    // Tek harfli ad bileşeni (MOHAMMED AATI M) — pasaportta yazılıysa sakla.
+    if (w.length === 1) {
+      if (/^[A-ZÇĞİÖŞÜ]$/i.test(w) && kept.length > 0) {
+        kept.push(w.toUpperCase());
+        if (kept.length >= maxWords) break;
+        continue;
+      }
+      break;
+    }
     kept.push(w);
     if (kept.length >= maxWords) break;
   }
 
   const out = kept.join(' ').trim();
   return isUsablePersonName(out) ? out : null;
+}
+
+/** TD3 ad alanı (39 karakter) tamamen doluysa veya sonu filler değilse isim kesik olabilir. */
+export function mrzNameFieldLooksTruncated(rawMrz: string | null | undefined): boolean {
+  if (!rawMrz?.trim()) return false;
+  const line = rawMrz
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((l) => l.replace(/[^A-Z0-9<]/gi, '').toUpperCase())
+    .find((l) => /^[IPAVC]<[A-Z]{3}/.test(l) && l.includes('<<'));
+  if (!line || line.length < 20) return false;
+  const padded = line.length >= 44 ? line.slice(0, 44) : line.padEnd(44, '<');
+  const nameField = padded.slice(5, 44);
+  if (nameField.replace(/</g, '').length < 12) return false;
+  // Son 2 karakter filler değilse alan dolmaya yakın → görsel ad ile tamamla.
+  if (!nameField.endsWith('<')) return true;
+  if (!/<{2,}$/.test(nameField)) return true;
+  return false;
+}
+
+/**
+ * Kısa ad (genelde MRZ) ile daha uzun görsel OCR — token uyumluysa tam olanı seç.
+ * Ezber/ülke listesi yok; yalnızca metin uzantısı / kesik son kelime.
+ */
+export function preferCompletePersonName(
+  primary: string | null | undefined,
+  fuller: string | null | undefined
+): string | null {
+  const a = sanitizePersonName(primary);
+  const b = sanitizePersonName(fuller);
+  if (!a) return isUsablePersonName(b) ? b : null;
+  if (!b) return isUsablePersonName(a) ? a : null;
+  if (a === b) return a;
+
+  const aw = a.split(/\s+/).filter(Boolean);
+  const bw = b.split(/\s+/).filter(Boolean);
+
+  // ALGHAMDI ↔ AL GHAMDI — görsel boşluklu yazımı tercih et (ezber değil, aynı harfler).
+  if (aw.length === 1 && bw.length >= 2 && bw.join('') === aw[0]) return b;
+  if (bw.length === 1 && aw.length >= 2 && aw.join('') === bw[0]) return a;
+
+  if (nameTokensAreCompatiblePrefix(aw, bw) && (bw.length > aw.length || b.length > a.length)) {
+    return b;
+  }
+  if (nameTokensAreCompatiblePrefix(bw, aw) && (aw.length > bw.length || a.length > b.length)) {
+    return a;
+  }
+
+  // Aynı kelime sayısı; daha uzun yazım (ABDULLA → ABDULLAH).
+  if (aw.length === bw.length) {
+    let aScore = 0;
+    let bScore = 0;
+    for (let i = 0; i < aw.length; i++) {
+      const x = aw[i]!;
+      const y = bw[i]!;
+      if (x === y) continue;
+      if (y.startsWith(x) && y.length > x.length) bScore++;
+      else if (x.startsWith(y) && x.length > y.length) aScore++;
+      else return a.length >= b.length ? a : b;
+    }
+    if (bScore > aScore) return b;
+    if (aScore > bScore) return a;
+  }
+
+  return a;
+}
+
+function nameTokensAreCompatiblePrefix(shorter: string[], longer: string[]): boolean {
+  if (shorter.length === 0 || shorter.length > longer.length) return false;
+  for (let i = 0; i < shorter.length; i++) {
+    const s = shorter[i]!;
+    const l = longer[i]!;
+    if (s === l) continue;
+    const last = i === shorter.length - 1;
+    const minLen = Math.min(s.length, l.length);
+    // MRZ sıkça ortasından keser: SA→SALEH, ABDULLA→ABDULLAH (2+ harf yeterli).
+    if (last && minLen >= 2 && (l.startsWith(s) || s.startsWith(l))) continue;
+    if (minLen >= 3 && (l.startsWith(s) || s.startsWith(l))) continue;
+    return false;
+  }
+  return true;
 }
 
 function trimMrzGivenRaw(givenRaw: string): string {
@@ -379,17 +474,23 @@ export function finalizeMrzPersonNames(args: {
     ({ firstName, lastName } = dedupeGivenAndSurname(firstName, lastName));
   }
 
-  const fullName =
-    [firstName, lastName].filter(Boolean).join(' ').trim() || fullNameFromField || null;
+  // Körfez / Arap: verilen ad(lar)ı tek alanda tut — yarım ad + middle kaybı olmasın.
+  const gcc = isGccNationality(args.nationalityCode) || isGccNationality(args.issuingCountryCode);
 
   let middleName: string | null = null;
-  if (hadChevronGiven && firstName) {
+  if (!gcc && hadChevronGiven && firstName) {
     const parts = firstName.split(/\s+/).filter(Boolean);
     if (parts.length > 1) {
       firstName = parts[0] ?? firstName;
       middleName = parts.slice(1).join(' ');
     }
   }
+
+  const fullName =
+    [firstName, middleName, lastName].filter(Boolean).join(' ').trim() ||
+    [firstName, lastName].filter(Boolean).join(' ').trim() ||
+    fullNameFromField ||
+    null;
 
   return { firstName, lastName, fullName, middleName };
 }

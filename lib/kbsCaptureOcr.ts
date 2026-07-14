@@ -17,6 +17,7 @@ import {
 import { KBS_OCR_ENGINE_AI_FALLBACK, KBS_OCR_ENGINE_FRONT_VISUAL } from '@/lib/kbsOcrEngineLabel';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
+import { applyBestPassportIdentityToParsed } from '@/lib/kbsPassportFieldResolve';
 import { formatKbsNationality, formatKbsTrDate, kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { log } from '@/lib/logger';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -30,6 +31,8 @@ export type KbsOcrResult = {
   parsed: ParsedDocument;
   missingFields: string[];
   engine: string;
+  /** Ham OCR satırları — isim çözümleme / düzeltme için. */
+  ocrLines?: string[];
 };
 
 export type KbsOcrOptions = {
@@ -131,15 +134,14 @@ export function parseKbsFromDocumentOcr(args: {
   const mrzLineSets = buildMrzLineSets(args.lineSets, args.mrzFocused);
   const mrzBest = tryExtractMrzFromLines(mrzLineSets);
   const frontParsed = parseIdCardFromOcrLines(frontFiltered);
-  const preferFrontId = !args.mrzFocused && shouldPreferKbsFrontIdParse(frontParsed);
 
   let parsed: ParsedDocument;
   let engine = args.engine;
+  /** Nihai MRZ alanları — VIZ ile ezilmesin. */
+  let mrzSource: ParsedDocument | null = mrzBest?.parsed ?? null;
 
-  if (preferFrontId) {
-    engine = KBS_OCR_ENGINE_FRONT_VISUAL;
-    parsed = frontParsed;
-  } else if (mrzBest) {
+  // MRZ bulunduysa her zaman MRZ kaynak — VIZ sadece zenginleştirir (isim yedek / seri / aile).
+  if (mrzBest) {
     parsed = {
       ...mrzBest.parsed,
       rawMrz: mrzBest.mrz,
@@ -147,12 +149,20 @@ export function parseKbsFromDocumentOcr(args: {
       confidence: mrzBest.parsed.confidence ?? mrzBest.score / 100,
     };
     parsed = enrichMrzParsedWithFrontOcr(parsed, frontFiltered);
+  } else if (
+    !args.mrzFocused &&
+    shouldPreferKbsFrontIdParse(frontParsed) &&
+    !detectPassportFromOcrLines(frontFiltered)
+  ) {
+    engine = KBS_OCR_ENGINE_FRONT_VISUAL;
+    parsed = frontParsed;
   } else if (args.mrzFocused) {
     engine = KBS_OCR_ENGINE_FRONT_VISUAL;
     parsed = parseIdCardFromOcrLines(frontFiltered);
     const retry = tryExtractMrzFromLines(mrzLineSets);
     if (retry) {
       engine = args.engine;
+      mrzSource = retry.parsed;
       parsed = enrichMrzParsedWithFrontOcr(
         {
           ...retry.parsed,
@@ -173,9 +183,11 @@ export function parseKbsFromDocumentOcr(args: {
     parsed = frontParsed;
     const retry = tryExtractMrzFromLines([
       filterMrzOnlyOcrLines(frontFiltered).filter((l) => l.includes('<<')),
+      ...mrzLineSets,
     ]);
-    if (retry && !shouldPreferKbsFrontIdParse(frontParsed)) {
+    if (retry) {
       engine = args.engine;
+      mrzSource = retry.parsed;
       parsed = enrichMrzParsedWithFrontOcr(
         {
           ...retry.parsed,
@@ -190,6 +202,8 @@ export function parseKbsFromDocumentOcr(args: {
 
   parsed = sanitizeKbsOcrForApply(tagFrontOnlyRead(parsed));
   parsed = applyBestPassportNamesToParsed(parsed, frontFiltered);
+  // MRZ güvenilirken kimlik alanları MRZ; bozuk/kuşkuluysa etiketli görsel OCR (isimlerle aynı hassasiyet).
+  parsed = applyBestPassportIdentityToParsed(parsed, frontFiltered, mrzSource);
 
   if (KBS_OCR_DEBUG) {
     log.info('kbsOcrDebug', {
@@ -217,7 +231,20 @@ export function parseKbsFromDocumentOcr(args: {
     parsed,
     missingFields: listMissingIdFields(parsed),
     engine,
+    ocrLines: frontFiltered.length ? frontFiltered : allLines,
   };
+}
+
+/** detectPassportFromOcr idCardOcrParser’da private — satırları buradan yoklamak için ince sargı. */
+function detectPassportFromOcrLines(lines: string[]): boolean {
+  const j = lines.join(' ').toUpperCase();
+  return (
+    /\bPASSPORT\b/.test(j) ||
+    /\bPASAPORT\b/.test(j) ||
+    /\bP<[A-Z]{3}\b/.test(j) ||
+    /\bSURNAME\b/.test(j) ||
+    /\bGIVEN\s*NAMES?\b/.test(j)
+  );
 }
 
 /**

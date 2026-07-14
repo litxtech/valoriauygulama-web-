@@ -22,11 +22,16 @@ import {
 } from '@/lib/kbsNationalityMap';
 import { resolveBestPassportNames } from '@/lib/kbsPassportNameResolve';
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
+import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
+import { isValidTurkishTc } from '@/lib/kbsTcValidation';
 import { parseTd3MrzFallback } from '@/lib/scanner/mrzTd3Fallback';
 
 const TC_RE = /\b([1-9]\d{10})\b/;
-const DATE_RE = /\b(\d{2})[./](\d{2})[./](\d{4})\b/;
-const DATE_RE_GLOBAL = /\b(\d{2})[./](\d{2})[./](\d{4})\b/g;
+const DATE_RE = /\b(\d{2})[./-](\d{2})[./-](\d{4})\b/;
+const DATE_RE_GLOBAL = /\b(\d{2})[./-](\d{2})[./-](\d{4})\b/g;
+/** ISO / GCC: 1990-01-15 veya 1990/01/15 */
+const DATE_ISO_RE = /\b(\d{4})[./-](\d{2})[./-](\d{2})\b/;
+const DATE_ISO_RE_GLOBAL = /\b(\d{4})[./-](\d{2})[./-](\d{2})\b/g;
 const YKN_RE = /\b(99\d{9})\b/;
 const SERIAL_TOKEN_RE = /\b([A-Z]{1,3}\s*\d{5,9})\b/i;
 const SERIAL_FALLBACK_RE = /\b([A-Z]{1,3}\d{5,9})\b/i;
@@ -74,45 +79,58 @@ function allTokensAreLabels(value: string): boolean {
 const TC_LABEL_LINE_RE =
   /(?:t\.?\s*c\.?\s*(?:kimlik)?|kimlik)\s*(?:no|numara|number)|identity\s*(?:no|number)|id\s*no/i;
 
-const BIRTH_LINE_LABEL_RE = /(?:do[gğ]um\s*tarih|date\s*of\s*birth|birth\s*date)/i;
+const BIRTH_LINE_LABEL_RE =
+  /(?:do[gğ]um\s*tarih|date\s*of\s*birth|birth\s*date|\bdob\b|tug.?ilgan\s*sana|tug\s*ilgan\s*samasi|تاريخ\s*الولادة|تاريخ\s*الميلاد)/i;
 const BIRTH_INLINE_RE =
-  /(?:do[gğ]um\s*tarihi?|date\s*of\s*birth|birth\s*date)\s*[:\/\s-]*(\d{2}[./]\d{2}[./]\d{4})/i;
+  /(?:do[gğ]um\s*tarihi?|date\s*of\s*birth|birth\s*date|\bdob\b|tug.?ilgan\s*sana(?:si)?|تاريخ\s*الولادة|تاريخ\s*الميلاد)\s*[:\/\s-]*(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2}|\d{1,2}\s+\d{1,2}\s+\d{4})/i;
 const EXPIRY_LINE_LABEL_RE =
-  /(?:son\s*geçerl|geçerlilik\s*tarih|valid\s*until|date\s*of\s*expiry|expiry\s*date|expires|valid\s*thru)/i;
+  /(?:son\s*geçerl|geçerlilik\s*tarih|valid\s*until|date\s*of\s*expiry|expiry\s*date|expires|valid\s*thru|date\s*of\s*expiration|amal\s*qilish\s*muddat|تاريخ\s*الانتهاء|تاريخ\s*انتهاء)/i;
 const EXPIRY_INLINE_RE =
-  /(?:son\s*geçerl(?:ilik)?\s*tarihi?|geçerlilik\s*tarihi?|valid\s*until|date\s*of\s*expiry)\s*[:\/\s-]*(\d{2}[./]\d{2}[./]\d{4})/i;
+  /(?:son\s*geçerl(?:ilik)?\s*tarihi?|geçerlilik\s*tarihi?|valid\s*until|date\s*of\s*expiry|date\s*of\s*expiration|amal\s*qilish\s*muddat(?:i)?|تاريخ\s*الانتهاء)\s*[:\/\s-]*(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2}|\d{1,2}\s+\d{1,2}\s+\d{4})/i;
+/** Veriliş tarihi — doğum/son geçerlilik sanılmasın. */
+const ISSUE_LINE_LABEL_RE =
+  /(?:date\s*of\s*issue|issue\s*date|verili[sş]\s*tarih|issuing\s*date|تاريخ\s*الاصدار|تاريخ\s*الإصدار)/i;
 const NATIONALITY_INLINE_RE =
-  /(?:^|\b)(?:uyruk|nationality|vatandaşlığı?|vatandasligi?)(?:\s*[:\-]\s*|\s+)([A-Za-zÇĞİÖŞÜçğıöşü]{2,40})/i;
-const NATIONALITY_LINE_LABEL_RE = /^(?:uyruk|nationality|vatandaşlığı?)/i;
+  /(?:^|\b)(?:uyruk|nationality|vatandaşlığı?|vatandasligi?|fuqarolig[iı]?|fuqaroligi)(?:\s*[:\-/\s]\s*|\s+)([A-Za-zÇĞİÖŞÜçğıöşü']{2,40})/i;
+const NATIONALITY_LINE_LABEL_RE = /^(?:uyruk|nationality|vatandaşlığı?|fuqarolig)/i;
 const GENDER_LINE_RE = /^(?:cinsiyet|sex|gender|erkek|kad[iı]n)\b/i;
 const GENDER_M_RE = /\b(?:E\/M|ERKEK|MALE|\bM\b|\bE\b)\b/i;
 const GENDER_F_RE = /\b(?:K\/F|KADIN|KADIN|FEMALE|\bF\b|\bK\b)\b/i;
 
 const NOISE_NAME_RE =
-  /^(?:türkiye|turkey|republic|cim|cumhuriyeti|cumhuriyet|kimlik|geçici|gecici|koruma|belgesi|identity|card|document|republic\s+of|valid|geçerlilik|uyruk|nationality|vatandas|vatandaş|masa|tezgah|table|desk|hotel|otel|resepsiyon|reception|valoria|wifi|menü|menu|kahve|coffee|restoran|instagram|facebook|whatsapp|pasaport|passport|passeport|pasaporte|specimen|type|turkiye|turk|reise|reisepass)/i;
+  /^(?:türkiye|turkey|republic|cim|cumhuriyeti|cumhuriyet|kimlik|geçici|gecici|koruma|belgesi|identity|card|document|republic\s+of|valid|geçerlilik|uyruk|nationality|vatandas|vatandaş|masa|tezgah|table|desk|hotel|otel|resepsiyon|reception|valoria|wifi|menü|menu|kahve|coffee|restoran|instagram|facebook|whatsapp|pasaport|passport|passeport|pasaporte|specimen|type|turkiye|turk|reise|reisepass|authority|berilgan|tomonidan|otasining|otasinng|father|mother|signature|holders|fuqarolig|samarkand|region|uzbekistan|ozbekiston|kim\s+tomonidan)/i;
 
 const PASSPORT_HEADER_RE =
   /(?:cumhuriyet|republic|pasaport|passport|passeport|turkiye|türkiye|turkey|specimen|reisepass|travel\s*document|belge\s*türü|document\s*type)/i;
 
-const PASSPORT_SURNAME_LINE_RE =
-  /^(?:soyad[ıi]?|soyadi|surname|family\s*name|last\s*name|nom|apellidos?)\s*$/i;
-const PASSPORT_GIVEN_LINE_RE =
-  /^(?:ad[ıi]?|adi|given(?:\s*names?)?|given\s*name(?:\(s\))?|first\s*names?|forename|prenoms?|prenom)\s*$/i;
+/** Çift dilli etiket: "Surname / اسم العائلة", "Given names / الاسم". */
+const PASSPORT_LABEL_SUFFIX = String.raw`(?:\s*\/\s*[^\n]{0,40})?\s*$`;
+const PASSPORT_SURNAME_LINE_RE = new RegExp(
+  `^(?:soyad[ıi]?|soyadi|surname|family\\s*name|last\\s*name|nom|apellidos?|familiyasi|familiyası|primary\\s*identifier)${PASSPORT_LABEL_SUFFIX}`,
+  'i'
+);
+const PASSPORT_GIVEN_LINE_RE = new RegExp(
+  `^(?:ad[ıi]?|adi|given(?:\\s*names?)?|given\\s*name(?:\\(s\\))?|first\\s*names?|forename|prenoms?|prenom|ismi|ism[iı]|secondary\\s*identifier)${PASSPORT_LABEL_SUFFIX}`,
+  'i'
+);
 const PASSPORT_SURNAME_INLINE_RE = new RegExp(
-  `(?:^|\\b)(?:soyad[ıi]?|soyadi|surname|family\\s*name|last\\s*name|nom|apellidos?)${LABEL_VALUE_SEP}(.*)$`,
+  `(?:^|\\b)(?:soyad[ıi]?|soyadi|surname|family\\s*name|last\\s*name|nom|apellidos?|familiyasi|familiyası)${LABEL_VALUE_SEP}(.*)$`,
   'i'
 );
 const PASSPORT_GIVEN_INLINE_RE = new RegExp(
-  `(?:^|\\b)(?:ad[ıi]?|adi|given\\s*names?|first\\s*names?|forename|prenoms?|prenom)${LABEL_VALUE_SEP}(.*)$`,
+  `(?:^|\\b)(?:ad[ıi]?|adi|given\\s*names?|first\\s*names?|forename|prenoms?|prenom|ismi|ism[iı])${LABEL_VALUE_SEP}(.*)$`,
   'i'
 );
 
-/** Arapça pasaport — اسم العائلة / اللقب etiketleri (Latin satır genelde altında). */
+/** Arapça / çift dilli pasaport — اسم العائلة / الاسم (Umman, Suudi vb.). */
 const ARABIC_SURNAME_LABEL_RE =
-  /(?:اسم\s*العائلة|اللقب|اسم\s*العائلة\s*\/|family\s*name\s*\/\s*اسم)/i;
-const ARABIC_GIVEN_LABEL_RE = /(?:^|\b)(?:الاسم|الاسم\s*الأول|given\s*names?\s*\/\s*الاسم)/i;
+  /(?:اسم\s*العائلة|اللقب|اسم\s*العائلة\s*\/|family\s*name\s*\/\s*اسم|primary\s*identifier)/i;
+const ARABIC_GIVEN_LABEL_RE =
+  /(?:^|\b)(?:الاسم|الاسماء|الاسم\s*الأول|الاسم\s* الاول|given\s*names?\s*\/\s*الاسم|secondary\s*identifier|أسماء\s*الأخرى)/i;
 const ARABIC_FATHER_LABEL_RE = /(?:اسم\s*الأب|اسم\s*الاب|father(?:'s)?\s*name)/i;
-const LATIN_NAME_LINE_RE = /^[A-Z][A-Z\s'.-]{2,48}$/;
+const LATIN_NAME_LINE_RE = /^[A-Z][A-Z\s'.-]{2,72}$/;
+/** Verilen ad devam satırı — tarih/etiket değil, yalnızca Latin isim. */
+const LATIN_NAME_CONTINUATION_RE = /^[A-Z](?:[A-Z]|[A-Z\s'.-]{1,40})$/;
 
 const MONTH_TO_NUM: Record<string, string> = {
   JAN: '01',
@@ -148,10 +166,12 @@ const PASSPORT_ALPHA_DATE_RE =
 const PASSPORT_ALPHA_DATE_INLINE_RE =
   /(?:do[gğ]um\s*tarih|date\s*of\s*birth|birth\s*date|son\s*geçerl|geçerlilik\s*tarih|valid\s*until|date\s*of\s*expiry|expiry\s*date|expires)\s*[:\/\s-]*(\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]{3,9}\s+\d{4})/gi;
 
-const PASSPORT_DOC_RE = /\b([A-Z]{1,2}\d{5,9})\b/;
-const PASSPORT_LABEL_RE = /pasaport\s*(?:no|numara)|passport\s*(?:no|number|#)/i;
-/** GCC pasaport — "NameALOTAIBI, MOHAMMED AATI M" tek satır isim. */
-const PASSPORT_COMMA_NAME_RE = /^Name([A-Z][A-Z\s'-]{1,40}),\s*([A-Z][A-Z\s'-]{1,48})$/i;
+const PASSPORT_DOC_RE = /\b([A-Z]{1,3}\d{5,10})\b/;
+const PASSPORT_LABEL_RE =
+  /pasaport\s*(?:no|numara)|passport\s*(?:no|number|#)|document\s*(?:no|number)|doc(?:ument)?\.?\s*no\.?|رقم\s*(?:الجواز|الوثيقة|المستند)/i;
+/** GCC pasaport — "NameALOTAIBI, MOHAMMED AATI M" / "ALOTAIBI, MOHAMMED ABDULLAH". */
+const PASSPORT_COMMA_NAME_RE =
+  /^(?:Name\s*)?([A-Z][A-Z\s'-]{1,48}),\s*([A-Z][A-Z\s'-]{1,72})$/i;
 
 const GCC_PASSPORT_HEADER_RE =
   /(?:kingdom\s*of\s*saudi|saudi\s*arabia|saudi\s*passport|united\s*arab\s*emirates|u\.?a\.?e\.?|emirates\s*passport|state\s*of\s*qatar|qatar\s*passport|sultanate\s*of\s*oman|oman\s*passport|state\s*of\s*kuwait|kuwait\s*passport|kingdom\s*of\s*bahrain|bahrain\s*passport|republic\s*of\s*iraq|iraq\s*passport|hashemite\s*kingdom|jordan\s*passport|lebanese\s*republic|lebanon\s*passport|islamic\s*republic\s*of\s*iran|iran\s*passport)/i;
@@ -181,57 +201,70 @@ export function normalizeTurkishIdDigits(raw: string): string | null {
   return s;
 }
 
-/** T.C. kimlik no — bitişik, boşluklu veya etiketli satırlardan. */
+/** T.C. kimlik no — bitişik, boşluklu veya etiketli satırlardan (checksum zorunlu). */
 export function extractTurkishNationalIdFromOcr(lines: string[]): string | null {
   const L = normLines(lines);
-  const joined = L.join('\n');
 
-  const strict = joined.match(TC_RE)?.[1];
-  if (strict) return strict;
+  // MRZ satırlarından T.C. çıkarma — pasaport şeridi yanlış pozitif üretir.
+  const nonMrz = L.filter((line) => !isMrzLikeOcrLine(line));
 
-  for (let i = 0; i < L.length; i++) {
-    const line = L[i]!;
+  const tryDigits = (raw: string): string | null => {
+    const d = normalizeTurkishIdDigits(raw);
+    return d && isValidTurkishTc(d) ? d : null;
+  };
+
+  for (let i = 0; i < nonMrz.length; i++) {
+    const line = nonMrz[i]!;
     if (!TC_LABEL_LINE_RE.test(line)) continue;
     const inline = line.match(/([0-9OIl\s.-]{11,18})/);
     if (inline?.[1]) {
-      const d = normalizeTurkishIdDigits(inline[1]);
+      const d = tryDigits(inline[1]);
       if (d) return d;
     }
     for (let j = 1; j <= 2; j++) {
-      const d = normalizeTurkishIdDigits(L[i + j] ?? '');
+      const d = tryDigits(nonMrz[i + j] ?? '');
       if (d) return d;
     }
   }
 
-  const digitChunks = joined.match(/(?:[0-9OIl][\s.\-/]*){11,}/gi) ?? [];
-  for (const chunk of digitChunks) {
-    const d = normalizeTurkishIdDigits(chunk);
-    if (d) return d;
-  }
+  const joined = nonMrz.join('\n');
+  const strict = joined.match(TC_RE)?.[1];
+  if (strict && isValidTurkishTc(strict)) return strict;
 
-  const compact = joined.replace(/[^0-9OIl]/gi, ' ');
-  for (const token of compact.split(/\s+/)) {
-    const d = normalizeTurkishIdDigits(token);
-    if (d) return d;
-  }
-
-  const allDigits = joined.replace(/[^0-9]/g, '');
-  for (let i = 0; i + 11 <= allDigits.length; i++) {
-    const d = normalizeTurkishIdDigits(allDigits.slice(i, i + 11));
-    if (d) return d;
+  // Etiketsiz: yalnızca satır bağımsız 11 hane + checksum (tüm görselden kayan pencere YOK).
+  for (const line of nonMrz) {
+    if (line.includes('<')) continue;
+    const m = line.match(TC_RE);
+    if (m?.[1] && isValidTurkishTc(m[1])) return m[1];
   }
 
   return null;
 }
 
+function isMrzLikeOcrLine(line: string): boolean {
+  const t = line.trim();
+  if (t.includes('<<')) return true;
+  if ((t.match(/</g) ?? []).length >= 2 && t.length >= 22) return true;
+  if (/^[A-Z0-9<]{28,}$/i.test(t.replace(/\s/g, ''))) return true;
+  return false;
+}
+
 /** Ön yüz T.C. kimlik parse sonucu MRZ yerine tercih edilsin mi. */
 export function shouldPreferKbsFrontIdParse(frontParsed: ParsedDocument): boolean {
+  // Pasaport / MRZ metni varken asla VIZ’e güvenme — MRZ doğru kaynak.
+  if (frontParsed.documentType === 'passport' || frontParsed.rawMrz) return false;
+  if ((frontParsed.warnings ?? []).some((w) => /passport|mrz/i.test(w))) return false;
+
   const digits = (frontParsed.documentNumber ?? '').replace(/\D/g, '');
-  const hasTc = /^[1-9]\d{10}$/.test(digits);
-  if (hasTc) return true;
-  const hasName =
-    isUsablePersonName(frontParsed.firstName) && isUsablePersonName(frontParsed.lastName);
-  return frontParsed.documentType === 'id_card' && hasName;
+  // Salt 11 hane yetmez — pasaport MRZ rakamları yanlış T.C. üretiyor; checksum şart.
+  if (isValidTurkishTc(digits) && frontParsed.documentType === 'id_card') {
+    return (
+      isUsablePersonName(frontParsed.firstName) ||
+      isUsablePersonName(frontParsed.lastName) ||
+      !!frontParsed.birthDate
+    );
+  }
+  return false;
 }
 
 function isoFromTrDate(m: RegExpMatchArray): string | null {
@@ -240,6 +273,29 @@ function isoFromTrDate(m: RegExpMatchArray): string | null {
   const y = m[3];
   if (!d || !mo || !y) return null;
   return `${y}-${mo}-${d}`;
+}
+
+function isoFromAnyDateToken(raw: string): string | null {
+  const t = raw.trim();
+  const iso = t.match(DATE_ISO_RE);
+  if (iso) {
+    const out = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const d = new Date(`${out}T12:00:00Z`);
+    if (!Number.isNaN(d.getTime())) return out;
+  }
+  const tr = t.match(DATE_RE);
+  if (tr) return isoFromTrDate(tr);
+  const spaced = t.match(/(\d{1,2})\s+(\d{1,2})\s+(\d{4})/);
+  if (spaced) {
+    return `${spaced[3]}-${spaced[2]!.padStart(2, '0')}-${spaced[1]!.padStart(2, '0')}`;
+  }
+  const alpha = t.match(/(\d{1,2})\s+([A-ZÇĞİÖŞÜa-zçğıöşü]{3,9})\s+(\d{4})/i);
+  if (alpha) return isoFromAlphaDate(alpha[1]!, alpha[2]!, alpha[3]!);
+  return null;
+}
+
+function lineLooksLikeHijri(line: string): boolean {
+  return /[هھح]\s*\.?|hijri|\bA\.?H\.?\b|هجري/i.test(line);
 }
 
 function stripLabelTokensFromName(value: string): string | null {
@@ -613,33 +669,53 @@ function isNameCandidateLine(line: string): boolean {
   return letters >= 3 && digits <= Math.max(2, Math.floor(letters * 0.15));
 }
 
-/** Seri no — etiket satırı, aynı satır değer veya seri benzeri token. */
-export function extractDocumentSerialFromOcr(lines: string[]): string | null {
+/** Seri no — etiket satırı; pasaport numarası asla seri sayılmaz. */
+export function extractDocumentSerialFromOcr(
+  lines: string[],
+  opts?: { passportNumber?: string | null; documentType?: string | null }
+): string | null {
   const L = normLines(lines);
+  const passportNo = (opts?.passportNumber ?? '').replace(/\s/g, '').toUpperCase() || null;
+  const isPassportDoc = opts?.documentType === 'passport' || L.some((l) => /passport|pasaport/i.test(l));
+
+  const accept = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const s = compactSerial(raw);
+    if (!s) return null;
+    if (passportNo && s === passportNo) return null;
+    if (passportNo && (s.includes(passportNo) || passportNo.includes(s))) return null;
+    if (isPassportDoc && hasPlausibleKbsDocumentNumber(s, 'passport')) return null;
+    if (/^(?:MIA|MOI|MIN|GOV|POL)\d/i.test(s)) return null;
+    return s;
+  };
 
   for (let i = 0; i < L.length; i++) {
     const line = L[i]!;
     if (!SERIAL_LINE_LABEL_RE.test(line)) continue;
     const inline = line.match(SERIAL_TOKEN_RE);
     if (inline?.[1]) {
-      const s = compactSerial(inline[1]);
+      const s = accept(inline[1]);
       if (s) return s;
     }
     const next = L[i + 1];
     if (next) {
       const m = next.match(SERIAL_TOKEN_RE);
       if (m?.[1]) {
-        const s = compactSerial(m[1]);
+        const s = accept(m[1]);
         if (s) return s;
       }
     }
   }
 
+  // Pasaportta boşlukta seri arama yok (FA5213328 yanlışlıkla seri oluyordu).
+  if (isPassportDoc) return null;
+
   for (const line of L) {
     if (SERIAL_LINE_LABEL_RE.test(line)) continue;
+    if (PASSPORT_LABEL_RE.test(line)) continue;
     const m = line.match(SERIAL_TOKEN_RE);
     if (m?.[1]) {
-      const s = compactSerial(m[1]);
+      const s = accept(m[1]);
       if (s && s.length >= 6 && s.length <= 12) return s;
     }
   }
@@ -707,7 +783,95 @@ export function extractMaritalStatusFromOcr(lines: string[]): 'married' | 'singl
   return null;
 }
 
-/** Pasaport biyometrik sayfa — Surname / Given names etiketleri. */
+/** Etiket altındaki Latin ad + hemen sonraki devam satırlarını birleştir. */
+function collectPassportNameAfterLabel(
+  lines: string[],
+  start: number,
+  role: 'surname' | 'given'
+): string | null {
+  let firstIdx = -1;
+  let first: string | null = null;
+
+  for (let i = start; i < Math.min(start + 5, lines.length); i++) {
+    const line = lines[i]!;
+    if (!line?.trim()) continue;
+    if (ARABIC_FATHER_LABEL_RE.test(line)) continue;
+    if (role === 'surname' && (PASSPORT_GIVEN_LINE_RE.test(line) || ARABIC_GIVEN_LABEL_RE.test(line))) {
+      continue;
+    }
+    if (role === 'given' && (PASSPORT_SURNAME_LINE_RE.test(line) || ARABIC_SURNAME_LABEL_RE.test(line))) {
+      continue;
+    }
+
+    const inlineSurname = line.match(PASSPORT_SURNAME_INLINE_RE);
+    if (role === 'surname' && inlineSurname?.[1]) {
+      const v = cleanPassportPersonName(inlineSurname[1], 'surname');
+      if (v) {
+        first = v;
+        firstIdx = i;
+        break;
+      }
+    }
+    const inlineGiven = line.match(PASSPORT_GIVEN_INLINE_RE);
+    if (role === 'given' && inlineGiven?.[1]) {
+      const v = cleanPassportPersonName(inlineGiven[1], 'given');
+      if (v) {
+        first = v;
+        firstIdx = i;
+        break;
+      }
+    }
+
+    const latinOnly = line.trim().toUpperCase();
+    if (LATIN_NAME_LINE_RE.test(latinOnly) || LATIN_NAME_CONTINUATION_RE.test(latinOnly)) {
+      const v = cleanPassportPersonName(latinOnly, role);
+      if (v) {
+        first = v;
+        firstIdx = i;
+        break;
+      }
+    }
+
+    const mixed = cleanPassportPersonName(
+      line.replace(/[\u0600-\u06FF]/g, ' ').replace(/\s+/g, ' ').trim(),
+      role
+    );
+    if (mixed && /[A-Z]{3,}/.test(mixed)) {
+      first = mixed;
+      firstIdx = i;
+      break;
+    }
+  }
+
+  if (!first || firstIdx < 0) return null;
+  if (role === 'surname') return first;
+
+  const parts = [first];
+  for (let j = firstIdx + 1; j < Math.min(firstIdx + 3, lines.length); j++) {
+    const raw = (lines[j] ?? '').trim().toUpperCase();
+    if (!raw) break;
+    if (
+      PASSPORT_SURNAME_LINE_RE.test(raw) ||
+      PASSPORT_GIVEN_LINE_RE.test(raw) ||
+      ARABIC_SURNAME_LABEL_RE.test(raw) ||
+      ARABIC_GIVEN_LABEL_RE.test(raw) ||
+      ARABIC_FATHER_LABEL_RE.test(raw) ||
+      /(?:date|birth|sex|national|passport|valid|expir|place|authority|holder)/i.test(raw)
+    ) {
+      break;
+    }
+    if (!LATIN_NAME_CONTINUATION_RE.test(raw) && !LATIN_NAME_LINE_RE.test(raw)) break;
+    const cont = cleanPassportPersonName(raw, 'given');
+    if (!cont) break;
+    const merged = cleanPassportPersonName(`${parts.join(' ')} ${cont}`, 'given');
+    if (!merged || merged === parts.join(' ')) break;
+    parts.push(cont);
+  }
+
+  return cleanPassportPersonName(parts.join(' '), 'given');
+}
+
+/** Pasaport biyometrik sayfa — Surname / Given names etiketleri (tam metin). */
 export function extractPassportNamesFromOcr(lines: string[]): {
   firstName: string | null;
   lastName: string | null;
@@ -721,46 +885,74 @@ export function extractPassportNamesFromOcr(lines: string[]): {
 
     const commaName = line.match(PASSPORT_COMMA_NAME_RE);
     if (commaName?.[1] && commaName[2]) {
-      const ln = cleanPassportPersonName(commaName[1].trim(), 'surname');
-      const fn = cleanPassportPersonName(commaName[2].trim(), 'given');
-      if (ln) lastName = ln;
-      if (fn) firstName = fn;
+      // "SAUDI ARABIA, ..." gibi başlık satırlarını isim sanma.
+      const lnCand = commaName[1].trim();
+      if (
+        !/(?:ARABIA|EMIRATES|SULTANATE|KINGDOM|REPUBLIC|STATE\s+OF|\bOMAN\b|\bQATAR\b|\bKUWAIT\b|\bBAHRAIN\b)/i.test(
+          lnCand
+        )
+      ) {
+        const ln = cleanPassportPersonName(lnCand, 'surname');
+        const fn = cleanPassportPersonName(commaName[2].trim(), 'given');
+        if (ln) lastName = preferLongerName(lastName, ln);
+        if (fn) firstName = preferLongerName(firstName, fn);
+      }
     }
 
     const surnameInline = line.match(PASSPORT_SURNAME_INLINE_RE);
-    if (surnameInline?.[1]) {
-      lastName = cleanPassportPersonName(surnameInline[1], 'surname') ?? lastName;
-    } else if (PASSPORT_SURNAME_LINE_RE.test(line)) {
-      const next =
-        cleanPassportPersonName(L[i + 1], 'surname') ?? pickNextLatinNameLine(L, i + 1, true);
-      if (next) lastName = next;
-    } else if (ARABIC_SURNAME_LABEL_RE.test(line) && !ARABIC_FATHER_LABEL_RE.test(line)) {
+    const surnameInlineClean = surnameInline?.[1]
+      ? cleanPassportPersonName(surnameInline[1], 'surname')
+      : null;
+    if (surnameInlineClean) {
+      lastName = preferLongerName(lastName, surnameInlineClean) ?? lastName;
+    } else if (
+      PASSPORT_SURNAME_LINE_RE.test(line) ||
+      (ARABIC_SURNAME_LABEL_RE.test(line) && !ARABIC_FATHER_LABEL_RE.test(line)) ||
+      // "Surname / اسم العائلة" — slash sonrası Arapça etiket, değer alt satırda
+      (surnameInline?.[1] && /[\u0600-\u06FF]/.test(surnameInline[1]))
+    ) {
       const inlineLatin = line.replace(/[\u0600-\u06FF]/g, ' ').replace(/\s+/g, ' ').trim();
       const fromInline = cleanPassportPersonName(
-        inlineLatin.replace(/.*(?:surname|family\s*name|soyad)/i, '').trim(),
+        inlineLatin.replace(/.*(?:surname|family\s*name|soyad|primary\s*identifier)/i, '').trim(),
         'surname'
       );
       if (fromInline) {
-        lastName = fromInline;
+        lastName = preferLongerName(lastName, fromInline) ?? lastName;
       } else {
-        const next = pickNextLatinNameLine(L, i + 1, true);
-        if (next) lastName = next;
+        const next = collectPassportNameAfterLabel(L, i + 1, 'surname');
+        if (next) lastName = preferLongerName(lastName, next) ?? lastName;
       }
     }
 
     const givenInline = line.match(PASSPORT_GIVEN_INLINE_RE);
-    if (givenInline?.[1]) {
-      firstName = cleanPassportPersonName(givenInline[1], 'given') ?? firstName;
-    } else if (PASSPORT_GIVEN_LINE_RE.test(line)) {
-      const next = cleanPassportPersonName(L[i + 1], 'given') ?? pickNextLatinNameLine(L, i + 1);
-      if (next) firstName = next;
-    } else if (ARABIC_GIVEN_LABEL_RE.test(line) && !ARABIC_FATHER_LABEL_RE.test(line)) {
-      const next = pickNextLatinNameLine(L, i + 1);
-      if (next) firstName = next;
+    const givenInlineClean = givenInline?.[1]
+      ? cleanPassportPersonName(givenInline[1], 'given')
+      : null;
+    if (givenInlineClean) {
+      const continued = preferLongerName(
+        givenInlineClean,
+        collectPassportNameAfterLabel(L, i + 1, 'given')
+      );
+      if (continued) firstName = preferLongerName(firstName, continued) ?? firstName;
+    } else if (
+      PASSPORT_GIVEN_LINE_RE.test(line) ||
+      (ARABIC_GIVEN_LABEL_RE.test(line) && !ARABIC_FATHER_LABEL_RE.test(line)) ||
+      (givenInline?.[1] && /[\u0600-\u06FF]/.test(givenInline[1]))
+    ) {
+      const next = collectPassportNameAfterLabel(L, i + 1, 'given');
+      if (next) firstName = preferLongerName(firstName, next) ?? firstName;
     }
   }
 
   return { firstName, lastName };
+}
+
+function preferLongerName(current: string | null, next: string | null | undefined): string | null {
+  if (!next) return current;
+  if (!current) return next;
+  if (next.length > current.length) return next;
+  if (next.split(/\s+/).length > current.split(/\s+/).length) return next;
+  return current;
 }
 
 /** Ad / soyad — etiketli satırlar, MRZ’siz ön yüz. */
@@ -935,12 +1127,80 @@ function isPlausibleBirthIso(iso: string): boolean {
 function allTrDatesFromLines(L: string[]): string[] {
   const found: string[] = [];
   for (const line of L) {
+    if (lineLooksLikeHijri(line) || ISSUE_LINE_LABEL_RE.test(line)) continue;
     for (const dm of line.matchAll(DATE_RE_GLOBAL)) {
       const iso = isoFromTrDate(dm);
       if (iso) found.push(iso);
     }
+    for (const dm of line.matchAll(DATE_ISO_RE_GLOBAL)) {
+      const iso = `${dm[1]}-${dm[2]}-${dm[3]}`;
+      const d = new Date(`${iso}T12:00:00Z`);
+      if (!Number.isNaN(d.getTime())) found.push(iso);
+    }
   }
   return found;
+}
+
+/** OCR'ın "16" "11" "2002" diye böldüğü tarihler. */
+function assembleSplitDateFromLines(L: string[], start: number, kind: 'birth' | 'expiry'): string | null {
+  const window = L.slice(start, start + 6).map((x) => x.trim());
+  const joined = window.join(' ');
+  const direct = isoFromAnyDateToken(joined);
+  if (direct) {
+    if (kind === 'birth' ? isPlausibleBirthIso(direct) : isPlausibleExpiryIso(direct)) return direct;
+  }
+  const spaced = joined.match(/(\d{1,2})\s+(\d{1,2})\s+(\d{4})/);
+  if (spaced) {
+    const iso = `${spaced[3]}-${spaced[2]!.padStart(2, '0')}-${spaced[1]!.padStart(2, '0')}`;
+    if (kind === 'birth' ? isPlausibleBirthIso(iso) : isPlausibleExpiryIso(iso)) return iso;
+  }
+  const nums: string[] = [];
+  for (const part of window) {
+    if (/^\d{1,2}$/.test(part) || /^\d{4}$/.test(part)) nums.push(part);
+    if (/^\d{1,2}\s+\d{1,2}$/.test(part)) nums.push(...part.split(/\s+/));
+    if (nums.length >= 3) break;
+  }
+  if (nums.length >= 3) {
+    const d = nums[0]!.padStart(2, '0');
+    const m = nums[1]!.padStart(2, '0');
+    const y = nums[2]!;
+    if (y.length === 4) {
+      const iso = `${y}-${m}-${d}`;
+      if (kind === 'birth' ? isPlausibleBirthIso(iso) : isPlausibleExpiryIso(iso)) return iso;
+    }
+  }
+  return null;
+}
+
+function extractDateNearLabel(
+  lines: string[],
+  labelRe: RegExp,
+  kind: 'birth' | 'expiry'
+): string | null {
+  const L = normLines(lines);
+  const ok = kind === 'birth' ? isPlausibleBirthIso : isPlausibleExpiryIso;
+  for (let i = 0; i < L.length; i++) {
+    const line = L[i]!;
+    if (ISSUE_LINE_LABEL_RE.test(line) && !labelRe.test(line)) continue;
+    if (lineLooksLikeHijri(line)) continue;
+    if (!labelRe.test(line) && !labelRe.test(`${line} ${L[i + 1] ?? ''}`)) continue;
+
+    for (let j = 0; j <= 3; j++) {
+      const candidate = L[i + j] ?? '';
+      if (j > 0 && ISSUE_LINE_LABEL_RE.test(candidate)) break;
+      if (lineLooksLikeHijri(candidate)) continue;
+      const iso = isoFromAnyDateToken(candidate);
+      if (iso && ok(iso)) return iso;
+      const alpha = candidate.match(/(\d{1,2})\s+([A-ZÇĞİÖŞÜa-zçğıöşü]{3,9})\s+(\d{4})/i);
+      if (alpha) {
+        const a = isoFromAlphaDate(alpha[1]!, alpha[2]!, alpha[3]!);
+        if (a && ok(a)) return a;
+      }
+    }
+    const split = assembleSplitDateFromLines(L, i + 1, kind);
+    if (split) return split;
+  }
+  return null;
 }
 
 function extractBirthDate(lines: string[]): string | null {
@@ -948,11 +1208,8 @@ function extractBirthDate(lines: string[]): string | null {
   const joined = L.join('\n');
   const inline = joined.match(BIRTH_INLINE_RE);
   if (inline?.[1]) {
-    const dm = inline[1].match(DATE_RE);
-    if (dm) {
-      const iso = isoFromTrDate(dm);
-      if (iso && isPlausibleBirthIso(iso)) return iso;
-    }
+    const iso = isoFromAnyDateToken(inline[1]);
+    if (iso && isPlausibleBirthIso(iso)) return iso;
   }
 
   for (const m of joined.matchAll(PASSPORT_ALPHA_DATE_INLINE_RE)) {
@@ -964,23 +1221,11 @@ function extractBirthDate(lines: string[]): string | null {
     }
   }
 
-  for (let i = 0; i < L.length; i++) {
-    if (BIRTH_LINE_LABEL_RE.test(L[i]!)) {
-      for (let j = 0; j <= 2; j++) {
-        const line = L[i + j] ?? '';
-        const dm = line.match(DATE_RE);
-        if (dm) {
-          const iso = isoFromTrDate(dm);
-          if (iso && isPlausibleBirthIso(iso)) return iso;
-        }
-        const alpha = line.match(/(\d{1,2})\s+([A-ZÇĞİÖŞÜa-zçğıöşü]{3,9})\s+(\d{4})/i);
-        if (alpha) {
-          const iso = isoFromAlphaDate(alpha[1]!, alpha[2]!, alpha[3]!);
-          if (iso && isPlausibleBirthIso(iso)) return iso;
-        }
-      }
-    }
-  }
+  const labeled = extractDateNearLabel(lines, BIRTH_LINE_LABEL_RE, 'birth');
+  if (labeled) return labeled;
+
+  // Pasaportta etiketsiz "en eski tarih" tahminine güvenme — yanlış doğum üretir.
+  if (detectPassportFromOcr(L)) return null;
 
   const found = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(isPlausibleBirthIso);
   if (found.length === 0) return null;
@@ -992,11 +1237,8 @@ function extractExpiryDateFromOcr(lines: string[]): string | null {
   const joined = L.join('\n');
   const inline = joined.match(EXPIRY_INLINE_RE);
   if (inline?.[1]) {
-    const dm = inline[1].match(DATE_RE);
-    if (dm) {
-      const iso = isoFromTrDate(dm);
-      if (iso && isPlausibleExpiryIso(iso)) return iso;
-    }
+    const iso = isoFromAnyDateToken(inline[1]);
+    if (iso && isPlausibleExpiryIso(iso)) return iso;
   }
 
   for (const m of joined.matchAll(PASSPORT_ALPHA_DATE_INLINE_RE)) {
@@ -1009,26 +1251,18 @@ function extractExpiryDateFromOcr(lines: string[]): string | null {
     }
   }
 
-  const tagged: string[] = [];
-  for (let i = 0; i < L.length; i++) {
-    if (!EXPIRY_LINE_LABEL_RE.test(L[i]!) && !EXPIRY_LINE_LABEL_RE.test(L[i + 1] ?? '')) continue;
-    for (let j = 0; j <= 2; j++) {
-      const line = L[i + j] ?? '';
-      const dm = line.match(DATE_RE);
-      if (dm) {
-        const iso = isoFromTrDate(dm);
-        if (iso && isPlausibleExpiryIso(iso)) tagged.push(iso);
-      }
-      const alpha = line.match(/(\d{1,2})\s+([A-ZÇĞİÖŞÜa-zçğıöşü]{3,9})\s+(\d{4})/i);
-      if (alpha) {
-        const iso = isoFromAlphaDate(alpha[1]!, alpha[2]!, alpha[3]!);
-        if (iso && isPlausibleExpiryIso(iso)) tagged.push(iso);
-      }
-    }
-  }
-  if (tagged.length > 0) return tagged.sort().pop()!;
+  const labeled = extractDateNearLabel(lines, EXPIRY_LINE_LABEL_RE, 'expiry');
+  if (labeled) return labeled;
 
   const birth = extractBirthDate(lines);
+  if (detectPassportFromOcr(L)) {
+    // Etiketsiz en geç tarih — yalnızca doğumdan farklıysa yedek.
+    const all = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(
+      (iso) => iso !== birth && isPlausibleExpiryIso(iso) && (!birth || iso > birth)
+    );
+    return all.length > 0 ? all.sort().pop()! : null;
+  }
+
   const all = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(
     (iso) => iso !== birth && isPlausibleExpiryIso(iso)
   );
@@ -1040,15 +1274,22 @@ function extractIdCardDates(lines: string[]): { birthDate: string | null; expiry
   let birthDate = extractBirthDate(lines);
   let expiryDate = extractExpiryDateFromOcr(lines);
   const L = normLines(lines);
-  const allBirth = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(isPlausibleBirthIso);
-  const allExpiry = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(isPlausibleExpiryIso);
+  const passport = detectPassportFromOcr(L);
 
-  if (!birthDate && allBirth.length > 0) birthDate = allBirth.sort()[0]!;
-  if (!expiryDate && allExpiry.length > 0) {
-    expiryDate = allExpiry.sort().pop()!;
-    if (birthDate && expiryDate === birthDate) {
-      expiryDate = allExpiry.filter((d) => d !== birthDate).sort().pop() ?? null;
+  if (!passport) {
+    const allBirth = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(isPlausibleBirthIso);
+    const allExpiry = [...allTrDatesFromLines(L), ...allAlphaDatesFromLines(L)].filter(isPlausibleExpiryIso);
+    if (!birthDate && allBirth.length > 0) birthDate = allBirth.sort()[0]!;
+    if (!expiryDate && allExpiry.length > 0) {
+      expiryDate = allExpiry.sort().pop()!;
+      if (birthDate && expiryDate === birthDate) {
+        expiryDate = allExpiry.filter((d) => d !== birthDate).sort().pop() ?? null;
+      }
     }
+  }
+
+  if (birthDate && expiryDate && birthDate > expiryDate) {
+    expiryDate = null;
   }
   return { birthDate, expiryDate };
 }
@@ -1074,12 +1315,7 @@ export function extractNationalityFromOcr(lines: string[]): string | null {
       }
     }
   }
-  for (const line of L) {
-    const c = line.trim().toUpperCase();
-    if (isKnownIcao3(c)) return c;
-    const code = mapNationalityTextToCode(line);
-    if (code) return code;
-  }
+  // Rastgele 3 harfli satırlardan uyruk seçme — yanlış ülke üretiyordu.
   return null;
 }
 
@@ -1143,6 +1379,7 @@ function extractPassportNumberFromMrzLines(rawMrz: string | null | undefined): s
 
 function extractNationalityFromPassportHeader(lines: string[]): string | null {
   const j = normLines(lines).join(' ').toUpperCase();
+  if (/\bUZBEKISTAN\b|\bO'?ZBEKISTON\b|\bOZBEKISTON\b/.test(j)) return 'UZB';
   if (/SAUDI|KINGDOM\s*OF\s*SAUDI/.test(j)) return 'SAU';
   if (/EMIRATES|U\.?A\.?E\.?/.test(j) && !/SAUDI/.test(j)) return 'ARE';
   if (/\bQATAR\b/.test(j)) return 'QAT';
@@ -1162,21 +1399,62 @@ function extractNationalityFromPassportHeader(lines: string[]): string | null {
 
 function extractPassportNumberFromOcr(lines: string[]): string | null {
   const L = normLines(lines);
+  const cleanCandidate = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const s = raw
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .replace(/[^A-Z0-9]/g, '');
+    if (!s || TC_RE.test(s) || YKN_RE.test(s)) return null;
+    if (!hasPlausibleKbsDocumentNumber(s, 'passport')) return null;
+    return s;
+  };
+
   for (let i = 0; i < L.length; i++) {
     if (!PASSPORT_LABEL_RE.test(L[i]!)) continue;
     const onLine = L[i]!.match(PASSPORT_DOC_RE);
-    if (onLine?.[1] && !TC_RE.test(onLine[1])) return onLine[1]!.toUpperCase();
-    const next = L[i + 1]?.match(PASSPORT_DOC_RE);
-    if (next?.[1] && !TC_RE.test(next[1])) return next[1]!.toUpperCase();
+    const fromLine = cleanCandidate(onLine?.[1]);
+    if (fromLine) return fromLine;
+    // Etiket satırında boşluklu / OCR: "P A 1 2 3 4 5 6 7"
+    const glued = cleanCandidate(L[i]!.replace(PASSPORT_LABEL_RE, '').replace(/\s+/g, ''));
+    if (glued && /[A-Z]/.test(glued) && /\d/.test(glued)) return glued;
+    for (let j = 1; j <= 2; j++) {
+      const next = cleanCandidate(L[i + j]?.match(PASSPORT_DOC_RE)?.[1] ?? L[i + j]);
+      if (next && /[A-Z]/.test(next) && /\d/.test(next)) return next;
+    }
   }
   for (const line of L) {
-    const normalized = line.replace(/\s+/g, '');
-    const mrzDoc = normalized.match(/^([A-Z][A-Z0-9]{5,8})<+[0-9A-Z]{3}/i);
-    if (mrzDoc?.[1]) return mrzDoc[1].toUpperCase();
+    if (isMrzLikeOcrLine(line)) {
+      const normalized = line.replace(/\s+/g, '');
+      const mrzDoc = normalized.match(/^([A-Z][A-Z0-9]{5,8})<+[0-9A-Z]{3}/i);
+      const fromMrz = cleanCandidate(mrzDoc?.[1]);
+      if (fromMrz) return fromMrz;
+      continue;
+    }
     const m = line.match(PASSPORT_DOC_RE);
-    if (m?.[1] && !TC_RE.test(m[1]) && !YKN_RE.test(m[1])) return m[1]!.toUpperCase();
+    const c = cleanCandidate(m?.[1]);
+    if (c && /[A-Z]/.test(c) && /\d/.test(c)) return c;
   }
   return null;
+}
+
+/** Görsel (VIZ) pasaport kimlik alanları — etiketli okuma. */
+export function extractPassportIdentityFromOcr(lines: string[]): {
+  documentNumber: string | null;
+  birthDate: string | null;
+  expiryDate: string | null;
+  gender: 'M' | 'F' | 'X' | null;
+  nationalityCode: string | null;
+} {
+  const L = normLines(lines);
+  const dates = extractIdCardDates(L);
+  return {
+    documentNumber: extractPassportNumberFromOcr(L),
+    birthDate: dates.birthDate,
+    expiryDate: dates.expiryDate,
+    gender: extractGenderFromOcr(L),
+    nationalityCode: extractNationalityFromOcr(L) ?? extractNationalityFromPassportHeader(L),
+  };
 }
 
 function pickDocumentNumber(
@@ -1202,6 +1480,7 @@ function mergeNameFields(
   ) {
     const best = resolveBestPassportNames({ parsed, ocrLines: lines });
     if (isUsablePersonName(best.firstName) && isUsablePersonName(best.lastName)) {
+      // Verilen ad(lar) tam metin firstName’de — middle ayrımı Körfez’de kayıp yaratıyordu.
       return {
         firstName: best.firstName,
         lastName: best.lastName,
@@ -1291,19 +1570,31 @@ export function parseIdCardFromOcrLines(lines: string[]): ParsedDocument & Turki
   const L = normLines(lines);
   const joined = L.join('\n');
 
-  const tc = extractTurkishNationalIdFromOcr(L) ?? joined.match(TC_RE)?.[1] ?? null;
+  const tc = extractTurkishNationalIdFromOcr(L);
   const ykn = joined.match(YKN_RE)?.[1] ?? null;
   const passportNo = extractPassportNumberFromOcr(L);
-  const serial = extractDocumentSerialFromOcr(L);
   const { birthDate, expiryDate } = extractIdCardDates(L);
   const nationalityOcr = extractNationalityFromOcr(L);
   const gender = extractGenderFromOcr(L);
   const { firstName, lastName } = resolveNames(L);
   const isPassport = detectPassportFromOcr(L) || !!passportNo;
   const isYkn = !!ykn && !tc;
-  const isTc = !!tc;
+  // Checksum’lu T.C. yoksa pasaport rakamlarını T.C. sanma.
+  const isTc = !!tc && isValidTurkishTc(tc) && !isPassport;
   const isGkk = detectTemporaryProtection(L);
-  const docNo = pickDocumentNumber(tc, ykn, passportNo);
+  const docNo = isPassport
+    ? pickDocumentNumber(null, ykn, passportNo) ?? (isTc ? tc : null)
+    : pickDocumentNumber(tc, ykn, passportNo);
+
+  let documentType: ParsedDocument['documentType'] = 'other';
+  if (isPassport) documentType = 'passport';
+  else if (isTc) documentType = 'id_card';
+  else if (isYkn || isGkk) documentType = 'residence_permit';
+
+  const serial = extractDocumentSerialFromOcr(L, {
+    passportNumber: isPassport ? docNo ?? passportNo : null,
+    documentType,
+  });
 
   const warnings: string[] = [];
   if (!docNo) warnings.push('no_identity_number');
@@ -1312,11 +1603,6 @@ export function parseIdCardFromOcrLines(lines: string[]): ParsedDocument & Turki
 
   const confidence =
     docNo && isUsablePersonName(firstName) && isUsablePersonName(lastName) && birthDate ? 0.82 : docNo ? 0.58 : 0.35;
-
-  let documentType: ParsedDocument['documentType'] = 'other';
-  if (isTc) documentType = 'id_card';
-  else if (isPassport) documentType = 'passport';
-  else if (isYkn || isGkk) documentType = 'residence_permit';
 
   return {
     documentType,
@@ -1334,7 +1620,11 @@ export function parseIdCardFromOcrLines(lines: string[]): ParsedDocument & Turki
     confidence,
     checksumsValid: null,
     warnings,
-    documentSeries: serial,
+    documentSeries: resolveKbsDocumentSeries({
+      documentSeries: serial,
+      documentNumber: docNo,
+      documentType,
+    }),
     motherName: null,
     fatherName: null,
   };
@@ -1347,15 +1637,6 @@ export function enrichMrzParsedWithFrontOcr(
   parsed: ParsedDocument,
   lines: string[]
 ): ParsedDocument & TurkishIdOcrExtras {
-  const serial = extractDocumentSerialFromOcr(lines) ?? parsed.documentSeries;
-  const parents = extractParentNamesFromOcr(lines);
-  const maritalStatus = extractMaritalStatusFromOcr(lines);
-  const natCode =
-    parsed.nationalityCode ??
-    extractNationalityFromOcr(lines) ??
-    extractNationalityFromPassportHeader(lines);
-  const { birthDate, expiryDate } = extractIdCardDates(lines);
-
   const isPassportDoc =
     parsed.documentType === 'passport' || !!parsed.rawMrz || detectPassportFromOcr(lines);
   const passportNo =
@@ -1363,8 +1644,12 @@ export function enrichMrzParsedWithFrontOcr(
     extractPassportNumberFromMrzLines(parsed.rawMrz) ??
     extractPassportNumberFromOcr(lines);
 
-  const isTurkishId =
-    parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines));
+  // MRZ varsa uyruk / tarih MRZ’den; VIZ yalnızca boş alan doldurur.
+  const natCode =
+    parsed.nationalityCode ??
+    extractNationalityFromOcr(lines) ??
+    extractNationalityFromPassportHeader(lines);
+  const { birthDate, expiryDate } = extractIdCardDates(lines);
 
   let firstName = parsed.firstName;
   let lastName = parsed.lastName;
@@ -1375,36 +1660,59 @@ export function enrichMrzParsedWithFrontOcr(
     firstName = best.firstName ?? firstName;
     lastName = best.lastName ?? lastName;
     fullName = best.fullName ?? fullName;
-  } else if (isTurkishId) {
+  } else if (
+    !parsed.rawMrz &&
+    (parsed.documentType === 'id_card' || !!extractTurkishNationalIdFromOcr(normLines(lines)))
+  ) {
     const tr = extractTurkishIdCardNamesFromOcr(normLines(lines));
     if (isUsablePersonName(tr.firstName) && isUsablePersonName(tr.lastName)) {
       firstName = tr.firstName;
       lastName = tr.lastName;
       fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || parsed.fullName;
-    } else {
-      const best = resolveBestPassportNames({ parsed, ocrLines: lines });
-      firstName = best.firstName ?? parsed.firstName;
-      lastName = best.lastName ?? parsed.lastName;
-      fullName =
-        best.fullName ??
-        ([firstName, lastName].filter(Boolean).join(' ').trim() || parsed.fullName);
     }
   }
+
+  const docNumber =
+    (parsed.rawMrz && parsed.checksumsValid === true ? parsed.documentNumber : null) ??
+    passportNo ??
+    parsed.documentNumber;
+  const serial = extractDocumentSerialFromOcr(lines, {
+    passportNumber: isPassportDoc ? docNumber ?? passportNo : null,
+    documentType: isPassportDoc ? 'passport' : parsed.documentType,
+  });
+  const parents = extractParentNamesFromOcr(lines);
+  const maritalStatus = extractMaritalStatusFromOcr(lines);
+
+  const mrzTrusted = parsed.checksumsValid === true;
+  const resolvedBirth = mrzTrusted
+    ? parsed.birthDate ?? birthDate
+    : birthDate && parsed.birthDate && birthDate !== parsed.birthDate
+      ? birthDate
+      : parsed.birthDate ?? birthDate;
+  const resolvedExpiry = mrzTrusted
+    ? parsed.expiryDate ?? expiryDate
+    : expiryDate && parsed.expiryDate && expiryDate !== parsed.expiryDate
+      ? expiryDate
+      : parsed.expiryDate ?? expiryDate;
 
   return {
     ...parsed,
     firstName,
     lastName,
     fullName,
-    documentNumber: passportNo ?? parsed.documentNumber,
+    documentNumber: docNumber,
     nationalityCode: natCode,
     issuingCountryCode: parsed.issuingCountryCode ?? natCode,
-    documentSeries: serial ?? parsed.documentSeries ?? null,
+    documentSeries: resolveKbsDocumentSeries({
+      documentSeries: serial ?? (isPassportDoc ? null : parsed.documentSeries ?? null),
+      documentNumber: docNumber,
+      documentType: isPassportDoc ? 'passport' : parsed.documentType,
+    }),
     motherName: parents.motherName ?? parsed.motherName ?? null,
     fatherName: parents.fatherName ?? parsed.fatherName ?? null,
     maritalStatus: maritalStatus ?? parsed.maritalStatus ?? null,
-    birthDate: parsed.birthDate ?? birthDate,
-    expiryDate: parsed.expiryDate ?? expiryDate,
+    birthDate: resolvedBirth,
+    expiryDate: resolvedExpiry,
     gender: parsed.gender ?? extractGenderFromOcr(lines),
   };
 }
@@ -1417,7 +1725,6 @@ export function enrichParsedWithIdCardOcr(
   lines: string[]
 ): ParsedDocument & TurkishIdOcrExtras {
   const id = parseIdCardFromOcrLines(lines);
-  const serial = extractDocumentSerialFromOcr(lines) ?? id.documentSeries;
   const joined = normLines(lines).join('\n');
   const ykn = joined.match(YKN_RE)?.[1] ?? null;
   const tc = extractTurkishNationalIdFromOcr(lines) ?? joined.match(TC_RE)?.[1] ?? null;
@@ -1439,6 +1746,14 @@ export function enrichParsedWithIdCardOcr(
   if (documentType === 'other' && (id.documentType === 'residence_permit' || detectTemporaryProtection(lines))) {
     documentType = 'residence_permit';
   }
+  if (documentType === 'other' && id.documentType === 'passport') {
+    documentType = 'passport';
+  }
+
+  const serial = extractDocumentSerialFromOcr(lines, {
+    passportNumber: documentType === 'passport' ? documentNumber : null,
+    documentType,
+  }) ?? (documentType === 'passport' ? null : id.documentSeries);
 
   const natCode =
     parsed.nationalityCode ?? extractNationalityFromOcr(lines) ?? id.nationalityCode;
@@ -1462,7 +1777,11 @@ export function enrichParsedWithIdCardOcr(
     gender: parsed.gender ?? id.gender,
     nationalityCode: natCode,
     issuingCountryCode: issuing,
-    documentSeries: serial,
+    documentSeries: resolveKbsDocumentSeries({
+      documentSeries: serial,
+      documentNumber,
+      documentType,
+    }),
     motherName: parents.motherName ?? parsed.motherName ?? null,
     fatherName: parents.fatherName ?? parsed.fatherName ?? null,
     maritalStatus: maritalStatus ?? parsed.maritalStatus ?? null,

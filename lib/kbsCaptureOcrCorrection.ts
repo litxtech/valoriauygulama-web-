@@ -5,7 +5,10 @@ import {
   markKbsCaptureOcrState,
 } from '@/lib/kbsCaptureHistory';
 import { parseIdCardImageUriGalleryDeep } from '@/lib/kbsCaptureGalleryDeepOcr';
-import { parseIdCardImageUriProfessional } from '@/lib/kbsCaptureProfessionalOcr';
+import {
+  hasKbsOcrApplyableData,
+  parseIdCardImageUriProfessional,
+} from '@/lib/kbsCaptureProfessionalOcr';
 import { parseKbsCaptureSideFromWarnings } from '@/lib/kbsCaptureSideMeta';
 import {
   listCoreMissingIdFields,
@@ -13,8 +16,10 @@ import {
 } from '@/lib/kbsCaptureParsedFields';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
+import { applyBestPassportIdentityToParsed } from '@/lib/kbsPassportFieldResolve';
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
 import type { ParsedDocument } from '@/lib/scanner/types';
+import type { KbsOcrResult } from '@/lib/kbsCaptureOcr';
 
 async function downloadForCorrection(url: string, docId: string): Promise<string> {
   const local = `${FileSystem.cacheDirectory ?? ''}kbs-fix-${docId}.jpg`;
@@ -22,20 +27,23 @@ async function downloadForCorrection(url: string, docId: string): Promise<string
   return res.uri;
 }
 
-function buildCorrectionParsed(existing: ParsedDocument, ocrParsed: ParsedDocument, lines: string[]): ParsedDocument {
+function collectOcrLines(ocr: KbsOcrResult): string[] {
+  if (ocr.ocrLines?.length) return ocr.ocrLines;
+  if (ocr.parsed.rawMrz) {
+    return ocr.parsed.rawMrz.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function buildCorrectionParsed(ocrParsed: ParsedDocument, lines: string[]): ParsedDocument {
   let next = sanitizeKbsOcrForApply(ocrParsed);
   next = applyBestPassportNamesToParsed(next, lines);
+  next = applyBestPassportIdentityToParsed(next, lines);
   return next;
 }
 
-function collectOcrLines(parsed: ParsedDocument): string[] {
-  return parsed.rawMrz
-    ? parsed.rawMrz.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean)
-    : [];
-}
-
 /**
- * Okunmayan / eksik pasaport-kimlik — önce hızlı OCR, çekirdek eksikse derin tarama.
+ * Okunmayan / eksik pasaport-kimlik — hızlı OCR önce; çekirdek hâlâ eksikse derin.
  */
 export async function correctKbsCapturedDocument(
   row: KbsCapturedDocumentRow,
@@ -60,27 +68,52 @@ export async function correctKbsCapturedDocument(
     const prepared = await prepareProfessionalKbsOcrUri(local);
     const warnings = (row.parsed_payload as ParsedDocument | null)?.warnings;
     const captureSide = parseKbsCaptureSideFromWarnings(warnings);
-    const existing = normalizeKbsParsedPayload(row.parsed_payload);
 
-    // 1) Hızlı profesyonel tarama
+    // 1) Hızlı profesyonel (MRZ bandı dahil)
     let ocr = await parseIdCardImageUriProfessional(prepared, {
       captureSide,
       imagePrepared: true,
       fast: true,
     });
-    let lines = collectOcrLines(ocr.parsed);
-    let corrected = buildCorrectionParsed(existing ?? ocr.parsed, ocr.parsed, lines);
+    let lines = collectOcrLines(ocr);
+    let corrected = buildCorrectionParsed(ocr.parsed, lines);
     let coreMissing = listCoreMissingIdFields(corrected);
 
-    // 2) Eksik çekirdek alan varsa derin tarama
-    if (opts?.deep === true || coreMissing.length > 0) {
+    // 2) MRZ yoksa hızlı MRZ odaklı geçiş
+    if (coreMissing.length > 0 && !corrected.rawMrz) {
+      const mrzFast = await parseIdCardImageUriProfessional(prepared, {
+        captureSide: 'mrz_back',
+        imagePrepared: true,
+        fast: true,
+      });
+      const mrzLines = collectOcrLines(mrzFast);
+      const mrzParsed = buildCorrectionParsed(mrzFast.parsed, mrzLines);
+      if (listCoreMissingIdFields(mrzParsed).length < coreMissing.length || mrzParsed.rawMrz) {
+        ocr = mrzFast;
+        lines = mrzLines;
+        corrected = mrzParsed;
+        coreMissing = listCoreMissingIdFields(corrected);
+      }
+    }
+
+    // 3) Hâlâ çekirdek eksik veya zorla derin → Maximum (yalnızca gerekliyse)
+    const needDeep =
+      opts?.deep === true ||
+      (coreMissing.length > 0 && (!corrected.rawMrz || coreMissing.length >= 3));
+
+    if (needDeep && coreMissing.length > 0) {
       const deep = await parseIdCardImageUriGalleryDeep(prepared, { captureSide });
-      const deepLines = collectOcrLines(deep.parsed);
-      const deepParsed = buildCorrectionParsed(corrected, deep.parsed, deepLines);
-      corrected = deepParsed;
-      ocr = deep;
-      lines = deepLines;
-      coreMissing = listCoreMissingIdFields(corrected);
+      const deepLines = collectOcrLines(deep);
+      const deepParsed = buildCorrectionParsed(deep.parsed, deepLines);
+      if (
+        listCoreMissingIdFields(deepParsed).length <= coreMissing.length ||
+        deepParsed.rawMrz
+      ) {
+        corrected = deepParsed;
+        ocr = deep;
+        lines = deepLines;
+        coreMissing = listCoreMissingIdFields(corrected);
+      }
     }
 
     const res = await applyKbsCaptureOcrCorrection(
@@ -96,7 +129,7 @@ export async function correctKbsCapturedDocument(
     }
 
     const coreComplete = coreMissing.length === 0;
-    if (!coreComplete) {
+    if (!coreComplete && !hasKbsOcrApplyableData(ocr)) {
       await markKbsCaptureOcrState(row.id, 'failed');
     }
 

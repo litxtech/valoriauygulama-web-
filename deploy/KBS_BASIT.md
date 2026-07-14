@@ -11,5 +11,5 @@ Hetzner / pm2 / sabit IP **kullanılmıyor**.
 | Mobil | `EXPO_PUBLIC_KBS_UI_ENABLED=true`, `EXPO_PUBLIC_RAILWAY_API_URL` |
 
 ```text
-Mobil → Supabase → https://valoriahotel-production.up.railway.app → Jandarma
+Mobil → Supabase → https://kbs-ops-production.up.railway.app (veya Edge → kbs-core) → Jandarma
 ```

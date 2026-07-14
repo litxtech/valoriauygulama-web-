@@ -84,6 +84,7 @@ function XAction({
   loading,
   disabled,
   scale,
+  showZeroCount,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   activeIcon?: keyof typeof Ionicons.glyphMap;
@@ -95,11 +96,13 @@ function XAction({
   loading?: boolean;
   disabled?: boolean;
   scale?: Animated.Value;
+  showZeroCount?: boolean;
 }) {
   const tint = active ? (activeColor ?? color) : color;
   const iconNode = (
     <Ionicons name={active && activeIcon ? activeIcon : icon} size={18} color={tint} />
   );
+  const showCount = count != null && (showZeroCount || count > 0);
   return (
     <Pressable
       style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}
@@ -114,9 +117,7 @@ function XAction({
       ) : (
         iconNode
       )}
-      {count != null && count > 0 ? (
-        <Text style={[styles.actionCount, { color: tint }]}>{count}</Text>
-      ) : null}
+      {showCount ? <Text style={[styles.actionCount, { color: tint }]}>{count}</Text> : null}
     </Pressable>
   );
 }
@@ -325,6 +326,7 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
               <XAction
                 icon="stats-chart-outline"
                 count={viewCount}
+                showZeroCount
                 color={sub}
                 onPress={viewersListEnabled ? onViewers : undefined}
                 disabled={!viewersListEnabled}

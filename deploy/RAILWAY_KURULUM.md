@@ -128,6 +128,21 @@ Metro: `npx expo start --dev-client --clear`
 
 Jandarma reddederse: paneldeki IP/şifre/tesis kodu — Railway tarafı ayakta ise köprü tamamdır.
 
+### Yetkisiz IP / YetkiHatasi
+
+**Sabit (static) IP Jandarma’da zorunlu değildir.** Biz de IP istemiyoruz.
+
+Bağlantı testi `Yetkisiz IP` döndürüyorsa bu mesaj **Jandarma SOAP** cevabıdır: istek, panelde daha önce kaydedilmiş IP ile uyuşmuyor (eski VPS / başka hat).
+
+Ne yapılır (opsiyonel IP alanı):
+
+1. KBS Tesis → **Web Servis İşlemleri** → **IP** alanına bakın.
+2. Eski IP varsa: **silin / boşaltın**, veya Railway çıkış IP’siyle değiştirin  
+   (`https://kbs-core-production.up.railway.app/gateway/egress-ip`).
+3. IP boşken hâlâ `Yetkisiz IP` geliyorsa: web-servis şifresi, KullanıcıTC, tesis kodu / yetkiyi kontrol edin.
+
+Railway’de sabit çıkış IP (Static Outbound) yalnızca isterseniz — zorunlu değil.
+
 ---
 
 ## Sorun giderme
@@ -137,6 +152,7 @@ Jandarma reddederse: paneldeki IP/şifre/tesis kodu — Railway tarafı ayakta i
 | `/health` 404 | kbs-ops Root Directory `railway-service` değil |
 | Healthcheck failed / service unavailable | Deploy log’da `[kbs-ops] startup failed` — zorunlu env eksik veya `GATEWAY_BASE_URL` geçersiz (https:// ile kbs-core domain) |
 | Bağlantı testi timeout | kbs-core ayakta mı, `GATEWAY_BASE_URL` doğru mu |
+| **Yetkisiz IP / YetkiHatasi** | Sabit IP şart değil — paneldeki eski IP’yi temizle/güncelle; değilse şifre/TC/yetki |
 | 401 / gateway token | `KBS_GATEWAY_TOKEN` Supabase = ops servisi |
 | Şifre çözülemedi | `KBS_CREDENTIAL_SECRET` Supabase Edge = iki Railway servisi |
 

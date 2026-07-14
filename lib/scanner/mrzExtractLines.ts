@@ -20,17 +20,43 @@ function isMrzLikeLine(line: string): boolean {
   return chevrons >= 2 && /^[A-Z0-9<]+$/.test(line);
 }
 
+/** TD3 satır 2: OCR sık «<» kaçırır; rakam ağırlıklı uzun satır. */
+function isMrzDataLine(line: string): boolean {
+  if (line.length < 28 || line.length > 52) return false;
+  if (!/^[A-Z0-9<]+$/.test(line)) return false;
+  if (line.includes('<<')) return false;
+  const digits = (line.match(/\d/g) ?? []).length;
+  return digits >= 10 && /[A-Z]{3}/.test(line);
+}
+
+/** P< eksik OCR: UZBMUKHAMMADIEVA<<NIGINA... → P<UZB... */
+function ensureTd3NameLine(line: string): string {
+  let L = line;
+  // Baştaki yanlış K/Ö önek
+  L = L.replace(/^K(?=[A-Z]{3}[A-Z<])/, '');
+  if (/^[IPAVC]</.test(L)) return padOrTrimTo(L, TD3_LEN);
+  if (/^[A-Z]{3}[A-Z<<]/.test(L) && L.includes('<<')) {
+    return padOrTrimTo(`P<${L}`, TD3_LEN);
+  }
+  return padOrTrimTo(L, TD3_LEN);
+}
+
+function pairTd3(a: string, b: string): string | null {
+  const nameFirst = a.includes('<<') || /^[IPAVC]</.test(a);
+  const la = nameFirst ? ensureTd3NameLine(a) : padOrTrimTo(a, TD3_LEN);
+  const lb = nameFirst ? padOrTrimTo(b, TD3_LEN) : ensureTd3NameLine(b);
+  if (la.length < TD3_MIN || lb.length < TD3_MIN) return null;
+  // İsim satırı «<<» içermeli
+  const nameLine = la.includes('<<') ? la : lb.includes('<<') ? lb : null;
+  const dataLine = la.includes('<<') ? lb : lb.includes('<<') ? la : null;
+  if (!nameLine || !dataLine) return `${la}\n${lb}`;
+  return `${nameLine}\n${dataLine}`;
+}
+
 function padOrTrimTo(line: string, target: number): string {
   if (line.length === target) return line;
   if (line.length > target) return line.slice(0, target);
   return line.padEnd(target, '<');
-}
-
-function pairTd3(a: string, b: string): string | null {
-  const la = padOrTrimTo(a, TD3_LEN);
-  const lb = padOrTrimTo(b, TD3_LEN);
-  if (la.length < TD3_MIN || lb.length < TD3_MIN) return null;
-  return `${la}\n${lb}`;
 }
 
 function pairTd2(a: string, b: string): string | null {
@@ -46,59 +72,72 @@ function tripleTd1(a: string, b: string, c: string): string | null {
   return lines.join('\n');
 }
 
+function rebuildTd3DataLine(data: string, vizDoc: string | null): string[] {
+  const base = padOrTrimTo(data, TD3_LEN);
+  const out = [base];
+  const natMatch = data.match(/^([A-Z0-9]{6,12}?)([A-Z]{3})(\d{6}.*)$/);
+  if (!natMatch) return out;
+  const [, , nat, rest] = natMatch;
+  const docs: string[] = [];
+  if (vizDoc) {
+    const d = vizDoc.replace(/[^A-Z0-9]/g, '').toUpperCase().slice(0, 9);
+    if (d) docs.push(d);
+  }
+  // OCR `52133285UZB...` — rakam öneki
+  const digitPrefix = natMatch[1]!.replace(/[^0-9]/g, '');
+  if (digitPrefix.length >= 7) docs.push(digitPrefix.slice(0, 9));
+
+  for (const doc of docs) {
+    const paddedDoc = doc.padEnd(9, '<').slice(0, 9);
+    for (const chk of ['', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+      out.push(padOrTrimTo(`${paddedDoc}${chk}${nat}${rest}`, TD3_LEN));
+    }
+  }
+  return [...new Set(out)];
+}
+
 function buildCandidateStrings(lines: string[]): string[] {
   const cleaned = normalizeMrzOcrLines(lines);
-  const candidates = cleaned.filter(isMrzLikeLine);
+  const nameLines = cleaned.filter(isMrzLikeLine).map((l) => {
+    const fixed = ensureTd3NameLine(l);
+    return fixed;
+  });
+  const rawData = cleaned.filter(isMrzDataLine);
+  const vizDoc =
+    lines
+      .map((l) => l.replace(/\s/g, '').toUpperCase())
+      .map((l) => l.match(/\b([A-Z]{1,2}\d{6,9})\b/)?.[1])
+      .find(Boolean) ?? null;
+
+  const dataVariants = rawData.flatMap((d) => rebuildTd3DataLine(d, vizDoc));
   const out = new Set<string>();
 
-  for (let i = 0; i < candidates.length - 1; i++) {
-    const a = candidates[i];
-    const b = candidates[i + 1];
-    if (a.length >= TD3_MIN && a.length <= TD3_MAX && b.length >= TD3_MIN && b.length <= TD3_MAX) {
-      const p = pairTd3(a, b);
+  for (const name of nameLines) {
+    for (const data of dataVariants) {
+      const p = pairTd3(name, data);
       if (p) out.add(p);
-      const pRev = pairTd3(b, a);
-      if (pRev) out.add(pRev);
+    }
+  }
+
+  // Yan yana OCR sırası
+  const candidates = [...new Set([...cleaned.filter(isMrzLikeLine), ...rawData])];
+  for (let i = 0; i < candidates.length - 1; i++) {
+    const a = candidates[i]!;
+    const b = candidates[i + 1]!;
+    for (const da of rebuildTd3DataLine(a, vizDoc)) {
+      const p = pairTd3(ensureTd3NameLine(b.includes('<<') ? b : a), da);
+      if (p) out.add(p);
     }
     if (a.length >= TD2_MIN && a.length <= TD2_MAX && b.length >= TD2_MIN && b.length <= TD2_MAX) {
       const p2 = pairTd2(a, b);
       if (p2) out.add(p2);
     }
-    if (a.length >= TD1_MIN && a.length <= TD1_MAX && b.length >= TD1_MIN && b.length <= TD1_MAX) {
-      const c = candidates[i + 2];
-      if (c) {
-        const t = tripleTd1(a, b, c);
-        if (t) out.add(t);
-      }
-    }
   }
 
   const byLen = [...candidates].sort((x, y) => y.length - x.length);
-  if (byLen.length >= 2 && byLen[0].length >= 40) {
-    out.add(`${padOrTrimTo(byLen[0], TD3_LEN)}\n${padOrTrimTo(byLen[1], TD3_LEN)}`);
-  }
-  if (byLen.length >= 2 && byLen[0].length >= TD2_MIN && byLen[0].length <= TD2_MAX) {
-    out.add(`${padOrTrimTo(byLen[0], TD2_LEN)}\n${padOrTrimTo(byLen[1], TD2_LEN)}`);
-  }
-  if (byLen.length >= 3 && byLen[0].length >= 28 && byLen[0].length <= 34) {
-    out.add(
-      `${padOrTrimTo(byLen[0], TD1_LEN)}\n${padOrTrimTo(byLen[1], TD1_LEN)}\n${padOrTrimTo(byLen[2], TD1_LEN)}`
-    );
-  }
-
-  const joined = candidates.slice(-3).join('');
-  if (joined.length >= 60 && joined.includes('<')) {
-    if (joined.length >= 88) {
-      out.add(`${joined.slice(0, TD3_LEN)}\n${joined.slice(TD3_LEN, TD3_LEN * 2)}`);
-    }
-    if (joined.length >= 72 && joined.length < 88) {
-      out.add(`${joined.slice(0, TD2_LEN)}\n${joined.slice(TD2_LEN, TD2_LEN * 2)}`);
-    }
-    if (joined.length >= 90) {
-      out.add(
-        `${joined.slice(0, TD1_LEN)}\n${joined.slice(TD1_LEN, TD1_LEN * 2)}\n${joined.slice(TD1_LEN * 2, TD1_LEN * 3)}`
-      );
-    }
+  if (byLen.length >= 2 && byLen[0]!.length >= 36) {
+    const p = pairTd3(ensureTd3NameLine(byLen[0]!), padOrTrimTo(byLen[1]!, TD3_LEN));
+    if (p) out.add(p);
   }
 
   return [...out];

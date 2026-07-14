@@ -8,6 +8,7 @@ import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
 import { findGuestDocumentByIdentity } from '@/lib/kbsGuestDocumentIdentity';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
+import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 import { log } from '@/lib/logger';
 
 export type KbsCapturedDocumentRow = {
@@ -157,7 +158,9 @@ async function commitKbsCaptureOcrPatch(
     payload.birthDate && payload.birthDate.length >= 10 ? payload.birthDate.slice(0, 10) : null;
   const expiryDate =
     payload.expiryDate && payload.expiryDate.length >= 10 ? payload.expiryDate.slice(0, 10) : null;
-  const docNo = writeDocumentNumber ? payload.documentNumber?.trim() || null : null;
+  const docNo = writeDocumentNumber
+    ? (payload.documentNumber ?? '').trim().replace(/\s+/g, '').toUpperCase() || null
+    : null;
   const coreReady = !!(docNo && fullName);
   const effectiveConfidence =
     scanConfidence != null
@@ -165,12 +168,18 @@ async function commitKbsCaptureOcrPatch(
       : payload.confidence ?? scanConfidence;
 
   const kind = inferKbsPersonKind(payload);
-  const series =
-    payload.documentSeries?.trim() ||
-    (kind !== 'tc_citizen' && docNo ? docNo : null);
+  const series = resolveKbsDocumentSeries({
+    documentSeries: payload.documentSeries,
+    documentNumber: docNo ?? payload.documentNumber,
+    documentType: payload.documentType,
+  });
 
   const patch: Record<string, unknown> = {
-    parsed_payload: payload,
+    parsed_payload: {
+      ...payload,
+      documentSeries: series,
+      documentNumber: writeDocumentNumber ? docNo ?? payload.documentNumber : payload.documentNumber,
+    },
     scan_confidence: effectiveConfidence,
     ocr_engine: ocrEngine ?? MRZ_OCR_ENGINE_VISION_MLKIT,
     issuing_country_code: payload.issuingCountryCode,
@@ -254,7 +263,8 @@ export async function applyKbsCaptureOcrResult(
   const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
   const merged = mergeKbsOcrIntoExisting(existing, parsed);
   const payload = stripOcrFlags(merged);
-  const docNo = payload.documentNumber?.trim() || null;
+  const docNo = (payload.documentNumber ?? '').trim().replace(/\s+/g, '').toUpperCase() || null;
+  if (docNo) payload.documentNumber = docNo;
   const hotelId = (docRow?.hotel_id as string | null) ?? null;
   const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
 
@@ -309,7 +319,8 @@ export async function applyKbsCaptureOcrCorrection(
   const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
   const merged = mergeKbsOcrIntoExisting(existing, parsed, { correction: true });
   const payload = stripOcrFlags(merged);
-  const docNo = payload.documentNumber?.trim() || null;
+  const docNo = (payload.documentNumber ?? '').trim().replace(/\s+/g, '').toUpperCase() || null;
+  if (docNo) payload.documentNumber = docNo;
   const hotelId = (docRow?.hotel_id as string | null) ?? null;
   const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
 

@@ -227,6 +227,7 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
           details: {
             httpStatus: testRes.httpStatus ?? null,
             via: testRes.via,
+            egressIp: testRes.egressIp ?? null,
           },
         },
       });
@@ -234,7 +235,12 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
 
     return json({
       ok: true,
-      data: { message: testRes.message, via: testRes.via, code: testRes.code },
+      data: {
+        message: testRes.message,
+        via: testRes.via,
+        code: testRes.code,
+        egressIp: testRes.egressIp ?? null,
+      },
     });
   }
 

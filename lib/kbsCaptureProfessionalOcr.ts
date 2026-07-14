@@ -8,6 +8,8 @@ import {
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { buildKbsCopyFields, listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
 import { prepareProfessionalKbsOcrUriCached } from '@/lib/kbsOcrSessionCache';
+import { shouldPreferKbsFrontIdParse } from '@/lib/guestScan/idCardOcrParser';
+import { isValidTurkishTc } from '@/lib/kbsTcValidation';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { ocrLinesForKbsDocument } from '@/lib/scanner/mrzDocumentOcr';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -54,7 +56,7 @@ function isGoodEnough(result: KbsOcrResult, galleryDeep: boolean): boolean {
 }
 
 function isTurkishTcDigits(docNumber: string | null | undefined): boolean {
-  return /^[1-9]\d{10}$/.test((docNumber ?? '').replace(/\D/g, ''));
+  return isValidTurkishTc((docNumber ?? '').replace(/\D/g, ''));
 }
 
 /** Ön yüz / MRZ çekim moduna göre en uygun OCR geçişini seç. */
@@ -140,7 +142,8 @@ export async function parseIdCardImageUriProfessional(
 }
 
 /**
- * Sisteme yüklenen belgeler — hızlı profesyonel okuma, gerekirse derin tarama.
+ * Sisteme yüklenen belgeler — hızlı profesyonel okuma; MRZ yoksa hedefi netleştir.
+ * Kamera + galeri aynı hızlı yolu kullanır; galeri eksikte maksimum tarama yapar.
  */
 export async function parseIdCardImageUriForUpload(
   uri: string,
@@ -150,26 +153,54 @@ export async function parseIdCardImageUriForUpload(
   const prepared = await prepareProfessionalKbsOcrUriCached(uri);
   const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true, fast: true };
 
-  const best = await parseIdCardImageUriProfessional(prepared, baseOpts);
-  if (shouldApplyKbsOcrResult(best)) return best;
-  if (hasKbsOcrApplyableData(best) && listCoreMissingIdFields(best.parsed).length <= 1) return best;
+  let best = await parseIdCardImageUriProfessional(prepared, baseOpts);
+  if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
+    return best;
+  }
+  if (hasKbsOcrApplyableData(best) && listCoreMissingIdFields(best.parsed).length <= 1 && best.parsed.rawMrz) {
+    return best;
+  }
+
+  // MRZ gelmediyse / çekirdek eksik: yavaş + MRZ odaklı geçiş (tam Maximum değil — hızlı).
+  const needsMrz = !best.parsed.rawMrz || listCoreMissingIdFields(best.parsed).length > 1;
+  if (needsMrz) {
+    const mrzPass = await parseIdCardImageUriProfessional(prepared, {
+      captureSide: 'mrz_back',
+      imagePrepared: true,
+      fast: true,
+    });
+    best = pickBetterKbsOcrResult(best, mrzPass);
+    if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
+      return best;
+    }
+  }
 
   const refined = await parseIdCardImageUriProfessional(prepared, {
     ...baseOpts,
     fast: false,
-    galleryDeep: options?.galleryDeep,
   });
-  if (shouldApplyKbsOcrResult(refined) || hasKbsOcrApplyableData(refined)) {
-    return pickBetterKbsOcrResult(best, refined);
+  best = pickBetterKbsOcrResult(best, refined);
+  if (shouldApplyKbsOcrResult(best) || hasKbsOcrApplyableData(best)) {
+    if (listCoreMissingIdFields(best.parsed).length === 0 || options?.galleryDeep !== true) {
+      return best;
+    }
   }
 
-  // Kamera çekiminde derin tarama yalnızca galeri / manuel düzeltme — prewarm hızını korur.
   if (options?.galleryDeep !== true) {
-    return pickBetterKbsOcrResult(best, refined);
+    // Kamera: eksik çekirdek + MRZ yoksa bir MRZ yavaş geçiş daha, Maximum'a gitme.
+    if (!best.parsed.rawMrz || listCoreMissingIdFields(best.parsed).length > 2) {
+      const mrzSlow = await parseIdCardImageUriProfessional(prepared, {
+        captureSide: 'mrz_back',
+        imagePrepared: true,
+        fast: false,
+      });
+      best = pickBetterKbsOcrResult(best, mrzSlow);
+    }
+    return best;
   }
 
   const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
-  return parseIdCardImageUriMaximum(prepared, { captureSide: side });
+  return pickBetterKbsOcrResult(best, await parseIdCardImageUriMaximum(prepared, { captureSide: side }));
 }
 
 /** Kayda yazılacak anlamlı OCR verisi var mı (kısmi sonuç dahil). */
@@ -179,6 +210,7 @@ export function hasKbsOcrApplyableData(result: KbsOcrResult): boolean {
   const p = result.parsed;
   if (p.rawMrz) return true;
   if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) return true;
+  return false;
 }
 
 export function shouldApplyKbsOcrResult(result: KbsOcrResult): boolean {

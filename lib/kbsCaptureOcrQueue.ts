@@ -21,9 +21,10 @@ export type KbsCaptureOcrJob = {
   captureSource?: 'camera' | 'gallery';
 };
 
-const OCR_GAP_MS = Platform.OS === 'android' ? 80 : 0;
+const OCR_GAP_MS = Platform.OS === 'android' ? 40 : 0;
 const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 90_000 : 75_000;
-const OCR_MAX_CONCURRENT = Platform.OS === 'android' ? 1 : 2;
+/** iOS 2; Android 2 — pasaport MRZ paralel bandı zaten tek iş içinde. */
+const OCR_MAX_CONCURRENT = 2;
 
 let jobs: KbsCaptureOcrJob[] = [];
 let activeCount = 0;
@@ -89,6 +90,8 @@ async function downloadImage(url: string, docId: string): Promise<string> {
 
 async function runJob(job: KbsCaptureOcrJob): Promise<void> {
   try {
+    await markKbsCaptureOcrState(job.docId, 'processing');
+
     let local = job.localUri?.trim() || '';
     if (local) {
       const info = await FileSystem.getInfoAsync(local);
@@ -120,6 +123,7 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
       nationalityCode: ocr.parsed.nationalityCode,
       gender: ocr.parsed.gender,
       hasMrz: !!ocr.parsed.rawMrz,
+      coreMissing: listCoreMissingIdFields(ocr.parsed),
     });
 
     const canApply = hasKbsOcrApplyableData(ocr) || kbsCaptureHasReadableData(ocr.parsed);

@@ -5,6 +5,7 @@ import {
   normalizeKbsParsedPayload,
 } from '@/lib/kbsCaptureParsedFields';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
+import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { fetchKbsCaptureNotifyStaffIds } from '@/lib/kbsCaptureSettings';
@@ -141,13 +142,15 @@ export async function updateKbsCaptureManualFields(
   };
 
   const kind = inferKbsPersonKind(payload);
-  const seriesForDb =
-    documentSeries ||
-    (kind !== 'tc_citizen' && documentNumber ? documentNumber : null);
+  const seriesForDb = resolveKbsDocumentSeries({
+    documentSeries: documentSeries,
+    documentNumber,
+    documentType: payload.documentType,
+  });
 
   const coreReady = !!(documentNumber && fullName);
   const docPatch: Record<string, unknown> = {
-    parsed_payload: payload,
+    parsed_payload: { ...payload, documentSeries: seriesForDb },
     document_number: documentNumber,
     document_series: seriesForDb,
     nationality_code: nationalityCode,
@@ -163,7 +166,16 @@ export async function updateKbsCaptureManualFields(
     .from('guest_documents')
     .update(docPatch)
     .eq('id', row.id);
-  if (docErr) return { ok: false, message: docErr.message };
+  if (docErr) {
+    if (docErr.code === '23505' && documentNumber) {
+      return {
+        ok: false,
+        message:
+          'Bu pasaport / kimlik numarası zaten başka bir kayıtta. Mevcut kaydı açın veya numarayı kontrol edin.',
+      };
+    }
+    return { ok: false, message: docErr.message };
+  }
 
   if (row.guest_id) {
     const guestPatch: Record<string, string | null> = {
@@ -199,6 +211,18 @@ function mapNotifyError(code: string, message: string): string {
   }
   if (/forbidden|izin|permission|kbs_bildir/i.test(lower)) {
     return `Bildir izni yok. Admin → Personel → KBS Bildir açın. (${message})`;
+  }
+  if (/belge seri|belgeseri|seri no zorunlu/i.test(lower)) {
+    return `Pasaport seri/belge no KBS’e eksik gitti. Seri veya pasaport numarasını kontrol edip tekrar bildirin. (${message})`;
+  }
+  if (/doğum|dogumtarihi|birth/i.test(lower)) {
+    return `Doğum tarihi KBS formatında değil veya eksik (YYYY-MM-DD). Kontrol edip tekrar bildirin. (${message})`;
+  }
+  if (/adı zorunlu|soyadı zorunlu|ulke zorunlu|ülke zorunlu/i.test(lower)) {
+    return `Pasaport zorunlu alanları eksik. Ad, soyad ve uyruk dolu olmalı. (${message})`;
+  }
+  if (/provider check-in failed|provider_error|kbs check-in failed/i.test(lower)) {
+    return `Jandarma KBS check-in reddetti. Pasaport no, uyruk, doğum tarihi ve odayı kontrol edin. (${message})`;
   }
   return message;
 }

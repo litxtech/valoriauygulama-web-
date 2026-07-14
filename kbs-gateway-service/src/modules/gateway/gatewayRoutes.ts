@@ -90,8 +90,15 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
       const res = await provider.submitCheckIn(body, credentials);
       return { ok: true, data: res };
     } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
       app.log.error({ err: e, transactionId: body.transactionId }, 'provider_checkin_failed');
-      return reply.status(502).send({ ok: false, error: { code: 'PROVIDER_ERROR', message: 'Provider check-in failed' } });
+      return reply.status(502).send({
+        ok: false,
+        error: {
+          code: 'PROVIDER_ERROR',
+          message: detail && detail !== 'Provider check-in failed' ? detail : 'Provider check-in failed',
+        },
+      });
     }
   });
 

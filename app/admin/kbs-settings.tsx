@@ -116,6 +116,10 @@ export default function AdminKbsSettingsScreen() {
     const message = res?.error?.message ?? t('requestFailed');
     const code = String(res?.error?.code ?? '');
     const detailsObj = res?.error?.details;
+    const egressIp =
+      detailsObj && typeof detailsObj === 'object' && typeof detailsObj.egressIp === 'string'
+        ? String(detailsObj.egressIp)
+        : '';
     const details = sanitizeDetailsForAlert(detailsObj);
     const httpStatus =
       detailsObj && typeof detailsObj === 'object' && detailsObj.httpStatus != null
@@ -166,6 +170,11 @@ export default function AdminKbsSettingsScreen() {
         isDnsOrUnreachableBridgeError(message))
     ) {
       hint += t('kbsApiHintBadGatewayUrl');
+    }
+    if (/yetkisiz\s*ip/i.test(message)) {
+      hint +=
+        '\n\nSabit IP zorunlu değil. Bu hata Jandarma’dan geliyor: panelde kayıtlı eski bir IP varsa silin veya Railway çıkış IP’siyle değiştirin.' +
+        (egressIp ? `\nRailway çıkış IP (bilgi): ${egressIp}` : '');
     }
 
     const statusLine = httpStatus != null && Number.isFinite(httpStatus) ? `\n[HTTP ${httpStatus} · ${code || 'ERR'}]` : code ? `\n[${code}]` : '';

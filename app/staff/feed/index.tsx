@@ -60,9 +60,9 @@ import {
 import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { guestDisplayName } from '@/lib/guestDisplayName';
 import {
-  loadFeedPostViewers,
   openFeedPostViewerProfile,
   recordStaffFeedPostViews,
+  getFeedPostViewCounts,
   type FeedPostViewerRow,
 } from '@/lib/feedPostViewers';
 import { fetchFeedPostViewersCached, getCachedFeedPostViewers, prefetchFeedPostViewers } from '@/lib/feedViewersCache';
@@ -556,32 +556,23 @@ export default function StaffHomeScreen() {
         ).catch(() => {});
         return;
       }
-      const [reactionsRes, commentsRes, myReactionsRes, viewCountsRes, notifPrefsRes] = await Promise.all([
+      const [reactionsRes, commentsRes, myReactionsRes, viewCountMap, notifPrefsRes] = await Promise.all([
         supabase.from('feed_post_reactions').select('post_id').in('post_id', ids),
         supabase.from('feed_post_comments').select('post_id').in('post_id', ids),
         supabase.from('feed_post_reactions').select('post_id').in('post_id', ids).eq('staff_id', staff.id),
-        supabase.rpc('get_feed_post_view_counts', { post_ids: ids }),
+        getFeedPostViewCounts(ids),
         supabase.from('feed_post_notification_prefs').select('post_id').eq('staff_id', staff.id).in('post_id', ids),
       ]);
       if (!mountedRef.current) return;
       const reactions = (reactionsRes.data ?? []) as { post_id: string }[];
       const comments = (commentsRes.data ?? []) as { post_id: string }[];
       const myReactions = (myReactionsRes.data ?? []) as { post_id: string }[];
-      if (viewCountsRes.error) {
-        log.warn('get_feed_post_view_counts RPC error', viewCountsRes.error);
-      }
-      const viewCountRows = (viewCountsRes.data ?? []) as { post_id: string; view_count: number }[];
       const notifPrefs = (notifPrefsRes.data ?? []) as { post_id: string }[];
       const likeCount: Record<string, number> = {};
       reactions.forEach((r) => {
         likeCount[r.post_id] = (likeCount[r.post_id] ?? 0) + 1;
       });
-      const viewCount: Record<string, number> = {};
-      viewCountRows.forEach((row: { post_id: string; view_count?: number; viewCount?: number }) => {
-        const pid = row.post_id != null ? String(row.post_id) : '';
-        const cnt = row.view_count ?? row.viewCount ?? 0;
-        if (pid) viewCount[pid] = Number(cnt) || 0;
-      });
+      const viewCount = viewCountMap;
       const commentCount: Record<string, number> = {};
       comments.forEach((c) => {
         commentCount[c.post_id] = (commentCount[c.post_id] ?? 0) + 1;
@@ -611,26 +602,30 @@ export default function StaffHomeScreen() {
 
     const avatarLookup = buildStaffAvatarLookup(staffListRows);
     InteractionManager.runAfterInteractions(() => {
-      if (!mountedRef.current) return;
-      prefetchImageUrls(
-        [
-          ...collectFeedPostPrefetchUrls(list),
-          ...list.map((p) =>
-            resolveFeedAuthorAvatarUrl({
-              staff: p.staff,
-              guest: p.guest,
-              staffId: p.staff_id,
-              staffAvatarById: avatarLookup,
-            })
-          ),
-          ...staffListRows.map((s) => s.profile_image),
-        ],
-        FEED_IMAGE_PREFETCH_CAP
-      );
-      if (shouldRunOptionalSupabaseWork()) {
-        void recordStaffFeedPostViews(ids, staff.id);
-      }
-      void applyEngagement();
+      void (async () => {
+        if (!mountedRef.current) return;
+        prefetchImageUrls(
+          [
+            ...collectFeedPostPrefetchUrls(list),
+            ...list.map((p) =>
+              resolveFeedAuthorAvatarUrl({
+                staff: p.staff,
+                guest: p.guest,
+                staffId: p.staff_id,
+                staffAvatarById: avatarLookup,
+              })
+            ),
+            ...staffListRows.map((s) => s.profile_image),
+          ],
+          FEED_IMAGE_PREFETCH_CAP
+        );
+        // Önce görüntüleme kaydı, sonra sayaç — aksi halde sayaç çoğu zaman 0 kalır.
+        if (shouldRunOptionalSupabaseWork() && staff?.id) {
+          await recordStaffFeedPostViews(ids, staff.id);
+        }
+        if (!mountedRef.current) return;
+        await applyEngagement();
+      })();
     });
   }, [staff?.id, loadStaffList]);
 
@@ -1486,6 +1481,7 @@ export default function StaffHomeScreen() {
     if (cached) {
       setViewersList(cached);
       setLoadingViewers(false);
+      setViewCounts((prev) => (prev[postId] === cached.length ? prev : { ...prev, [postId]: cached.length }));
     } else {
       setLoadingViewers(true);
       setViewersList([]);
@@ -1493,6 +1489,7 @@ export default function StaffHomeScreen() {
     void fetchFeedPostViewersCached(postId).then(({ rows, error }) => {
       setViewersList(rows);
       setLoadingViewers(false);
+      setViewCounts((prev) => (prev[postId] === rows.length ? prev : { ...prev, [postId]: rows.length }));
       if (error) log.warn('staff/feed openViewersModal', error.message);
     });
   }, []);
@@ -1971,7 +1968,7 @@ export default function StaffHomeScreen() {
               .filter((x) => x.text);
             const staffInfo = parseFeedStaffEmbed(p.staff);
             const guestInfo = parseFeedGuestEmbed(p.guest);
-            const isGuestPost = !p.staff_id;
+            const isGuestPost = !!p.guest_id && !p.staff_id;
             const authorName = isGuestPost
               ? guestDisplayName(guestInfo?.full_name, 'Misafir')
               : displayStaffNameForViewer(
@@ -2035,6 +2032,7 @@ export default function StaffHomeScreen() {
               ) : null;
 
             const isOwnStaffPost = !!(staff?.id && p.staff_id === staff.id);
+            // Misafir paylaşımları: tüm personel görüntülenme sayısı + Görenler listesini açabilir.
             const canOpenViewersList = !!(staff?.id && (isOwnStaffPost || isGuestPost));
             if (canOpenViewersList && viewCount > 0 && shouldRunOptionalSupabaseWork()) {
               prefetchFeedPostViewers(p.id);
@@ -2072,7 +2070,7 @@ export default function StaffHomeScreen() {
                   likeCount={likeCount}
                   commentCount={commentCount}
                   viewCount={viewCount}
-                  showViewStats
+                  showViewStats={canOpenViewersList}
                   viewersListEnabled={canOpenViewersList}
                   commentPreview={commentPreview}
                   deletingPost={deletingPostId === p.id}
@@ -2288,11 +2286,16 @@ export default function StaffHomeScreen() {
                         </AvatarWithBadge>
                         <View style={styles.viewerInfo}>
                           {isGuest ? (
-                            <Text style={styles.viewerName}>{name}</Text>
+                            <>
+                              <Text style={styles.viewerName}>{name}</Text>
+                              <Text style={styles.viewerTime}>Misafir · {formatDateTime(v.viewed_at)}</Text>
+                            </>
                           ) : (
-                            <StaffNameWithBadge name={name} badge={badge} textStyle={styles.viewerName} />
+                            <>
+                              <StaffNameWithBadge name={name} badge={badge} textStyle={styles.viewerName} />
+                              <Text style={styles.viewerTime}>{formatDateTime(v.viewed_at)}</Text>
+                            </>
                           )}
-                          <Text style={styles.viewerTime}>{formatDateTime(v.viewed_at)}</Text>
                         </View>
                         {canOpenProfile ? (
                           <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />

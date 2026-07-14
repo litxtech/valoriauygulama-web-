@@ -12,6 +12,8 @@ export type KbsGatewayTestResult = {
   httpStatus?: number;
   /** Machine code: AUTH | GATEWAY_TOKEN | CONFIG | TIMEOUT | UPSTREAM | KBS | OK */
   code?: string;
+  /** Railway kbs-core çıkış IPv4 (Jandarma panel). */
+  egressIp?: string | null;
 };
 
 function hostOf(url: string): string {
@@ -22,11 +24,18 @@ function hostOf(url: string): string {
   }
 }
 
-function enrichIpHint(message: string): string {
-  if (!/yetkisiz|unauthorized|ip|forbidden|jandarma/i.test(message)) return message;
+function enrichIpHint(message: string, egressIp?: string | null): string {
+  // Sabit IP zorunlu değil — bu metin yalnızca Jandarma’nın döndürdüğü Yetkisiz IP için.
+  if (!/yetkisiz\s*ip|yetkihatasi/i.test(message)) return message;
+  if (egressIp && message.includes(egressIp)) return message;
+  const ipLine = egressIp
+    ? ` Railway çıkış IP (bilgi): ${egressIp}.`
+    : " Railway çıkış IP (bilgi): /gateway/egress-ip";
   return (
-    `${message} ` +
-    "Jandarma isteği Railway kbs-core çıkış IP’sinden gider; panelde o IP kayıtlı olmalı."
+    `${message}` +
+    ipLine +
+    " Sabit IP şart değil. Panelde eski bir IP kayıtlıysa ya silin ya da Railway çıkış IP’siyle değiştirin;" +
+    " IP alanı boşken yine Yetkisiz IP geliyorsa tesis web-servis yetkisi / şifre / KullanıcıTC’yi kontrol edin."
   );
 }
 
@@ -200,7 +209,17 @@ export async function testKbsConnectionViaGateway(hotelId: string): Promise<KbsG
     }
 
     const err = parsed.error as { code?: string; message?: string } | undefined;
-    const data = parsed.data as { ok?: boolean; message?: string } | undefined;
+    const data = parsed.data as {
+      ok?: boolean;
+      message?: string;
+      egressIp?: string | null;
+    } | undefined;
+    const egressIp =
+      (typeof data?.egressIp === "string" && data.egressIp) ||
+      (typeof (parsed as { egressIp?: string }).egressIp === "string"
+        ? (parsed as { egressIp?: string }).egressIp
+        : null) ||
+      null;
     const bodyMessage =
       (typeof err?.message === "string" && err.message) ||
       (typeof data?.message === "string" && data.message) ||
@@ -208,24 +227,38 @@ export async function testKbsConnectionViaGateway(hotelId: string): Promise<KbsG
       "";
     const bodyCode = typeof err?.code === "string" ? err.code : undefined;
 
-    // Gateway envelope: { ok: true, data: { ok, message } }
+    // Gateway envelope: { ok: true, data: { ok, message, egressIp } }
     if (parsed.ok === true) {
       const innerOk = data?.ok !== false;
       const msg =
         (typeof data?.message === "string" && data.message) ||
         (innerOk ? "KBS bağlantısı başarılı." : "KBS bağlantı testi başarısız.");
       if (!innerOk) {
-        logStep("warn", { event: "kbs_rejected", host, httpStatus: res.status, msg: msg.slice(0, 200) });
+        logStep("warn", {
+          event: "kbs_rejected",
+          host,
+          httpStatus: res.status,
+          egressIp,
+          msg: msg.slice(0, 200),
+        });
         return {
           ok: false,
-          message: enrichIpHint(msg),
+          message: enrichIpHint(msg, egressIp),
           code: "KBS",
           httpStatus: res.status,
           via: "kbs_core",
+          egressIp,
         };
       }
-      logStep("info", { event: "ok", host, httpStatus: res.status });
-      return { ok: true, message: msg, via: "kbs_core", httpStatus: res.status, code: "OK" };
+      logStep("info", { event: "ok", host, httpStatus: res.status, egressIp });
+      return {
+        ok: true,
+        message: msg,
+        via: "kbs_core",
+        httpStatus: res.status,
+        code: "OK",
+        egressIp,
+      };
     }
 
     const mapped = mapFailure({
@@ -245,10 +278,11 @@ export async function testKbsConnectionViaGateway(hotelId: string): Promise<KbsG
 
     return {
       ok: false,
-      message: mapped.message,
+      message: enrichIpHint(mapped.message, egressIp),
       code: mapped.code,
       httpStatus: res.status,
       via: "kbs_core",
+      egressIp,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -2,6 +2,7 @@ import { buildGalleryOcrRegions } from '@/lib/kbsOcrDocumentFocus';
 import { buildKbsOcrEnhancedVariantsCached } from '@/lib/kbsOcrSessionCache';
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
 import { extractMrzFromLinesBest } from '@/lib/scanner/mrzExtractLines';
+import { mrzNameFieldLooksTruncated } from '@/lib/scanner/mrzPersonNames';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { ocrLinesFromImage, ocrLinesFromImageExpoOnly } from '@/lib/scanner/ocrLinesFromImage';
 
@@ -81,16 +82,35 @@ function pushSet(
 }
 
 function hasEnoughFastLines(lineSets: MrzDocumentOcrLineSet[], mrzFocused: boolean): boolean {
-  if (hasConfidentMrz(lineSets)) return true;
+  if (hasConfidentMrz(lineSets) && !needsVisualNamePass(lineSets)) return true;
   const flat = flattenMrzDocumentOcrLineSets(lineSets);
   if (flat.length < 4) return false;
-  if (mrzFocused) return lineSets.some((s) => s.pass === 'mrz_band');
+  // MRZ odaklı: band geçişi şart.
+  if (mrzFocused) return lineSets.some((s) => s.pass === 'mrz_band' || s.pass === 'pro_mrz_band');
+  // Ön yüz TC kimlik: belge kırpımı yeterli olabilir — ama MRZ denenmeden çıkma (pasaport kırılır).
+  const hasBand = lineSets.some((s) => s.pass === 'mrz_band' || s.pass === 'pro_mrz_band');
+  if (!hasBand) return false;
   return lineSets.some((s) => s.pass === 'document_crop') && flat.length >= 6;
+}
+
+/** Kesik MRZ adı + görsel etiket/ad sinyali zayıf → bir full geçiş daha (yavaş Maximum’a gitmeden). */
+function needsVisualNamePass(lineSets: MrzDocumentOcrLineSet[]): boolean {
+  const flat = flattenMrzDocumentOcrLineSets(lineSets);
+  const best = extractMrzFromLinesBest(flat, { kbsRelaxed: true });
+  if (!best?.parsed.rawMrz) return false;
+  if (!mrzNameFieldLooksTruncated(best.parsed.rawMrz)) return false;
+  const joined = flat.join('\n');
+  const hasNameLabel =
+    /(?:surname|given\s*names?|family\s*name|اسم\s*العائلة|الاسم|primary\s*identifier|secondary\s*identifier)/i.test(
+      joined
+    );
+  const latinNameLines = flat.filter((l) => /^[A-Z][A-Z\s'.-]{3,72}$/.test(l.trim())).length;
+  return !(hasNameLabel && latinNameLines >= 2);
 }
 
 /**
  * Kimlik / pasaport görseli OCR.
- * fast: belge kırpımı + tam görüntü (2 geçiş, ~3× daha hızlı).
+ * Hızlı yol: MRZ şeridi + belge kırpımı paralel (pasaport kaçmasın).
  */
 export async function ocrLinesForKbsDocument(
   uri: string,
@@ -107,28 +127,23 @@ export async function ocrLinesForKbsDocument(
     const variants = await buildKbsOcrEnhancedVariantsCached(prepared);
     const ocrOpts = { imagePrepared: true as const };
 
-    if (mrzFocused) {
-      const [bandSet, docSet] = await Promise.all([
-        runPass(ocr, 'mrz_band', variants.mrzBand, true, ocrOpts.imagePrepared),
-        runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared),
-      ]);
-      pushSet(lineSets, engines, bandSet);
-      pushSet(lineSets, engines, docSet);
-    } else {
-      pushSet(
-        lineSets,
-        engines,
-        await runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared)
-      );
-    }
+    // Her zaman MRZ bandı + belge — ön yüz de pasaport olabilir.
+    const [bandSet, docSet] = await Promise.all([
+      runPass(ocr, 'mrz_band', variants.mrzBand, true, ocrOpts.imagePrepared),
+      runPass(ocr, 'document_crop', variants.documentCrop, true, ocrOpts.imagePrepared),
+    ]);
+    pushSet(lineSets, engines, bandSet);
+    pushSet(lineSets, engines, docSet);
 
-    if (mrzFocused && hasConfidentMrz(lineSets)) {
+    // Güvenilir MRZ + görsel ad yeterli → erken çık (hız).
+    if (hasConfidentMrz(lineSets) && !needsVisualNamePass(lineSets)) {
       return { lineSets, engine: pickEngine(...engines) };
     }
-    if (hasEnoughFastLines(lineSets, mrzFocused)) {
+    if (hasEnoughFastLines(lineSets, mrzFocused) && !needsVisualNamePass(lineSets)) {
       return { lineSets, engine: pickEngine(...engines) };
     }
 
+    // Kesik Körfez/uzun ad veya yetersiz satır: tek hızlı full — Maximum döngüsüne gerek kalmasın.
     const fullSet = await runPass(ocr, 'full', variants.full, true, ocrOpts.imagePrepared);
     pushSet(lineSets, engines, fullSet);
 
@@ -137,20 +152,19 @@ export async function ocrLinesForKbsDocument(
 
   const prepared = await prepareKbsOcrUri(uri, opts?.imagePrepared);
   const variants = await buildKbsOcrEnhancedVariantsCached(prepared);
-  const passes: { pass: MrzDocumentOcrPassId; imageUri: string }[] = mrzFocused
-    ? [
-        { pass: 'mrz_band', imageUri: variants.mrzBand },
-        { pass: 'document_crop', imageUri: variants.documentCrop },
-        { pass: 'full', imageUri: variants.full },
-      ]
-    : [
-        { pass: 'document_crop', imageUri: variants.documentCrop },
-        { pass: 'full', imageUri: variants.full },
-      ];
+  // Yavaş yol: MRZ her zaman dahil (ön yüz pasaportları için).
+  const passes: { pass: MrzDocumentOcrPassId; imageUri: string }[] = [
+    { pass: 'mrz_band', imageUri: variants.mrzBand },
+    { pass: 'document_crop', imageUri: variants.documentCrop },
+    { pass: 'full', imageUri: variants.full },
+  ];
 
   for (const { pass, imageUri } of passes) {
     const set = await runPass(ocr, pass, imageUri, false, true);
     pushSet(lineSets, engines, set);
+    if (mrzFocused && hasConfidentMrz(lineSets) && lineSets.some((s) => s.pass === 'document_crop')) {
+      break;
+    }
   }
 
   return { lineSets, engine: pickEngine(...engines) };

@@ -30,6 +30,7 @@ import {
 } from '@/lib/kbsSubmissionBoard';
 import { isKbsDocInOcrQueue } from '@/lib/kbsCaptureOcrQueue';
 import { isKbsOcrPending } from '@/lib/kbsCaptureParsedFields';
+import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 type Props = {
@@ -57,11 +58,19 @@ type FormState = {
 };
 
 function formFromParsed(p: ParsedDocument | null): FormState {
+  const docNo = (p?.documentNumber ?? '').trim();
+  const series =
+    resolveKbsDocumentSeries({
+      documentSeries: p?.documentSeries,
+      documentNumber: docNo,
+      documentType: p?.documentType,
+    }) ?? '';
+
   return {
     firstName: p?.firstName ?? '',
     lastName: p?.lastName ?? '',
     middleName: p?.middleName ?? '',
-    docNo: p?.documentNumber ?? '',
+    docNo,
     birthDate: p?.birthDate?.slice(0, 10) ?? '',
     nationality: p?.nationalityCode ?? '',
     issuingCountry: p?.issuingCountryCode ?? '',
@@ -69,7 +78,7 @@ function formFromParsed(p: ParsedDocument | null): FormState {
     motherName: p?.motherName ?? '',
     fatherName: p?.fatherName ?? '',
     expiryDate: p?.expiryDate?.slice(0, 10) ?? '',
-    documentSeries: p?.documentSeries ?? '',
+    documentSeries: series,
     placeOfBirth: p?.placeOfBirth ?? '',
     personalNumber: p?.personalNumber ?? '',
     maritalStatus:
