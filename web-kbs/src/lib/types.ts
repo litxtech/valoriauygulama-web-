@@ -13,6 +13,8 @@ export type ParsedDocument = {
   gender: 'M' | 'F' | 'X' | null;
   motherName?: string | null;
   fatherName?: string | null;
+  placeOfBirth?: string | null;
+  personalNumber?: string | null;
   maritalStatus?: 'married' | 'single' | null;
   rawMrz: string | null;
   confidence: number | null;

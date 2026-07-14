@@ -1,6 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { apiPost } from '@/lib/kbsApi';
-import { assignKbsRoom } from '@/lib/kbsStaffOpsEdge';
+import { assignKbsRoom, submitKbsCheckInEdge } from '@/lib/kbsStaffOpsEdge';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import type { MrzRecentDocRow } from '@/lib/loadMrzRecentDocuments';
 
@@ -88,7 +87,7 @@ export async function deleteMrzArchiveRecord(
   return { ok: true };
 }
 
-/** Oda ata → hazır işaretle → KBS check-in bildirimi. */
+/** Oda ata → Edge check-in (Railway JWT yok). */
 export async function notifyMrzArchiveToKbs(args: {
   guestDocumentId: string;
   roomId: string;
@@ -100,23 +99,7 @@ export async function notifyMrzArchiveToKbs(args: {
   });
   if (!assign.ok) return { ok: false, message: assign.error.message };
 
-  if (args.currentStatus === 'scanned' || args.currentStatus === 'draft' || args.currentStatus === 'incomplete') {
-    const mark = await apiPost<{ updated?: number }>('/documents/mark-ready', {
-      guestDocumentIds: [args.guestDocumentId],
-    });
-    if (!mark.ok) {
-      const { error } = await supabase
-        .schema('ops')
-        .from('guest_documents')
-        .update({ scan_status: 'ready_to_submit' })
-        .eq('id', args.guestDocumentId);
-      if (error) return { ok: false, message: mark.error.message };
-    }
-  }
-
-  const submit = await apiPost<{ transactionId: string; idempotent?: boolean }>('/submissions/check-in', {
-    guestDocumentId: args.guestDocumentId,
-  });
+  const submit = await submitKbsCheckInEdge({ guestDocumentId: args.guestDocumentId });
   if (!submit.ok) return { ok: false, message: submit.error.message };
 
   return { ok: true, transactionId: submit.data.transactionId };
