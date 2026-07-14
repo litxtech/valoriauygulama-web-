@@ -66,10 +66,10 @@ export default function StaffKbsTab() {
       ) : null}
       {canNotify ? (
         <Tile
-          title={t('kbsNavReady')}
-          subtitle={t('kbsTabReadySub')}
-          icon="paper-plane-outline"
-          onPress={() => router.push('/staff/kbs/ready')}
+          title="Bildirme durumu"
+          subtitle="Ulaştı · Devam · Kuyruk · Başarısız — işle / yeniden ilet."
+          icon="pulse-outline"
+          onPress={() => router.push('/staff/kbs/status-board' as never)}
         />
       ) : null}
       {canCheckout ? (
@@ -87,8 +87,20 @@ export default function StaffKbsTab() {
           onPress={() => router.push('/staff/kbs/lodgers' as never)}
         />
       )}
-      <Tile title={t('kbsNavRooms')} subtitle={t('kbsTabRoomsSub')} icon="bed-outline" onPress={() => router.push('/staff/kbs/rooms')} />
-      <Tile title={t('kbsNavFailed')} subtitle={t('kbsTabFailedSub')} icon="alert-circle-outline" onPress={() => router.push('/staff/kbs/failed')} />
+      <Tile
+        title="Bildirilen odalar"
+        subtitle="Odaya dokun → kimlikler. Oda değiştir KBS’ye iletilir."
+        icon="grid-outline"
+        onPress={() => router.push('/staff/kbs/rooms')}
+      />
+      {!canNotify ? (
+        <Tile
+          title={t('kbsNavFailed')}
+          subtitle={t('kbsTabFailedSub')}
+          icon="alert-circle-outline"
+          onPress={() => router.push('/staff/kbs/status-board' as never)}
+        />
+      ) : null}
     </View>
   );
 }

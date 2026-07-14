@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { theme } from '@/constants/theme';
 import { fetchKbsOpsRooms, type KbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
 import { kbsQueryOptions } from '@/lib/kbsReactQuery';
+import { fetchKbsRoomsSummary, type KbsRoomSummary } from '@/lib/kbsSubmissionBoard';
 import { useGuestScanSessionStore } from '@/stores/guestScanSessionStore';
 import { updateGuestScanSessionDb } from '@/lib/guestScan/guestScanSessionDb';
 import { submitGuestGroupToKbs } from '@/lib/guestScan/submitGroupToKbs';
@@ -47,6 +48,22 @@ export default function KbsGuestRoomScreen() {
     },
     ...kbsQueryOptions,
   });
+
+  const summaryQ = useQuery({
+    queryKey: ['kbs', 'rooms_summary'],
+    queryFn: async () => {
+      const res = await fetchKbsRoomsSummary();
+      if (!res.ok) return [] as KbsRoomSummary[];
+      return res.data;
+    },
+    ...kbsQueryOptions,
+  });
+
+  const summaryByRoomId = useMemo(() => {
+    const m = new Map<string, KbsRoomSummary>();
+    for (const r of summaryQ.data ?? []) m.set(r.roomId, r);
+    return m;
+  }, [summaryQ.data]);
 
   const items = session?.items ?? [];
 
@@ -190,15 +207,43 @@ export default function KbsGuestRoomScreen() {
             }
             renderItem={({ item: r }) => {
               const active = selectedRoomId === r.id;
+              const summary = summaryByRoomId.get(r.id);
+              const guests = summary?.guests ?? [];
+              const notifiedNames = guests
+                .filter((g) => g.notified)
+                .map((g) => g.guestName || g.documentNumber || '—')
+                .slice(0, 4);
               return (
                 <TouchableOpacity
-                  style={[styles.roomRow, active && styles.roomRowActive]}
+                  style={[
+                    styles.roomRow,
+                    active && styles.roomRowActive,
+                    guests.length > 0 && styles.roomRowOccupied,
+                  ]}
                   onPress={() => selectRoom(r)}
                   disabled={submitting}
                   activeOpacity={0.85}
                 >
-                  <Text style={[styles.roomRowNo, active && styles.roomRowNoActive]}>{r.room_number}</Text>
-                  {r.floor ? <Text style={styles.roomRowSub}>{r.floor}</Text> : null}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.roomRowNo, active && styles.roomRowNoActive]}>
+                      Oda {r.room_number}
+                    </Text>
+                    {notifiedNames.length > 0 ? (
+                      <Text style={styles.roomGuests} numberOfLines={2}>
+                        Bildirilmiş: {notifiedNames.join(', ')}
+                        {guests.filter((g) => g.notified).length > 4 ? '…' : ''}
+                      </Text>
+                    ) : guests.length > 0 ? (
+                      <Text style={styles.roomGuests}>{guests.length} kişi (henüz KBS yok)</Text>
+                    ) : (
+                      <Text style={styles.roomEmpty}>Boş</Text>
+                    )}
+                  </View>
+                  {active ? (
+                    <Text style={styles.roomPickMark}>Seçili</Text>
+                  ) : notifiedNames.length > 0 ? (
+                    <Text style={styles.roomKbsMark}>KBS</Text>
+                  ) : null}
                 </TouchableOpacity>
               );
             }}
@@ -270,7 +315,7 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     marginBottom: 10,
   },
-  roomList: { maxHeight: 220, marginBottom: 12 },
+  roomList: { maxHeight: 360, marginBottom: 12 },
   roomRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -287,9 +332,25 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     backgroundColor: theme.colors.primary + '12',
   },
-  roomRowNo: { fontSize: 17, fontWeight: '900', color: theme.colors.text, minWidth: 48 },
+  roomRowOccupied: {
+    borderColor: '#d6d3d1',
+  },
+  roomRowNo: { fontSize: 17, fontWeight: '900', color: theme.colors.text },
   roomRowNoActive: { color: theme.colors.primary },
   roomRowSub: { fontSize: 13, color: theme.colors.textSecondary },
+  roomGuests: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 4, lineHeight: 16 },
+  roomEmpty: { fontSize: 12, color: theme.colors.textMuted, marginTop: 4 },
+  roomPickMark: { fontSize: 11, fontWeight: '900', color: theme.colors.primary },
+  roomKbsMark: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#0f766e',
+    backgroundColor: '#ccfbf1',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   emptyList: { color: theme.colors.textMuted, textAlign: 'center', paddingVertical: 12 },
   progressBox: {
     backgroundColor: theme.colors.surface,

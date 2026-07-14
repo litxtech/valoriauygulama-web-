@@ -100,9 +100,10 @@ export default function KbsLayout() {
           ),
         }}
       />
+      <Stack.Screen name="status-board" options={{ title: 'Bildirme durumu' }} />
       <Stack.Screen name="ready" options={{ title: t('kbsNavReady') }} />
       <Stack.Screen name="submitted" options={{ title: t('kbsNavSubmitted') }} />
-      <Stack.Screen name="rooms" options={{ title: t('kbsNavRooms') }} />
+      <Stack.Screen name="rooms" options={{ title: 'Bildirilen odalar' }} />
       <Stack.Screen name="failed" options={{ title: t('kbsNavFailed') }} />
       <Stack.Screen name="batch" options={{ title: 'Parti / Beklet' }} />
       <Stack.Screen name="guests" options={{ headerShown: false }} />

@@ -93,10 +93,21 @@ export const staysRoutes: FastifyPluginAsync = async (app) => {
       : { data: [], error: null };
     if (dErr) throw Errors.internal('Failed to load documents');
 
+    const { data: guestsRows, error: gErr } = guestIds.length
+      ? await app.supabase
+          .schema('ops')
+          .from('guests')
+          .select('id, first_name, last_name, full_name')
+          .eq('hotel_id', auth.hotelId)
+          .in('id', guestIds)
+      : { data: [], error: null };
+    if (gErr) throw Errors.internal('Failed to load guests');
+
     const latestDocByGuest = new Map<string, any>();
     for (const d of docs ?? []) {
       if (!latestDocByGuest.has(d.guest_id)) latestDocByGuest.set(d.guest_id, d);
     }
+    const guestById = new Map((guestsRows ?? []).map((g) => [g.id as string, g]));
 
     const staysByRoom = new Map<string, any[]>();
     for (const s of stays ?? []) {
@@ -109,14 +120,27 @@ export const staysRoutes: FastifyPluginAsync = async (app) => {
       const roomStays = staysByRoom.get(room.id) ?? [];
       const guests = roomStays.map((s) => {
         const d = latestDocByGuest.get(s.guest_id);
+        const g = guestById.get(s.guest_id);
+        const guestName =
+          (g?.full_name as string | null)?.trim() ||
+          [g?.first_name, g?.last_name].filter(Boolean).join(' ').trim() ||
+          null;
+        const scanStatus = d?.scan_status ?? null;
+        const notified =
+          scanStatus === 'submitted' ||
+          scanStatus === 'checkout_pending' ||
+          s.stay_status === 'checked_in' ||
+          s.stay_status === 'checkout_pending';
         return {
           stayAssignmentId: s.id,
           guestId: s.guest_id,
           stayStatus: s.stay_status,
           guestDocumentId: d?.id ?? null,
-          scanStatus: d?.scan_status ?? null,
+          scanStatus,
           documentNumber: d?.document_number ?? null,
-          nationalityCode: d?.nationality_code ?? null
+          nationalityCode: d?.nationality_code ?? null,
+          guestName,
+          notified: !!notified,
         };
       });
       const counts = guests.reduce(
@@ -127,13 +151,16 @@ export const staysRoutes: FastifyPluginAsync = async (app) => {
         },
         {} as Record<string, number>
       );
+      const notifiedCount = guests.filter((g) => g.notified).length;
       return {
         roomId: room.id,
         roomNumber: room.room_number,
         floor: room.floor,
         capacity: room.capacity,
         guests,
-        counts
+        counts,
+        notifiedCount,
+        occupied: guests.length > 0,
       };
     });
 

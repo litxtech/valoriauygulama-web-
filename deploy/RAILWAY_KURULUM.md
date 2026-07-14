@@ -2,7 +2,8 @@
 
 Hetzner / pm2 gerekmez. Aynı Railway projesinde **2 servis** + Supabase secret’ları.
 
-Dış adres (mobil & Supabase): **`https://valoriahotel-production.up.railway.app`** (ops servisinin public URL’si).
+Dış adres (mobil & Supabase): **`https://kbs-ops-production.up.railway.app`** (ops servisinin public URL’si).  
+Eski `valoriahotel-production.up.railway.app` artık 404 verir — kullanmayın.
 
 ---
 
@@ -12,7 +13,7 @@ Dış adres (mobil & Supabase): **`https://valoriahotel-production.up.railway.ap
 
 | Servis adı (örnek) | Root Directory | Public domain |
 |--------------------|----------------|---------------|
-| **kbs-ops** | `railway-service` | `valoriahotel-production.up.railway.app` (veya yeni domain) |
+| **kbs-ops** | `railway-service` | `kbs-ops-production.up.railway.app` |
 | **kbs-core** | `kbs-gateway-service` | Railway’in verdiği URL (ör. `kbs-core-xxx.up.railway.app`) |
 
 Her serviste **Settings → Networking → Generate Domain** açık olsun (ops için zaten var).
@@ -74,7 +75,7 @@ GATEWAY_BASE_URL=https://${{kbs-core.RAILWAY_PUBLIC_DOMAIN}}
 Tarayıcıda:
 
 ```text
-https://valoriahotel-production.up.railway.app/health
+https://kbs-ops-production.up.railway.app/health
 ```
 
 Beklenen:
@@ -86,7 +87,7 @@ Beklenen:
 Core için:
 
 ```text
-https://<kbs-core-domain>/gateway/health
+https://kbs-core-production.up.railway.app/gateway/health
 ```
 
 → `{"ok":true,"service":"kbs-gateway-service",...}`
@@ -96,14 +97,15 @@ https://<kbs-core-domain>/gateway/health
 ## 6) Supabase (tek sefer, proje kökünden)
 
 ```bash
-supabase secrets set KBS_GATEWAY_URL=https://valoriahotel-production.up.railway.app
+supabase secrets set KBS_GATEWAY_URL=https://kbs-ops-production.up.railway.app
+supabase secrets set KBS_CORE_URL=https://kbs-core-production.up.railway.app
 supabase secrets set KBS_GATEWAY_TOKEN=<kbs-ops KBS_GATEWAY_TOKEN ile aynı>
 supabase functions deploy ops-proxy
 supabase functions deploy kbs-admin-credentials
 supabase functions deploy kbs-staff-ops
 ```
 
-`KBS_CREDENTIAL_SECRET` Edge’de zaten varsa dokunmayın.
+`KBS_CREDENTIAL_SECRET` / `GATEWAY_SHARED_SECRET` Edge’de zaten varsa dokunmayın (Railway ile aynı olmalı).
 
 ---
 
@@ -111,7 +113,7 @@ supabase functions deploy kbs-staff-ops
 
 ```env
 EXPO_PUBLIC_KBS_UI_ENABLED=true
-EXPO_PUBLIC_RAILWAY_API_URL=https://valoriahotel-production.up.railway.app
+EXPO_PUBLIC_RAILWAY_API_URL=https://kbs-ops-production.up.railway.app
 ```
 
 Metro: `npx expo start --dev-client --clear`
@@ -143,8 +145,8 @@ Jandarma reddederse: paneldeki IP/şifre/tesis kodu — Railway tarafı ayakta i
 ## Akış (kısa)
 
 ```text
-Mobil → Supabase Edge → https://valoriahotel-production.up.railway.app (ops)
-                              → https://kbs-core-....railway.app (SOAP)
+Mobil → Supabase Edge → https://kbs-ops-production.up.railway.app (ops / kuyruk)
+         veya doğrudan   → https://kbs-core-production.up.railway.app (SOAP HMAC)
                               → Jandarma
 ```
 

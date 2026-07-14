@@ -24,6 +24,12 @@ import {
 } from '@/lib/kbsCaptureNotify';
 import { validateCaptureNotifyForm } from '@/lib/kbsCaptureNotifyValidate';
 import { correctKbsCapturedDocument } from '@/lib/kbsCaptureOcrCorrection';
+import {
+  duplicateNotifyWarning,
+  fetchKbsActiveByDocument,
+} from '@/lib/kbsSubmissionBoard';
+import { isKbsDocInOcrQueue } from '@/lib/kbsCaptureOcrQueue';
+import { isKbsOcrPending } from '@/lib/kbsCaptureParsedFields';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 type Props = {
@@ -151,6 +157,7 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const runReadRef = useRef(runRead);
   runReadRef.current = runRead;
 
+  // Arka plan OCR kuyruğu / processing bitmeden otomatik Oku tetikleme (çift okuma yok).
   useEffect(() => {
     if (autoReadDoneRef.current === row.id) return;
     if (!row.front_image_url) {
@@ -160,6 +167,9 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
     const p = enrichKbsParsedFromSources(row.parsed_payload);
     if (kbsCaptureHasReadableData(p) && !isKbsOcrInProgress(p)) {
       autoReadDoneRef.current = row.id;
+      return;
+    }
+    if (isKbsDocInOcrQueue(row.id) || isKbsOcrInProgress(p)) {
       return;
     }
     autoReadDoneRef.current = row.id;
@@ -236,27 +246,46 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
       return;
     }
 
-    setNotifying(true);
-    const saved = await saveFields();
-    if (!saved) {
+    const runNotify = async () => {
+      setNotifying(true);
+      const saved = await saveFields();
+      if (!saved) {
+        setNotifying(false);
+        return;
+      }
+      const res = await notifyKbsCaptureToKbs({
+        guestDocumentId: row.id,
+        roomId: roomId!,
+        currentStatus: row.scan_status,
+      });
       setNotifying(false);
-      return;
-    }
-    const res = await notifyKbsCaptureToKbs({
-      guestDocumentId: row.id,
-      roomId: roomId!,
-      currentStatus: row.scan_status,
-    });
+      if (!res.ok) {
+        Alert.alert('Bildir', res.message);
+        return;
+      }
+      Alert.alert(
+        'Bildirildi',
+        res.transactionId ? `İşlem: ${String(res.transactionId).slice(0, 8)}…` : 'KBS bildirimi alındı.'
+      );
+      onUpdated();
+    };
+
+    setNotifying(true);
+    const active = await fetchKbsActiveByDocument(row.id);
     setNotifying(false);
-    if (!res.ok) {
-      Alert.alert('Bildir', res.message);
+    if (active.ok && active.data.alreadyNotified) {
+      Alert.alert('Zaten bildirilmiş', duplicateNotifyWarning(active.data), [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Yine de bildir',
+          style: 'destructive',
+          onPress: () => void runNotify(),
+        },
+      ]);
       return;
     }
-    Alert.alert(
-      'Bildirildi',
-      res.transactionId ? `İşlem: ${String(res.transactionId).slice(0, 8)}…` : 'KBS bildirimi alındı.'
-    );
-    onUpdated();
+
+    await runNotify();
   };
 
   const busy = saving || notifying || reading;
