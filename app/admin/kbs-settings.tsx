@@ -171,10 +171,13 @@ export default function AdminKbsSettingsScreen() {
     ) {
       hint += t('kbsApiHintBadGatewayUrl');
     }
-    if (/yetkisiz\s*ip/i.test(message)) {
+    if (/yetkisiz\s*ip|yetkihatasi/i.test(message)) {
       hint +=
-        '\n\nSabit IP zorunlu değil. Bu hata Jandarma’dan geliyor: panelde kayıtlı eski bir IP varsa silin veya Railway çıkış IP’siyle değiştirin.' +
-        (egressIp ? `\nRailway çıkış IP (bilgi): ${egressIp}` : '');
+        '\n\nBu hata Jandarma’dan: çağrı Railway kbs-core IP’sinden gidiyor, panelde yetkisiz görünüyor.' +
+        (egressIp
+          ? `\nKaydedilecek IP: ${egressIp}`
+          : '\nIP görünmüyor → Railway kbs-core’u Redeploy edin, sonra /gateway/egress-ip açın.') +
+        '\nPanelde IP listesini boşaltın veya bu IP’yi ekleyin. Sabit IP şart değil.';
     }
 
     const statusLine = httpStatus != null && Number.isFinite(httpStatus) ? `\n[HTTP ${httpStatus} · ${code || 'ERR'}]` : code ? `\n[${code}]` : '';

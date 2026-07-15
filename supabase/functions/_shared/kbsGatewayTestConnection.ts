@@ -29,14 +29,39 @@ function enrichIpHint(message: string, egressIp?: string | null): string {
   if (!/yetkisiz\s*ip|yetkihatasi/i.test(message)) return message;
   if (egressIp && message.includes(egressIp)) return message;
   const ipLine = egressIp
-    ? ` Railway çıkış IP (bilgi): ${egressIp}.`
-    : " Railway çıkış IP (bilgi): /gateway/egress-ip";
+    ? ` ★ JANDARMA’YA KAYDEDİLECEK IP: ${egressIp} — panelde yetkili IP ekleyin veya IP listesini tamamen SİLİN/BOŞALTIN.`
+    : " Çıkış IP henüz okunamadı. Açın: https://kbs-ops-production.up.railway.app/egress-ip";
   return (
     `${message}` +
+    " " +
     ipLine +
-    " Sabit IP şart değil. Panelde eski bir IP kayıtlıysa ya silin ya da Railway çıkış IP’siyle değiştirin;" +
-    " IP alanı boşken yine Yetkisiz IP geliyorsa tesis web-servis yetkisi / şifre / KullanıcıTC’yi kontrol edin."
+    " Eski VPS IP kayıtlıysa Yetkisiz IP verir. Sabit IP şart değil."
   );
+}
+
+/** kbs-ops ile kbs-core aynı Railway NAT → ops /egress-ip yedek. */
+async function detectEgressViaOps(): Promise<string | null> {
+  const raw =
+    Deno.env.get("KBS_GATEWAY_URL") ??
+    Deno.env.get("KBS_OPS_URL") ??
+    "https://kbs-ops-production.up.railway.app";
+  const base = normalizeGatewayBase(raw);
+  if (!base) return null;
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const res = await fetch(`${base}/egress-ip`, { signal: controller.signal });
+      if (!res.ok) return null;
+      const j = (await res.json()) as { egressIp?: string | null };
+      const ip = typeof j.egressIp === "string" ? j.egressIp.trim() : "";
+      return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) ? ip : null;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return null;
+  }
 }
 
 function logStep(level: "info" | "warn" | "error", payload: Record<string, unknown>) {
@@ -214,12 +239,15 @@ export async function testKbsConnectionViaGateway(hotelId: string): Promise<KbsG
       message?: string;
       egressIp?: string | null;
     } | undefined;
-    const egressIp =
+    let egressIp =
       (typeof data?.egressIp === "string" && data.egressIp) ||
       (typeof (parsed as { egressIp?: string }).egressIp === "string"
         ? (parsed as { egressIp?: string }).egressIp
         : null) ||
       null;
+    if (!egressIp) {
+      egressIp = await detectEgressViaOps();
+    }
     const bodyMessage =
       (typeof err?.message === "string" && err.message) ||
       (typeof data?.message === "string" && data.message) ||
