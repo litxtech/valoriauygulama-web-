@@ -331,9 +331,28 @@ function RootLayoutInner() {
 
   // Dil: Önce kaydedilmiş tercih, yoksa cihaz dili; böylece uygulama tam seçilen dilde açılır
   // Arapça için RTL: dil değişince yönü güncelle (uygulama yeniden başlatıldığında tam uygulanır)
+  // /menu: public menü kendi dilini yönetir — AsyncStorage ile üzerine yazma
   useEffect(() => {
     const supportedCodes = new Set(LANGUAGES.map((l) => l.code));
     AsyncStorage.getItem(LANG_STORAGE_KEY).then(async (saved) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const path = window.location.pathname || '';
+        if (path === '/menu' || path.startsWith('/menu/')) {
+          try {
+            const menuStored =
+              typeof sessionStorage !== 'undefined'
+                ? sessionStorage.getItem('valoria_public_menu_lang')
+                : null;
+            if (menuStored === 'tr' || menuStored === 'en' || menuStored === 'ar') {
+              await ensureI18nLanguage(menuStored);
+              if (i18n.language !== menuStored) await changeAppLanguage(menuStored);
+            }
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+      }
       const lang =
         saved && supportedCodes.has(saved as (typeof LANGUAGES)[number]['code'])
           ? (saved as LangCode)

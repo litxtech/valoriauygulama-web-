@@ -84,12 +84,17 @@ export function PublicKitchenMenuPremiumHome({
     delivery: t('restaurantOrderDelivery', { defaultValue: 'Paket Servis' }),
   };
 
+  const heroSubtitle =
+    menuLang === 'tr'
+      ? (menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub'))
+      : t('publicKitchenMenuHeroSub');
+
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
       <RestaurantDashboardHeader
         tokens={tokens}
         orgName={org.name}
-        description={menuTheme.heroSubtitle ?? undefined}
+        description={heroSubtitle}
         cartCount={cartItemCount(cartLines)}
         onCartPress={onCartPress}
         onOrdersPress={onOrdersPress}

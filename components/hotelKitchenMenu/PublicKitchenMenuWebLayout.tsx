@@ -320,7 +320,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           onOrdersPress={() => setOrdersOpen(true)}
           onItemPress={setDetailItem}
           onAddToCart={onAddToCart}
-          langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} />}
+          langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} tone="light" />}
           orderMode={orderMode}
           onOrderModeChange={setOrderMode}
           showExplore={menuTab === 'explore'}

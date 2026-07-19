@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { CachedImage } from '@/components/CachedImage';
 import type { KitchenMenuPromoVideo } from '@/lib/kitchenMenuPromoVideo';
 import { resolvePromoVideoPoster } from '@/lib/kitchenMenuPromoVideo';
@@ -13,27 +14,50 @@ type Props = {
   onPromoPress?: (index: number) => void;
 };
 
-const FALLBACK_PROMOS = [
-  { title: 'Günün Özel Menüsü', subtitle: 'Şefin seçimi', icon: 'sparkles' as const, grad: ['#1e3a5f', '#0f172a'] },
-  { title: 'Kahvaltı', subtitle: 'Taze & zengin', icon: 'sunny' as const, grad: ['#78350f', '#451a03'] },
-  { title: 'Tatlı Zamanı', subtitle: 'Özel lezzetler', icon: 'ice-cream' as const, grad: ['#831843', '#500724'] },
-];
-
 export function RestaurantPromoSlider({ tokens, promos, onPromoPress }: Props) {
+  const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const cardW = Math.min(width * 0.82, 360);
   const scrollRef = useRef<ScrollView>(null);
   const [active, setActive] = useState(0);
 
+  const fallbackPromos = [
+    {
+      title: t('restaurantPromoSpecialTitle', { defaultValue: 'Günün Özel Menüsü' }),
+      subtitle: t('restaurantPromoSpecialSub', { defaultValue: 'Şefin seçimi' }),
+      icon: 'sparkles' as const,
+      grad: ['#1e3a5f', '#0f172a'],
+    },
+    {
+      title: t('restaurantPromoBreakfastTitle', { defaultValue: 'Kahvaltı' }),
+      subtitle: t('restaurantPromoBreakfastSub', { defaultValue: 'Taze & zengin' }),
+      icon: 'sunny' as const,
+      grad: ['#78350f', '#451a03'],
+    },
+    {
+      title: t('restaurantPromoDessertTitle', { defaultValue: 'Tatlı Zamanı' }),
+      subtitle: t('restaurantPromoDessertSub', { defaultValue: 'Özel lezzetler' }),
+      icon: 'ice-cream' as const,
+      grad: ['#831843', '#500724'],
+    },
+  ];
+
   const slides =
     promos.length > 0
       ? promos.map((p, i) => ({
           key: p.id ?? `promo-${i}`,
-          title: p.title?.trim() || 'Kampanya',
+          title: p.title?.trim() || t('restaurantPromoCampaign', { defaultValue: 'Kampanya' }),
           subtitle: '',
           poster: resolvePromoVideoPoster(p),
         }))
-      : FALLBACK_PROMOS.map((p, i) => ({ key: `fb-${i}`, title: p.title, subtitle: p.subtitle, poster: null as string | null, icon: p.icon, grad: p.grad }));
+      : fallbackPromos.map((p, i) => ({
+          key: `fb-${i}`,
+          title: p.title,
+          subtitle: p.subtitle,
+          poster: null as string | null,
+          icon: p.icon,
+          grad: p.grad,
+        }));
 
   return (
     <View style={styles.wrap}>

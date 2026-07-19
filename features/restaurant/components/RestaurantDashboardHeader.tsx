@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 import type { RestaurantTokens } from '@/features/restaurant/tokens/restaurantTokens';
 
 type Props = {
@@ -32,13 +33,14 @@ export function RestaurantDashboardHeader({
   onThemeToggle,
   safeTop,
 }: Props) {
+  const { t } = useTranslation();
   return (
     <LinearGradient colors={[...tokens.gradientHero]} style={[styles.hero, { paddingTop: safeTop + 12 }]}>
       <View style={styles.topRow}>
         <View style={[styles.logo, { backgroundColor: tokens.accentSoft, borderColor: tokens.border }]}>
           <Ionicons name="restaurant" size={22} color={tokens.accent} />
         </View>
-        <View style={styles.actions}>
+        <View style={styles.actions} {...(Platform.OS === 'web' ? ({ dir: 'ltr' } as object) : null)}>
           {langToggle}
           {onThemeToggle ? (
             <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border }]} onPress={onThemeToggle}>
@@ -67,11 +69,17 @@ export function RestaurantDashboardHeader({
         </View>
         <View style={[styles.pill, { backgroundColor: isOpen ? `${tokens.success}22` : `${tokens.danger}22`, borderColor: tokens.border }]}>
           <View style={[styles.dot, { backgroundColor: isOpen ? tokens.success : tokens.danger }]} />
-          <Text style={[styles.pillText, { color: tokens.text }]}>{isOpen ? 'Açık' : 'Kapalı'}</Text>
+          <Text style={[styles.pillText, { color: tokens.text }]}>
+            {isOpen
+              ? t('restaurantStatusOpen', { defaultValue: 'Açık' })
+              : t('restaurantStatusClosed', { defaultValue: 'Kapalı' })}
+          </Text>
         </View>
         <View style={[styles.pill, { backgroundColor: tokens.bgGlass, borderColor: tokens.border }]}>
           <Ionicons name="time-outline" size={12} color={tokens.textMuted} />
-          <Text style={[styles.pillText, { color: tokens.textSecondary }]}>~{prepMinutes} dk</Text>
+          <Text style={[styles.pillText, { color: tokens.textSecondary }]}>
+            {t('restaurantPrepMinutes', { minutes: prepMinutes, defaultValue: `~${prepMinutes} dk` })}
+          </Text>
         </View>
       </View>
       {description ? (

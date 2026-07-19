@@ -176,7 +176,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
 
   const handleMenuLangChange = useCallback((lang: PublicMenuLang) => {
     setMenuLang(lang);
-    void applyPublicMenuLang(lang);
+    void applyPublicMenuLang(lang).catch(() => {});
   }, []);
 
   const handleAddToCart = useCallback((item: HotelKitchenMenuItemWithImages) => {
