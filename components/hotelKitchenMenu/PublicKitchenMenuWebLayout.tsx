@@ -62,6 +62,8 @@ type Props = {
   productChips: ProductChip[];
   tagFilter: string | null;
   setTagFilter: (v: string | null) => void;
+  dietTagFilter: string | null;
+  setDietTagFilter: (v: string | null) => void;
   nameTagChips: TagChip[];
   search: string;
   setSearch: (v: string) => void;
@@ -97,6 +99,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
     productChips,
     tagFilter,
     setTagFilter,
+    dietTagFilter,
+    setDietTagFilter,
     nameTagChips,
     search,
     setSearch,
@@ -311,6 +315,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           categoryChips={categoryChips}
           categoryFilter={categoryFilter}
           onPickCategory={pickCategory}
+          dietTagFilter={dietTagFilter}
+          onPickDietTag={setDietTagFilter}
           search={search}
           onSearchChange={setSearch}
           menuLang={menuLang}
@@ -463,6 +469,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         onAddToCart={detailItem ? () => onAddToCart(detailItem) : undefined}
         cartQuantity={detailItem ? cartQuantityFor(cartLines, detailItem.id) : 0}
         displayLang={menuLang}
+        orgSlug={orgSlug}
       />
 
       <PublicKitchenMenuCartBar

@@ -100,6 +100,7 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [productFilter, setProductFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [dietTagFilter, setDietTagFilter] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [updateToast, setUpdateToast] = useState(false);
@@ -323,12 +324,13 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         categoryFilter,
         productFilter,
         tagFilter,
+        dietTagFilter,
         search,
       }),
-    [items, section, categoryFilter, productFilter, tagFilter, search]
+    [items, section, categoryFilter, productFilter, tagFilter, dietTagFilter, search]
   );
 
-  const hasActiveFilters = !!(categoryFilter || productFilter || tagFilter || search.trim());
+  const hasActiveFilters = !!(categoryFilter || productFilter || tagFilter || dietTagFilter || search.trim());
 
   const menuTheme = useMemo(
     () =>
@@ -408,6 +410,8 @@ export function PublicKitchenMenuScreen({ orgSlug }: Props) {
         productChips={productChips}
         tagFilter={tagFilter}
         setTagFilter={setTagFilter}
+        dietTagFilter={dietTagFilter}
+        setDietTagFilter={setDietTagFilter}
         nameTagChips={nameTagChips}
         search={search}
         setSearch={setSearch}

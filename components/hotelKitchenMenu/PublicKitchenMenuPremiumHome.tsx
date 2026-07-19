@@ -9,11 +9,13 @@ import type { PublicMenuCartLine } from '@/lib/publicKitchenMenuCart';
 import { cartItemCount } from '@/lib/publicKitchenMenuCart';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import { localizedCategoryLabel } from '@/lib/kitchenMenuI18n';
+import { buildDietTagChips } from '@/lib/hotelKitchenMenuFilters';
 import { useRestaurantAppearance } from '@/features/restaurant/hooks/useRestaurantAppearance';
 import { RestaurantDashboardHeader } from '@/features/restaurant/components/RestaurantDashboardHeader';
 import { RestaurantSearchBar } from '@/features/restaurant/components/RestaurantSearchBar';
 import { RestaurantPromoSlider } from '@/features/restaurant/components/RestaurantPromoSlider';
 import { RestaurantCategoryRail } from '@/features/restaurant/components/RestaurantCategoryRail';
+import { RestaurantDietTagRail } from '@/features/restaurant/components/RestaurantDietTagRail';
 import { RestaurantOrderModeChips, type OrderMode } from '@/features/restaurant/components/RestaurantOrderModeChips';
 import { RestaurantExploreSection } from '@/features/restaurant/components/RestaurantExploreSection';
 import { buildExploreSections } from '@/features/restaurant/utils/exploreSections';
@@ -26,6 +28,8 @@ type Props = {
   categoryChips: CategoryChip[];
   categoryFilter: string | null;
   onPickCategory: (title: string | null) => void;
+  dietTagFilter: string | null;
+  onPickDietTag: (tag: string | null) => void;
   search: string;
   onSearchChange: (v: string) => void;
   menuLang: PublicMenuLang;
@@ -47,6 +51,8 @@ export function PublicKitchenMenuPremiumHome({
   categoryChips,
   categoryFilter,
   onPickCategory,
+  dietTagFilter,
+  onPickDietTag,
   search,
   onSearchChange,
   menuLang,
@@ -74,6 +80,8 @@ export function PublicKitchenMenuPremiumHome({
       })),
     [categoryChips, items, menuLang]
   );
+
+  const dietChips = useMemo(() => buildDietTagChips(items), [items]);
 
   const exploreSections = useMemo(() => (showExplore ? buildExploreSections(items) : []), [items, showExplore]);
 
@@ -136,6 +144,15 @@ export function PublicKitchenMenuPremiumHome({
           />
         </View>
       ) : null}
+
+      <View style={styles.block}>
+        <RestaurantDietTagRail
+          tokens={tokens}
+          chips={dietChips}
+          selected={dietTagFilter}
+          onSelect={onPickDietTag}
+        />
+      </View>
 
       {showExplore && exploreSections.length > 0
         ? exploreSections.map((section) => (

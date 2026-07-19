@@ -31,6 +31,12 @@ import { buildKitchenMenuItemI18nFields } from '@/lib/kitchenMenuItemAutoTransla
 import { uploadHotelKitchenMenuImagesParallel } from '@/lib/hotelKitchenMenuUpload';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
+import {
+  KITCHEN_MENU_TAG_IDS,
+  kitchenMenuTagI18nKey,
+  normalizeKitchenMenuTags,
+  type KitchenMenuTagId,
+} from '@/lib/kitchenMenuTags';
 
 type PendingImage = { uri: string; uploadedUrl?: string };
 
@@ -51,6 +57,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
   const [price, setPrice] = useState('');
   const [servedInHotel, setServedInHotel] = useState(true);
   const [isAvailable, setIsAvailable] = useState(true);
+  const [tags, setTags] = useState<KitchenMenuTagId[]>([]);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [loading, setLoading] = useState(!!itemId);
   const [saving, setSaving] = useState(false);
@@ -68,11 +75,16 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         setPrice(String(row.price));
         setServedInHotel(row.served_in_hotel_restaurant);
         setIsAvailable(row.is_available);
+        setTags(normalizeKitchenMenuTags(row.tags));
         setImages(row.images.map((im) => ({ uri: im.image_url, uploadedUrl: im.image_url })));
       })
       .catch(() => Alert.alert(t('error'), t('hotelKitchenMenuLoadFailed')))
       .finally(() => setLoading(false));
   }, [itemId, t]);
+
+  const toggleTag = (tag: KitchenMenuTagId) => {
+    setTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]));
+  };
 
   const pickImages = useCallback(
     async (fromCamera: boolean) => {
@@ -172,6 +184,7 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
         descriptionAr: i18n.descriptionAr,
         categoryTitleEn: i18n.categoryTitleEn,
         categoryTitleAr: i18n.categoryTitleAr,
+        tags,
       });
 
       router.replace(backFallback as never);
@@ -274,6 +287,25 @@ export function HotelKitchenMenuEditor({ itemId, backFallback }: Props) {
           <Switch value={isAvailable} onValueChange={setIsAvailable} />
         </View>
 
+        <Text style={styles.label}>{t('kitchenMenuTagsLabel')}</Text>
+        <Text style={styles.hint}>{t('kitchenMenuTagsHint')}</Text>
+        <View style={styles.tagRow}>
+          {KITCHEN_MENU_TAG_IDS.map((tag) => {
+            const on = tags.includes(tag);
+            return (
+              <TouchableOpacity
+                key={tag}
+                style={[styles.tagChip, on && styles.tagChipOn]}
+                onPress={() => toggleTag(tag)}
+              >
+                <Text style={[styles.tagChipText, on && styles.tagChipTextOn]}>
+                  {t(kitchenMenuTagI18nKey(tag))}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <Text style={styles.label}>{t('hotelKitchenMenuPhotosLabel')}</Text>
         <View style={styles.photoActions}>
           <TouchableOpacity style={styles.photoBtn} onPress={() => pickImages(true)}>
@@ -343,6 +375,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   switchLabel: { fontSize: 15, color: theme.colors.text, flex: 1, paddingRight: 12 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  tagChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: '#fff',
+  },
+  tagChipOn: {
+    borderColor: theme.colors.primary,
+    backgroundColor: `${theme.colors.primary}18`,
+  },
+  tagChipText: { fontSize: 13, fontWeight: '700', color: theme.colors.textMuted },
+  tagChipTextOn: { color: theme.colors.primary },
   photoActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
   photoBtn: {
     flex: 1,

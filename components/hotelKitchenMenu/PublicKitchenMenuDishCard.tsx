@@ -160,6 +160,12 @@ export function PublicKitchenMenuDishCard({
           <View style={[styles.catPill, { backgroundColor: catColor }]} pointerEvents="none">
             <Text style={styles.catPillText} numberOfLines={1}>{displayCategory}</Text>
           </View>
+          {(item.review_count ?? 0) > 0 ? (
+            <View style={styles.ratingBadge} pointerEvents="none">
+              <Ionicons name="star" size={10} color="#E8A838" />
+              <Text style={styles.ratingBadgeText}>{(item.rating_avg ?? 0).toFixed(1)}</Text>
+            </View>
+          ) : null}
         </View>
 
         <Pressable
@@ -321,6 +327,19 @@ const styles = StyleSheet.create({
     maxWidth: '75%',
   },
   catPillText: { color: '#fff', fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  ratingBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(5, 8, 16, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  ratingBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   premiumBody: { padding: 10, gap: 4, flex: 1 },
   premiumName: { fontSize: 14, fontWeight: '800', lineHeight: 18, letterSpacing: -0.15 },
   premiumDesc: { fontSize: 11, lineHeight: 15, color: menuUi.webMuted },

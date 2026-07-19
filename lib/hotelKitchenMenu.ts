@@ -63,6 +63,9 @@ function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImage
     sort_order: Number(raw.sort_order ?? 0),
     cover_image_url: cover,
     image_count: Number(raw.image_count ?? 0),
+    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+    review_count: Number(raw.review_count ?? 0),
+    rating_avg: Number(raw.rating_avg ?? 0),
     created_at: raw.created_at as string | undefined,
     updated_at: raw.updated_at as string | undefined,
     images: cover
@@ -93,6 +96,9 @@ function mapDetailRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithIma
     sort_order: Number(raw.sort_order ?? 0),
     cover_image_url: cover,
     image_count: Number(raw.image_count ?? imgs.length),
+    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+    review_count: Number(raw.review_count ?? 0),
+    rating_avg: Number(raw.rating_avg ?? 0),
     created_at: raw.created_at as string | undefined,
     updated_at: raw.updated_at as string | undefined,
     images: imgs,
@@ -120,6 +126,9 @@ const LIST_SELECT = `
   sort_order,
   cover_image_url,
   image_count,
+  tags,
+  review_count,
+  rating_avg,
   created_at,
   updated_at,
   ${I18N_SELECT}
@@ -161,9 +170,17 @@ export async function fetchHotelKitchenMenuItems(params: {
 
   const { data, error } = await q;
   if (error) {
-    if (isSupabaseUnavailableError(error.message)) {
-      const hit = getHotelKitchenMenuCache(key);
-      if (hit) return hit;
+    if (
+      isSupabaseUnavailableError(error.message) ||
+      error.message.includes('tags') ||
+      error.message.includes('review_count') ||
+      error.message.includes('rating_avg')
+    ) {
+      if (isSupabaseUnavailableError(error.message)) {
+        const hit = getHotelKitchenMenuCache(key);
+        if (hit) return hit;
+      }
+      return fetchHotelKitchenMenuItemsLegacy(params);
     }
     return fetchHotelKitchenMenuItemsLegacy(params);
   }
@@ -282,6 +299,7 @@ export type UpsertHotelKitchenMenuInput = {
   descriptionAr?: string | null;
   categoryTitleEn?: string | null;
   categoryTitleAr?: string | null;
+  tags?: string[];
 };
 
 export async function upsertHotelKitchenMenuItem(input: UpsertHotelKitchenMenuInput): Promise<string> {
@@ -302,6 +320,7 @@ export async function upsertHotelKitchenMenuItem(input: UpsertHotelKitchenMenuIn
     p_description_ar: input.descriptionAr?.trim() || null,
     p_category_title_en: input.categoryTitleEn?.trim() || null,
     p_category_title_ar: input.categoryTitleAr?.trim() || null,
+    p_tags: Array.isArray(input.tags) ? input.tags : [],
   });
   if (error) {
     const msg = error.message ?? '';

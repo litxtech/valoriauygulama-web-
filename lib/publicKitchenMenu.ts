@@ -38,6 +38,9 @@ const LIST_SELECT = `
   sort_order,
   cover_image_url,
   image_count,
+  tags,
+  review_count,
+  rating_avg,
   created_at,
   updated_at,
   hotel_kitchen_menu_images (
@@ -89,6 +92,9 @@ function mapListRow(raw: Record<string, unknown>): HotelKitchenMenuItemWithImage
     sort_order: Number(raw.sort_order ?? 0),
     cover_image_url: cover,
     image_count: Number(raw.image_count ?? images.length ?? 0),
+    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+    review_count: Number(raw.review_count ?? 0),
+    rating_avg: Number(raw.rating_avg ?? 0),
     created_at: raw.created_at as string | undefined,
     updated_at: raw.updated_at as string | undefined,
     images,
@@ -249,17 +255,29 @@ export async function fetchPublicKitchenMenuItems(
     .order('created_at', { ascending: false });
 
   if (error) {
-    if (error.message.includes('cover_image_url')) {
+    if (error.message.includes('cover_image_url') || error.message.includes('tags') || error.message.includes('review_count') || error.message.includes('rating_avg')) {
       const legacy = await supabase
         .from('hotel_kitchen_menu_items')
         .select(
-          'id, organization_id, category_title, name, description, price, served_in_hotel_restaurant, is_available, sort_order, created_at, updated_at'
+          'id, organization_id, category_title, name, description, price, served_in_hotel_restaurant, is_available, sort_order, cover_image_url, image_count, created_at, updated_at, name_en, name_ar, description_en, description_ar, category_title_en, category_title_ar, hotel_kitchen_menu_images ( id, image_url, sort_order )'
         )
         .eq('organization_id', organizationId)
         .eq('is_available', true)
         .order('sort_order', { ascending: false })
         .order('created_at', { ascending: false });
-      if (legacy.error) throw new Error(legacy.error.message);
+      if (legacy.error) {
+        const bare = await supabase
+          .from('hotel_kitchen_menu_items')
+          .select(
+            'id, organization_id, category_title, name, description, price, served_in_hotel_restaurant, is_available, sort_order, created_at, updated_at'
+          )
+          .eq('organization_id', organizationId)
+          .eq('is_available', true)
+          .order('sort_order', { ascending: false })
+          .order('created_at', { ascending: false });
+        if (bare.error) throw new Error(bare.error.message);
+        return ((bare.data ?? []) as Record<string, unknown>[]).map((row) => mapListRow(row));
+      }
       return ((legacy.data ?? []) as Record<string, unknown>[]).map((row) => mapListRow(row));
     }
     throw new Error(error.message);

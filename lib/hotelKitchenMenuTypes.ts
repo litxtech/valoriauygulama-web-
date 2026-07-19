@@ -18,6 +18,9 @@ export type HotelKitchenMenuItemRow = {
   sort_order: number;
   cover_image_url?: string | null;
   image_count?: number;
+  tags?: string[];
+  review_count?: number;
+  rating_avg?: number;
   created_at?: string;
   updated_at?: string;
 };

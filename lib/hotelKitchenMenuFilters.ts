@@ -1,5 +1,10 @@
 import type { HotelKitchenMenuItemRow } from '@/lib/hotelKitchenMenuTypes';
 import { isBreakfastCategory } from '@/lib/hotelKitchenMenu';
+import {
+  KITCHEN_MENU_TAG_IDS,
+  isKitchenMenuTagId,
+  type KitchenMenuTagId,
+} from '@/lib/kitchenMenuTags';
 
 const STOPWORDS = new Set([
   've',
@@ -25,8 +30,14 @@ export type ProductChip = { name: string; count: number };
 
 export type NameTagChip = { tag: string; label: string; count: number };
 
+export type DietTagChip = { tag: KitchenMenuTagId; count: number };
+
 function norm(s: string): string {
   return s.trim().toLocaleLowerCase('tr');
+}
+
+function itemTags(item: HotelKitchenMenuItemRow): string[] {
+  return Array.isArray(item.tags) ? item.tags : [];
 }
 
 export function applySectionFilter<T extends HotelKitchenMenuItemRow>(
@@ -123,12 +134,26 @@ export function buildNameTagChips(
     .slice(0, 12);
 }
 
+/** Personel etiketli hızlı filtreler — yalnızca menüde en az 1 ürünü olanlar */
+export function buildDietTagChips(items: HotelKitchenMenuItemRow[]): DietTagChip[] {
+  const counts = new Map<KitchenMenuTagId, number>();
+  for (const id of KITCHEN_MENU_TAG_IDS) counts.set(id, 0);
+  for (const it of items) {
+    for (const raw of itemTags(it)) {
+      if (!isKitchenMenuTagId(raw)) continue;
+      counts.set(raw, (counts.get(raw) ?? 0) + 1);
+    }
+  }
+  return KITCHEN_MENU_TAG_IDS.map((tag) => ({ tag, count: counts.get(tag) ?? 0 })).filter((c) => c.count > 0);
+}
+
 export function filterMenuItems<T extends HotelKitchenMenuItemRow>(params: {
   items: T[];
   section: MenuSectionFilter;
   categoryFilter: string | null;
   productFilter: string | null;
   tagFilter: string | null;
+  dietTagFilter?: string | null;
   search: string;
 }): T[] {
   let list = applySectionFilter(params.items, params.section);
@@ -136,6 +161,11 @@ export function filterMenuItems<T extends HotelKitchenMenuItemRow>(params: {
   if (params.categoryFilter) {
     const cat = norm(params.categoryFilter);
     list = list.filter((i) => norm(i.category_title) === cat);
+  }
+
+  if (params.dietTagFilter && isKitchenMenuTagId(params.dietTagFilter)) {
+    const diet = params.dietTagFilter;
+    list = list.filter((i) => itemTags(i).includes(diet));
   }
 
   if (params.productFilter) {
@@ -159,6 +189,7 @@ export function filterMenuItems<T extends HotelKitchenMenuItemRow>(params: {
         i.category_title_ar ?? '',
         i.description_en ?? '',
         i.description_ar ?? '',
+        ...itemTags(i),
       ]
         .join(' ')
         .toLowerCase();

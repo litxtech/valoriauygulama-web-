@@ -54,6 +54,9 @@ verify_jwt = false
 [functions.public-complaint]
 verify_jwt = false
 
+[functions.public-kitchen-menu-reviews]
+verify_jwt = false
+
 [functions.print-contract]
 verify_jwt = false
 

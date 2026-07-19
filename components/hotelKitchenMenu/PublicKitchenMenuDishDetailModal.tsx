@@ -29,6 +29,7 @@ import {
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import { prefetchImageUrls } from '@/lib/prefetchImageUrls';
 import { HotelKitchenMenuImageLightbox } from '@/components/hotelKitchenMenu/HotelKitchenMenuImageLightbox';
+import { PublicKitchenMenuDishReviews } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishReviews';
 
 type Props = {
   visible: boolean;
@@ -37,6 +38,7 @@ type Props = {
   onAddToCart?: () => void;
   cartQuantity?: number;
   displayLang?: PublicMenuLang;
+  orgSlug?: string;
 };
 
 export function PublicKitchenMenuDishDetailModal({
@@ -46,6 +48,7 @@ export function PublicKitchenMenuDishDetailModal({
   onAddToCart,
   cartQuantity = 0,
   displayLang = 'tr',
+  orgSlug,
 }: Props) {
   const { t } = useTranslation();
   const { width, height } = useWindowDimensions();
@@ -220,6 +223,16 @@ export function PublicKitchenMenuDishDetailModal({
                 </View>
               ) : null}
 
+              {(item.review_count ?? 0) > 0 ? (
+                <View style={styles.metaRow}>
+                  <Ionicons name="star" size={16} color="#E8A838" />
+                  <Text style={styles.metaText}>
+                    {(item.rating_avg ?? 0).toFixed(1)} ·{' '}
+                    {t('kitchenMenuReviewCount', { count: item.review_count })}
+                  </Text>
+                </View>
+              ) : null}
+
               {onAddToCart ? (
                 <Pressable
                   style={[styles.addCartBtn, cartQuantity > 0 && styles.addCartBtnActive]}
@@ -236,6 +249,15 @@ export function PublicKitchenMenuDishDetailModal({
                       : t('publicKitchenMenuAddToCart')}
                   </Text>
                 </Pressable>
+              ) : null}
+
+              {orgSlug ? (
+                <PublicKitchenMenuDishReviews
+                  orgSlug={orgSlug}
+                  itemId={item.id}
+                  initialCount={item.review_count ?? 0}
+                  initialAvg={item.rating_avg ?? 0}
+                />
               ) : null}
             </ScrollView>
           </View>
