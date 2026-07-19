@@ -22,6 +22,7 @@ import { PublicKitchenMenuWelcomeHero } from '@/components/hotelKitchenMenu/Publ
 import { PublicKitchenMenuPremiumHome } from '@/components/hotelKitchenMenu/PublicKitchenMenuPremiumHome';
 import type { OrderMode } from '@/features/restaurant/components/RestaurantOrderModeChips';
 import { PublicKitchenMenuOrderHistorySheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuOrderHistorySheet';
+import { PublicKitchenMenuGuestRails } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestRails';
 import {
   menuUi,
   menuWebPageBg,
@@ -279,6 +280,14 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           <Text style={[styles.clearLink, { color: accent }]}>{t('hotelKitchenMenuClearFilters')}</Text>
         </TouchableOpacity>
       ) : null}
+
+      <PublicKitchenMenuGuestRails
+        organizationId={org.id}
+        menuLang={menuLang}
+        accentColor={accent}
+        navyColor={navy}
+        variant={width >= 1180 ? 'complaint' : 'sidebar'}
+      />
     </View>
   );
 
@@ -359,7 +368,17 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           </ScrollView>
         ) : null}
 
-        <View style={[styles.main, { maxWidth: maxW + (wide ? 280 : 0) }]}>
+        {!wide ? (
+          <PublicKitchenMenuGuestRails
+            organizationId={org.id}
+            menuLang={menuLang}
+            accentColor={accent}
+            navyColor={navy}
+            variant="compact"
+          />
+        ) : null}
+
+        <View style={[styles.main, { maxWidth: maxW + (wide ? 520 : 0) }]}>
           {wide ? filterSidebar : null}
 
           <View style={styles.menuCol}>
@@ -452,6 +471,18 @@ export function PublicKitchenMenuWebLayout(props: Props) {
               </>
             )}
           </View>
+
+          {wide && width >= 1180 ? (
+            <View style={[styles.rightRail, styles.sidebarWide]}>
+              <PublicKitchenMenuGuestRails
+                organizationId={org.id}
+                menuLang={menuLang}
+                accentColor={accent}
+                navyColor={navy}
+                variant="apps-only"
+              />
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.footer}>
@@ -631,6 +662,7 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   sidebar: { width: 220 },
+  rightRail: { width: 220 },
   sidebarWide: {
     position: 'sticky',
     top: 16,

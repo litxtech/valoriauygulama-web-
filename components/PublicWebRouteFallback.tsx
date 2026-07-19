@@ -72,6 +72,7 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
     expoPath.startsWith('/maliye/') ||
     expoPath === '/breakfast-pass' ||
     expoPath.startsWith('/breakfast-pass/') ||
+    expoPath.startsWith('/profil/') ||
     expoPath === '/guest' ||
     expoPath.startsWith('/guest/')
   ) {
@@ -94,6 +95,13 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
         }}
       />
     );
+  }
+
+  if (route.kind === 'profil') {
+    if (expoPath === `/profil/${route.staffId}` || expoPath.startsWith(`/profil/${route.staffId}/`)) {
+      return null;
+    }
+    return <Redirect href={{ pathname: '/profil/[id]', params: { id: route.staffId } }} />;
   }
 
   return null;

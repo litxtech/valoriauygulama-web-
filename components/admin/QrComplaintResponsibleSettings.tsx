@@ -122,8 +122,9 @@ export function QrComplaintResponsibleSettings() {
     <View style={styles.card}>
       <Text style={styles.title}>Sorumlu profili (QR sayfası)</Text>
       <Text style={styles.hint}>
-        Misafir formunda görünen kart: Valoria Hotel & Bavulsuite sorumlusu. Varsayılan admin profili
-        (Soner); buradan fotoğraf ve notları düzenleyebilirsiniz.
+        Misafir formunda ve internet menü kenarında görünen kart: Valoria Hotel & Bavulsuite
+        sorumlusu. Varsayılan admin profili (Soner); buradan fotoğraf ve notları düzenleyebilirsiniz.
+        Profil tıklanınca valoria.tr/profil/… web sayfası açılır.
       </Text>
 
       <View style={styles.previewRow}>

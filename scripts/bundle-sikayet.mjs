@@ -73,6 +73,10 @@ const html = `<!DOCTYPE html>
     .resp .title{margin:0;color:var(--gold-soft);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
     .resp .brands{margin:4px 0 0;color:var(--ink-soft);font-size:13px}
     .resp .note{margin:8px 0 0;color:var(--ink-muted);font-size:12px;line-height:1.45}
+    .resp{cursor:pointer;transition:border-color .15s,transform .12s}
+    .resp:hover{border-color:rgba(201,162,39,.55)}
+    .resp:active{transform:scale(.99)}
+    .resp .profile-link{margin:10px 0 0;color:var(--gold-soft);font-size:12px;font-weight:700}
     .card{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);backdrop-filter:blur(18px);overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.35)}
     .card-top{padding:18px 18px 14px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(201,162,39,.08),transparent)}
     .card-top h2{margin:0;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-soft)}
@@ -167,13 +171,14 @@ const html = `<!DOCTYPE html>
       <p class="lead" id="tLead"></p>
       <div class="no-login" id="tNoLogin"></div>
     </header>
-    <aside class="resp" id="respCard">
+    <aside class="resp" id="respCard" role="link" tabindex="0">
       <div class="ph" id="respPh">S</div>
       <div>
         <p class="title" id="respTitle"></p>
         <p class="name" id="respName">Soner</p>
         <p class="brands" id="respBrands">Valoria Hotel · Bavulsuite</p>
         <p class="note" id="respNote"></p>
+        <p class="profile-link" id="respProfileLink"></p>
       </div>
     </aside>
     <section class="card" id="card">
@@ -296,7 +301,8 @@ const html = `<!DOCTYPE html>
       uploading: "Medya yükleniyor…", uploaded: "Medya hazır", waitUpload: "Medya yüklenirken lütfen bekleyin…",
       foot: "Valoria Hotel · Bavulsuite\\nMesajlar yalnızca sorumlu yöneticiye iletilir.",
       respTitle: "Valoria Hotel & Bavulsuite Sorumlusu",
-      respNote: "Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir."
+      respNote: "Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir.",
+      respProfile: "Profilime bak · web"
     },
     en: {
       title: "Complaint Line", lead: "No login required. Name, phone, room and description are enough. You may add photos or video.",
@@ -320,7 +326,8 @@ const html = `<!DOCTYPE html>
       uploading: "Uploading media…", uploaded: "Media ready", waitUpload: "Please wait while media uploads…",
       foot: "Valoria Hotel · Bavulsuite\\nMessages go only to the responsible manager.",
       respTitle: "Valoria Hotel & Bavulsuite Manager",
-      respNote: "Complaints are reviewed promptly. Your message goes directly to the responsible manager."
+      respNote: "Complaints are reviewed promptly. Your message goes directly to the responsible manager.",
+      respProfile: "View profile · web"
     },
     ar: {
       title: "خط الشكاوى", lead: "لا حاجة لتسجيل الدخول. الاسم والهاتف ورقم الغرفة والوصف كافية. يمكن إضافة صور أو فيديو.",
@@ -344,7 +351,8 @@ const html = `<!DOCTYPE html>
       uploading: "جارٍ رفع الوسائط…", uploaded: "الوسائط جاهزة", waitUpload: "يرجى الانتظار حتى يكتمل الرفع…",
       foot: "Valoria Hotel · Bavulsuite\\nتُرسل الرسائل فقط إلى المدير المسؤول.",
       respTitle: "مسؤول Valoria Hotel و Bavulsuite",
-      respNote: "تُراجع الشكاوى فوراً. رسالتك تصل مباشرة إلى المدير المسؤول."
+      respNote: "تُراجع الشكاوى فوراً. رسالتك تصل مباشرة إلى المدير المسؤول.",
+      respProfile: "عرض الملف · ويب"
     }
   };
 
@@ -423,6 +431,8 @@ const html = `<!DOCTYPE html>
     qs("footNote").innerHTML=t.foot.replace("\\n","<br/>");
     qs("respTitle").textContent=t.respTitle;
     qs("respNote").textContent=t.respNote;
+    var pl=qs("respProfileLink");
+    if(pl) pl.textContent=t.respProfile||"";
     document.querySelectorAll("[data-i18n]").forEach(function(el){
       var k=el.getAttribute("data-i18n");
       if(t[k]) el.textContent=t[k];
@@ -665,6 +675,14 @@ const html = `<!DOCTYPE html>
     }
   });
 
+  var responsibleStaffId=null;
+
+  function openResponsibleProfile(){
+    if(!responsibleStaffId) return;
+    var origin=location.origin.replace(/\\/$/,"");
+    location.href=origin+"/profil/"+encodeURIComponent(responsibleStaffId);
+  }
+
   function applyResponsible(r){
     if(!r) return;
     qs("respName").textContent=r.name||"Soner";
@@ -672,6 +690,14 @@ const html = `<!DOCTYPE html>
     if(r.brands) qs("respBrands").textContent=r.brands;
     // note: keep localized default unless server note is preferred — show server note if present
     if(r.note && lang==="tr") qs("respNote").textContent=r.note;
+    responsibleStaffId=r.staffId||null;
+    var card=qs("respCard");
+    if(card){
+      card.style.cursor=responsibleStaffId?"pointer":"default";
+      card.setAttribute("aria-label",(r.name||"Soner")+" — "+(t.respProfile||""));
+    }
+    var pl=qs("respProfileLink");
+    if(pl) pl.style.display=responsibleStaffId?"":"none";
     var ph=qs("respPh");
     if(r.photoUrl && ph){
       var img=document.createElement("img");
@@ -692,7 +718,26 @@ const html = `<!DOCTYPE html>
     }catch(_){}
   }
 
+  function applyCategoryFromQuery(){
+    try{
+      var cat=new URLSearchParams(location.search).get("category");
+      if(!cat) return;
+      var btn=qs("categories").querySelector('button[data-v="'+cat+'"]');
+      if(btn){
+        qs("categories").querySelectorAll("button").forEach(function(b){ b.classList.remove("on"); });
+        btn.classList.add("on");
+        category=cat;
+      }
+    }catch(_){}
+  }
+
+  qs("respCard").addEventListener("click", openResponsibleProfile);
+  qs("respCard").addEventListener("keydown", function(e){
+    if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openResponsibleProfile(); }
+  });
+
   applyLang(detectLang());
+  applyCategoryFromQuery();
   loadMeta();
 })();
   </script>

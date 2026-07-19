@@ -313,7 +313,8 @@ function RootLayoutInner() {
         p.includes('/sozlesme') ||
         p.includes('/sözleşme') ||
         p.includes('/breakfast-pass') ||
-        p.includes('/sikayet');
+        p.includes('/sikayet') ||
+        p.includes('/profil');
       const bg = contractLike ? GUEST_CONTRACT_WEB_BG : WEB_BG;
       if (typeof document !== 'undefined') {
         document.body.style.backgroundColor = bg;

@@ -11,6 +11,7 @@ import {
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
   PUBLIC_COMPLAINT_PATH,
+  PUBLIC_STAFF_PROFILE_PATH,
   normalizePublicContractBaseUrl,
 } from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
@@ -222,15 +223,28 @@ export function buildPublicMaliyeUrl(
 
 /** QR şikayet hattı — valoria.tr/sikayet (?org=… isteğe bağlı) */
 export function buildPublicComplaintUrl(
-  opts?: { organizationId?: string | null },
+  opts?: { organizationId?: string | null; category?: string | null },
   baseOverride?: string | null
 ): string {
   const origin = getShareablePublicOrigin(baseOverride);
   const params = new URLSearchParams();
   const org = opts?.organizationId?.trim();
   if (org) params.set('org', org);
+  const cat = opts?.category?.trim();
+  if (cat) params.set('category', cat);
   const q = params.toString();
   return `${origin}/${PUBLIC_COMPLAINT_PATH}${q ? `?${q}` : ''}`;
+}
+
+/** Otel sorumlusu / personel public web profili — valoria.tr/profil/{staffId} */
+export function buildPublicStaffProfileUrl(
+  staffId: string,
+  baseOverride?: string | null
+): string {
+  const id = staffId.trim();
+  const origin = getShareablePublicOrigin(baseOverride);
+  if (!id) return `${origin}/${PUBLIC_STAFF_PROFILE_PATH}`;
+  return `${origin}/${PUBLIC_STAFF_PROFILE_PATH}/${encodeURIComponent(id)}`;
 }
 
 /** @deprecated buildPublicMenuUrl kullanın */

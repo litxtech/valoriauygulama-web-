@@ -12,6 +12,8 @@ export const PUBLIC_KBS_PATH = 'kbs';
 export const PUBLIC_BREAKFAST_PASS_PATH = 'breakfast-pass';
 /** QR şikayet hattı — valoria.tr/sikayet (uygulama indirmeden) */
 export const PUBLIC_COMPLAINT_PATH = 'sikayet';
+/** Otel sorumlusu / personel public web profili — valoria.tr/profil/{staffId} */
+export const PUBLIC_STAFF_PROFILE_PATH = 'profil';
 /** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
 export const LEGACY_PAYMENT_PATH = 'odeme';
 export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';
