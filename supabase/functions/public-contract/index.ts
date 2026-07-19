@@ -241,14 +241,24 @@ function contractPageBaseStyles(extra = ""): string {
     .content{padding:18px;max-height:62vh;overflow:auto;line-height:1.6}
     .content a{color:#b45309;text-decoration:none;font-weight:500}
     .content a:hover{text-decoration:underline}
-    .storeSection{margin-top:12px;padding-top:16px;border-top:1px solid var(--line);width:100%;}
-    .storeTitle{font-size:14px;font-weight:700;color:var(--accent);margin-bottom:10px;}
+    .storeSection{margin-top:16px;padding:18px;border-radius:18px;width:100%;
+      background:linear-gradient(145deg,#1a1408,#0f172a 55%,#14532d);border:1px solid rgba(201,162,39,.35);}
+    .storeBadge{display:inline-block;padding:5px 10px;border-radius:999px;margin-bottom:10px;
+      background:rgba(201,162,39,.18);border:1px solid rgba(201,162,39,.4);
+      color:#e8d5a3;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;}
+    .storeTitle{font-size:18px;font-weight:800;color:#f8fafc;margin:0 0 6px;}
+    .storeSub{font-size:13px;color:rgba(248,250,252,.72);margin:0 0 14px;line-height:1.45;}
     .storeBtn{
-      display:inline-block;margin:6px 8px 6px 0;padding:12px 18px;border-radius:10px;
-      font-weight:700;text-decoration:none;color:#fff;background:var(--accent);
+      display:flex;align-items:center;gap:12px;margin:0 0 10px;padding:14px 16px;border-radius:14px;
+      font-weight:700;text-decoration:none;color:#fff;background:#000;border:1px solid rgba(255,255,255,.12);
     }
     .storeBtn.second{background:#15803d;}
-    .storeAuto{font-size:11px;color:var(--muted);margin-top:8px;}
+    .storeBtn .ico{font-size:24px;width:32px;text-align:center;}
+    .storeBtn .col{flex:1;text-align:start;}
+    .storeBtn .eye{display:block;font-size:11px;opacity:.7;}
+    .storeBtn .name{display:block;font-size:16px;font-weight:800;}
+    .storeBtn .plat{display:block;font-size:12px;opacity:.65;margin-top:2px;}
+    .storeAuto{font-size:11px;color:rgba(248,250,252,.55);margin-top:4px;}
     ${extra}
   `;
 }
@@ -268,6 +278,120 @@ function pageHeaderHtml(subtitle: string, pillText?: string): string {
         <div class="pill">${pill}</div>
       </div>
     </header>`;
+}
+
+function storePromoCopy(lang: string): {
+  badge: string;
+  title: string;
+  sub: string;
+  getOn: string;
+  apple: string;
+  appleSub: string;
+  play: string;
+  playSub: string;
+  tip: string;
+} {
+  const l = (lang || "tr").toLowerCase().slice(0, 2);
+  type Copy = {
+    badge: string;
+    title: string;
+    sub: string;
+    getOn: string;
+    apple: string;
+    appleSub: string;
+    play: string;
+    playSub: string;
+    tip: string;
+  };
+  const map: Record<string, Copy> = {
+    tr: {
+      badge: "Valoria uygulaması",
+      title: "Otel deneyimini cebinize alın",
+      sub: "Mesajlaşma, şikayet, oda servisi ve daha fazlası — ücretsiz indirin.",
+      getOn: "İndir",
+      apple: "App Store",
+      appleSub: "iPhone & iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Butonlardan mağazaya gidebilirsiniz.",
+    },
+    en: {
+      badge: "Valoria app",
+      title: "Take the hotel experience with you",
+      sub: "Messaging, complaints, room service and more — download free.",
+      getOn: "Get",
+      apple: "App Store",
+      appleSub: "iPhone & iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Use the buttons above to open the store.",
+    },
+    ar: {
+      badge: "تطبيق Valoria",
+      title: "خذ تجربة الفندق معك",
+      sub: "المراسلة والشكاوى وخدمة الغرف والمزيد — حمّل مجاناً.",
+      getOn: "تحميل",
+      apple: "App Store",
+      appleSub: "iPhone و iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "استخدم الأزرار أعلاه لفتح المتجر.",
+    },
+    de: {
+      badge: "Valoria App",
+      title: "Hotel-Erlebnis in Ihrer Tasche",
+      sub: "Nachrichten, Anliegen, Zimmerservice und mehr — kostenlos laden.",
+      getOn: "Laden",
+      apple: "App Store",
+      appleSub: "iPhone & iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Über die Buttons gelangen Sie zum Store.",
+    },
+    fr: {
+      badge: "App Valoria",
+      title: "L’expérience hôtel dans votre poche",
+      sub: "Messages, demandes, room service et plus — téléchargez gratuitement.",
+      getOn: "Obtenir",
+      apple: "App Store",
+      appleSub: "iPhone & iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Utilisez les boutons ci-dessus pour ouvrir le store.",
+    },
+    ru: {
+      badge: "Приложение Valoria",
+      title: "Отель в вашем кармане",
+      sub: "Сообщения, жалобы, room service и другое — скачайте бесплатно.",
+      getOn: "Скачать",
+      apple: "App Store",
+      appleSub: "iPhone и iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Откройте магазин кнопками выше.",
+    },
+    es: {
+      badge: "App Valoria",
+      title: "Lleva el hotel en el bolsillo",
+      sub: "Mensajes, quejas, room service y más — descarga gratis.",
+      getOn: "Obtener",
+      apple: "App Store",
+      appleSub: "iPhone y iPad",
+      play: "Google Play",
+      playSub: "Android",
+      tip: "Usa los botones de arriba para abrir la tienda.",
+    },
+  };
+  return map[l] ?? map.tr;
+}
+
+const DEFAULT_PLAY_URL =
+  "https://play.google.com/store/apps/details?id=com.valoria.hotel&pcampaignid=web_share";
+
+function defaultAppStoreUrl(lang: string): string {
+  const code = (lang || "tr").toLowerCase().slice(0, 2);
+  const l = ["tr", "en", "ar", "de", "fr", "ru", "es"].includes(code) ? code : "tr";
+  return `https://apps.apple.com/tr/app/valoria/id6760633347?l=${l}`;
 }
 
 function htmlPage(opts: {
@@ -291,14 +415,15 @@ function htmlPage(opts: {
   const safeTitle = toEnt(title.replaceAll("<", "&lt;").replaceAll(">", "&gt;"));
   const revPart = revision ? `&rev=${encodeURIComponent(revision)}` : "";
   const action = `?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(lang)}${revPart}`;
-  const hasStore = (googlePlayUrl && googlePlayUrl.trim()) || (appStoreUrl && appStoreUrl.trim());
-  const gp = (googlePlayUrl || "").trim();
-  const as = (appStoreUrl || "").trim();
+  const gp = (googlePlayUrl || "").trim() || DEFAULT_PLAY_URL;
+  const as = (appStoreUrl || "").trim() || defaultAppStoreUrl(lang);
+  const promo = storePromoCopy(lang);
+  const dir = (lang || "").toLowerCase().startsWith("ar") ? "rtl" : "ltr";
 
   const msgColor = accepted ? "#15803d" : "#b45309";
 
   return `\uFEFF<!doctype html>
-<html lang="${lang}">
+<html lang="${lang}" dir="${dir}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -336,30 +461,30 @@ function htmlPage(opts: {
             }
           </div>
           ${
-            accepted && hasStore
+            accepted
               ? `
           <div class="storeSection">
-            <div class="storeTitle">${toEnt("Uygulamayı indirin")}</div>
-            ${gp ? `<a href="${gp}" class="storeBtn second" id="storeGp">Google Play</a>` : ""}
-            ${as ? `<a href="${as}" class="storeBtn" id="storeAs">App Store</a>` : ""}
-            <div class="storeAuto" id="storeAuto">${toEnt("Cihazınıza göre mağazaya yönlendiriliyorsunuz…")}</div>
-          </div>
-          <script>
-            (function(){
-              var ua = navigator.userAgent || "";
-              var isAndroid = /Android/i.test(ua);
-              var isIos = /iPhone|iPad|iPod/i.test(ua);
-              var gp = ${JSON.stringify(gp)};
-              var as = ${JSON.stringify(as)};
-              var el = document.getElementById("storeAuto");
-              var go = function(url){ if(url) window.location.href = url; };
-              setTimeout(function(){
-                if (isAndroid && gp) { go(gp); return; }
-                if (isIos && as) { go(as); return; }
-                if (el) el.textContent = "Yukar\u0131daki butondan ma\u011fazaya gidebilirsiniz.";
-              }, 2500);
-            })();
-          </script>`
+            <div class="storeBadge">${toEnt(promo.badge)}</div>
+            <div class="storeTitle">${toEnt(promo.title)}</div>
+            <p class="storeSub">${toEnt(promo.sub)}</p>
+            <a href="${as}" class="storeBtn" id="storeAs" target="_blank" rel="noopener">
+              <span class="ico"></span>
+              <span class="col">
+                <span class="eye">${toEnt(promo.getOn)}</span>
+                <span class="name">${toEnt(promo.apple)}</span>
+                <span class="plat">${toEnt(promo.appleSub)}</span>
+              </span>
+            </a>
+            <a href="${gp}" class="storeBtn second" id="storeGp" target="_blank" rel="noopener">
+              <span class="ico">▶</span>
+              <span class="col">
+                <span class="eye">${toEnt(promo.getOn)}</span>
+                <span class="name">${toEnt(promo.play)}</span>
+                <span class="plat">${toEnt(promo.playSub)}</span>
+              </span>
+            </a>
+            <div class="storeAuto" id="storeAuto">${toEnt(promo.tip)}</div>
+          </div>`
               : ""
           }
         </div>

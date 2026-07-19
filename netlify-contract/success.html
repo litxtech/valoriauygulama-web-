@@ -6,35 +6,39 @@
   <title>Onayınız alındı – Valoria Hotel</title>
   <style>
     body{ margin:0; font-family: system-ui, sans-serif; background: #0b1220; color: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; }
-    .card{ background: rgba(255,255,255,.06); border-radius: 20px; padding: 2rem; max-width: 420px; border: 1px solid rgba(255,255,255,.1); }
+    .card{ background: rgba(255,255,255,.06); border-radius: 20px; padding: 2rem; max-width: 440px; border: 1px solid rgba(255,255,255,.1); width:100%; }
     h1{ font-size: 1.5rem; margin: 0 0 0.5rem; color: #fff; }
     p{ color: rgba(255,255,255,.85); margin: 0 0 1.5rem; line-height: 1.5; }
-    .store{ display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 1.5rem; }
-    .store a{ display: inline-block; padding: 14px 24px; border-radius: 12px; font-weight: 700; text-decoration: none; color: #fff; }
-    .store .gp{ background: #34a853; }
-    .store .as{ background: #007aff; }
-    .store a:hover{ opacity: 0.9; }
+    .promo{ text-align:left; border-radius:18px; padding:18px; background:linear-gradient(145deg,#1a1408,#0f172a 55%,#14532d); border:1px solid rgba(201,162,39,.35); }
+    .badge{ display:inline-block; padding:5px 10px; border-radius:999px; margin-bottom:10px; background:rgba(201,162,39,.18); border:1px solid rgba(201,162,39,.4); color:#e8d5a3; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .promo h2{ margin:0 0 6px; font-size:1.2rem; }
+    .promo .sub{ margin:0 0 14px; font-size:.9rem; color:rgba(255,255,255,.7); }
+    .store a{ display:flex; align-items:center; gap:12px; text-decoration:none; color:#fff; border-radius:14px; padding:14px 16px; margin-bottom:10px; font-weight:700; }
+    .store .as{ background:#000; border:1px solid rgba(255,255,255,.12); }
+    .store .gp{ background:#15803d; border:1px solid rgba(255,255,255,.12); }
+    .store .name{ display:block; font-size:1.05rem; font-weight:800; }
+    .store .plat{ display:block; font-size:.75rem; opacity:.7; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Teşekkürler</h1>
-    <p>Onayınız alındı. Dilerseniz aşağıdan uygulamayı indirebilirsiniz.</p>
-    <div class="store">
-      <a href="#" id="gp" class="gp">Google Play'den indir</a>
-      <a href="#" id="as" class="as">App Store'dan indir</a>
+    <p>Onayınız alındı. Dilerseniz aşağıdan Valoria uygulamasını indirebilirsiniz.</p>
+    <div class="promo">
+      <div class="badge">Valoria uygulaması</div>
+      <h2>Otel deneyimini cebinize alın</h2>
+      <p class="sub">Mesajlaşma, şikayet, oda servisi ve daha fazlası — ücretsiz indirin.</p>
+      <div class="store">
+        <a class="as" id="as" href="https://apps.apple.com/tr/app/valoria/id6760633347?l=tr" target="_blank" rel="noopener">
+          <span style="font-size:1.4rem"></span>
+          <span><span class="name">App Store</span><span class="plat">iPhone &amp; iPad</span></span>
+        </a>
+        <a class="gp" id="gp" href="https://play.google.com/store/apps/details?id=com.valoria.hotel&pcampaignid=web_share" target="_blank" rel="noopener">
+          <span style="font-size:1.2rem">▶</span>
+          <span><span class="name">Google Play</span><span class="plat">Android</span></span>
+        </a>
+      </div>
     </div>
-    <p style="margin-top:1.5rem;font-size:0.85rem;color:rgba(255,255,255,.6)">Uygulama ile oda bilgilerinize ve mesajlara erişebilirsiniz.</p>
   </div>
-  <script>
-    (function(){
-      var gp = document.getElementById('gp');
-      var as = document.getElementById('as');
-      var gpUrl = 'https://play.google.com/store/apps/details?id=com.valoria.hotel';
-      var asUrl = 'https://apps.apple.com/app/valoria-hotel/idXXXXXXXXX';
-      gp.href = gpUrl;
-      as.href = asUrl;
-    })();
-  </script>
 </body>
 </html>

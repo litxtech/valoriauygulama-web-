@@ -112,11 +112,39 @@ const html = `<!DOCTYPE html>
     .submit:disabled{opacity:.55;cursor:not-allowed;filter:grayscale(.2)}
     .err{display:none;padding:12px 14px;border-radius:12px;background:rgba(185,28,28,.18);border:1px solid rgba(252,165,165,.35);color:var(--danger);font-size:13px;line-height:1.45}
     .err.show{display:block}
-    .success{display:none;padding:36px 22px;text-align:center}
+    .success{display:none;padding:28px 18px 24px;text-align:center}
     .success.show{display:block}
     .success .check{width:64px;height:64px;margin:0 auto 16px;border-radius:50%;display:grid;place-items:center;background:rgba(110,231,183,.12);border:1px solid rgba(110,231,183,.35);color:var(--ok);font-size:28px}
     .success h3{font-family:"Cormorant Garamond",Georgia,serif;font-size:32px;margin:0 0 8px;font-weight:600}
     .success p{margin:0;color:var(--ink-soft);line-height:1.55;font-size:14px}
+    .promo{
+      margin-top:22px;text-align:left;border-radius:20px;padding:18px;
+      background:linear-gradient(145deg,#1a1408,#0f172a 55%,#14532d);
+      border:1px solid rgba(201,162,39,.4);
+      box-shadow:0 16px 40px rgba(0,0,0,.35);
+    }
+    html[dir=rtl] .promo{text-align:right}
+    .promo-badge{
+      display:inline-block;padding:5px 10px;border-radius:999px;margin-bottom:12px;
+      background:rgba(201,162,39,.18);border:1px solid rgba(201,162,39,.4);
+      color:var(--gold-soft);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    }
+    .promo h4{margin:0 0 6px;font-size:20px;font-weight:800;color:#fff}
+    .promo .promo-sub{margin:0 0 16px;color:rgba(248,250,252,.72);font-size:13px;line-height:1.5}
+    .store-btn{
+      display:flex;align-items:center;gap:12px;text-decoration:none;color:#fff;
+      border-radius:14px;padding:14px 16px;margin-bottom:10px;
+      transition:transform .12s,opacity .12s;
+    }
+    .store-btn:active{transform:scale(.98)}
+    .store-btn.apple{background:#000;border:1px solid rgba(255,255,255,.14)}
+    .store-btn.play{background:#15803d;border:1px solid rgba(255,255,255,.14)}
+    .store-btn .ico{font-size:26px;width:34px;text-align:center;flex-shrink:0}
+    .store-btn .col{flex:1;text-align:start}
+    .store-btn .eye{display:block;font-size:11px;opacity:.7;font-weight:600}
+    .store-btn .name{display:block;font-size:17px;font-weight:800;line-height:1.2}
+    .store-btn .plat{display:block;font-size:12px;opacity:.65;margin-top:2px}
+    .store-btn .arrow{opacity:.65;font-size:18px}
     .foot{margin-top:18px;text-align:center;color:var(--ink-muted);font-size:12px;line-height:1.55}
     .loading-bar{display:none;height:3px;width:100%;overflow:hidden;background:rgba(255,255,255,.06)}
     .loading-bar.on{display:block}
@@ -158,6 +186,29 @@ const html = `<!DOCTYPE html>
         <div class="check">✓</div>
         <h3 id="tOkTitle"></h3>
         <p id="tOkBody"></p>
+        <div class="promo" id="storePromo">
+          <div class="promo-badge" id="tPromoBadge"></div>
+          <h4 id="tPromoTitle"></h4>
+          <p class="promo-sub" id="tPromoSub"></p>
+          <a class="store-btn apple" id="btnApple" href="#" target="_blank" rel="noopener">
+            <span class="ico"></span>
+            <span class="col">
+              <span class="eye" id="tGetOn"></span>
+              <span class="name" id="tAppleName"></span>
+              <span class="plat" id="tAppleSub"></span>
+            </span>
+            <span class="arrow">→</span>
+          </a>
+          <a class="store-btn play" id="btnPlay" href="#" target="_blank" rel="noopener">
+            <span class="ico">▶</span>
+            <span class="col">
+              <span class="eye" id="tGetOn2"></span>
+              <span class="name" id="tPlayName"></span>
+              <span class="plat" id="tPlaySub"></span>
+            </span>
+            <span class="arrow">→</span>
+          </a>
+        </div>
       </div>
       <form id="form">
         <div>
@@ -234,6 +285,10 @@ const html = `<!DOCTYPE html>
       media: "İsteğe bağlı: fotoğraf veya video (en fazla 4). Seçince hemen yüklenir.",
       photo: "Fotoğraf", video: "Video", camera: "Kamera", submit: "Gönder", sending: "Gönderiliyor…",
       okTitle: "İletildi", okBody: "Mesajınız sorumlu yöneticiye ulaştı. Anlık değerlendirilir. Teşekkür ederiz.",
+      promoBadge: "Valoria uygulaması", promoTitle: "Otel deneyimini cebinize alın",
+      promoSub: "Mesajlaşma, şikayet, oda servisi ve daha fazlası — ücretsiz indirin.",
+      getOn: "İndir", appleName: "App Store", appleSub: "iPhone & iPad",
+      playName: "Google Play", playSub: "Android",
       errName: "Lütfen adınızı ve soyadınızı yazın.", errPhone: "Lütfen geçerli bir telefon numarası yazın.",
       errRoom: "Lütfen oda numaranızı yazın.", errDesc: "Lütfen açıklamanızı yazın.", errAiDraft: "Önce kısa bir taslak yazın.",
       errConfig: "Portal yapılandırması eksik.", errSend: "Gönderilemedi. Lütfen tekrar deneyin.",
@@ -254,6 +309,10 @@ const html = `<!DOCTYPE html>
       media: "Optional: photo or video (max 4). Uploads start as soon as you select.",
       photo: "Photo", video: "Video", camera: "Camera", submit: "Send", sending: "Sending…",
       okTitle: "Sent", okBody: "Your message reached management. It is reviewed promptly. Thank you.",
+      promoBadge: "Valoria app", promoTitle: "Take the hotel experience with you",
+      promoSub: "Messaging, complaints, room service and more — download free.",
+      getOn: "Get", appleName: "App Store", appleSub: "iPhone & iPad",
+      playName: "Google Play", playSub: "Android",
       errName: "Please enter your full name.", errPhone: "Please enter a valid phone number.",
       errRoom: "Please enter your room number.", errDesc: "Please write a description.", errAiDraft: "Write a short draft first.",
       errConfig: "Portal configuration missing.", errSend: "Could not send. Please try again.",
@@ -274,6 +333,10 @@ const html = `<!DOCTYPE html>
       media: "اختياري: صورة أو فيديو (حد أقصى 4). يبدأ الرفع فور الاختيار.",
       photo: "صورة", video: "فيديو", camera: "كاميرا", submit: "إرسال", sending: "جارٍ الإرسال…",
       okTitle: "تم الإرسال", okBody: "وصلت رسالتك إلى الإدارة وتُراجع فوراً. شكراً لك.",
+      promoBadge: "تطبيق Valoria", promoTitle: "خذ تجربة الفندق معك",
+      promoSub: "المراسلة والشكاوى وخدمة الغرف والمزيد — حمّل مجاناً.",
+      getOn: "تحميل", appleName: "App Store", appleSub: "iPhone و iPad",
+      playName: "Google Play", playSub: "Android",
       errName: "يرجى إدخال الاسم الكامل.", errPhone: "يرجى إدخال رقم هاتف صالح.",
       errRoom: "يرجى إدخال رقم الغرفة.", errDesc: "يرجى كتابة الوصف.", errAiDraft: "اكتب مسودة قصيرة أولاً.",
       errConfig: "إعدادات البوابة ناقصة.", errSend: "تعذر الإرسال. حاول مرة أخرى.",
@@ -342,6 +405,17 @@ const html = `<!DOCTYPE html>
     qs("submit").textContent=t.submit;
     qs("tOkTitle").textContent=t.okTitle;
     qs("tOkBody").textContent=t.okBody;
+    qs("tPromoBadge").textContent=t.promoBadge;
+    qs("tPromoTitle").textContent=t.promoTitle;
+    qs("tPromoSub").textContent=t.promoSub;
+    qs("tGetOn").textContent=t.getOn;
+    qs("tGetOn2").textContent=t.getOn;
+    qs("tAppleName").textContent=t.appleName;
+    qs("tAppleSub").textContent=t.appleSub;
+    qs("tPlayName").textContent=t.playName;
+    qs("tPlaySub").textContent=t.playSub;
+    qs("btnApple").href="https://apps.apple.com/tr/app/valoria/id6760633347?l="+lang;
+    qs("btnPlay").href="https://play.google.com/store/apps/details?id=com.valoria.hotel&pcampaignid=web_share";
     qs("name").placeholder=t.namePh;
     qs("phone").placeholder=t.phonePh;
     qs("room").placeholder=t.roomPh;
