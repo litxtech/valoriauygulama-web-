@@ -9,13 +9,14 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { supabase, supabaseUrl } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { QrHubSection } from '@/components/admin/QrHubSection';
 import {
   buildCheckinQrUrl,
   buildPublicContractUrl,
   buildPublicMaliyeUrl,
   buildPublicMenuUrl,
+  buildPublicComplaintUrl,
   fetchPublicQrSettings,
   invalidatePublicAppOriginCache,
   resolvePublicAppOrigin,
@@ -25,6 +26,7 @@ import {
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
+  PUBLIC_COMPLAINT_PATH,
   normalizePublicContractBaseUrl,
 } from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
@@ -110,6 +112,11 @@ export default function QrHubPage() {
   const maliyeQrUrl = buildPublicMaliyeUrl(
     FIXED_MALIYE_QR_TOKEN,
     maliyeBase.trim() ? maliyeBase.replace(/\?.*$/, '').replace(/\/$/, '') : safePublicOrigin(publicBaseUrl)
+  );
+
+  const complaintQrUrl = buildPublicComplaintUrl(
+    { organizationId: selectedOrg?.id ?? null },
+    publicBaseUrl
   );
 
   const saveSetting = async (key: string, value: string, label: string) => {
@@ -304,6 +311,19 @@ export default function QrHubPage() {
           </TouchableOpacity>
         </View>
         <Text style={styles.hint}>Sabit token: {FIXED_MALIYE_QR_TOKEN}</Text>
+      </QrHubSection>
+
+      <QrHubSection
+        variant="general"
+        title="QR Şikayet Hattı"
+        description={`Misafir uygulama indirmeden ${PUBLIC_COMPLAINT_PATH} sayfasından metin, fotoğraf ve video gönderir. Admin hesabına anında push gider.`}
+        url={complaintQrUrl}
+        urlLabel="Şikayet hattı adresi"
+      >
+        <Text style={styles.hint}>
+          Lobide / odalarda basılı QR için bu adresi kullanın. Seçili işletme varsa org parametresi eklenir.
+        </Text>
+        <Text style={styles.hint}>Örnek: {safePublicOrigin(publicBaseUrl)}/{PUBLIC_COMPLAINT_PATH}</Text>
       </QrHubSection>
     </ScrollView>
   );

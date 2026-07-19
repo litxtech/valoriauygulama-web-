@@ -448,6 +448,7 @@ export default function AdminLayout() {
       <Stack.Screen name="engagement" options={{ title: 'Okuma takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="reports/index" options={{ title: t('adminReports'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="complaints/index" options={{ title: complaintsText('adminTitle'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="qr-complaints/index" options={{ title: 'QR Şikayet Hattı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff-complaints/index" options={{ title: 'Personel Şikayetleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/templates" options={{ title: t('adminNotificationTemplates'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/sounds" options={{ title: 'Bildirim Sesleri', headerRight: renderHeaderRight }} />

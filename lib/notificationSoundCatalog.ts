@@ -253,7 +253,7 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     titleTr: 'Şikayet / geri bildirim',
     descriptionTr: 'Misafir şikayeti ve personel iç not bildirimleri.',
     audiences: ['staff', 'admin'],
-    notificationTypeHints: ['guest_complaint', 'staff_internal_note'],
+    notificationTypeHints: ['guest_complaint', 'qr_complaint', 'staff_internal_note'],
     defaultIosPushSound: 'default',
     defaultAndroidPushSound: 'default',
     defaultAndroidChannelId: 'valoria_ns_complaint',
@@ -573,7 +573,8 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
     key: 'smart_ops',
   },
   {
-    test: (t) => t.includes('guest_complaint') || t.includes('staff_internal_note'),
+    test: (t) =>
+      t.includes('guest_complaint') || t.includes('qr_complaint') || t.includes('staff_internal_note'),
     key: 'complaint',
   },
   { test: (t) => t.startsWith('missing_item'), key: 'missing_item' },

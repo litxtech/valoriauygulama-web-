@@ -51,6 +51,9 @@ verify_jwt = false
 [functions.public-maliye]
 verify_jwt = false
 
+[functions.public-complaint]
+verify_jwt = false
+
 [functions.print-contract]
 verify_jwt = false
 

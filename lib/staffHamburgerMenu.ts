@@ -603,6 +603,15 @@ export function buildStaffHamburgerMenuSections(
       icon: 'chatbox-ellipses-outline',
       accent: ACCENTS.guest_complaints,
     });
+    if (isAdmin) {
+      push('hotel', {
+        id: 'qr_complaints',
+        label: 'QR Şikayet Hattı',
+        href: '/admin/qr-complaints',
+        icon: 'qr-code-outline',
+        accent: ACCENTS.guest_complaints,
+      });
+    }
   }
   if (canViewSecurityBlacklist(staff)) {
     push('hotel', {

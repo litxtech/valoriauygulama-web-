@@ -33,6 +33,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/emergency-locations': 'toplu_duyuru',
   '/admin/reports': 'gonderi_yonetimi',
   '/admin/complaints': 'misafir_sikayetleri',
+  '/admin/qr-complaints': 'misafir_sikayetleri',
   '/admin/staff-complaints': 'personel_sikayet_notlari',
   '/admin/approvals': 'onay_merkezi',
   '/admin/stock': 'stok_yonetimi',

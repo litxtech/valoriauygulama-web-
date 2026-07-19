@@ -66,6 +66,18 @@
       "destination": "/breakfast-pass/index.html"
     },
     {
+      "source": "/sikayet/index.html",
+      "destination": "/sikayet/index.html"
+    },
+    {
+      "source": "/sikayet/",
+      "destination": "/sikayet/index.html"
+    },
+    {
+      "source": "/sikayet",
+      "destination": "/sikayet/index.html"
+    },
+    {
       "source": "/:path*",
       "destination": "/"
     }
@@ -81,7 +93,7 @@
       ]
     },
     {
-      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass).*)",
+      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass|sikayet).*)",
       "headers": [
         {
           "key": "Cache-Control",
@@ -109,6 +121,15 @@
     },
     {
       "source": "/breakfast-pass-config.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/sikayet-config.js",
       "headers": [
         {
           "key": "Cache-Control",

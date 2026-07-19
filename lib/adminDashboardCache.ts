@@ -15,6 +15,7 @@ export type AdminDashboardStats = {
   feedTotal: number;
   reportsPending: number;
   complaintsPending: number;
+  qrComplaintsPending: number;
   acceptancesUnassigned: number;
 };
 
@@ -74,7 +75,11 @@ function isMessagesFresh(e: CacheEntry): boolean {
 export function getAdminDashboardCache(key: string, allowStale = false): AdminDashboardStats | null {
   if (!entry || entry.key !== key) return null;
   if (!allowStale && !isEntryFresh(entry, ADMIN_DASHBOARD_FOCUS_REFRESH_MS)) return null;
-  return entry.stats;
+  const s = entry.stats;
+  return {
+    ...s,
+    qrComplaintsPending: s.qrComplaintsPending ?? 0,
+  };
 }
 
 export function setAdminDashboardCache(key: string, stats: AdminDashboardStats, opts?: { touchMessages?: boolean }): void {

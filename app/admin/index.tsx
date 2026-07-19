@@ -31,6 +31,7 @@ import { useAdminBadgeDismissedStore } from '@/stores/adminBadgeDismissedStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { adminTheme } from '@/constants/adminTheme';
 import { countPendingGuestComplaints } from '@/lib/guestComplaintsAdmin';
+import { countPendingQrComplaints } from '@/lib/qrComplaintsAdmin';
 import { AdminLiveOpsStrip } from '@/components/premium/AdminLiveOpsStrip';
 import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
@@ -74,6 +75,7 @@ const EMPTY_STATS: Stats = {
   feedTotal: 0,
   reportsPending: 0,
   complaintsPending: 0,
+  qrComplaintsPending: 0,
   acceptancesUnassigned: 0,
 };
 
@@ -149,6 +151,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/emergency-locations', icon: 'warning-outline', label: 'Acil lokasyonlari yonet' },
       { href: '/admin/reports', icon: 'flag-outline', label: 'Şikayetler (paylaşım bildirimleri)', badge: 0 },
       { href: '/admin/complaints', icon: 'chatbox-ellipses-outline', label: 'Misafir Şikayet/Oneri', badge: 0 },
+      { href: '/admin/qr-complaints', icon: 'qr-code-outline', label: 'QR Şikayet Hattı', badge: 0 },
       { href: '/admin/staff-complaints', icon: 'alert-circle-outline', label: 'Personel Şikayet Notları' },
     ],
   },
@@ -465,6 +468,7 @@ export default function AdminDashboard() {
         expensesPendingRes,
         reportsPendingRes,
         complaintsPendingRes,
+        qrComplaintsPendingRes,
         acceptancesUnassignedRes,
       ] = await Promise.all([
         roomsQuery,
@@ -476,6 +480,7 @@ export default function AdminDashboard() {
         expensesPendingQuery,
         reportsPendingQuery,
         countPendingGuestComplaints(orgScoped ?? undefined).then((count) => ({ count })),
+        countPendingQrComplaints(orgScoped ?? undefined).then((count) => ({ count })),
         acceptancesUnassignedQuery,
       ]);
 
@@ -493,6 +498,7 @@ export default function AdminDashboard() {
           feedTotal: prev.feedTotal,
           reportsPending: reportsPendingRes.count ?? 0,
           complaintsPending: complaintsPendingRes.count ?? 0,
+          qrComplaintsPending: qrComplaintsPendingRes.count ?? 0,
           acceptancesUnassigned: acceptancesUnassignedRes.count ?? 0,
         };
         setAdminDashboardCache(cacheKey, next);
@@ -598,6 +604,7 @@ export default function AdminDashboard() {
     if (href === '/admin/expenses') return 'expensesPending';
     if (href === '/admin/reports') return 'reportsPending';
     if (href === '/admin/complaints') return 'complaintsPending';
+    if (href === '/admin/qr-complaints') return 'qrComplaintsPending';
     if (href === '/admin/contracts') return 'acceptancesUnassigned';
     return null;
   }, []);

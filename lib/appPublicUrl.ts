@@ -10,6 +10,7 @@ import {
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
+  PUBLIC_COMPLAINT_PATH,
   normalizePublicContractBaseUrl,
 } from '@/constants/publicWebPaths';
 import { FIXED_MALIYE_QR_TOKEN } from '@/constants/maliyeQr';
@@ -217,6 +218,19 @@ export function buildPublicMaliyeUrl(
 
   const origin = getShareablePublicOrigin(raw || null);
   return `${origin}/${PUBLIC_MALIYE_PATH}?${query}`;
+}
+
+/** QR şikayet hattı — valoria.tr/sikayet (?org=… isteğe bağlı) */
+export function buildPublicComplaintUrl(
+  opts?: { organizationId?: string | null },
+  baseOverride?: string | null
+): string {
+  const origin = getShareablePublicOrigin(baseOverride);
+  const params = new URLSearchParams();
+  const org = opts?.organizationId?.trim();
+  if (org) params.set('org', org);
+  const q = params.toString();
+  return `${origin}/${PUBLIC_COMPLAINT_PATH}${q ? `?${q}` : ''}`;
 }
 
 /** @deprecated buildPublicMenuUrl kullanın */

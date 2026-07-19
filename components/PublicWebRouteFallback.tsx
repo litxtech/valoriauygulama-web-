@@ -4,9 +4,11 @@ import { Platform } from 'react-native';
 import { MaliyeWebPortalRedirect } from '@/components/MaliyeWebPortalRedirect';
 import { BreakfastPassWebPortalRedirect } from '@/components/BreakfastPassWebPortalRedirect';
 import { PaymentWebPortalRedirect } from '@/components/PaymentWebPortalRedirect';
+import { SikayetWebPortalRedirect } from '@/components/SikayetWebPortalRedirect';
 import { parseCheckinUrl } from '@/lib/checkinDeepLink';
 import { isBreakfastPassPublicPath } from '@/lib/breakfastGuestPass';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
+import { isSikayetPublicPath } from '@/lib/sikayetPortalUrl';
 import { resolvePublicWebRoute } from '@/lib/publicWebRoute';
 
 const EXPO_GUEST_CONTRACT_PATHS = ['/guest/sign-one', '/guest/success', '/guest/contract', '/guest/form'];
@@ -24,6 +26,10 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
 
   if (isPaymentPublicPath(winNormalized)) {
     return <PaymentWebPortalRedirect />;
+  }
+
+  if (isSikayetPublicPath(winNormalized)) {
+    return <SikayetWebPortalRedirect />;
   }
 
   if (isBreakfastPassPublicPath(winNormalized)) {

@@ -8,6 +8,7 @@ import {
   PUBLIC_CONTRACT_PATH,
   PUBLIC_MENU_PATH,
   PUBLIC_MALIYE_PATH,
+  PUBLIC_COMPLAINT_PATH,
 } from '@/constants/publicWebPaths';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
@@ -16,6 +17,7 @@ export type PublicWebRoute =
   | { kind: 'contract'; token?: string; lang?: string }
   | { kind: 'maliye'; token?: string }
   | { kind: 'breakfast-pass'; token: string }
+  | { kind: 'sikayet' }
   | null;
 
 /** Path eşleştirme: menü/menu, sözleşme/sozlesme/guest/sign-one, maliye */
@@ -85,6 +87,10 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
     return null;
   }
 
+  if (head === PUBLIC_COMPLAINT_PATH || head === 'sikayet') {
+    return { kind: 'sikayet' };
+  }
+
   return null;
 }
 
@@ -129,6 +135,11 @@ export function applyPublicWebRoute(
     return true;
   }
 
+  // Statik portal — PublicWebRouteFallback / SikayetWebPortalRedirect yönlendirir
+  if (route.kind === 'sikayet') {
+    return true;
+  }
+
   return false;
 }
 
@@ -139,6 +150,7 @@ export function isPublicWebPath(pathname: string, search?: string): boolean {
   if (p.includes('/guest/sign-one') || p.includes('/guest/success')) return true;
   if (p === '/maliye' || p.startsWith('/maliye/')) return true;
   if (p === '/breakfast-pass' || p.startsWith('/breakfast-pass/')) return true;
+  if (p === '/sikayet' || p.startsWith('/sikayet/')) return true;
   if (isPaymentPublicPath(p)) return true;
   if (search?.includes('token=') && p === '/guest') return true;
   return resolvePublicWebRoute(pathname, search) != null;

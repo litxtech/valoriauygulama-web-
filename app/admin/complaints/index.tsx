@@ -34,6 +34,7 @@ import {
   type GuestComplaintAdminPreset,
 } from '@/lib/complaintsI18n';
 import { useCachedList } from '@/hooks/useCachedList';
+import { useRouter } from 'expo-router';
 
 type ComplaintRow = AdminGuestComplaintRow & {
   status:
@@ -48,6 +49,7 @@ type ComplaintRow = AdminGuestComplaintRow & {
 
 export default function AdminComplaintsIndex() {
   useTranslation();
+  const router = useRouter();
   const loc = complaintsLocaleTag();
   const staff = useAuthStore((s) => s.staff);
   const { orgScoped, canUseAll } = useAdminOrganizationQueryScope();
@@ -142,6 +144,15 @@ export default function AdminComplaintsIndex() {
         <Ionicons name="shield-checkmark-outline" size={20} color={adminTheme.colors.accent} />
         <Text style={styles.bannerText}>{complaintsText('adminBanner')}</Text>
       </View>
+
+      <TouchableOpacity
+        style={styles.qrBanner}
+        onPress={() => router.push('/admin/qr-complaints')}
+        activeOpacity={0.88}
+      >
+        <Ionicons name="qr-code-outline" size={20} color={adminTheme.colors.accent} />
+        <Text style={styles.qrBannerText}>QR Şikayet Hattı (uygulama dışı) →</Text>
+      </TouchableOpacity>
 
       <View style={styles.filterRow}>
         {(
@@ -261,6 +272,18 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   bannerText: { flex: 1, color: adminTheme.colors.text, fontSize: 13, lineHeight: 19 },
+  qrBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  qrBannerText: { flex: 1, fontSize: 14, fontWeight: '700', color: adminTheme.colors.text },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
   filterChip: {
     paddingHorizontal: 12,

@@ -293,6 +293,8 @@ export default function HomeScreen() {
         pathname.startsWith('/maliye/') ||
         pathname === '/breakfast-pass' ||
         pathname.startsWith('/breakfast-pass/') ||
+        pathname === '/sikayet' ||
+        pathname.startsWith('/sikayet/') ||
         pathname === '/payment' ||
         pathname === '/payment/qr' ||
         pathname === '/payment/new' ||

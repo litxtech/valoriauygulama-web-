@@ -10,6 +10,8 @@ export const PUBLIC_PAYMENT_QR_PATH = 'payment/qr';
 export const PUBLIC_KBS_PATH = 'kbs';
 /** Partner otel misafir kahvaltı QR — valoria.tr/breakfast-pass?token=… */
 export const PUBLIC_BREAKFAST_PASS_PATH = 'breakfast-pass';
+/** QR şikayet hattı — valoria.tr/sikayet (uygulama indirmeden) */
+export const PUBLIC_COMPLAINT_PATH = 'sikayet';
 /** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
 export const LEGACY_PAYMENT_PATH = 'odeme';
 export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';
