@@ -1,0 +1,294 @@
+import { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Platform,
+  useWindowDimensions,
+} from 'react-native';
+import { useTranslation } from 'react-i18next';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { CachedImage } from '@/components/CachedImage';
+import { BreakfastPhotoLightbox } from '@/components/BreakfastPhotoLightbox';
+import {
+  formatBreakfastMenuDate,
+  loadPublicMenuBreakfastGallery,
+  type PublicMenuBreakfastItem,
+} from '@/lib/publicMenuBreakfastGallery';
+import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
+
+type Props = {
+  organizationId: string;
+  menuLang: PublicMenuLang;
+  accentColor?: string;
+};
+
+const AMBER = '#F59E0B';
+const AMBER_BORDER = '#FDE68A';
+const AMBER_SOFT = 'rgba(254, 243, 199, 0.55)';
+
+export function PublicKitchenMenuBreakfastGallery({
+  organizationId,
+  menuLang,
+  accentColor = AMBER,
+}: Props) {
+  const { t } = useTranslation();
+  const { width } = useWindowDimensions();
+  const [items, setItems] = useState<PublicMenuBreakfastItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState<{
+    urls: string[];
+    index: number;
+    title: string;
+    subtitle: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void loadPublicMenuBreakfastGallery(organizationId).then((rows) => {
+      if (cancelled) return;
+      setItems(rows);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId]);
+
+  if (loading) {
+    return (
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator color={accentColor} />
+      </View>
+    );
+  }
+
+  if (items.length === 0) return null;
+
+  const cardW = Math.min(width >= 900 ? 280 : width * 0.72, 300);
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.head}>
+        <View style={[styles.headAccent, { backgroundColor: accentColor }]} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.kicker}>{t('publicMenuBreakfastKicker')}</Text>
+          <Text style={styles.title}>{t('publicMenuBreakfastTitle')}</Text>
+          <Text style={styles.sub}>{t('publicMenuBreakfastSub')}</Text>
+        </View>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        nestedScrollEnabled
+        contentContainerStyle={styles.row}
+        decelerationRate="fast"
+      >
+        {items.map((item) => {
+          const dateLabel = formatBreakfastMenuDate(item.record_date, menuLang);
+          const cover = item.photo_urls[0] ?? null;
+          const headline = t('publicMenuBreakfastDayTitle', { date: dateLabel });
+          return (
+            <TouchableOpacity
+              key={item.id}
+              activeOpacity={0.92}
+              style={[styles.card, { width: cardW, borderColor: AMBER_BORDER }]}
+              onPress={() =>
+                setLightbox({
+                  urls: item.photo_urls,
+                  index: 0,
+                  title: headline,
+                  subtitle: [
+                    t('publicMenuBreakfastGuests', { count: item.guest_count }),
+                    item.note?.trim(),
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
+                })
+              }
+            >
+              <View style={[styles.cardAccent, { backgroundColor: accentColor }]} />
+              <View style={styles.mediaWrap}>
+                {cover ? (
+                  <CachedImage
+                    uri={cover}
+                    style={styles.cover}
+                    contentFit="cover"
+                    recyclingKey={`pub-bf-${item.id}`}
+                  />
+                ) : (
+                  <LinearGradient colors={['#fef3c7', '#fde68a', '#fcd34d']} style={styles.cover}>
+                    <Ionicons name="cafe" size={36} color="#b45309" />
+                  </LinearGradient>
+                )}
+                <LinearGradient colors={['transparent', 'rgba(15,23,42,0.55)']} style={styles.mediaFade} />
+                {item.photo_urls.length > 1 ? (
+                  <View style={styles.countPill}>
+                    <Ionicons name="images" size={11} color="#fff" />
+                    <Text style={styles.countPillText}>{item.photo_urls.length}</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.body}>
+                <Text style={styles.dayTitle} numberOfLines={2}>
+                  {headline}
+                </Text>
+                <View style={styles.metaRow}>
+                  <Ionicons name="people-outline" size={13} color={accentColor} />
+                  <Text style={styles.metaText}>
+                    {t('publicMenuBreakfastGuests', { count: item.guest_count })}
+                  </Text>
+                </View>
+                {item.note?.trim() ? (
+                  <Text style={styles.note} numberOfLines={2}>
+                    {item.note.trim()}
+                  </Text>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      <BreakfastPhotoLightbox
+        visible={lightbox != null}
+        urls={lightbox?.urls ?? []}
+        initialIndex={lightbox?.index ?? 0}
+        onClose={() => setLightbox(null)}
+        accentColor="#fef3c7"
+        title={lightbox?.title}
+        subtitle={lightbox?.subtitle}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  section: {
+    marginTop: 8,
+    marginBottom: 18,
+    paddingHorizontal: 16,
+  },
+  loadingWrap: { paddingVertical: 18, alignItems: 'center' },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 14,
+  },
+  headAccent: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 2,
+    minHeight: 42,
+  },
+  kicker: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: AMBER,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 3,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.3,
+  },
+  sub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 3,
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  row: { gap: 14, paddingRight: 8, paddingVertical: 2 },
+  card: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    backgroundColor: AMBER_SOFT,
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        backgroundColor: 'rgba(255, 251, 235, 0.58)',
+      } as object,
+      ios: {
+        shadowColor: '#d97706',
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 8 },
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
+  },
+  cardAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    zIndex: 2,
+  },
+  mediaWrap: {
+    height: 148,
+    backgroundColor: '#1c1917',
+    position: 'relative',
+  },
+  cover: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaFade: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  countPill: {
+    position: 'absolute',
+    top: 12,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(217,119,6,0.88)',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  countPillText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  body: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 14,
+    backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.72)',
+  },
+  dayTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    lineHeight: 19,
+    marginBottom: 6,
+  },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  metaText: { fontSize: 12, fontWeight: '700', color: '#92400e' },
+  note: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+});

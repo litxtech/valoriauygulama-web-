@@ -1,7 +1,7 @@
 import { theme } from '@/constants/theme';
 
 /** Canlı web menü build etiketi — deploy doğrulama */
-export const PUBLIC_MENU_WEB_BUILD = '2026.07-v7.5';
+export const PUBLIC_MENU_WEB_BUILD = '2026.07-v7.6';
 
 /** Otel mutfağı — gece lacivert + şampanya altın */
 export const menuUi = {

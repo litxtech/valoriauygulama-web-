@@ -23,6 +23,7 @@ import { PublicKitchenMenuPremiumHome } from '@/components/hotelKitchenMenu/Publ
 import type { OrderMode } from '@/features/restaurant/components/RestaurantOrderModeChips';
 import { PublicKitchenMenuOrderHistorySheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuOrderHistorySheet';
 import { PublicKitchenMenuGuestRails } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestRails';
+import { PublicKitchenMenuBreakfastGallery } from '@/components/hotelKitchenMenu/PublicKitchenMenuBreakfastGallery';
 import {
   menuUi,
   menuWebPageBg,
@@ -339,6 +340,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           orderMode={orderMode}
           onOrderModeChange={setOrderMode}
           showExplore={menuTab === 'explore'}
+        />
+
+        <PublicKitchenMenuBreakfastGallery
+          organizationId={org.id}
+          menuLang={menuLang}
+          accentColor={accent}
         />
 
         <View
