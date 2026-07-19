@@ -184,27 +184,30 @@ async function improveComplaintText(params: {
   text: string;
   topicType: string;
   category: string;
+  lang?: string;
 }): Promise<string> {
   const apiKey = (Deno.env.get("DEEPSEEK_API_KEY") ?? "").trim();
-  if (!apiKey) throw new Error("AI desteği şu an yapılandırılmamış");
+  if (!apiKey) throw new Error("AI support is not configured");
+
+  const lang = ["tr", "en", "ar"].includes(params.lang || "") ? (params.lang as string) : "tr";
+  const langName = lang === "en" ? "English" : lang === "ar" ? "Arabic" : "Turkish";
 
   const topicLabel =
     params.topicType === "suggestion"
-      ? "öneri"
+      ? "suggestion"
       : params.topicType === "thanks"
-      ? "teşekkür"
-      : "şikayet";
+      ? "thanks"
+      : "complaint";
 
   const systemPrompt =
-    "Sen bir otel misafir iletişim asistanısın (Valoria Hotel / Bavulsuite). " +
-    "Misafirin taslak metnini nazik, net ve profesyonel Türkçe'ye düzenle. " +
-    "Anlamı değiştirme, abartma, uydurma detay ekleme. " +
-    "Kısa tut (en fazla 2-3 paragraf). Yalnızca düzenlenmiş metni döndür; " +
-    "açıklama, tırnak veya markdown kullanma.";
+    `You are a hotel guest communication assistant (Valoria Hotel / Bavulsuite). ` +
+    `Rewrite the guest's draft into polite, clear, professional ${langName}. ` +
+    `Do not change meaning, exaggerate, or invent details. ` +
+    `Keep it short (max 2-3 paragraphs). Return ONLY the rewritten text — no quotes, markdown, or commentary.`;
 
   const userPrompt =
-    `Tür: ${topicLabel}\nKategori: ${params.category}\n\nMisafir taslağı:\n${params.text}\n\n` +
-    "Bu metni otel yönetimine iletilecek şekilde düzenle.";
+    `Type: ${topicLabel}\nCategory: ${params.category}\nLanguage: ${langName}\n\nGuest draft:\n${params.text}\n\n` +
+    `Rewrite for hotel management in ${langName}.`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT_MS);
@@ -229,7 +232,7 @@ async function improveComplaintText(params: {
     });
   } catch (e) {
     if ((e as Error)?.name === "AbortError") {
-      throw new Error("AI zaman aşımı — tekrar deneyin");
+      throw new Error("AI timeout — try again");
     }
     throw e;
   } finally {
@@ -238,13 +241,13 @@ async function improveComplaintText(params: {
 
   const rawBody = await res.text();
   if (!res.ok) {
-    throw new Error(`AI hatası (${res.status})`);
+    throw new Error(`AI error (${res.status})`);
   }
   const data = JSON.parse(rawBody) as {
     choices?: { message?: { content?: string } }[];
   };
   const content = (data.choices?.[0]?.message?.content ?? "").trim();
-  if (!content) throw new Error("AI boş yanıt döndü");
+  if (!content) throw new Error("Empty AI response");
   return content.replace(/^["']|["']$/g, "").trim();
 }
 
@@ -419,6 +422,7 @@ Deno.serve(async (req: Request) => {
           text,
           topicType: tt,
           category: cat,
+          lang: normalizeText(body.lang, 8) || "tr",
         });
         return json({ ok: true, text: improved });
       }

@@ -1,7 +1,6 @@
 /**
  * Expo web export sonrası QR şikayet portalını dist/ altına yazar.
- * valoria.tr/sikayet → dist/sikayet/index.html
- * Giriş yok · zorunlu ad/telefon/oda · DeepSeek yazım desteği · sorumlu kartı
+ * valoria.tr/sikayet — TR/EN/AR · giriş yok · hızlı paralel medya yükleme
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,12 +24,15 @@ const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABAS
 const outDir = path.join(dist, 'sikayet');
 fs.mkdirSync(outDir, { recursive: true });
 
-const configJs = `window.__VALORIA_SIKAYET__=${JSON.stringify({
-  supabaseUrl,
-  anonKey,
-  apiPath: '/functions/v1/public-complaint',
-})};`;
-fs.writeFileSync(path.join(dist, 'sikayet-config.js'), configJs, 'utf8');
+fs.writeFileSync(
+  path.join(dist, 'sikayet-config.js'),
+  `window.__VALORIA_SIKAYET__=${JSON.stringify({
+    supabaseUrl,
+    anonKey,
+    apiPath: '/functions/v1/public-complaint',
+  })};`,
+  'utf8'
+);
 
 const html = `<!DOCTYPE html>
 <html lang="tr">
@@ -39,586 +41,585 @@ const html = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0c1222" />
   <meta name="robots" content="noindex" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>Valoria · Şikayet Hattı</title>
+  <title>Valoria · Complaint Line</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet" />
   <script src="/sikayet-config.js"></script>
   <style>
     :root {
-      --ink: #f4f0e8;
-      --ink-soft: rgba(244, 240, 232, 0.72);
-      --ink-muted: rgba(244, 240, 232, 0.48);
-      --gold: #c9a227;
-      --gold-soft: #e8d5a3;
-      --panel: rgba(18, 24, 40, 0.72);
-      --line: rgba(244, 240, 232, 0.12);
-      --ok: #6ee7b7;
-      --danger: #fca5a5;
-      --radius: 22px;
+      --ink:#f4f0e8; --ink-soft:rgba(244,240,232,.72); --ink-muted:rgba(244,240,232,.48);
+      --gold:#c9a227; --gold-soft:#e8d5a3; --panel:rgba(18,24,40,.72);
+      --line:rgba(244,240,232,.12); --ok:#6ee7b7; --danger:#fca5a5; --radius:22px;
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
-    body {
-      font-family: "DM Sans", system-ui, sans-serif;
-      color: var(--ink);
-      background: #070b14;
-      -webkit-font-smoothing: antialiased;
-    }
-    .bg {
-      position: fixed; inset: 0; z-index: 0; pointer-events: none;
-      background:
-        radial-gradient(ellipse 90% 60% at 10% -10%, rgba(201, 162, 39, 0.22), transparent 55%),
-        radial-gradient(ellipse 70% 50% at 100% 0%, rgba(56, 89, 140, 0.28), transparent 50%),
-        radial-gradient(ellipse 80% 50% at 50% 100%, rgba(12, 40, 48, 0.55), transparent 55%),
-        linear-gradient(165deg, #0a0f1a 0%, #101827 45%, #0c1220 100%);
-    }
-    .bg::after {
-      content: "";
-      position: absolute; inset: 0; opacity: 0.035;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-    .wrap {
-      position: relative; z-index: 1;
-      max-width: 560px; margin: 0 auto;
-      padding: max(20px, env(safe-area-inset-top)) 18px max(36px, env(safe-area-inset-bottom));
-    }
-    .brand { text-align: center; margin-bottom: 18px; animation: rise 0.7s ease both; }
-    .brand-mark {
-      display: inline-flex; align-items: center; gap: 10px;
-      letter-spacing: 0.28em; text-transform: uppercase;
-      font-size: 11px; font-weight: 600; color: var(--gold-soft);
-    }
-    .brand-mark span {
-      width: 28px; height: 1px;
-      background: linear-gradient(90deg, transparent, var(--gold), transparent);
-    }
-    h1 {
-      font-family: "Cormorant Garamond", Georgia, serif;
-      font-weight: 600; font-size: clamp(34px, 8vw, 44px);
-      margin: 14px 0 8px; letter-spacing: 0.02em; line-height: 1.05;
-    }
-    .lead {
-      margin: 0 auto; max-width: 36ch;
-      color: var(--ink-soft); font-size: 15px; line-height: 1.55;
-    }
-    .no-login {
-      display: inline-flex; margin-top: 12px; padding: 7px 12px;
-      border-radius: 999px; border: 1px solid rgba(110,231,183,0.28);
-      background: rgba(110,231,183,0.08); color: var(--ok);
-      font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
-    }
-    .resp {
-      display: flex; gap: 14px; align-items: center;
-      margin: 18px 0 0; padding: 14px;
-      border-radius: 18px; border: 1px solid var(--line);
-      background: linear-gradient(135deg, rgba(201,162,39,0.12), rgba(18,24,40,0.55));
-      animation: rise 0.8s ease 0.05s both;
-    }
-    .resp img, .resp .ph {
-      width: 64px; height: 64px; border-radius: 50%;
-      object-fit: cover; flex-shrink: 0;
-      border: 2px solid rgba(201,162,39,0.45);
-      background: #1a2236;
-    }
-    .resp .ph {
-      display: grid; place-items: center;
-      font-family: "Cormorant Garamond", Georgia, serif;
-      font-size: 26px; color: var(--gold-soft);
-    }
-    .resp .name {
-      font-family: "Cormorant Garamond", Georgia, serif;
-      font-size: 22px; font-weight: 600; margin: 0 0 2px;
-    }
-    .resp .title { margin: 0; color: var(--gold-soft); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-    .resp .brands { margin: 4px 0 0; color: var(--ink-soft); font-size: 13px; }
-    .resp .note { margin: 8px 0 0; color: var(--ink-muted); font-size: 12px; line-height: 1.45; }
-    .card {
-      margin-top: 18px; background: var(--panel);
-      border: 1px solid var(--line); border-radius: var(--radius);
-      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-      box-shadow: 0 24px 60px rgba(0,0,0,0.35); overflow: hidden;
-      animation: rise 0.85s ease 0.08s both;
-    }
-    .card-top {
-      padding: 18px 18px 14px; border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(201,162,39,0.08), transparent);
-    }
-    .card-top h2 {
-      margin: 0; font-size: 13px; font-weight: 700;
-      letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-soft);
-    }
-    .card-top p { margin: 6px 0 0; color: var(--ink-muted); font-size: 13px; line-height: 1.45; }
-    form { padding: 16px 18px 20px; display: grid; gap: 16px; }
-    .label {
-      display: block; margin-bottom: 8px;
-      font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--ink-muted);
-    }
-    .req { color: var(--gold); }
-    .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-    .seg button, .chips button {
-      appearance: none; border: 1px solid var(--line);
-      background: rgba(255,255,255,0.03); color: var(--ink-soft);
-      border-radius: 14px; padding: 12px 10px; font: inherit;
-      font-size: 13px; font-weight: 600; cursor: pointer;
-      transition: border-color .2s, background .2s, color .2s, transform .15s;
-    }
-    .seg button:active, .chips button:active { transform: scale(0.98); }
-    .seg button.on, .chips button.on {
-      border-color: rgba(201,162,39,0.55);
-      background: rgba(201,162,39,0.16); color: var(--gold-soft);
-    }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chips button { padding: 10px 12px; border-radius: 999px; font-size: 12px; }
-    .field {
-      width: 100%; border: 1px solid var(--line); border-radius: 14px;
-      background: rgba(0,0,0,0.28); color: var(--ink);
-      padding: 14px; font: inherit; font-size: 15px; outline: none;
-      transition: border-color .2s, box-shadow .2s;
-    }
-    .field:focus {
-      border-color: rgba(201,162,39,0.5);
-      box-shadow: 0 0 0 3px rgba(201,162,39,0.12);
-    }
-    textarea.field { min-height: 140px; resize: vertical; line-height: 1.5; }
-    .desc-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px;
-    }
-    .desc-head .label { margin: 0; }
-    .ai-btn {
-      appearance: none; border: 1px solid rgba(201,162,39,0.4);
-      background: rgba(201,162,39,0.12); color: var(--gold-soft);
-      border-radius: 999px; padding: 8px 12px; font: inherit;
-      font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
-    }
-    .ai-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .ai-hint { margin: 8px 0 0; color: var(--ink-muted); font-size: 12px; line-height: 1.4; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    @media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } }
-    .media-zone {
-      border: 1px dashed rgba(201,162,39,0.35); border-radius: 16px;
-      padding: 16px; background: rgba(201,162,39,0.04); text-align: center;
-    }
-    .media-zone p { margin: 0 0 12px; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
-    .media-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-    .media-actions label {
-      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line);
-      background: rgba(255,255,255,0.04); color: var(--ink);
-      font-size: 13px; font-weight: 600; cursor: pointer;
-    }
-    .media-actions input { display: none; }
-    .previews { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
-    .preview {
-      position: relative; border-radius: 14px; overflow: hidden;
-      aspect-ratio: 1; background: #000; border: 1px solid var(--line);
-    }
-    .preview img, .preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .preview .rm {
-      position: absolute; top: 6px; right: 6px; width: 28px; height: 28px;
-      border-radius: 50%; border: 0; background: rgba(0,0,0,0.65);
-      color: #fff; font-size: 16px; cursor: pointer;
-    }
-    .preview .badge {
-      position: absolute; left: 6px; bottom: 6px; padding: 3px 8px;
-      border-radius: 999px; font-size: 10px; font-weight: 700;
-      background: rgba(0,0,0,0.55); color: var(--gold-soft); text-transform: uppercase;
-    }
-    .submit {
-      appearance: none; border: 0; width: 100%; padding: 16px 18px;
-      border-radius: 16px; font: inherit; font-size: 15px; font-weight: 700;
-      letter-spacing: 0.04em; color: #1a1408; cursor: pointer;
-      background: linear-gradient(135deg, #e8d5a3 0%, #c9a227 55%, #a8841a 100%);
-      box-shadow: 0 12px 28px rgba(201,162,39,0.28);
-    }
-    .submit:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.2); }
-    .err {
-      display: none; padding: 12px 14px; border-radius: 12px;
-      background: rgba(185,28,28,0.18); border: 1px solid rgba(252,165,165,0.35);
-      color: var(--danger); font-size: 13px; line-height: 1.45;
-    }
-    .err.show { display: block; }
-    .success { display: none; padding: 36px 22px; text-align: center; animation: rise 0.55s ease both; }
-    .success.show { display: block; }
-    .success .check {
-      width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%;
-      display: grid; place-items: center;
-      background: rgba(110,231,183,0.12); border: 1px solid rgba(110,231,183,0.35);
-      color: var(--ok); font-size: 28px;
-    }
-    .success h3 {
-      font-family: "Cormorant Garamond", Georgia, serif;
-      font-size: 32px; margin: 0 0 8px; font-weight: 600;
-    }
-    .success p { margin: 0; color: var(--ink-soft); line-height: 1.55; font-size: 14px; }
-    .foot {
-      margin-top: 18px; text-align: center; color: var(--ink-muted);
-      font-size: 12px; line-height: 1.55; animation: rise 1s ease 0.15s both;
-    }
-    .loading-bar {
-      display: none; height: 3px; width: 100%; overflow: hidden;
-      background: rgba(255,255,255,0.06);
-    }
-    .loading-bar.on { display: block; }
-    .loading-bar i {
-      display: block; height: 100%; width: 40%;
-      background: linear-gradient(90deg, transparent, var(--gold), transparent);
-      animation: slide 1s ease infinite;
-    }
-    @keyframes rise {
-      from { opacity: 0; transform: translateY(14px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes slide {
-      from { transform: translateX(-120%); }
-      to { transform: translateX(320%); }
-    }
+    *{box-sizing:border-box} html,body{margin:0;min-height:100%}
+    body{font-family:"DM Sans",system-ui,sans-serif;color:var(--ink);background:#070b14;-webkit-font-smoothing:antialiased}
+    html[dir=rtl] body{font-family:"DM Sans","Segoe UI",Tahoma,sans-serif}
+    .bg{position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 90% 60% at 10% -10%,rgba(201,162,39,.22),transparent 55%),radial-gradient(ellipse 70% 50% at 100% 0%,rgba(56,89,140,.28),transparent 50%),linear-gradient(165deg,#0a0f1a 0%,#101827 45%,#0c1220 100%)}
+    .wrap{position:relative;z-index:1;max-width:560px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 18px max(36px,env(safe-area-inset-bottom))}
+    .lang{display:flex;justify-content:center;gap:6px;margin-bottom:14px}
+    .lang button{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--ink-soft);border-radius:999px;padding:8px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+    .lang button.on{border-color:rgba(201,162,39,.55);background:rgba(201,162,39,.16);color:var(--gold-soft)}
+    .brand{text-align:center;margin-bottom:18px}
+    .brand-mark{display:inline-flex;align-items:center;gap:10px;letter-spacing:.28em;text-transform:uppercase;font-size:11px;font-weight:600;color:var(--gold-soft)}
+    .brand-mark span{width:28px;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+    h1{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;font-size:clamp(32px,8vw,44px);margin:14px 0 8px;line-height:1.05}
+    .lead{margin:0 auto;max-width:38ch;color:var(--ink-soft);font-size:15px;line-height:1.55}
+    .no-login{display:inline-flex;margin-top:12px;padding:7px 12px;border-radius:999px;border:1px solid rgba(110,231,183,.28);background:rgba(110,231,183,.08);color:var(--ok);font-size:12px;font-weight:700}
+    .resp{display:flex;gap:14px;align-items:center;margin:18px 0 0;padding:14px;border-radius:18px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(201,162,39,.12),rgba(18,24,40,.55))}
+    .resp img,.resp .ph{width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid rgba(201,162,39,.45);background:#1a2236}
+    .resp .ph{display:grid;place-items:center;font-family:"Cormorant Garamond",Georgia,serif;font-size:26px;color:var(--gold-soft)}
+    .resp .name{font-family:"Cormorant Garamond",Georgia,serif;font-size:22px;font-weight:600;margin:0 0 2px}
+    .resp .title{margin:0;color:var(--gold-soft);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+    .resp .brands{margin:4px 0 0;color:var(--ink-soft);font-size:13px}
+    .resp .note{margin:8px 0 0;color:var(--ink-muted);font-size:12px;line-height:1.45}
+    .card{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);backdrop-filter:blur(18px);overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+    .card-top{padding:18px 18px 14px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(201,162,39,.08),transparent)}
+    .card-top h2{margin:0;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-soft)}
+    .card-top p{margin:6px 0 0;color:var(--ink-muted);font-size:13px;line-height:1.45}
+    form{padding:16px 18px 20px;display:grid;gap:16px}
+    .label{display:block;margin-bottom:8px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted)}
+    .req{color:var(--gold)}
+    .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+    .seg button,.chips button{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--ink-soft);border-radius:14px;padding:12px 10px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+    .seg button.on,.chips button.on{border-color:rgba(201,162,39,.55);background:rgba(201,162,39,.16);color:var(--gold-soft)}
+    .chips{display:flex;flex-wrap:wrap;gap:8px}
+    .chips button{padding:10px 12px;border-radius:999px;font-size:12px}
+    .field{width:100%;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.28);color:var(--ink);padding:14px;font:inherit;font-size:15px;outline:none}
+    .field:focus{border-color:rgba(201,162,39,.5);box-shadow:0 0 0 3px rgba(201,162,39,.12)}
+    textarea.field{min-height:140px;resize:vertical;line-height:1.5}
+    .desc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+    .desc-head .label{margin:0}
+    .ai-btn{appearance:none;border:1px solid rgba(201,162,39,.4);background:rgba(201,162,39,.12);color:var(--gold-soft);border-radius:999px;padding:8px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .ai-btn:disabled{opacity:.5;cursor:not-allowed}
+    .ai-hint{margin:8px 0 0;color:var(--ink-muted);font-size:12px;line-height:1.4}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media (max-width:420px){.grid2{grid-template-columns:1fr}}
+    .media-zone{border:1px dashed rgba(201,162,39,.35);border-radius:16px;padding:16px;background:rgba(201,162,39,.04);text-align:center}
+    .media-zone p{margin:0 0 12px;color:var(--ink-soft);font-size:13px;line-height:1.45}
+    .media-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+    .media-actions label{display:inline-flex;align-items:center;justify-content:center;padding:11px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--ink);font-size:13px;font-weight:600;cursor:pointer}
+    .media-actions input{display:none}
+    .previews{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}
+    .preview{position:relative;border-radius:14px;overflow:hidden;aspect-ratio:1;background:#000;border:1px solid var(--line)}
+    .preview img,.preview video{width:100%;height:100%;object-fit:cover;display:block}
+    .preview .rm{position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:16px;cursor:pointer}
+    .preview .badge{position:absolute;left:6px;bottom:6px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;background:rgba(0,0,0,.55);color:var(--gold-soft);text-transform:uppercase}
+    .preview.uploading::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45);background-image:linear-gradient(90deg,transparent,rgba(201,162,39,.5),transparent);background-size:200% 100%;animation:shine 1s linear infinite}
+    .preview.ready .badge{color:#6ee7b7}
+    .upload-status{margin-top:10px;font-size:12px;color:var(--ink-muted);min-height:16px}
+    .submit{appearance:none;border:0;width:100%;padding:16px 18px;border-radius:16px;font:inherit;font-size:15px;font-weight:700;letter-spacing:.04em;color:#1a1408;cursor:pointer;background:linear-gradient(135deg,#e8d5a3 0%,#c9a227 55%,#a8841a 100%);box-shadow:0 12px 28px rgba(201,162,39,.28)}
+    .submit:disabled{opacity:.55;cursor:not-allowed;filter:grayscale(.2)}
+    .err{display:none;padding:12px 14px;border-radius:12px;background:rgba(185,28,28,.18);border:1px solid rgba(252,165,165,.35);color:var(--danger);font-size:13px;line-height:1.45}
+    .err.show{display:block}
+    .success{display:none;padding:36px 22px;text-align:center}
+    .success.show{display:block}
+    .success .check{width:64px;height:64px;margin:0 auto 16px;border-radius:50%;display:grid;place-items:center;background:rgba(110,231,183,.12);border:1px solid rgba(110,231,183,.35);color:var(--ok);font-size:28px}
+    .success h3{font-family:"Cormorant Garamond",Georgia,serif;font-size:32px;margin:0 0 8px;font-weight:600}
+    .success p{margin:0;color:var(--ink-soft);line-height:1.55;font-size:14px}
+    .foot{margin-top:18px;text-align:center;color:var(--ink-muted);font-size:12px;line-height:1.55}
+    .loading-bar{display:none;height:3px;width:100%;overflow:hidden;background:rgba(255,255,255,.06)}
+    .loading-bar.on{display:block}
+    .loading-bar i{display:block;height:100%;width:40%;background:linear-gradient(90deg,transparent,var(--gold),transparent);animation:slide 1s ease infinite}
+    @keyframes slide{from{transform:translateX(-120%)}to{transform:translateX(320%)}}
+    @keyframes shine{from{background-position:200% 0}to{background-position:-200% 0}}
   </style>
 </head>
 <body>
   <div class="bg" aria-hidden="true"></div>
   <div class="wrap">
+    <div class="lang" id="langSwitch" role="group" aria-label="Language">
+      <button type="button" data-lang="tr" class="on">TR</button>
+      <button type="button" data-lang="en">EN</button>
+      <button type="button" data-lang="ar">عربي</button>
+    </div>
     <header class="brand">
       <div class="brand-mark"><span></span>Valoria Hotel<span></span></div>
-      <h1>Şikayet Hattı</h1>
-      <p class="lead">Giriş yapmadan yazın. Ad, telefon, oda ve açıklama yeterlidir. İsterseniz fotoğraf veya video ekleyin.</p>
-      <div class="no-login">Giriş gerekmez</div>
+      <h1 id="tTitle">Şikayet Hattı</h1>
+      <p class="lead" id="tLead"></p>
+      <div class="no-login" id="tNoLogin"></div>
     </header>
-
-    <aside class="resp" id="respCard" aria-live="polite">
+    <aside class="resp" id="respCard">
       <div class="ph" id="respPh">S</div>
       <div>
-        <p class="title" id="respTitle">Valoria Hotel &amp; Bavulsuite Sorumlusu</p>
+        <p class="title" id="respTitle"></p>
         <p class="name" id="respName">Soner</p>
         <p class="brands" id="respBrands">Valoria Hotel · Bavulsuite</p>
-        <p class="note" id="respNote">Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir.</p>
+        <p class="note" id="respNote"></p>
       </div>
     </aside>
-
     <section class="card" id="card">
       <div class="loading-bar" id="loadingBar"><i></i></div>
       <div class="card-top" id="cardTop">
-        <h2>Geri bildirim formu</h2>
-        <p>Uygulama indirmeden, hesabınız olmadan gönderin.</p>
+        <h2 id="tFormTitle"></h2>
+        <p id="tFormSub"></p>
       </div>
       <div class="success" id="success">
         <div class="check">✓</div>
-        <h3>İletildi</h3>
-        <p>Mesajınız sorumlu yöneticiye ulaştı. Anlık değerlendirilir. Teşekkür ederiz.</p>
+        <h3 id="tOkTitle"></h3>
+        <p id="tOkBody"></p>
       </div>
       <form id="form">
         <div>
-          <span class="label">Konu</span>
+          <span class="label" id="tTopic"></span>
           <div class="seg" id="topics">
-            <button type="button" data-v="complaint" class="on">Şikayet</button>
-            <button type="button" data-v="suggestion">Öneri</button>
-            <button type="button" data-v="thanks">Teşekkür</button>
+            <button type="button" data-v="complaint" class="on" data-i18n="topicComplaint"></button>
+            <button type="button" data-v="suggestion" data-i18n="topicSuggestion"></button>
+            <button type="button" data-v="thanks" data-i18n="topicThanks"></button>
           </div>
         </div>
         <div>
-          <span class="label">Kategori</span>
+          <span class="label" id="tCategory"></span>
           <div class="chips" id="categories">
-            <button type="button" data-v="personnel" class="on">Personel</button>
-            <button type="button" data-v="room_issue">Oda</button>
-            <button type="button" data-v="reception_checkin_checkout">Resepsiyon</button>
-            <button type="button" data-v="noise">Gürültü</button>
-            <button type="button" data-v="breakfast">Kahvaltı</button>
-            <button type="button" data-v="food">Yemek</button>
-            <button type="button" data-v="payment">Ödeme</button>
-            <button type="button" data-v="passport">Pasaport</button>
-            <button type="button" data-v="other">Diğer</button>
+            <button type="button" data-v="personnel" class="on" data-i18n="catPersonnel"></button>
+            <button type="button" data-v="room_issue" data-i18n="catRoom"></button>
+            <button type="button" data-v="reception_checkin_checkout" data-i18n="catReception"></button>
+            <button type="button" data-v="noise" data-i18n="catNoise"></button>
+            <button type="button" data-v="breakfast" data-i18n="catBreakfast"></button>
+            <button type="button" data-v="food" data-i18n="catFood"></button>
+            <button type="button" data-v="payment" data-i18n="catPayment"></button>
+            <button type="button" data-v="passport" data-i18n="catPassport"></button>
+            <button type="button" data-v="other" data-i18n="catOther"></button>
           </div>
         </div>
         <div>
-          <label class="label" for="name">Ad Soyad <span class="req">*</span></label>
-          <input class="field" id="name" maxlength="120" placeholder="İsim Soyisim" required autocomplete="name" />
+          <label class="label" for="name" id="tName"></label>
+          <input class="field" id="name" maxlength="120" required autocomplete="name" />
         </div>
         <div class="grid2">
           <div>
-            <label class="label" for="phone">Telefon <span class="req">*</span></label>
-            <input class="field" id="phone" type="tel" maxlength="40" placeholder="+90 …" required autocomplete="tel" />
+            <label class="label" for="phone" id="tPhone"></label>
+            <input class="field" id="phone" type="tel" maxlength="40" required autocomplete="tel" />
           </div>
           <div>
-            <label class="label" for="room">Oda no <span class="req">*</span></label>
-            <input class="field" id="room" inputmode="numeric" maxlength="20" placeholder="Örn. 204" required />
+            <label class="label" for="room" id="tRoom"></label>
+            <input class="field" id="room" inputmode="numeric" maxlength="20" required />
           </div>
         </div>
         <div>
           <div class="desc-head">
-            <label class="label" for="description">Açıklama <span class="req">*</span></label>
-            <button type="button" class="ai-btn" id="aiBtn">✦ DeepSeek ile düzenle</button>
+            <label class="label" for="description" id="tDesc"></label>
+            <button type="button" class="ai-btn" id="aiBtn"></button>
           </div>
-          <textarea class="field" id="description" placeholder="Ne yaşadığınızı yazın… AI düğmesi metninizi nazik ve net hale getirir." required maxlength="4000"></textarea>
-          <p class="ai-hint">Birkaç kelime yazıp DeepSeek’e bırakın; anlam aynı kalır, ifade profesyonelleşir.</p>
+          <textarea class="field" id="description" required maxlength="4000"></textarea>
+          <p class="ai-hint" id="tAiHint"></p>
         </div>
         <div class="media-zone">
-          <p>İsteğe bağlı: fotoğraf veya video (en fazla 4)</p>
+          <p id="tMedia"></p>
           <div class="media-actions">
-            <label><input type="file" id="pickImage" accept="image/*" multiple />Fotoğraf</label>
-            <label><input type="file" id="pickVideo" accept="video/*" multiple />Video</label>
-            <label><input type="file" id="pickCamera" accept="image/*,video/*" capture="environment" />Kamera</label>
+            <label><input type="file" id="pickImage" accept="image/*" multiple /><span data-i18n="photo"></span></label>
+            <label><input type="file" id="pickVideo" accept="video/*" multiple /><span data-i18n="video"></span></label>
+            <label><input type="file" id="pickCamera" accept="image/*,video/*" capture="environment" /><span data-i18n="camera"></span></label>
           </div>
           <div class="previews" id="previews"></div>
+          <div class="upload-status" id="uploadStatus"></div>
         </div>
         <div class="err" id="err"></div>
-        <button class="submit" id="submit" type="submit">Gönder</button>
+        <button class="submit" id="submit" type="submit"></button>
       </form>
     </section>
-    <p class="foot" id="footNote">Valoria Hotel · Bavulsuite<br/>Mesajlar yalnızca sorumlu yöneticiye iletilir.</p>
+    <p class="foot" id="footNote"></p>
   </div>
   <script>
 (function () {
+  var I18N = {
+    tr: {
+      title: "Şikayet Hattı", lead: "Giriş yapmadan yazın. Ad, telefon, oda ve açıklama yeterlidir. Fotoğraf veya video ekleyebilirsiniz.",
+      noLogin: "Giriş gerekmez", formTitle: "Geri bildirim formu", formSub: "Uygulama indirmeden, hesabınız olmadan gönderin.",
+      topic: "Konu", category: "Kategori", name: "Ad Soyad *", phone: "Telefon *", room: "Oda no *", desc: "Açıklama *",
+      topicComplaint: "Şikayet", topicSuggestion: "Öneri", topicThanks: "Teşekkür",
+      catPersonnel: "Personel", catRoom: "Oda", catReception: "Resepsiyon", catNoise: "Gürültü", catBreakfast: "Kahvaltı", catFood: "Yemek", catPayment: "Ödeme", catPassport: "Pasaport", catOther: "Diğer",
+      namePh: "İsim Soyisim", phonePh: "+90 …", roomPh: "Örn. 204", descPh: "Ne yaşadığınızı yazın…",
+      aiBtn: "✦ DeepSeek ile düzenle", aiBusy: "Düzenleniyor…", aiHint: "Birkaç kelime yazıp DeepSeek’e bırakın; anlam aynı kalır.",
+      media: "İsteğe bağlı: fotoğraf veya video (en fazla 4). Seçince hemen yüklenir.",
+      photo: "Fotoğraf", video: "Video", camera: "Kamera", submit: "Gönder", sending: "Gönderiliyor…",
+      okTitle: "İletildi", okBody: "Mesajınız sorumlu yöneticiye ulaştı. Anlık değerlendirilir. Teşekkür ederiz.",
+      errName: "Lütfen adınızı ve soyadınızı yazın.", errPhone: "Lütfen geçerli bir telefon numarası yazın.",
+      errRoom: "Lütfen oda numaranızı yazın.", errDesc: "Lütfen açıklamanızı yazın.", errAiDraft: "Önce kısa bir taslak yazın.",
+      errConfig: "Portal yapılandırması eksik.", errSend: "Gönderilemedi. Lütfen tekrar deneyin.",
+      errUpload: "Medya yüklenemedi", errBig: "Dosya çok büyük (üst sınır 40MB)",
+      uploading: "Medya yükleniyor…", uploaded: "Medya hazır", waitUpload: "Medya yüklenirken lütfen bekleyin…",
+      foot: "Valoria Hotel · Bavulsuite\\nMesajlar yalnızca sorumlu yöneticiye iletilir.",
+      respTitle: "Valoria Hotel & Bavulsuite Sorumlusu",
+      respNote: "Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir."
+    },
+    en: {
+      title: "Complaint Line", lead: "No login required. Name, phone, room and description are enough. You may add photos or video.",
+      noLogin: "No login needed", formTitle: "Feedback form", formSub: "Send without installing the app or creating an account.",
+      topic: "Topic", category: "Category", name: "Full name *", phone: "Phone *", room: "Room no. *", desc: "Description *",
+      topicComplaint: "Complaint", topicSuggestion: "Suggestion", topicThanks: "Thanks",
+      catPersonnel: "Staff", catRoom: "Room", catReception: "Reception", catNoise: "Noise", catBreakfast: "Breakfast", catFood: "Food", catPayment: "Payment", catPassport: "Passport", catOther: "Other",
+      namePh: "Full name", phonePh: "+90 …", roomPh: "e.g. 204", descPh: "Tell us what happened…",
+      aiBtn: "✦ Improve with DeepSeek", aiBusy: "Improving…", aiHint: "Write a few words — DeepSeek will polish the wording.",
+      media: "Optional: photo or video (max 4). Uploads start as soon as you select.",
+      photo: "Photo", video: "Video", camera: "Camera", submit: "Send", sending: "Sending…",
+      okTitle: "Sent", okBody: "Your message reached management. It is reviewed promptly. Thank you.",
+      errName: "Please enter your full name.", errPhone: "Please enter a valid phone number.",
+      errRoom: "Please enter your room number.", errDesc: "Please write a description.", errAiDraft: "Write a short draft first.",
+      errConfig: "Portal configuration missing.", errSend: "Could not send. Please try again.",
+      errUpload: "Media upload failed", errBig: "File too large (max 40MB)",
+      uploading: "Uploading media…", uploaded: "Media ready", waitUpload: "Please wait while media uploads…",
+      foot: "Valoria Hotel · Bavulsuite\\nMessages go only to the responsible manager.",
+      respTitle: "Valoria Hotel & Bavulsuite Manager",
+      respNote: "Complaints are reviewed promptly. Your message goes directly to the responsible manager."
+    },
+    ar: {
+      title: "خط الشكاوى", lead: "لا حاجة لتسجيل الدخول. الاسم والهاتف ورقم الغرفة والوصف كافية. يمكن إضافة صور أو فيديو.",
+      noLogin: "بدون تسجيل دخول", formTitle: "نموذج الملاحظات", formSub: "أرسل بدون تثبيت التطبيق أو إنشاء حساب.",
+      topic: "الموضوع", category: "الفئة", name: "الاسم الكامل *", phone: "الهاتف *", room: "رقم الغرفة *", desc: "الوصف *",
+      topicComplaint: "شكوى", topicSuggestion: "اقتراح", topicThanks: "شكر",
+      catPersonnel: "الموظفون", catRoom: "الغرفة", catReception: "الاستقبال", catNoise: "الضوضاء", catBreakfast: "الإفطار", catFood: "الطعام", catPayment: "الدفع", catPassport: "جواز السفر", catOther: "أخرى",
+      namePh: "الاسم الكامل", phonePh: "+90 …", roomPh: "مثال 204", descPh: "صف ما حدث…",
+      aiBtn: "✦ تحسين بـ DeepSeek", aiBusy: "جارٍ التحسين…", aiHint: "اكتب بضع كلمات — DeepSeek يصقل الصياغة.",
+      media: "اختياري: صورة أو فيديو (حد أقصى 4). يبدأ الرفع فور الاختيار.",
+      photo: "صورة", video: "فيديو", camera: "كاميرا", submit: "إرسال", sending: "جارٍ الإرسال…",
+      okTitle: "تم الإرسال", okBody: "وصلت رسالتك إلى الإدارة وتُراجع فوراً. شكراً لك.",
+      errName: "يرجى إدخال الاسم الكامل.", errPhone: "يرجى إدخال رقم هاتف صالح.",
+      errRoom: "يرجى إدخال رقم الغرفة.", errDesc: "يرجى كتابة الوصف.", errAiDraft: "اكتب مسودة قصيرة أولاً.",
+      errConfig: "إعدادات البوابة ناقصة.", errSend: "تعذر الإرسال. حاول مرة أخرى.",
+      errUpload: "فشل رفع الوسائط", errBig: "الملف كبير جداً (حد أقصى 40MB)",
+      uploading: "جارٍ رفع الوسائط…", uploaded: "الوسائط جاهزة", waitUpload: "يرجى الانتظار حتى يكتمل الرفع…",
+      foot: "Valoria Hotel · Bavulsuite\\nتُرسل الرسائل فقط إلى المدير المسؤول.",
+      respTitle: "مسؤول Valoria Hotel و Bavulsuite",
+      respNote: "تُراجع الشكاوى فوراً. رسالتك تصل مباشرة إلى المدير المسؤول."
+    }
+  };
+
   var cfg = window.__VALORIA_SIKAYET__ || {};
   var apiBase = (cfg.supabaseUrl || "").replace(/\\/$/, "");
   var apiUrl = apiBase + (cfg.apiPath || "/functions/v1/public-complaint");
   var anonKey = cfg.anonKey || "";
-  var topic = "complaint";
-  var category = "personnel";
-  var files = [];
+  var topic = "complaint", category = "personnel";
   var MAX = 4;
+  var items = []; // {id,file,previewUrl,status,media,el}
+  var lang = "tr";
+  var t = I18N.tr;
 
-  function qs(id) { return document.getElementById(id); }
-  function authHeaders(json) {
-    var h = { Authorization: "Bearer " + anonKey, apikey: anonKey };
-    if (json) h["Content-Type"] = "application/json";
+  function qs(id){ return document.getElementById(id); }
+  function authHeaders(json){
+    var h={Authorization:"Bearer "+anonKey,apikey:anonKey};
+    if(json) h["Content-Type"]="application/json";
     return h;
   }
-  function wireToggle(rootId, setter) {
-    var root = qs(rootId);
-    root.addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-v]");
-      if (!btn) return;
-      root.querySelectorAll("button").forEach(function (b) { b.classList.remove("on"); });
+  function showErr(msg){ var el=qs("err"); el.textContent=msg||""; el.classList.toggle("show",!!msg); }
+  function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
+
+  function detectLang(){
+    try{
+      var saved=localStorage.getItem("valoria_sikayet_lang");
+      if(saved && I18N[saved]) return saved;
+    }catch(_){}
+    var nav=(navigator.language||"tr").toLowerCase();
+    if(nav.indexOf("ar")===0) return "ar";
+    if(nav.indexOf("en")===0) return "en";
+    return "tr";
+  }
+
+  function applyLang(code){
+    lang = I18N[code] ? code : "tr";
+    t = I18N[lang];
+    try{ localStorage.setItem("valoria_sikayet_lang", lang); }catch(_){}
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
+    document.title = "Valoria · " + t.title;
+    qs("langSwitch").querySelectorAll("button").forEach(function(b){
+      b.classList.toggle("on", b.getAttribute("data-lang")===lang);
+    });
+    qs("tTitle").textContent=t.title;
+    qs("tLead").textContent=t.lead;
+    qs("tNoLogin").textContent=t.noLogin;
+    qs("tFormTitle").textContent=t.formTitle;
+    qs("tFormSub").textContent=t.formSub;
+    qs("tTopic").textContent=t.topic;
+    qs("tCategory").textContent=t.category;
+    qs("tName").innerHTML=t.name.replace("*",'<span class="req">*</span>');
+    qs("tPhone").innerHTML=t.phone.replace("*",'<span class="req">*</span>');
+    qs("tRoom").innerHTML=t.room.replace("*",'<span class="req">*</span>');
+    qs("tDesc").innerHTML=t.desc.replace("*",'<span class="req">*</span>');
+    qs("tAiHint").textContent=t.aiHint;
+    qs("tMedia").textContent=t.media;
+    qs("aiBtn").textContent=t.aiBtn;
+    qs("submit").textContent=t.submit;
+    qs("tOkTitle").textContent=t.okTitle;
+    qs("tOkBody").textContent=t.okBody;
+    qs("name").placeholder=t.namePh;
+    qs("phone").placeholder=t.phonePh;
+    qs("room").placeholder=t.roomPh;
+    qs("description").placeholder=t.descPh;
+    qs("footNote").innerHTML=t.foot.replace("\\n","<br/>");
+    qs("respTitle").textContent=t.respTitle;
+    qs("respNote").textContent=t.respNote;
+    document.querySelectorAll("[data-i18n]").forEach(function(el){
+      var k=el.getAttribute("data-i18n");
+      if(t[k]) el.textContent=t[k];
+    });
+    updateUploadStatus();
+  }
+
+  qs("langSwitch").addEventListener("click", function(e){
+    var b=e.target.closest("button[data-lang]");
+    if(b) applyLang(b.getAttribute("data-lang"));
+  });
+
+  function wireToggle(rootId, setter){
+    qs(rootId).addEventListener("click", function(e){
+      var btn=e.target.closest("button[data-v]");
+      if(!btn) return;
+      qs(rootId).querySelectorAll("button").forEach(function(b){ b.classList.remove("on"); });
       btn.classList.add("on");
       setter(btn.getAttribute("data-v"));
     });
   }
-  wireToggle("topics", function (v) { topic = v; });
-  wireToggle("categories", function (v) { category = v; });
+  wireToggle("topics", function(v){ topic=v; });
+  wireToggle("categories", function(v){ category=v; });
 
-  function showErr(msg) {
-    var el = qs("err");
-    el.textContent = msg || "";
-    el.classList.toggle("show", !!msg);
+  function updateUploadStatus(){
+    var pending=items.filter(function(i){ return i.status==="uploading"||i.status==="queued"; }).length;
+    var ready=items.filter(function(i){ return i.status==="ready"; }).length;
+    var failed=items.filter(function(i){ return i.status==="error"; }).length;
+    var el=qs("uploadStatus");
+    if(!items.length){ el.textContent=""; return; }
+    if(pending) el.textContent=t.uploading+" ("+ready+"/"+items.length+")";
+    else if(failed) el.textContent=t.errUpload;
+    else el.textContent=t.uploaded+" ("+ready+")";
   }
 
-  function applyResponsible(r) {
-    if (!r) return;
-    qs("respName").textContent = r.name || "Soner";
-    qs("respTitle").textContent = r.title || "Valoria Hotel & Bavulsuite Sorumlusu";
-    qs("respBrands").textContent = r.brands || "Valoria Hotel · Bavulsuite";
-    qs("respNote").textContent = r.note || "Anlık şikayet değerlendirilir.";
-    qs("footNote").innerHTML = (r.brands || "Valoria Hotel · Bavulsuite") + "<br/>Mesajlar yalnızca sorumlu yöneticiye iletilir.";
-    var ph = qs("respPh");
-    if (r.photoUrl) {
-      var img = document.createElement("img");
-      img.src = r.photoUrl;
-      img.alt = r.name || "Sorumlu";
-      img.id = "respPhoto";
-      ph.replaceWith(img);
-      img.className = "";
-      img.style.cssText = "width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid rgba(201,162,39,0.45);background:#1a2236;";
-    } else {
-      ph.textContent = (r.name || "S").charAt(0).toUpperCase();
-    }
-  }
-
-  async function loadMeta() {
-    if (!apiBase || !anonKey) return;
-    try {
-      var res = await fetch(apiUrl, { headers: authHeaders(false) });
-      var data = await res.json();
-      if (data && data.responsible) applyResponsible(data.responsible);
-    } catch (_) {}
-  }
-  loadMeta();
-
-  function renderPreviews() {
-    var box = qs("previews");
-    box.innerHTML = "";
-    files.forEach(function (f, idx) {
-      var div = document.createElement("div");
-      div.className = "preview";
-      var url = URL.createObjectURL(f);
-      if (f.type.indexOf("video/") === 0) {
-        var v = document.createElement("video");
-        v.src = url; v.muted = true; v.playsInline = true;
-        div.appendChild(v);
-        var badge = document.createElement("span");
-        badge.className = "badge"; badge.textContent = "Video";
-        div.appendChild(badge);
-      } else {
-        var img = document.createElement("img");
-        img.src = url; img.alt = "";
-        div.appendChild(img);
-        var badge2 = document.createElement("span");
-        badge2.className = "badge"; badge2.textContent = "Foto";
-        div.appendChild(badge2);
+  function compressImage(file){
+    return new Promise(function(resolve){
+      if(!file.type || file.type.indexOf("image/")!==0 || file.type.indexOf("gif")>=0){
+        resolve(file); return;
       }
-      var rm = document.createElement("button");
-      rm.type = "button"; rm.className = "rm"; rm.textContent = "×";
-      rm.onclick = function () { files.splice(idx, 1); renderPreviews(); };
+      if(file.size < 450000){ resolve(file); return; }
+      var url=URL.createObjectURL(file);
+      var img=new Image();
+      img.onload=function(){
+        var max=1280;
+        var w=img.width, h=img.height;
+        if(w>max || h>max){
+          if(w>h){ h=Math.round(h*(max/w)); w=max; }
+          else { w=Math.round(w*(max/h)); h=max; }
+        }
+        var canvas=document.createElement("canvas");
+        canvas.width=w; canvas.height=h;
+        var ctx=canvas.getContext("2d");
+        ctx.drawImage(img,0,0,w,h);
+        canvas.toBlob(function(blob){
+          URL.revokeObjectURL(url);
+          if(!blob || blob.size>=file.size){ resolve(file); return; }
+          resolve(new File([blob], (file.name||"photo").replace(/\\.[^.]+$/,"")+".jpg", {type:"image/jpeg"}));
+        }, "image/jpeg", 0.72);
+      };
+      img.onerror=function(){ URL.revokeObjectURL(url); resolve(file); };
+      img.src=url;
+    });
+  }
+
+  async function uploadOne(item){
+    item.status="uploading";
+    if(item.el) item.el.classList.add("uploading");
+    updateUploadStatus();
+    try{
+      var file=item.file;
+      if(file.type && file.type.indexOf("image/")===0){
+        file=await compressImage(file);
+        item.file=file;
+      }
+      var mime=(file.type||"image/jpeg").toLowerCase();
+      var prepRes=await fetch(apiUrl,{
+        method:"POST", headers:authHeaders(true),
+        body:JSON.stringify({action:"signed-upload", mime:mime})
+      });
+      var prep=await prepRes.json().catch(function(){return {};});
+      if(!prepRes.ok || !prep.ok || !prep.token || !prep.path){
+        throw new Error((prep&&prep.error)||t.errUpload);
+      }
+      var upRes;
+      if(prep.signedUrl){
+        upRes=await fetch(prep.signedUrl,{
+          method:"PUT",
+          headers:{"Content-Type":mime,"x-upsert":"false"},
+          body:file
+        });
+      } else {
+        upRes=await fetch(apiBase+"/storage/v1/object/upload/sign/qr-complaints/"+prep.path+"?token="+encodeURIComponent(prep.token),{
+          method:"PUT",
+          headers:{"Content-Type":mime,Authorization:"Bearer "+anonKey,apikey:anonKey,"x-upsert":"false"},
+          body:file
+        });
+      }
+      if(!upRes.ok) throw new Error(t.errUpload);
+      item.media={
+        url:prep.publicUrl,
+        type:prep.type || (mime.indexOf("video/")===0?"video":"image"),
+        mime:mime,
+        name:file.name||undefined
+      };
+      item.status="ready";
+      if(item.el){ item.el.classList.remove("uploading"); item.el.classList.add("ready"); }
+    }catch(err){
+      item.status="error";
+      item.error=err&&err.message?err.message:t.errUpload;
+      if(item.el) item.el.classList.remove("uploading");
+      showErr(item.error);
+    }
+    updateUploadStatus();
+  }
+
+  function renderPreviews(){
+    var box=qs("previews");
+    box.innerHTML="";
+    items.forEach(function(item){
+      var div=document.createElement("div");
+      div.className="preview"+(item.status==="uploading"||item.status==="queued"?" uploading":"")+(item.status==="ready"?" ready":"");
+      if(item.file.type.indexOf("video/")===0){
+        var v=document.createElement("video"); v.src=item.previewUrl; v.muted=true; v.playsInline=true; div.appendChild(v);
+      } else {
+        var img=document.createElement("img"); img.src=item.previewUrl; img.alt=""; div.appendChild(img);
+      }
+      var badge=document.createElement("span");
+      badge.className="badge";
+      badge.textContent=item.status==="ready"?"OK":(item.file.type.indexOf("video/")===0?"Video":"Foto");
+      div.appendChild(badge);
+      var rm=document.createElement("button");
+      rm.type="button"; rm.className="rm"; rm.textContent="×";
+      rm.onclick=function(){
+        items=items.filter(function(x){ return x.id!==item.id; });
+        renderPreviews(); updateUploadStatus();
+      };
       div.appendChild(rm);
+      item.el=div;
       box.appendChild(div);
     });
   }
 
-  function addFiles(list) {
-    for (var i = 0; i < list.length; i++) {
-      if (files.length >= MAX) break;
-      var f = list[i];
-      if (!f) continue;
-      if (f.size > 40 * 1024 * 1024) {
-        showErr("Dosya çok büyük (üst sınır 40MB): " + f.name);
-        continue;
-      }
-      files.push(f);
+  async function addFiles(list){
+    var incoming=[];
+    for(var i=0;i<list.length;i++){
+      if(items.length+incoming.length>=MAX) break;
+      var f=list[i];
+      if(!f) continue;
+      if(f.size>40*1024*1024){ showErr(t.errBig+": "+f.name); continue; }
+      incoming.push({
+        id:uid(),
+        file:f,
+        previewUrl:URL.createObjectURL(f),
+        status:"queued",
+        media:null,
+        el:null
+      });
     }
+    items=items.concat(incoming);
     renderPreviews();
+    showErr("");
+    // Paralel yükleme — gönderimi bekletmez
+    await Promise.all(incoming.map(function(item){ return uploadOne(item); }));
   }
 
-  ["pickImage", "pickVideo", "pickCamera"].forEach(function (id) {
-    qs(id).addEventListener("change", function (e) {
-      addFiles(e.target.files || []);
-      e.target.value = "";
+  ["pickImage","pickVideo","pickCamera"].forEach(function(id){
+    qs(id).addEventListener("change", function(e){
+      addFiles(e.target.files||[]);
+      e.target.value="";
     });
   });
 
-  qs("aiBtn").addEventListener("click", async function () {
+  qs("aiBtn").addEventListener("click", async function(){
     showErr("");
-    var text = (qs("description").value || "").trim();
-    if (text.length < 3) {
-      showErr("Önce kısa bir taslak yazın, sonra DeepSeek düzenlesin.");
-      return;
-    }
-    var btn = qs("aiBtn");
-    btn.disabled = true;
-    btn.textContent = "Düzenleniyor…";
-    try {
-      var res = await fetch(apiUrl, {
-        method: "POST",
-        headers: authHeaders(true),
-        body: JSON.stringify({
-          action: "improve-text",
-          text: text,
-          topic_type: topic,
-          category: category,
-        }),
+    var text=(qs("description").value||"").trim();
+    if(text.length<3){ showErr(t.errAiDraft); return; }
+    var btn=qs("aiBtn");
+    btn.disabled=true; btn.textContent=t.aiBusy;
+    try{
+      var res=await fetch(apiUrl,{
+        method:"POST", headers:authHeaders(true),
+        body:JSON.stringify({action:"improve-text", text:text, topic_type:topic, category:category, lang:lang})
       });
-      var data = {};
-      try { data = await res.json(); } catch (_) {}
-      if (!res.ok || !data.ok || !data.text) {
-        throw new Error((data && data.error) || "AI düzenlemesi başarısız");
-      }
-      qs("description").value = data.text;
-    } catch (err) {
-      showErr(err && err.message ? err.message : "AI bağlantı hatası");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "✦ DeepSeek ile düzenle";
+      var data=await res.json().catch(function(){return {};});
+      if(!res.ok||!data.ok||!data.text) throw new Error((data&&data.error)||t.errSend);
+      qs("description").value=data.text;
+    }catch(err){
+      showErr(err&&err.message?err.message:t.errSend);
+    }finally{
+      btn.disabled=false; btn.textContent=t.aiBtn;
     }
   });
 
-  qs("form").addEventListener("submit", async function (e) {
+  qs("form").addEventListener("submit", async function(e){
     e.preventDefault();
     showErr("");
-    var name = (qs("name").value || "").trim();
-    var phone = (qs("phone").value || "").trim();
-    var room = (qs("room").value || "").trim();
-    var description = (qs("description").value || "").trim();
-    if (name.length < 2) { showErr("Lütfen adınızı ve soyadınızı yazın."); return; }
-    if (phone.length < 7) { showErr("Lütfen geçerli bir telefon numarası yazın."); return; }
-    if (!room) { showErr("Lütfen oda numaranızı yazın."); return; }
-    if (!description) { showErr("Lütfen açıklamanızı yazın."); return; }
-    if (!apiBase || !anonKey) {
-      showErr("Portal yapılandırması eksik. Lütfen resepsiyona bildirin.");
-      return;
-    }
+    var name=(qs("name").value||"").trim();
+    var phone=(qs("phone").value||"").trim();
+    var room=(qs("room").value||"").trim();
+    var description=(qs("description").value||"").trim();
+    if(name.length<2){ showErr(t.errName); return; }
+    if(phone.length<7){ showErr(t.errPhone); return; }
+    if(!room){ showErr(t.errRoom); return; }
+    if(!description){ showErr(t.errDesc); return; }
+    if(!apiBase||!anonKey){ showErr(t.errConfig); return; }
 
-    var btn = qs("submit");
-    btn.disabled = true;
+    var pending=items.filter(function(i){ return i.status==="uploading"||i.status==="queued"; });
+    if(pending.length){ showErr(t.waitUpload); return; }
+    var failed=items.filter(function(i){ return i.status==="error"; });
+    if(failed.length){ showErr(t.errUpload); return; }
+
+    var btn=qs("submit");
+    btn.disabled=true; btn.textContent=t.sending;
     qs("loadingBar").classList.add("on");
 
-    try {
-      var mediaUrls = [];
-      for (var i = 0; i < files.length; i++) {
-        var f = files[i];
-        var mime = (f.type || "image/jpeg").toLowerCase();
-        var prepRes = await fetch(apiUrl, {
-          method: "POST",
-          headers: authHeaders(true),
-          body: JSON.stringify({ action: "signed-upload", mime: mime }),
-        });
-        var prep = {};
-        try { prep = await prepRes.json(); } catch (_) {}
-        if (!prepRes.ok || !prep.ok || !prep.token || !prep.path) {
-          throw new Error((prep && prep.error) || "Medya yükleme hazırlığı başarısız");
-        }
-        var upRes;
-        if (prep.signedUrl) {
-          upRes = await fetch(prep.signedUrl, {
-            method: "PUT",
-            headers: { "Content-Type": mime, "x-upsert": "false" },
-            body: f,
-          });
-        } else {
-          upRes = await fetch(
-            apiBase + "/storage/v1/object/upload/sign/qr-complaints/" + prep.path + "?token=" + encodeURIComponent(prep.token),
-            {
-              method: "PUT",
-              headers: {
-                "Content-Type": mime,
-                Authorization: "Bearer " + anonKey,
-                apikey: anonKey,
-                "x-upsert": "false",
-              },
-              body: f,
-            }
-          );
-        }
-        if (!upRes.ok) throw new Error("Medya yüklenemedi (" + (f.name || "dosya") + ")");
-        mediaUrls.push({
-          url: prep.publicUrl,
-          type: prep.type || (mime.indexOf("video/") === 0 ? "video" : "image"),
-          mime: mime,
-          name: f.name || undefined,
-        });
-      }
-
-      var payload = {
-        topic_type: topic,
-        category: category,
-        description: description,
-        room_number: room,
-        phone: phone,
-        contact_name: name,
-        media_urls: mediaUrls,
+    try{
+      var mediaUrls=items.filter(function(i){ return i.status==="ready"&&i.media; }).map(function(i){ return i.media; });
+      var payload={
+        topic_type:topic, category:category, description:description,
+        room_number:room, phone:phone, contact_name:name, media_urls:mediaUrls, lang:lang
       };
-      var org = new URLSearchParams(location.search).get("org");
-      if (org) payload.organization_id = org;
+      var org=new URLSearchParams(location.search).get("org");
+      if(org) payload.organization_id=org;
 
-      var res = await fetch(apiUrl, {
-        method: "POST",
-        headers: authHeaders(true),
-        body: JSON.stringify(payload),
+      var res=await fetch(apiUrl,{
+        method:"POST", headers:authHeaders(true),
+        body:JSON.stringify(payload)
       });
-      var data = {};
-      try { data = await res.json(); } catch (_) {}
-      if (!res.ok || !data.ok) {
-        throw new Error((data && data.error) || "Gönderilemedi. Lütfen tekrar deneyin.");
-      }
-      qs("form").style.display = "none";
-      qs("cardTop").style.display = "none";
+      var data=await res.json().catch(function(){return {};});
+      if(!res.ok||!data.ok) throw new Error((data&&data.error)||t.errSend);
+      qs("form").style.display="none";
+      qs("cardTop").style.display="none";
       qs("success").classList.add("show");
-    } catch (err) {
-      showErr(err && err.message ? err.message : "Bağlantı hatası");
-      btn.disabled = false;
-    } finally {
+    }catch(err){
+      showErr(err&&err.message?err.message:t.errSend);
+      btn.disabled=false; btn.textContent=t.submit;
+    }finally{
       qs("loadingBar").classList.remove("on");
     }
   });
+
+  function applyResponsible(r){
+    if(!r) return;
+    qs("respName").textContent=r.name||"Soner";
+    if(r.title) qs("respTitle").textContent=r.title;
+    if(r.brands) qs("respBrands").textContent=r.brands;
+    // note: keep localized default unless server note is preferred — show server note if present
+    if(r.note && lang==="tr") qs("respNote").textContent=r.note;
+    var ph=qs("respPh");
+    if(r.photoUrl && ph){
+      var img=document.createElement("img");
+      img.src=r.photoUrl; img.alt=r.name||"";
+      img.style.cssText="width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid rgba(201,162,39,0.45);background:#1a2236;";
+      ph.replaceWith(img);
+    } else if(ph){
+      ph.textContent=(r.name||"S").charAt(0).toUpperCase();
+    }
+  }
+
+  async function loadMeta(){
+    if(!apiBase||!anonKey) return;
+    try{
+      var res=await fetch(apiUrl,{headers:authHeaders(false)});
+      var data=await res.json();
+      if(data&&data.responsible) applyResponsible(data.responsible);
+    }catch(_){}
+  }
+
+  applyLang(detectLang());
+  loadMeta();
 })();
   </script>
 </body>
