@@ -23,6 +23,7 @@ import {
   fetchPublicComplaintResponsible,
   type PublicComplaintResponsible,
 } from '@/lib/publicComplaintResponsible';
+import { hotelManagerWhatsAppUrl } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestMenuButton';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type Props = {
@@ -86,6 +87,19 @@ export function PublicKitchenMenuGuestRails({
     openUrl(buildPublicStaffProfileUrl(resp.staffId));
   };
 
+  const openWhatsApp = () => {
+    const name = resp?.name || 'Soner';
+    openUrl(
+      hotelManagerWhatsAppUrl(
+        menuLang === 'en'
+          ? `Hello ${name}, I am writing from the Valoria menu.`
+          : menuLang === 'ar'
+            ? `مرحباً ${name}، أكتب من قائمة Valoria.`
+            : `Merhaba ${name}, Valoria menüden yazıyorum.`
+      )
+    );
+  };
+
   if (variant === 'apps-only') {
     return (
       <View style={[styles.appsCard, { borderColor: `${accentColor}33` }]}>
@@ -147,6 +161,11 @@ export function PublicKitchenMenuGuestRails({
       </TouchableOpacity>
       <Text style={styles.note}>{note}</Text>
       <Text style={styles.hint}>{t('publicMenuComplaintHint')}</Text>
+
+      <TouchableOpacity style={styles.waBtn} onPress={openWhatsApp} activeOpacity={0.9}>
+        <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+        <Text style={styles.waBtnText}>{t('publicMenuWhatsApp')}</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity
         style={[styles.cta, { backgroundColor: navyColor }]}
@@ -300,8 +319,19 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     marginTop: 6,
   },
-  cta: {
+  waBtn: {
     marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingVertical: 12,
+    backgroundColor: '#25D366',
+  },
+  waBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  cta: {
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

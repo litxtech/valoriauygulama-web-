@@ -19,6 +19,8 @@ import { RestaurantDietTagRail } from '@/features/restaurant/components/Restaura
 import { RestaurantOrderModeChips, type OrderMode } from '@/features/restaurant/components/RestaurantOrderModeChips';
 import { RestaurantExploreSection } from '@/features/restaurant/components/RestaurantExploreSection';
 import { buildExploreSections } from '@/features/restaurant/utils/exploreSections';
+import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
+import { PublicKitchenMenuGuestMenuButton } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestMenuButton';
 
 type CategoryChip = { title: string; count: number };
 
@@ -33,13 +35,13 @@ type Props = {
   search: string;
   onSearchChange: (v: string) => void;
   menuLang: PublicMenuLang;
+  onMenuLangChange: (lang: PublicMenuLang) => void;
   menuTheme: ResolvedKitchenMenuTheme;
   cartLines: PublicMenuCartLine[];
   onCartPress: () => void;
   onOrdersPress: () => void;
   onItemPress: (item: HotelKitchenMenuItemWithImages) => void;
   onAddToCart: (item: HotelKitchenMenuItemWithImages) => void;
-  langToggle?: React.ReactNode;
   orderMode: OrderMode;
   onOrderModeChange: (mode: OrderMode) => void;
   showExplore?: boolean;
@@ -56,13 +58,13 @@ export function PublicKitchenMenuPremiumHome({
   search,
   onSearchChange,
   menuLang,
+  onMenuLangChange,
   menuTheme,
   cartLines,
   onCartPress,
   onOrdersPress,
   onItemPress,
   onAddToCart,
-  langToggle,
   orderMode,
   onOrderModeChange,
   showExplore = true,
@@ -97,6 +99,8 @@ export function PublicKitchenMenuPremiumHome({
       ? (menuTheme.heroSubtitle ?? t('publicKitchenMenuHeroSub'))
       : t('publicKitchenMenuHeroSub');
 
+  const langTone = tokens.scheme === 'dark' ? 'dark' : 'light';
+
   return (
     <View style={[styles.root, { backgroundColor: tokens.bg }]}>
       <RestaurantDashboardHeader
@@ -106,7 +110,19 @@ export function PublicKitchenMenuPremiumHome({
         cartCount={cartItemCount(cartLines)}
         onCartPress={onCartPress}
         onOrdersPress={onOrdersPress}
-        langToggle={langToggle}
+        guestMenu={
+          <PublicKitchenMenuGuestMenuButton
+            organizationId={org.id}
+            menuLang={menuLang}
+            accentColor={menuTheme.primaryColor}
+            navyColor={menuTheme.navyColor}
+            iconBorderColor={tokens.border}
+            iconColor={tokens.text}
+          />
+        }
+        langToggle={
+          <PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} tone={langTone} />
+        }
         onThemeToggle={toggleScheme}
         safeTop={insets.top}
       />

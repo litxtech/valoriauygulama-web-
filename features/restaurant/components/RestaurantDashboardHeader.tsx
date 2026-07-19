@@ -15,6 +15,7 @@ type Props = {
   onCartPress: () => void;
   onOrdersPress: () => void;
   langToggle?: React.ReactNode;
+  guestMenu?: React.ReactNode;
   onThemeToggle?: () => void;
   safeTop: number;
 };
@@ -30,6 +31,7 @@ export function RestaurantDashboardHeader({
   onCartPress,
   onOrdersPress,
   langToggle,
+  guestMenu,
   onThemeToggle,
   safeTop,
 }: Props) {
@@ -41,6 +43,7 @@ export function RestaurantDashboardHeader({
           <Ionicons name="restaurant" size={22} color={tokens.accent} />
         </View>
         <View style={styles.actions} {...(Platform.OS === 'web' ? ({ dir: 'ltr' } as object) : null)}>
+          {guestMenu}
           {langToggle}
           {onThemeToggle ? (
             <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border }]} onPress={onThemeToggle}>

@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PublicKitchenMenuDishCard } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishCard';
 import { PublicKitchenMenuDishDetailModal } from '@/components/hotelKitchenMenu/PublicKitchenMenuDishDetailModal';
 import { KitchenMenuUpdatedToast } from '@/components/hotelKitchenMenu/KitchenMenuUpdatedToast';
-import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
 import { PublicKitchenMenuCartBar } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartBar';
 import { PublicKitchenMenuCartSheet } from '@/components/hotelKitchenMenu/PublicKitchenMenuCartSheet';
 import { PublicKitchenMenuWelcomeHero } from '@/components/hotelKitchenMenu/PublicKitchenMenuWelcomeHero';
@@ -287,7 +286,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
         menuLang={menuLang}
         accentColor={accent}
         navyColor={navy}
-        variant={width >= 1180 ? 'complaint' : 'sidebar'}
+        variant="complaint"
       />
     </View>
   );
@@ -330,13 +329,13 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           search={search}
           onSearchChange={setSearch}
           menuLang={menuLang}
+          onMenuLangChange={onMenuLangChange}
           menuTheme={menuTheme}
           cartLines={cartLines}
           onCartPress={() => setCartOpen(true)}
           onOrdersPress={() => setOrdersOpen(true)}
           onItemPress={setDetailItem}
           onAddToCart={onAddToCart}
-          langToggle={<PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} tone="light" />}
           orderMode={orderMode}
           onOrderModeChange={setOrderMode}
           showExplore={menuTab === 'explore'}
@@ -375,17 +374,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           </ScrollView>
         ) : null}
 
-        {!wide ? (
-          <PublicKitchenMenuGuestRails
-            organizationId={org.id}
-            menuLang={menuLang}
-            accentColor={accent}
-            navyColor={navy}
-            variant="compact"
-          />
-        ) : null}
-
-        <View style={[styles.main, { maxWidth: maxW + (wide ? 520 : 0) }]}>
+        <View style={[styles.main, { maxWidth: maxW + (wide ? 280 : 0) }]}>
           {wide ? filterSidebar : null}
 
           <View style={styles.menuCol}>
@@ -478,18 +467,6 @@ export function PublicKitchenMenuWebLayout(props: Props) {
               </>
             )}
           </View>
-
-          {wide && width >= 1180 ? (
-            <View style={[styles.rightRail, styles.sidebarWide]}>
-              <PublicKitchenMenuGuestRails
-                organizationId={org.id}
-                menuLang={menuLang}
-                accentColor={accent}
-                navyColor={navy}
-                variant="apps-only"
-              />
-            </View>
-          ) : null}
         </View>
 
         <View style={styles.footer}>
