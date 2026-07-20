@@ -47,6 +47,14 @@ function normalizeText(v: unknown, max = 800): string {
     .slice(0, max);
 }
 
+function newDeleteToken(): string {
+  try {
+    return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  } catch {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  }
+}
+
 async function resolveOrgBySlug(
   supabase: ReturnType<typeof createClient>,
   slug: string
@@ -126,20 +134,53 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = (await req.json()) as Record<string, unknown>;
+    const action = normalizeText(body.action, 40) || "submit";
     const slug = normalizeText(body.slug, 80);
+    if (!slug) return json({ error: "slug gerekli" }, 400);
+
+    const org = await resolveOrgBySlug(supabase, slug);
+    if (!org) return json({ error: "Menü bulunamadı" }, 404);
+
+    if (action === "delete") {
+      const commentId = normalizeText(body.comment_id, 64);
+      const deleteToken = normalizeText(body.delete_token, 96);
+      if (!/^[0-9a-f-]{36}$/i.test(commentId)) {
+        return json({ error: "Geçersiz yorum" }, 400);
+      }
+      if (deleteToken.length < 16) {
+        return json({ error: "Silme yetkisi yok" }, 403);
+      }
+      const { data: row, error: findErr } = await supabase
+        .from("kitchen_menu_guest_comments")
+        .select("id, delete_token, status")
+        .eq("id", commentId)
+        .eq("organization_id", org.id)
+        .maybeSingle();
+      if (findErr || !row) return json({ error: "Yorum bulunamadı" }, 404);
+      const stored = String((row as { delete_token?: string }).delete_token ?? "");
+      if (!stored || stored !== deleteToken) {
+        return json({ error: "Bu yorumu silme yetkiniz yok" }, 403);
+      }
+      const { error: updErr } = await supabase
+        .from("kitchen_menu_guest_comments")
+        .update({ status: "hidden" })
+        .eq("id", commentId)
+        .eq("organization_id", org.id);
+      if (updErr) return json({ error: updErr.message }, 500);
+      return json({ ok: true, deleted: true, id: commentId });
+    }
+
     const firstName = normalizeText(body.first_name, 60);
     const lastName = normalizeText(body.last_name, 60);
     const comment = normalizeText(body.comment, 800);
     const rating = Math.min(5, Math.max(1, Math.round(Number(body.rating) || 0)));
 
-    if (!slug) return json({ error: "slug gerekli" }, 400);
     if (firstName.length < 1) return json({ error: "Ad gerekli" }, 400);
     if (lastName.length < 1) return json({ error: "Soyad gerekli" }, 400);
     if (comment.length < 2) return json({ error: "Yorum gerekli" }, 400);
     if (rating < 1 || rating > 5) return json({ error: "Geçersiz puan" }, 400);
 
-    const org = await resolveOrgBySlug(supabase, slug);
-    if (!org) return json({ error: "Menü bulunamadı" }, 404);
+    const deleteToken = newDeleteToken();
 
     const { data, error } = await supabase
       .from("kitchen_menu_guest_comments")
@@ -150,6 +191,7 @@ Deno.serve(async (req: Request) => {
         comment,
         rating,
         status: "published",
+        delete_token: deleteToken,
         client_ip: ip.slice(0, 64),
         user_agent: (req.headers.get("user-agent") || "").slice(0, 240),
       })
@@ -158,7 +200,11 @@ Deno.serve(async (req: Request) => {
 
     if (error || !data) return json({ error: error?.message || "Kayıt başarısız" }, 500);
 
-    return json({ ok: true, comment: mapComment(data as Record<string, unknown>) });
+    return json({
+      ok: true,
+      comment: mapComment(data as Record<string, unknown>),
+      delete_token: deleteToken,
+    });
   } catch (e) {
     return json({ error: (e as Error)?.message || "İstek işlenemedi" }, 500);
   }

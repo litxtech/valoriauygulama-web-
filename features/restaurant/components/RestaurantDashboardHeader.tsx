@@ -66,11 +66,11 @@ export function RestaurantDashboardHeader({
         </View>
       </View>
 
-      <View style={styles.nameRow}>
+      <View style={styles.nameBlock}>
         <Text style={[styles.name, { color: tokens.text }]} numberOfLines={2}>
           {orgName}
         </Text>
-        {titleAccessory}
+        {titleAccessory ? <View style={styles.accessoryRow}>{titleAccessory}</View> : null}
       </View>
       <View style={styles.metaRow}>
         <View style={[styles.pill, { backgroundColor: tokens.bgGlass, borderColor: tokens.border }]}>
@@ -102,7 +102,7 @@ export function RestaurantDashboardHeader({
 }
 
 const styles = StyleSheet.create({
-  hero: { paddingHorizontal: 18, paddingBottom: 16 },
+  hero: { paddingHorizontal: 18, paddingBottom: 16, zIndex: 1, position: 'relative' },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   logo: {
     width: 48,
@@ -133,14 +133,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
+  nameBlock: {
     marginBottom: 10,
+    gap: 8,
+    zIndex: 2,
   },
-  name: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, minWidth: 0 },
+  name: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  accessoryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: {
     flexDirection: 'row',

@@ -83,19 +83,17 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexShrink: 1,
+    flexWrap: 'wrap',
     gap: 6,
-    maxWidth: '52%',
   },
   complainBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    maxWidth: 128,
   },
   complainText: {
     fontSize: 11,

@@ -8,11 +8,18 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Modal,
+  Pressable,
+  ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  deleteKitchenMenuGuestComment,
+  getGuestCommentDeleteToken,
   listKitchenMenuGuestComments,
+  listOwnedGuestCommentIds,
   submitKitchenMenuGuestComment,
   type KitchenMenuGuestComment,
 } from '@/lib/publicKitchenMenuGuestComments';
@@ -91,7 +98,13 @@ export function PublicKitchenMenuGuestBook({
   const [comment, setComment] = useState('');
   const [rating, setRating] = useState(5);
   const [sending, setSending] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [thanks, setThanks] = useState(false);
+  const [ownedIds, setOwnedIds] = useState<string[]>([]);
+
+  const refreshOwned = useCallback(() => {
+    setOwnedIds(listOwnedGuestCommentIds());
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,16 +112,25 @@ export function PublicKitchenMenuGuestBook({
       const res = await listKitchenMenuGuestComments({ orgSlug });
       setComments(res.comments);
       onRatingChange?.(res.rating_avg, res.count);
+      refreshOwned();
     } catch {
       setComments([]);
     } finally {
       setLoading(false);
     }
-  }, [orgSlug, onRatingChange]);
+  }, [orgSlug, onRatingChange, refreshOwned]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const closeCompose = () => {
+    setComposing(false);
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const active = document.activeElement as HTMLElement | null;
+      active?.blur?.();
+    }
+  };
 
   const submit = async () => {
     if (firstName.trim().length < 1) {
@@ -125,7 +147,7 @@ export function PublicKitchenMenuGuestBook({
     }
     setSending(true);
     try {
-      const row = await submitKitchenMenuGuestComment({
+      const { comment: row } = await submitKitchenMenuGuestComment({
         orgSlug,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
@@ -139,7 +161,8 @@ export function PublicKitchenMenuGuestBook({
           ? Math.round((next.reduce((s, c) => s + c.rating, 0) / next.length) * 10) / 10
           : 0;
       onRatingChange?.(avg, next.length);
-      setComposing(false);
+      refreshOwned();
+      closeCompose();
       setFirstName('');
       setLastName('');
       setComment('');
@@ -153,7 +176,43 @@ export function PublicKitchenMenuGuestBook({
     }
   };
 
-  const preview = comments.slice(0, 6);
+  const remove = (c: KitchenMenuGuestComment) => {
+    const token = getGuestCommentDeleteToken(c.id);
+    if (!token) return;
+    const run = async () => {
+      setDeletingId(c.id);
+      try {
+        await deleteKitchenMenuGuestComment({ orgSlug, commentId: c.id, deleteToken: token });
+        const next = comments.filter((x) => x.id !== c.id);
+        setComments(next);
+        const avg =
+          next.length > 0
+            ? Math.round((next.reduce((s, row) => s + row.rating, 0) / next.length) * 10) / 10
+            : 0;
+        onRatingChange?.(avg, next.length);
+        refreshOwned();
+      } catch (e) {
+        Alert.alert(t('error'), (e as Error)?.message || t('guestBookDeleteError'));
+      } finally {
+        setDeletingId(null);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const ok =
+        typeof window !== 'undefined' &&
+        window.confirm(t('guestBookDeleteConfirm', { defaultValue: 'Yorumunuzu silmek istiyor musunuz?' }));
+      if (ok) void run();
+      return;
+    }
+    Alert.alert(t('guestBookDelete'), t('guestBookDeleteConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('guestBookDelete'), style: 'destructive', onPress: () => void run() },
+    ]);
+  };
+
+  const preview = comments.slice(0, 8);
+  const inputFont = Platform.OS === 'web' ? 16 : 14;
 
   return (
     <View style={[styles.wrap, { backgroundColor: tokens.bgElevated, borderColor: tokens.border }]}>
@@ -163,16 +222,14 @@ export function PublicKitchenMenuGuestBook({
           <Text style={[styles.title, { color: tokens.text }]}>{t('guestBookTitle')}</Text>
           <Text style={[styles.sub, { color: tokens.textMuted }]}>{t('guestBookSub')}</Text>
         </View>
-        {!composing ? (
-          <TouchableOpacity
-            style={[styles.cta, { backgroundColor: accentColor }]}
-            onPress={() => setComposing(true)}
-            activeOpacity={0.88}
-          >
-            <Ionicons name="heart-outline" size={15} color="#fff" />
-            <Text style={styles.ctaText}>{t('guestBookWrite')}</Text>
-          </TouchableOpacity>
-        ) : null}
+        <TouchableOpacity
+          style={[styles.cta, { backgroundColor: accentColor }]}
+          onPress={() => setComposing(true)}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="heart-outline" size={15} color="#fff" />
+          <Text style={styles.ctaText}>{t('guestBookWrite')}</Text>
+        </TouchableOpacity>
       </View>
 
       {thanks ? (
@@ -182,99 +239,169 @@ export function PublicKitchenMenuGuestBook({
         </View>
       ) : null}
 
-      {composing ? (
-        <View style={[styles.form, { borderColor: tokens.border, backgroundColor: tokens.bg }]}>
-          <Text style={[styles.prompt, { color: tokens.textSecondary }]}>{t('guestBookPrompt')}</Text>
-          <MoodStars
-            value={rating}
-            onChange={setRating}
-            color="#E8A838"
-            muted={tokens.textMuted}
-          />
-          <View style={styles.nameRow}>
-            <TextInput
-              style={[
-                styles.input,
-                styles.nameInput,
-                { color: tokens.text, borderColor: tokens.border, backgroundColor: tokens.bgElevated },
-              ]}
-              value={firstName}
-              onChangeText={setFirstName}
-              placeholder={t('guestBookFirstName')}
-              placeholderTextColor={tokens.textMuted}
-              autoCapitalize="words"
-            />
-            <TextInput
-              style={[
-                styles.input,
-                styles.nameInput,
-                { color: tokens.text, borderColor: tokens.border, backgroundColor: tokens.bgElevated },
-              ]}
-              value={lastName}
-              onChangeText={setLastName}
-              placeholder={t('guestBookLastName')}
-              placeholderTextColor={tokens.textMuted}
-              autoCapitalize="words"
-            />
-          </View>
-          <TextInput
-            style={[
-              styles.input,
-              styles.multiline,
-              { color: tokens.text, borderColor: tokens.border, backgroundColor: tokens.bgElevated },
-            ]}
-            value={comment}
-            onChangeText={setComment}
-            multiline
-            placeholder={t('guestBookCommentPh')}
-            placeholderTextColor={tokens.textMuted}
-          />
-          <View style={styles.formActions}>
-            <TouchableOpacity onPress={() => setComposing(false)} style={styles.cancelBtn}>
-              <Text style={[styles.cancelText, { color: tokens.textMuted }]}>{t('cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.submitBtn, { backgroundColor: accentColor }, sending && styles.submitDisabled]}
-              disabled={sending}
-              onPress={() => void submit()}
-            >
-              {sending ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.submitText}>{t('guestBookSubmit')}</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
-
       {loading ? (
         <ActivityIndicator style={{ marginTop: 10 }} color={accentColor} />
       ) : preview.length === 0 ? (
         <Text style={[styles.empty, { color: tokens.textMuted }]}>{t('guestBookEmpty')}</Text>
       ) : (
         <View style={styles.list}>
-          {preview.map((c) => (
-            <View
-              key={c.id}
-              style={[styles.card, { borderColor: tokens.border, backgroundColor: tokens.bg }]}
-            >
-              <InitialsAvatar initials={c.initials} accent={accentColor} tokens={tokens} />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={styles.cardHead}>
-                  <Text style={[styles.cardName, { color: tokens.text }]} numberOfLines={1}>
-                    {c.display_name}
+          {preview.map((c) => {
+            const canDelete = ownedIds.includes(c.id) && !!getGuestCommentDeleteToken(c.id);
+            return (
+              <View
+                key={c.id}
+                style={[styles.card, { borderColor: tokens.border, backgroundColor: tokens.bg }]}
+              >
+                <InitialsAvatar initials={c.initials} accent={accentColor} tokens={tokens} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={styles.cardHead}>
+                    <Text style={[styles.cardName, { color: tokens.text }]} numberOfLines={1}>
+                      {c.display_name}
+                    </Text>
+                    <MoodStars value={c.rating} color="#E8A838" muted={tokens.textMuted} size={12} />
+                  </View>
+                  <Text style={[styles.cardComment, { color: tokens.textSecondary }]} numberOfLines={3}>
+                    {c.comment}
                   </Text>
-                  <MoodStars value={c.rating} color="#E8A838" muted={tokens.textMuted} size={12} />
                 </View>
-                <Text style={[styles.cardComment, { color: tokens.textSecondary }]} numberOfLines={3}>
-                  {c.comment}
-                </Text>
+                {canDelete ? (
+                  <TouchableOpacity
+                    style={styles.deleteBtn}
+                    onPress={() => remove(c)}
+                    disabled={deletingId === c.id}
+                    hitSlop={8}
+                    accessibilityLabel={t('guestBookDelete')}
+                  >
+                    {deletingId === c.id ? (
+                      <ActivityIndicator size="small" color={tokens.textMuted} />
+                    ) : (
+                      <Ionicons name="trash-outline" size={16} color={tokens.textMuted} />
+                    )}
+                  </TouchableOpacity>
+                ) : null}
               </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
+
+      <Modal
+        visible={composing}
+        transparent
+        animationType="fade"
+        onRequestClose={closeCompose}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={closeCompose} />
+          <View
+            style={[
+              styles.modalSheet,
+              { backgroundColor: tokens.bgElevated, borderColor: tokens.border },
+            ]}
+          >
+            <View style={styles.modalGrab} />
+            <View style={styles.modalHead}>
+              <Text style={[styles.modalTitle, { color: tokens.text }]}>{t('guestBookWrite')}</Text>
+              <TouchableOpacity onPress={closeCompose} hitSlop={10} accessibilityLabel={t('cancel')}>
+                <Ionicons name="close" size={22} color={tokens.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalBody}
+              {...(Platform.OS === 'web'
+                ? ({ style: { maxHeight: '70vh', overflowY: 'auto' } } as object)
+                : null)}
+            >
+              <Text style={[styles.prompt, { color: tokens.textSecondary }]}>{t('guestBookPrompt')}</Text>
+              <MoodStars
+                value={rating}
+                onChange={setRating}
+                color="#E8A838"
+                muted={tokens.textMuted}
+              />
+              <View style={styles.nameRow}>
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.nameInput,
+                    {
+                      color: tokens.text,
+                      borderColor: tokens.border,
+                      backgroundColor: tokens.bg,
+                      fontSize: inputFont,
+                    },
+                  ]}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  placeholder={t('guestBookFirstName')}
+                  placeholderTextColor={tokens.textMuted}
+                  autoCapitalize="words"
+                  autoFocus={Platform.OS !== 'web'}
+                />
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.nameInput,
+                    {
+                      color: tokens.text,
+                      borderColor: tokens.border,
+                      backgroundColor: tokens.bg,
+                      fontSize: inputFont,
+                    },
+                  ]}
+                  value={lastName}
+                  onChangeText={setLastName}
+                  placeholder={t('guestBookLastName')}
+                  placeholderTextColor={tokens.textMuted}
+                  autoCapitalize="words"
+                />
+              </View>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.multiline,
+                  {
+                    color: tokens.text,
+                    borderColor: tokens.border,
+                    backgroundColor: tokens.bg,
+                    fontSize: inputFont,
+                  },
+                ]}
+                value={comment}
+                onChangeText={setComment}
+                multiline
+                placeholder={t('guestBookCommentPh')}
+                placeholderTextColor={tokens.textMuted}
+              />
+              <View style={styles.formActions}>
+                <TouchableOpacity onPress={closeCompose} style={styles.cancelBtn}>
+                  <Text style={[styles.cancelText, { color: tokens.textMuted }]}>{t('cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.submitBtn,
+                    { backgroundColor: accentColor },
+                    sending && styles.submitDisabled,
+                  ]}
+                  disabled={sending}
+                  onPress={() => void submit()}
+                >
+                  {sending ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.submitText}>{t('guestBookSubmit')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -282,10 +409,12 @@ export function PublicKitchenMenuGuestBook({
 const styles = StyleSheet.create({
   wrap: {
     marginHorizontal: 16,
+    marginTop: 4,
     marginBottom: 12,
     padding: 14,
     borderRadius: 18,
     borderWidth: 1,
+    zIndex: 1,
   },
   head: {
     flexDirection: 'row',
@@ -315,14 +444,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   thanksText: { fontSize: 13, fontWeight: '700', flex: 1 },
-  form: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
-    gap: 10,
-  },
-  prompt: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
   starsRow: { flexDirection: 'row', gap: 4 },
   nameRow: { flexDirection: 'row', gap: 8 },
   nameInput: { flex: 1 },
@@ -330,11 +451,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'web' ? 10 : 9,
-    fontSize: 14,
+    paddingVertical: Platform.OS === 'web' ? 12 : 9,
     fontWeight: '600',
   },
-  multiline: { minHeight: 72, textAlignVertical: 'top' },
+  multiline: { minHeight: 88, textAlignVertical: 'top' },
   formActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12 },
   cancelBtn: { paddingVertical: 8, paddingHorizontal: 6 },
   cancelText: { fontSize: 13, fontWeight: '600' },
@@ -356,6 +476,14 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 14,
     borderWidth: 1,
+    alignItems: 'flex-start',
+  },
+  deleteBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
   },
   avatar: {
     width: 36,
@@ -375,4 +503,47 @@ const styles = StyleSheet.create({
   },
   cardName: { fontSize: 13, fontWeight: '800', flex: 1 },
   cardComment: { fontSize: 13, lineHeight: 18, fontWeight: '500' },
+  prompt: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    ...(Platform.OS === 'web'
+      ? ({
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+        } as object)
+      : {}),
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(10,15,26,0.45)',
+  },
+  modalSheet: {
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingBottom: Platform.OS === 'web' ? 24 : 18,
+    maxHeight: Platform.OS === 'web' ? ('85vh' as unknown as number) : '88%',
+    zIndex: 2,
+  },
+  modalGrab: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(100,116,139,0.35)',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  modalHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  modalTitle: { fontSize: 17, fontWeight: '800' },
+  modalBody: { paddingHorizontal: 16, paddingBottom: 12, gap: 12 },
 });

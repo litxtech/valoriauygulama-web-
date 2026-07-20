@@ -51,7 +51,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   sticky: Platform.select({
-    web: { position: 'sticky', top: 0 } as object,
+    web: { position: 'sticky', top: 0, zIndex: 30, isolation: 'isolate' } as object,
     default: {},
   }),
   box: {
@@ -75,5 +75,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  input: { flex: 1, fontSize: 15, fontWeight: '600', padding: 0 },
+  input: {
+    flex: 1,
+    fontSize: Platform.OS === 'web' ? 16 : 15,
+    fontWeight: '600',
+    padding: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
+  },
 });
