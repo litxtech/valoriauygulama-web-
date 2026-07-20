@@ -80,6 +80,7 @@ export function PublicKitchenMenuPremiumHome({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [guestRating, setGuestRating] = useState<{ avg: number; count: number } | null>(null);
+  const [guestBookOpen, setGuestBookOpen] = useState(false);
 
   const onGuestRatingChange = useCallback((avg: number, count: number) => {
     setGuestRating(count > 0 ? { avg, count } : null);
@@ -128,6 +129,8 @@ export function PublicKitchenMenuPremiumHome({
             organizationId={org.id}
             menuLang={menuLang}
             tokens={tokens}
+            onCommentsPress={() => setGuestBookOpen(true)}
+            commentsCount={guestRating?.count ?? 0}
           />
         }
         guestMenu={
@@ -169,7 +172,10 @@ export function PublicKitchenMenuPremiumHome({
         orgSlug={orgSlug}
         tokens={tokens}
         accentColor={menuTheme.primaryColor}
+        visible={guestBookOpen}
+        onClose={() => setGuestBookOpen(false)}
         onRatingChange={onGuestRatingChange}
+        prefetch
       />
 
       <View style={styles.block}>

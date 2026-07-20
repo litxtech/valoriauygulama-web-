@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Linking,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,15 +20,25 @@ type Props = {
   organizationId?: string | null;
   menuLang: PublicMenuLang;
   tokens: RestaurantTokens;
+  onCommentsPress?: () => void;
+  commentsCount?: number;
 };
 
 /**
- * Compact header accessories: complaint + store icons next to hotel name.
- * Kept small so the hero stays clean.
+ * Compact header accessories: comments + complaint + store icons.
+ * Responsive chips for small phones.
  */
-export function PublicKitchenMenuHeaderExtras({ organizationId, menuLang, tokens }: Props) {
+export function PublicKitchenMenuHeaderExtras({
+  organizationId,
+  menuLang,
+  tokens,
+  onCommentsPress,
+  commentsCount = 0,
+}: Props) {
   const { t } = useTranslation();
+  const { width } = useWindowDimensions();
   const appleUrl = useMemo(() => valoriaAppStoreUrl(menuLang), [menuLang]);
+  const narrow = width < 380;
 
   const openUrl = (url: string) => {
     Linking.openURL(url).catch(() => {});
@@ -43,16 +54,36 @@ export function PublicKitchenMenuHeaderExtras({ organizationId, menuLang, tokens
 
   return (
     <View style={styles.row} {...(Platform.OS === 'web' ? ({ dir: 'ltr' } as object) : null)}>
+      {onCommentsPress ? (
+        <TouchableOpacity
+          style={[styles.chipBtn, { borderColor: tokens.border, backgroundColor: tokens.bgGlass }]}
+          onPress={onCommentsPress}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={t('guestBookBtn')}
+        >
+          <Ionicons name="chatbubbles-outline" size={12} color={tokens.accent} />
+          <Text style={[styles.chipText, { color: tokens.text }]} numberOfLines={1}>
+            {narrow ? t('guestBookBtnShort') : t('guestBookBtn')}
+          </Text>
+          {commentsCount > 0 ? (
+            <View style={[styles.countBadge, { backgroundColor: tokens.accent }]}>
+              <Text style={styles.countText}>{commentsCount > 99 ? '99+' : commentsCount}</Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      ) : null}
+
       <TouchableOpacity
-        style={[styles.complainBtn, { borderColor: tokens.border, backgroundColor: tokens.bgGlass }]}
+        style={[styles.chipBtn, { borderColor: tokens.border, backgroundColor: tokens.bgGlass }]}
         onPress={openComplaint}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={t('publicMenuComplainShort')}
       >
         <Ionicons name="chatbubble-ellipses-outline" size={12} color={tokens.accent} />
-        <Text style={[styles.complainText, { color: tokens.text }]} numberOfLines={1}>
-          {t('publicMenuComplainShort')}
+        <Text style={[styles.chipText, { color: tokens.text }]} numberOfLines={1}>
+          {narrow ? t('publicMenuComplainTiny') : t('publicMenuComplainShort')}
         </Text>
       </TouchableOpacity>
 
@@ -85,21 +116,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 6,
+    maxWidth: '100%',
   },
-  complainBtn: {
+  chipBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
+    maxWidth: '100%',
   },
-  complainText: {
+  chipText: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: -0.1,
   },
+  countBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    marginLeft: 1,
+  },
+  countText: { color: '#fff', fontSize: 9, fontWeight: '800' },
   iconChip: {
     width: 28,
     height: 28,

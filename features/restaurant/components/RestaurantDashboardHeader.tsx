@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import type { RestaurantTokens } from '@/features/restaurant/tokens/restaurantTokens';
@@ -38,25 +38,27 @@ export function RestaurantDashboardHeader({
   safeTop,
 }: Props) {
   const { t } = useTranslation();
+  const { width } = useWindowDimensions();
+  const compact = width < 400;
   return (
-    <View style={[styles.hero, { paddingTop: safeTop + 12, backgroundColor: tokens.bg }]}>
+    <View style={[styles.hero, { paddingTop: safeTop + (compact ? 8 : 12), backgroundColor: tokens.bg }]}>
       <View style={styles.topRow}>
-        <View style={[styles.logo, { backgroundColor: tokens.accentSoft, borderColor: tokens.border }]}>
-          <Ionicons name="restaurant" size={22} color={tokens.accent} />
+        <View style={[styles.logo, compact && styles.logoSm, { backgroundColor: tokens.accentSoft, borderColor: tokens.border }]}>
+          <Ionicons name="restaurant" size={compact ? 18 : 22} color={tokens.accent} />
         </View>
-        <View style={styles.actions} {...(Platform.OS === 'web' ? ({ dir: 'ltr' } as object) : null)}>
+        <View style={[styles.actions, compact && styles.actionsCompact]} {...(Platform.OS === 'web' ? ({ dir: 'ltr' } as object) : null)}>
           {guestMenu}
           {langToggle}
           {onThemeToggle ? (
-            <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onThemeToggle}>
-              <Ionicons name={tokens.scheme === 'dark' ? 'sunny-outline' : 'moon-outline'} size={18} color={tokens.text} />
+            <TouchableOpacity style={[styles.iconBtn, compact && styles.iconBtnSm, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onThemeToggle}>
+              <Ionicons name={tokens.scheme === 'dark' ? 'sunny-outline' : 'moon-outline'} size={compact ? 16 : 18} color={tokens.text} />
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onOrdersPress}>
-            <Ionicons name="receipt-outline" size={18} color={tokens.text} />
+          <TouchableOpacity style={[styles.iconBtn, compact && styles.iconBtnSm, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onOrdersPress}>
+            <Ionicons name="receipt-outline" size={compact ? 16 : 18} color={tokens.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onCartPress}>
-            <Ionicons name="bag-handle-outline" size={18} color={tokens.text} />
+          <TouchableOpacity style={[styles.iconBtn, compact && styles.iconBtnSm, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onCartPress}>
+            <Ionicons name="bag-handle-outline" size={compact ? 16 : 18} color={tokens.text} />
             {cartCount > 0 ? (
               <View style={[styles.badge, { backgroundColor: tokens.accent }]}>
                 <Text style={styles.badgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
@@ -67,7 +69,7 @@ export function RestaurantDashboardHeader({
       </View>
 
       <View style={styles.nameBlock}>
-        <Text style={[styles.name, { color: tokens.text }]} numberOfLines={2}>
+        <Text style={[styles.name, compact && styles.nameSm, { color: tokens.text }]} numberOfLines={2}>
           {orgName}
         </Text>
         {titleAccessory ? <View style={styles.accessoryRow}>{titleAccessory}</View> : null}
@@ -112,7 +114,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  logoSm: { width: 40, height: 40, borderRadius: 14 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  actionsCompact: { gap: 6, maxWidth: '72%' },
   iconBtn: {
     width: 40,
     height: 40,
@@ -121,6 +125,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconBtnSm: { width: 34, height: 34, borderRadius: 12 },
   badge: {
     position: 'absolute',
     top: -4,
@@ -139,6 +144,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   name: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  nameSm: { fontSize: 22 },
   accessoryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
