@@ -149,7 +149,11 @@ const html = `<!DOCTYPE html>
     .store-btn .name{display:block;font-size:17px;font-weight:800;line-height:1.2}
     .store-btn .plat{display:block;font-size:12px;opacity:.65;margin-top:2px}
     .store-btn .arrow{opacity:.65;font-size:18px}
-    .foot{margin-top:18px;text-align:center;color:var(--ink-muted);font-size:12px;line-height:1.55}
+    .stars{display:flex;gap:6px;justify-content:flex-start;flex-wrap:wrap}
+    .stars button{appearance:none;border:0;background:transparent;font-size:28px;line-height:1;cursor:pointer;color:rgba(244,240,232,.28);padding:2px 4px}
+    .stars button.on{color:var(--gold)}
+    .section-label{margin:4px 0 0;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-soft)}
+    .hint-soft{margin:6px 0 0;color:var(--ink-muted);font-size:12px;line-height:1.4}
     .loading-bar{display:none;height:3px;width:100%;overflow:hidden;background:rgba(255,255,255,.06)}
     .loading-bar.on{display:block}
     .loading-bar i{display:block;height:100%;width:40%;background:linear-gradient(90deg,transparent,var(--gold),transparent);animation:slide 1s ease infinite}
@@ -216,6 +220,48 @@ const html = `<!DOCTYPE html>
         </div>
       </div>
       <form id="form">
+        <p class="section-label" id="tAccountSec"></p>
+        <p class="hint-soft" id="tAccountHint"></p>
+        <div class="grid2">
+          <div>
+            <label class="label" for="firstName" id="tFirst"></label>
+            <input class="field" id="firstName" maxlength="60" required autocomplete="given-name" />
+          </div>
+          <div>
+            <label class="label" for="lastName" id="tLast"></label>
+            <input class="field" id="lastName" maxlength="60" required autocomplete="family-name" />
+          </div>
+        </div>
+        <div>
+          <label class="label" for="email" id="tEmail"></label>
+          <input class="field" id="email" type="email" maxlength="160" required autocomplete="email" />
+        </div>
+        <div class="grid2">
+          <div>
+            <label class="label" for="phone" id="tPhone"></label>
+            <input class="field" id="phone" type="tel" maxlength="40" required autocomplete="tel" />
+          </div>
+          <div>
+            <label class="label" for="password" id="tPassword"></label>
+            <input class="field" id="password" type="password" minlength="6" maxlength="72" required autocomplete="new-password" />
+          </div>
+        </div>
+        <div>
+          <label class="label" for="room" id="tRoom"></label>
+          <input class="field" id="room" inputmode="numeric" maxlength="20" />
+        </div>
+
+        <p class="section-label" id="tShareSec"></p>
+        <div>
+          <span class="label" id="tRating"></span>
+          <div class="stars" id="stars" role="group" aria-label="rating">
+            <button type="button" data-v="1">★</button>
+            <button type="button" data-v="2">★</button>
+            <button type="button" data-v="3">★</button>
+            <button type="button" data-v="4">★</button>
+            <button type="button" data-v="5" class="on">★</button>
+          </div>
+        </div>
         <div>
           <span class="label" id="tTopic"></span>
           <div class="seg" id="topics">
@@ -236,20 +282,6 @@ const html = `<!DOCTYPE html>
             <button type="button" data-v="payment" data-i18n="catPayment"></button>
             <button type="button" data-v="passport" data-i18n="catPassport"></button>
             <button type="button" data-v="other" data-i18n="catOther"></button>
-          </div>
-        </div>
-        <div>
-          <label class="label" for="name" id="tName"></label>
-          <input class="field" id="name" maxlength="120" required autocomplete="name" />
-        </div>
-        <div class="grid2">
-          <div>
-            <label class="label" for="phone" id="tPhone"></label>
-            <input class="field" id="phone" type="tel" maxlength="40" required autocomplete="tel" />
-          </div>
-          <div>
-            <label class="label" for="room" id="tRoom"></label>
-            <input class="field" id="room" inputmode="numeric" maxlength="20" required />
           </div>
         </div>
         <div>
@@ -280,78 +312,87 @@ const html = `<!DOCTYPE html>
 (function () {
   var I18N = {
     tr: {
-      title: "Şikayet Hattı", lead: "Giriş yapmadan yazın. Ad, telefon, oda ve açıklama yeterlidir. Fotoğraf veya video ekleyebilirsiniz.",
-      noLogin: "Giriş gerekmez", formTitle: "Geri bildirim formu", formSub: "Uygulama indirmeden, hesabınız olmadan gönderin.",
-      topic: "Konu", category: "Kategori", name: "Ad Soyad *", phone: "Telefon *", room: "Oda no *", desc: "Açıklama *",
+      title: "Deneyimini paylaş", lead: "Aynı sayfada hesabınız oluşur ve mesajınız iletilir. Uygulama indirmeden paylaşın; sonra aynı e-posta ve şifreyle giriş yapın.",
+      noLogin: "Uygulama gerekmez · Hesap otomatik", formTitle: "Paylaşım", formSub: "Ad, e-posta ve mesajınız yeterli. Yönlendirme yok.",
+      accountSec: "Hesap bilgileri", accountHint: "Gönderince Valoria hesabınız oluşur. Uygulamada aynı e-posta + şifre ile giriş yaparsınız.",
+      shareSec: "Paylaşımınız", rating: "Puanınız *",
+      topic: "Konu", category: "Kategori", first: "Ad *", last: "Soyad *", email: "E-posta *", password: "Şifre *", phone: "Telefon *", room: "Oda no (isteğe bağlı)", desc: "Mesajınız *",
       topicComplaint: "Şikayet", topicSuggestion: "Öneri", topicThanks: "Teşekkür",
       catPersonnel: "Personel", catRoom: "Oda", catReception: "Resepsiyon", catNoise: "Gürültü", catBreakfast: "Kahvaltı", catFood: "Yemek", catPayment: "Ödeme", catPassport: "Pasaport", catOther: "Diğer",
-      namePh: "İsim Soyisim", phonePh: "+90 …", roomPh: "Örn. 204", descPh: "Ne yaşadığınızı yazın…",
+      firstPh: "Ad", lastPh: "Soyad", emailPh: "ornek@mail.com", passwordPh: "En az 6 karakter", phonePh: "+90 …", roomPh: "Örn. 204", descPh: "Ne yaşadığınızı yazın…",
       aiBtn: "✦ DeepSeek ile düzenle", aiBusy: "Düzenleniyor…", aiHint: "Birkaç kelime yazıp DeepSeek’e bırakın; anlam aynı kalır.",
       media: "İsteğe bağlı: fotoğraf veya video (en fazla 4). Seçince hemen yüklenir.",
-      photo: "Fotoğraf", video: "Video", camera: "Kamera", submit: "Gönder", sending: "Gönderiliyor…",
-      okTitle: "İletildi", okBody: "Mesajınız sorumlu yöneticiye ulaştı. Anlık değerlendirilir. Teşekkür ederiz.",
-      promoBadge: "Valoria uygulaması", promoTitle: "Otel deneyimini cebinize alın",
-      promoSub: "Mesajlaşma, şikayet, oda servisi ve daha fazlası — ücretsiz indirin.",
+      photo: "Fotoğraf", video: "Video", camera: "Kamera", submit: "Paylaş ve kaydol", sending: "Gönderiliyor…",
+      okTitle: "Paylaşıldı", okBody: "Mesajınız iletildi. Hesabınız hazır — uygulamayı indirip e-posta ve şifrenizle giriş yapabilirsiniz.",
+      promoBadge: "Valoria uygulaması", promoTitle: "Aynı hesapla devam edin",
+      promoSub: "İndirin, e-posta ve şifrenizle giriş yapın. Mesajlaşma ve daha fazlası.",
       getOn: "İndir", appleName: "App Store", appleSub: "iPhone & iPad",
       playName: "Google Play", playSub: "Android",
-      errName: "Lütfen adınızı ve soyadınızı yazın.", errPhone: "Lütfen geçerli bir telefon numarası yazın.",
-      errRoom: "Lütfen oda numaranızı yazın.", errDesc: "Lütfen açıklamanızı yazın.", errAiDraft: "Önce kısa bir taslak yazın.",
+      errFirst: "Lütfen adınızı yazın.", errLast: "Lütfen soyadınızı yazın.", errEmail: "Geçerli bir e-posta yazın.",
+      errPassword: "Şifre en az 6 karakter olmalı.", errPhone: "Lütfen geçerli bir telefon numarası yazın.",
+      errDesc: "Lütfen mesajınızı yazın.", errAiDraft: "Önce kısa bir taslak yazın.",
       errConfig: "Portal yapılandırması eksik.", errSend: "Gönderilemedi. Lütfen tekrar deneyin.",
       errUpload: "Medya yüklenemedi", errBig: "Dosya çok büyük (üst sınır 40MB)",
       uploading: "Medya yükleniyor…", uploaded: "Medya hazır", waitUpload: "Medya yüklenirken lütfen bekleyin…",
-      foot: "Valoria Hotel · Bavulsuite\\nMesajlar yalnızca sorumlu yöneticiye iletilir.",
+      foot: "Valoria Hotel · Bavulsuite\\nPaylaşımınız sorumlu yöneticiye iletilir; hesabınız uygulamada hazır olur.",
       respTitle: "Valoria Hotel & Bavulsuite Sorumlusu",
-      respNote: "Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir.",
+      respNote: "Anlık değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir.",
       respProfile: "Profilime bak · web"
     },
     en: {
-      title: "Complaint Line", lead: "No login required. Name, phone, room and description are enough. You may add photos or video.",
-      noLogin: "No login needed", formTitle: "Feedback form", formSub: "Send without installing the app or creating an account.",
-      topic: "Topic", category: "Category", name: "Full name *", phone: "Phone *", room: "Room no. *", desc: "Description *",
+      title: "Share your experience", lead: "Your account is created on this page and your message is sent. Share without the app — later sign in with the same email and password.",
+      noLogin: "No app needed · Account auto-created", formTitle: "Share", formSub: "Name, email and your message. No redirects.",
+      accountSec: "Account details", accountHint: "Submitting creates your Valoria account. Use the same email + password in the app.",
+      shareSec: "Your post", rating: "Your rating *",
+      topic: "Topic", category: "Category", first: "First name *", last: "Last name *", email: "Email *", password: "Password *", phone: "Phone *", room: "Room no. (optional)", desc: "Your message *",
       topicComplaint: "Complaint", topicSuggestion: "Suggestion", topicThanks: "Thanks",
       catPersonnel: "Staff", catRoom: "Room", catReception: "Reception", catNoise: "Noise", catBreakfast: "Breakfast", catFood: "Food", catPayment: "Payment", catPassport: "Passport", catOther: "Other",
-      namePh: "Full name", phonePh: "+90 …", roomPh: "e.g. 204", descPh: "Tell us what happened…",
+      firstPh: "First name", lastPh: "Last name", emailPh: "you@email.com", passwordPh: "At least 6 characters", phonePh: "+90 …", roomPh: "e.g. 204", descPh: "Tell us what happened…",
       aiBtn: "✦ Improve with DeepSeek", aiBusy: "Improving…", aiHint: "Write a few words — DeepSeek will polish the wording.",
       media: "Optional: photo or video (max 4). Uploads start as soon as you select.",
-      photo: "Photo", video: "Video", camera: "Camera", submit: "Send", sending: "Sending…",
-      okTitle: "Sent", okBody: "Your message reached management. It is reviewed promptly. Thank you.",
-      promoBadge: "Valoria app", promoTitle: "Take the hotel experience with you",
-      promoSub: "Messaging, complaints, room service and more — download free.",
+      photo: "Photo", video: "Video", camera: "Camera", submit: "Share & register", sending: "Sending…",
+      okTitle: "Shared", okBody: "Your message was sent. Your account is ready — download the app and sign in with your email and password.",
+      promoBadge: "Valoria app", promoTitle: "Continue with the same account",
+      promoSub: "Download and sign in with your email and password. Messaging and more.",
       getOn: "Get", appleName: "App Store", appleSub: "iPhone & iPad",
       playName: "Google Play", playSub: "Android",
-      errName: "Please enter your full name.", errPhone: "Please enter a valid phone number.",
-      errRoom: "Please enter your room number.", errDesc: "Please write a description.", errAiDraft: "Write a short draft first.",
+      errFirst: "Please enter your first name.", errLast: "Please enter your last name.", errEmail: "Please enter a valid email.",
+      errPassword: "Password must be at least 6 characters.", errPhone: "Please enter a valid phone number.",
+      errDesc: "Please write your message.", errAiDraft: "Write a short draft first.",
       errConfig: "Portal configuration missing.", errSend: "Could not send. Please try again.",
       errUpload: "Media upload failed", errBig: "File too large (max 40MB)",
       uploading: "Uploading media…", uploaded: "Media ready", waitUpload: "Please wait while media uploads…",
-      foot: "Valoria Hotel · Bavulsuite\\nMessages go only to the responsible manager.",
+      foot: "Valoria Hotel · Bavulsuite\\nYour post goes to the manager; your app account is ready.",
       respTitle: "Valoria Hotel & Bavulsuite Manager",
-      respNote: "Complaints are reviewed promptly. Your message goes directly to the responsible manager.",
+      respNote: "Reviewed promptly. Your message goes directly to the responsible manager.",
       respProfile: "View profile · web"
     },
     ar: {
-      title: "خط الشكاوى", lead: "لا حاجة لتسجيل الدخول. الاسم والهاتف ورقم الغرفة والوصف كافية. يمكن إضافة صور أو فيديو.",
-      noLogin: "بدون تسجيل دخول", formTitle: "نموذج الملاحظات", formSub: "أرسل بدون تثبيت التطبيق أو إنشاء حساب.",
-      topic: "الموضوع", category: "الفئة", name: "الاسم الكامل *", phone: "الهاتف *", room: "رقم الغرفة *", desc: "الوصف *",
+      title: "شارك تجربتك", lead: "يُنشأ حسابك في هذه الصفحة وتُرسل رسالتك. شارك بدون التطبيق — لاحقاً سجّل الدخول بنفس البريد وكلمة المرور.",
+      noLogin: "بدون تطبيق · حساب تلقائي", formTitle: "مشاركة", formSub: "الاسم والبريد والرسالة. بدون تحويل.",
+      accountSec: "بيانات الحساب", accountHint: "عند الإرسال يُنشأ حساب Valoria. استخدم نفس البريد وكلمة المرور في التطبيق.",
+      shareSec: "منشورك", rating: "تقييمك *",
+      topic: "الموضوع", category: "الفئة", first: "الاسم *", last: "العائلة *", email: "البريد *", password: "كلمة المرور *", phone: "الهاتف *", room: "رقم الغرفة (اختياري)", desc: "رسالتك *",
       topicComplaint: "شكوى", topicSuggestion: "اقتراح", topicThanks: "شكر",
       catPersonnel: "الموظفون", catRoom: "الغرفة", catReception: "الاستقبال", catNoise: "الضوضاء", catBreakfast: "الإفطار", catFood: "الطعام", catPayment: "الدفع", catPassport: "جواز السفر", catOther: "أخرى",
-      namePh: "الاسم الكامل", phonePh: "+90 …", roomPh: "مثال 204", descPh: "صف ما حدث…",
+      firstPh: "الاسم", lastPh: "العائلة", emailPh: "you@email.com", passwordPh: "6 أحرف على الأقل", phonePh: "+90 …", roomPh: "مثال 204", descPh: "صف ما حدث…",
       aiBtn: "✦ تحسين بـ DeepSeek", aiBusy: "جارٍ التحسين…", aiHint: "اكتب بضع كلمات — DeepSeek يصقل الصياغة.",
       media: "اختياري: صورة أو فيديو (حد أقصى 4). يبدأ الرفع فور الاختيار.",
-      photo: "صورة", video: "فيديو", camera: "كاميرا", submit: "إرسال", sending: "جارٍ الإرسال…",
-      okTitle: "تم الإرسال", okBody: "وصلت رسالتك إلى الإدارة وتُراجع فوراً. شكراً لك.",
-      promoBadge: "تطبيق Valoria", promoTitle: "خذ تجربة الفندق معك",
-      promoSub: "المراسلة والشكاوى وخدمة الغرف والمزيد — حمّل مجاناً.",
+      photo: "صورة", video: "فيديو", camera: "كاميرا", submit: "شارك وسجّل", sending: "جارٍ الإرسال…",
+      okTitle: "تم النشر", okBody: "أُرسلت رسالتك. حسابك جاهز — حمّل التطبيق وسجّل الدخول بالبريد وكلمة المرور.",
+      promoBadge: "تطبيق Valoria", promoTitle: "تابع بنفس الحساب",
+      promoSub: "حمّل وسجّل الدخول بالبريد وكلمة المرور. المراسلة والمزيد.",
       getOn: "تحميل", appleName: "App Store", appleSub: "iPhone و iPad",
       playName: "Google Play", playSub: "Android",
-      errName: "يرجى إدخال الاسم الكامل.", errPhone: "يرجى إدخال رقم هاتف صالح.",
-      errRoom: "يرجى إدخال رقم الغرفة.", errDesc: "يرجى كتابة الوصف.", errAiDraft: "اكتب مسودة قصيرة أولاً.",
+      errFirst: "يرجى إدخال الاسم.", errLast: "يرجى إدخال اسم العائلة.", errEmail: "يرجى إدخال بريد صالح.",
+      errPassword: "كلمة المرور 6 أحرف على الأقل.", errPhone: "يرجى إدخال رقم هاتف صالح.",
+      errDesc: "يرجى كتابة رسالتك.", errAiDraft: "اكتب مسودة قصيرة أولاً.",
       errConfig: "إعدادات البوابة ناقصة.", errSend: "تعذر الإرسال. حاول مرة أخرى.",
       errUpload: "فشل رفع الوسائط", errBig: "الملف كبير جداً (حد أقصى 40MB)",
       uploading: "جارٍ رفع الوسائط…", uploaded: "الوسائط جاهزة", waitUpload: "يرجى الانتظار حتى يكتمل الرفع…",
-      foot: "Valoria Hotel · Bavulsuite\\nتُرسل الرسائل فقط إلى المدير المسؤول.",
+      foot: "Valoria Hotel · Bavulsuite\\nيصل منشورك للمدير؛ حساب التطبيق جاهز.",
       respTitle: "مسؤول Valoria Hotel و Bavulsuite",
-      respNote: "تُراجع الشكاوى فوراً. رسالتك تصل مباشرة إلى المدير المسؤول.",
+      respNote: "تُراجع فوراً. رسالتك تصل مباشرة إلى المدير المسؤول.",
       respProfile: "عرض الملف · ويب"
     }
   };
@@ -401,11 +442,18 @@ const html = `<!DOCTYPE html>
     qs("tNoLogin").textContent=t.noLogin;
     qs("tFormTitle").textContent=t.formTitle;
     qs("tFormSub").textContent=t.formSub;
+    qs("tAccountSec").textContent=t.accountSec;
+    qs("tAccountHint").textContent=t.accountHint;
+    qs("tShareSec").textContent=t.shareSec;
+    qs("tRating").innerHTML=t.rating.replace("*",'<span class="req">*</span>');
     qs("tTopic").textContent=t.topic;
     qs("tCategory").textContent=t.category;
-    qs("tName").innerHTML=t.name.replace("*",'<span class="req">*</span>');
+    qs("tFirst").innerHTML=t.first.replace("*",'<span class="req">*</span>');
+    qs("tLast").innerHTML=t.last.replace("*",'<span class="req">*</span>');
+    qs("tEmail").innerHTML=t.email.replace("*",'<span class="req">*</span>');
+    qs("tPassword").innerHTML=t.password.replace("*",'<span class="req">*</span>');
     qs("tPhone").innerHTML=t.phone.replace("*",'<span class="req">*</span>');
-    qs("tRoom").innerHTML=t.room.replace("*",'<span class="req">*</span>');
+    qs("tRoom").textContent=t.room;
     qs("tDesc").innerHTML=t.desc.replace("*",'<span class="req">*</span>');
     qs("tAiHint").textContent=t.aiHint;
     qs("tMedia").textContent=t.media;
@@ -424,7 +472,10 @@ const html = `<!DOCTYPE html>
     qs("tPlaySub").textContent=t.playSub;
     qs("btnApple").href="https://apps.apple.com/tr/app/valoria/id6760633347?l="+lang;
     qs("btnPlay").href="https://play.google.com/store/apps/details?id=com.valoria.hotel&pcampaignid=web_share";
-    qs("name").placeholder=t.namePh;
+    qs("firstName").placeholder=t.firstPh;
+    qs("lastName").placeholder=t.lastPh;
+    qs("email").placeholder=t.emailPh;
+    qs("password").placeholder=t.passwordPh;
     qs("phone").placeholder=t.phonePh;
     qs("room").placeholder=t.roomPh;
     qs("description").placeholder=t.descPh;
@@ -456,6 +507,21 @@ const html = `<!DOCTYPE html>
   }
   wireToggle("topics", function(v){ topic=v; });
   wireToggle("categories", function(v){ category=v; });
+
+  var rating = 5;
+  function setRating(n){
+    rating = n;
+    qs("stars").querySelectorAll("button").forEach(function(b){
+      var v = Number(b.getAttribute("data-v"));
+      b.classList.toggle("on", v <= rating);
+    });
+  }
+  qs("stars").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-v]");
+    if(!btn) return;
+    setRating(Number(btn.getAttribute("data-v")) || 5);
+  });
+  setRating(5);
 
   function updateUploadStatus(){
     var pending=items.filter(function(i){ return i.status==="uploading"||i.status==="queued"; }).length;
@@ -630,14 +696,19 @@ const html = `<!DOCTYPE html>
   qs("form").addEventListener("submit", async function(e){
     e.preventDefault();
     showErr("");
-    var name=(qs("name").value||"").trim();
+    var firstName=(qs("firstName").value||"").trim();
+    var lastName=(qs("lastName").value||"").trim();
+    var email=(qs("email").value||"").trim();
+    var password=(qs("password").value||"");
     var phone=(qs("phone").value||"").trim();
     var room=(qs("room").value||"").trim();
     var description=(qs("description").value||"").trim();
-    if(name.length<2){ showErr(t.errName); return; }
+    if(firstName.length<1){ showErr(t.errFirst); return; }
+    if(lastName.length<1){ showErr(t.errLast); return; }
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ showErr(t.errEmail); return; }
+    if(password.trim().length<6){ showErr(t.errPassword); return; }
     if(phone.length<7){ showErr(t.errPhone); return; }
-    if(!room){ showErr(t.errRoom); return; }
-    if(!description){ showErr(t.errDesc); return; }
+    if(description.length<2){ showErr(t.errDesc); return; }
     if(!apiBase||!anonKey){ showErr(t.errConfig); return; }
 
     var pending=items.filter(function(i){ return i.status==="uploading"||i.status==="queued"; });
@@ -653,7 +724,8 @@ const html = `<!DOCTYPE html>
       var mediaUrls=items.filter(function(i){ return i.status==="ready"&&i.media; }).map(function(i){ return i.media; });
       var payload={
         topic_type:topic, category:category, description:description,
-        room_number:room, phone:phone, contact_name:name, media_urls:mediaUrls, lang:lang
+        first_name:firstName, last_name:lastName, email:email, password:password,
+        room_number:room, phone:phone, rating:rating, media_urls:mediaUrls, lang:lang
       };
       var org=new URLSearchParams(location.search).get("org");
       if(org) payload.organization_id=org;
@@ -666,6 +738,7 @@ const html = `<!DOCTYPE html>
       if(!res.ok||!data.ok) throw new Error((data&&data.error)||t.errSend);
       qs("form").style.display="none";
       qs("cardTop").style.display="none";
+      if(data.message) qs("tOkBody").textContent=data.message;
       qs("success").classList.add("show");
     }catch(err){
       showErr(err&&err.message?err.message:t.errSend);

@@ -52,7 +52,7 @@ const DEFAULT_META = {
   title: "Valoria Hotel & Bavulsuite Sorumlusu",
   brands: "Valoria Hotel · Bavulsuite",
   note:
-    "Anlık şikayet değerlendirilir. Mesajınız doğrudan sorumlu yöneticiye iletilir — giriş yapmanız gerekmez.",
+    "Aynı sayfada hesabınız oluşur ve paylaşımınız iletilir. Uygulamada e-posta + şifre ile giriş yapabilirsiniz.",
 };
 
 function json(obj: Record<string, unknown>, status = 200) {
@@ -333,6 +333,125 @@ function normalizeText(v: unknown, max = 2000): string {
     .slice(0, max);
 }
 
+function normalizeEmail(v: unknown): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 160);
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/** Web şikayet: Auth + guests satırı oluştur / eşleştir */
+async function ensureGuestFromComplaint(
+  supabase: ReturnType<typeof createClient>,
+  params: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+  }
+): Promise<{ guestId: string; authUserId: string; created: boolean }> {
+  const fullName = `${params.firstName} ${params.lastName}`.trim();
+  const email = params.email;
+
+  const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+    email,
+    password: params.password,
+    email_confirm: true,
+    user_metadata: { full_name: fullName, phone: params.phone },
+  });
+
+  let authUserId: string | null = created?.user?.id ?? null;
+  let accountCreated = !!authUserId;
+
+  if (createErr || !authUserId) {
+    const already =
+      (createErr?.message || "").toLowerCase().includes("already") ||
+      (createErr?.message || "").toLowerCase().includes("registered");
+    if (!already) {
+      throw new Error(createErr?.message || "Hesap oluşturulamadı");
+    }
+    // Mevcut hesap: şifre doğrula
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const anon = createClient(supabaseUrl, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: signed, error: signErr } = await anon.auth.signInWithPassword({
+      email,
+      password: params.password,
+    });
+    if (signErr || !signed.user?.id) {
+      throw new Error(
+        "Bu e-posta zaten kayıtlı. Uygulamada kullandığınız şifreyi girin veya e-posta kodu ile giriş yapın."
+      );
+    }
+    authUserId = signed.user.id;
+    accountCreated = false;
+    await anon.auth.signOut().catch(() => {});
+  }
+
+  // guests satırı
+  const { data: existingGuest } = await supabase
+    .from("guests")
+    .select("id, phone, full_name")
+    .eq("auth_user_id", authUserId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existingGuest?.id) {
+    const patch: Record<string, unknown> = {};
+    if (params.phone && params.phone !== existingGuest.phone) patch.phone = params.phone;
+    if (fullName && fullName !== existingGuest.full_name) patch.full_name = fullName;
+    if (Object.keys(patch).length) {
+      await supabase.from("guests").update(patch).eq("id", existingGuest.id);
+    }
+    return { guestId: existingGuest.id, authUserId, created: accountCreated };
+  }
+
+  const { data: byEmail } = await supabase
+    .from("guests")
+    .select("id")
+    .ilike("email", email)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (byEmail?.id) {
+    await supabase
+      .from("guests")
+      .update({
+        auth_user_id: authUserId,
+        full_name: fullName,
+        phone: params.phone || null,
+      })
+      .eq("id", byEmail.id);
+    return { guestId: byEmail.id, authUserId, created: accountCreated };
+  }
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("guests")
+    .insert({
+      email,
+      full_name: fullName,
+      phone: params.phone || null,
+      auth_user_id: authUserId,
+      contract_lang: "tr",
+      status: "pending",
+      is_guest_app_account: false,
+    })
+    .select("id")
+    .single();
+
+  if (insErr || !inserted?.id) {
+    throw new Error(insErr?.message || "Misafir kaydı oluşturulamadı");
+  }
+  return { guestId: inserted.id, authUserId, created: true };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -353,7 +472,8 @@ Deno.serve(async (req: Request) => {
       categories: [...CATEGORIES],
       maxFiles: MAX_FILES,
       maxFileBytes: MAX_FILE_BYTES,
-      requiredFields: ["contact_name", "phone", "room_number", "description"],
+      requiredFields: ["first_name", "last_name", "email", "phone", "password", "description", "rating"],
+      autoRegistersGuest: true,
       responsible: meta,
     });
   }
@@ -370,8 +490,13 @@ Deno.serve(async (req: Request) => {
     let category = "other";
     let description = "";
     let contactName = "";
+    let firstName = "";
+    let lastName = "";
+    let email = "";
+    let password = "";
     let phone = "";
     let roomNumber = "";
+    let rating = 5;
     let organizationId: string | null = null;
     const media: MediaItem[] = [];
 
@@ -380,9 +505,14 @@ Deno.serve(async (req: Request) => {
       topicType = normalizeText(form.get("topic_type"), 32) || "complaint";
       category = normalizeText(form.get("category"), 64) || "other";
       description = normalizeText(form.get("description"), 4000);
+      firstName = normalizeText(form.get("first_name"), 60);
+      lastName = normalizeText(form.get("last_name"), 60);
       contactName = normalizeText(form.get("contact_name"), 120);
+      email = normalizeEmail(form.get("email"));
+      password = String(form.get("password") ?? "");
       phone = normalizeText(form.get("phone"), 40);
       roomNumber = normalizeText(form.get("room_number"), 40);
+      rating = Math.min(5, Math.max(1, Math.round(Number(form.get("rating")) || 5)));
       const orgRaw = normalizeText(form.get("organization_id"), 64);
       if (orgRaw && /^[0-9a-f-]{36}$/i.test(orgRaw)) organizationId = orgRaw;
 
@@ -406,7 +536,7 @@ Deno.serve(async (req: Request) => {
 
       if (action === "meta") {
         const meta = await loadPublicMeta(supabase);
-        return json({ ok: true, loginRequired: false, responsible: meta });
+        return json({ ok: true, loginRequired: false, autoRegistersGuest: true, responsible: meta });
       }
 
       if (action === "improve-text") {
@@ -456,9 +586,14 @@ Deno.serve(async (req: Request) => {
       topicType = normalizeText(body.topic_type, 32) || "complaint";
       category = normalizeText(body.category, 64) || "other";
       description = normalizeText(body.description, 4000);
+      firstName = normalizeText(body.first_name, 60);
+      lastName = normalizeText(body.last_name, 60);
       contactName = normalizeText(body.contact_name, 120);
+      email = normalizeEmail(body.email);
+      password = String(body.password ?? "");
       phone = normalizeText(body.phone, 40);
       roomNumber = normalizeText(body.room_number, 40);
+      rating = Math.min(5, Math.max(1, Math.round(Number(body.rating) || 5)));
       const orgRaw = normalizeText(body.organization_id, 64);
       if (orgRaw && /^[0-9a-f-]{36}$/i.test(orgRaw)) organizationId = orgRaw;
 
@@ -492,31 +627,60 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    if (!firstName && !lastName && contactName) {
+      const parts = contactName.split(/\s+/).filter(Boolean);
+      firstName = parts[0] || "";
+      lastName = parts.slice(1).join(" ") || parts[0] || "";
+    }
+    const displayName = `${firstName} ${lastName}`.trim() || contactName;
+
     if (!TOPIC_TYPES.has(topicType)) topicType = "complaint";
     if (!CATEGORIES.has(category)) category = "other";
-    if (contactName.length < 2) {
-      return json({ error: "Lütfen adınızı ve soyadınızı yazın." }, 400);
+    if (firstName.length < 1) {
+      return json({ error: "Lütfen adınızı yazın." }, 400);
+    }
+    if (lastName.length < 1) {
+      return json({ error: "Lütfen soyadınızı yazın." }, 400);
+    }
+    if (!isValidEmail(email)) {
+      return json({ error: "Geçerli bir e-posta yazın." }, 400);
+    }
+    if (password.trim().length < 6) {
+      return json({ error: "Şifre en az 6 karakter olmalı (uygulama girişi için)." }, 400);
     }
     if (phone.length < 7) {
       return json({ error: "Lütfen geçerli bir telefon numarası yazın." }, 400);
     }
-    if (roomNumber.length < 1) {
-      return json({ error: "Lütfen oda numaranızı yazın." }, 400);
+    if (description.length < 2) {
+      return json({ error: "Lütfen mesajınızı yazın." }, 400);
     }
-    if (description.length < 1) {
-      return json({ error: "Lütfen açıklamanızı yazın." }, 400);
+    if (rating < 1 || rating > 5) {
+      return json({ error: "Lütfen 1–5 yıldız seçin." }, 400);
     }
+
+    const guest = await ensureGuestFromComplaint(supabase, {
+      email,
+      password: password.trim(),
+      firstName,
+      lastName,
+      phone,
+    });
 
     const { data: row, error } = await supabase
       .from("qr_complaints")
       .insert({
         organization_id: organizationId,
+        guest_id: guest.guestId,
         topic_type: topicType,
         category,
         description,
-        contact_name: contactName || null,
+        contact_name: displayName || null,
+        first_name: firstName,
+        last_name: lastName,
+        email,
         phone: phone || null,
         room_number: roomNumber || null,
+        rating,
         media_urls: media,
         source: "qr_web",
         client_ip: ip,
@@ -541,7 +705,11 @@ Deno.serve(async (req: Request) => {
       ok: true,
       id: row.id,
       mediaCount: media.length,
-      message: "Mesajınız iletildi. Teşekkür ederiz.",
+      guestId: guest.guestId,
+      accountCreated: guest.created,
+      message: guest.created
+        ? "Paylaşımınız iletildi. Hesabınız oluşturuldu — uygulamada e-posta ve şifrenizle giriş yapabilirsiniz."
+        : "Paylaşımınız iletildi. Mevcut hesabınızla uygulamaya giriş yapabilirsiniz.",
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Beklenmeyen hata";
