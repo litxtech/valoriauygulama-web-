@@ -10,7 +10,7 @@ import { cartItemCount } from '@/lib/publicKitchenMenuCart';
 import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 import { localizedCategoryLabel } from '@/lib/kitchenMenuI18n';
 import { buildDietTagChips } from '@/lib/hotelKitchenMenuFilters';
-import { useRestaurantAppearance } from '@/features/restaurant/hooks/useRestaurantAppearance';
+import type { RestaurantTokens } from '@/features/restaurant/tokens/restaurantTokens';
 import { RestaurantDashboardHeader } from '@/features/restaurant/components/RestaurantDashboardHeader';
 import { RestaurantSearchBar } from '@/features/restaurant/components/RestaurantSearchBar';
 import { RestaurantPromoSlider } from '@/features/restaurant/components/RestaurantPromoSlider';
@@ -48,6 +48,8 @@ type Props = {
   orderMode: OrderMode;
   onOrderModeChange: (mode: OrderMode) => void;
   showExplore?: boolean;
+  tokens: RestaurantTokens;
+  onThemeToggle: () => void;
 };
 
 export function PublicKitchenMenuPremiumHome({
@@ -72,10 +74,11 @@ export function PublicKitchenMenuPremiumHome({
   orderMode,
   onOrderModeChange,
   showExplore = true,
+  tokens,
+  onThemeToggle,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { tokens, toggleScheme } = useRestaurantAppearance(menuTheme.primaryColor, menuTheme.navyColor);
   const [guestRating, setGuestRating] = useState<{ avg: number; count: number } | null>(null);
 
   const onGuestRatingChange = useCallback((avg: number, count: number) => {
@@ -140,7 +143,7 @@ export function PublicKitchenMenuPremiumHome({
         langToggle={
           <PublicKitchenMenuLangToggle lang={menuLang} onChange={onMenuLangChange} tone={langTone} />
         }
-        onThemeToggle={toggleScheme}
+        onThemeToggle={onThemeToggle}
         safeTop={insets.top}
       />
 

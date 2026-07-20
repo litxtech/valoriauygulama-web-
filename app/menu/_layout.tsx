@@ -2,13 +2,14 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 
-const MENU_BG = '#faf9f7';
+const MENU_BG = '#f8f7f4';
 
 export default function PublicMenuLayout() {
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     const html = document.documentElement;
     document.body.style.backgroundColor = MENU_BG;
+    html.style.backgroundColor = MENU_BG;
     document.body.style.margin = '0';
     document.body.style.overflow = 'hidden';
     document.body.style.overflowX = 'hidden';
@@ -25,6 +26,7 @@ export default function PublicMenuLayout() {
       document.body.style.overflowX = '';
       document.body.style.minHeight = '';
       document.body.style.height = '';
+      html.style.backgroundColor = '';
       html.style.scrollBehavior = '';
       html.style.overflow = '';
       html.style.overflowX = '';

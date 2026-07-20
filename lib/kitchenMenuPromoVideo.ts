@@ -1,8 +1,11 @@
 export type KitchenMenuPromoVideo = {
   id: string;
   title: string;
+  /** Kısa kampanya / ürün notu — banner altında görünür */
+  note?: string | null;
   videoUrl?: string | null;
   muxPlaybackId?: string | null;
+  /** Ürün veya kampanya görseli */
   posterUrl?: string | null;
 };
 
@@ -19,6 +22,7 @@ export function parseKitchenMenuPromoVideos(raw: unknown): KitchenMenuPromoVideo
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
     const o = row as Record<string, unknown>;
     const title = typeof o.title === 'string' ? o.title.trim() : '';
+    const note = typeof o.note === 'string' ? o.note.trim() : '';
     const videoUrl = typeof o.videoUrl === 'string' ? o.videoUrl.trim() : '';
     const muxPlaybackId = typeof o.muxPlaybackId === 'string' ? o.muxPlaybackId.trim() : '';
     const posterUrl = typeof o.posterUrl === 'string' ? o.posterUrl.trim() : '';
@@ -30,6 +34,7 @@ export function parseKitchenMenuPromoVideos(raw: unknown): KitchenMenuPromoVideo
     out.push({
       id,
       title: title || 'Restoran tanıtımı',
+      note: note || null,
       videoUrl: videoUrl || null,
       muxPlaybackId: muxPlaybackId || null,
       posterUrl: posterUrl || null,
@@ -43,6 +48,7 @@ export function kitchenMenuPromoVideosToPayload(videos: KitchenMenuPromoVideo[])
     .map((v) => ({
       id: v.id,
       title: v.title.trim() || 'Restoran tanıtımı',
+      note: v.note?.trim() || null,
       videoUrl: v.videoUrl?.trim() || null,
       muxPlaybackId: v.muxPlaybackId?.trim() || null,
       posterUrl: v.posterUrl?.trim() || null,

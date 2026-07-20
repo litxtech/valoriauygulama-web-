@@ -1,7 +1,7 @@
 import { theme } from '@/constants/theme';
 
 /** Canlı web menü build etiketi — deploy doğrulama */
-export const PUBLIC_MENU_WEB_BUILD = '2026.07-v7.7';
+export const PUBLIC_MENU_WEB_BUILD = '2026.07-v7.8';
 
 /** Otel mutfağı — gece lacivert + şampanya altın */
 export const menuUi = {
@@ -65,8 +65,6 @@ export const menuUi = {
 
 export const menuWebPageBg = {
   backgroundColor: menuUi.webSurface,
-  backgroundImage:
-    'radial-gradient(ellipse 80% 50% at 10% -10%, rgba(212,168,75,0.09) 0%, transparent 55%), radial-gradient(ellipse 60% 40% at 100% 0%, rgba(10,15,26,0.05) 0%, transparent 50%), linear-gradient(180deg, #f8f7f4 0%, #f3f0ea 50%, #f8f7f4 100%)',
   minHeight: '100%',
 } as object;
 

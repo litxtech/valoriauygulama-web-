@@ -531,6 +531,22 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
             placeholder={t('hotelKitchenMenuPromoVideoTitlePh')}
             placeholderTextColor="#94a3b8"
           />
+          <Text style={styles.promoFieldLabel}>{t('hotelKitchenMenuPromoNote')}</Text>
+          <TextInput
+            style={[styles.input, styles.promoNoteInput]}
+            value={video.note ?? ''}
+            onChangeText={(v) =>
+              setForm((f) => ({
+                ...f,
+                promoVideos: (f.promoVideos ?? []).map((row) =>
+                  row.id === video.id ? { ...row, note: v } : row
+                ),
+              }))
+            }
+            placeholder={t('hotelKitchenMenuPromoNotePh')}
+            placeholderTextColor="#94a3b8"
+            multiline
+          />
           <TouchableOpacity
             style={[styles.promoPickBtn, { borderColor: preview.primaryColor }]}
             disabled={
@@ -646,6 +662,7 @@ export function HotelKitchenMenuThemeEditor({ backFallback = '/staff/fnb-hub' }:
           const row: KitchenMenuPromoVideo = {
             id: newKitchenMenuPromoVideoId(),
             title: t('hotelKitchenMenuPromoVideoTitlePh'),
+            note: '',
             videoUrl: null,
             muxPlaybackId: null,
             posterUrl: null,
@@ -811,6 +828,7 @@ const styles = StyleSheet.create({
   promoCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   promoCardTitle: { fontSize: 13, fontWeight: '800', color: '#334155' },
   promoFieldLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', marginTop: 4 },
+  promoNoteInput: { minHeight: 64, textAlignVertical: 'top' },
   promoAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16, paddingVertical: 8 },
   promoAddText: { fontSize: 14, fontWeight: '700' },
   promoPickBtn: {

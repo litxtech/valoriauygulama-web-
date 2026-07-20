@@ -1,5 +1,13 @@
 import { useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  useWindowDimensions,
+  Platform,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -47,7 +55,7 @@ export function RestaurantPromoSlider({ tokens, promos, onPromoPress }: Props) {
       ? promos.map((p, i) => ({
           key: p.id ?? `promo-${i}`,
           title: p.title?.trim() || t('restaurantPromoCampaign', { defaultValue: 'Kampanya' }),
-          subtitle: '',
+          subtitle: (p.note ?? '').trim(),
           poster: resolvePromoVideoPoster(p),
         }))
       : fallbackPromos.map((p, i) => ({
@@ -89,13 +97,23 @@ export function RestaurantPromoSlider({ tokens, promos, onPromoPress }: Props) {
               ) : (
                 <LinearGradient colors={grad as [string, string]} style={StyleSheet.absoluteFillObject} />
               )}
-              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={styles.fade} />
+              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.78)']} style={styles.fade} />
               <View style={styles.cardBody}>
                 {'icon' in slide && slide.icon ? (
-                  <Ionicons name={slide.icon as keyof typeof Ionicons.glyphMap} size={22} color="#fff" />
+                  <Ionicons name={slide.icon as keyof typeof Ionicons.glyphMap} size={20} color="#fff" />
+                ) : (
+                  <View style={[styles.badge, { backgroundColor: `${tokens.accent}dd` }]}>
+                    <Text style={styles.badgeText}>{t('restaurantPromoBadge', { defaultValue: 'Öne çıkan' })}</Text>
+                  </View>
+                )}
+                <Text style={styles.cardTitle} numberOfLines={2}>
+                  {slide.title}
+                </Text>
+                {slide.subtitle ? (
+                  <Text style={styles.cardSub} numberOfLines={2}>
+                    {slide.subtitle}
+                  </Text>
                 ) : null}
-                <Text style={styles.cardTitle}>{slide.title}</Text>
-                {slide.subtitle ? <Text style={styles.cardSub}>{slide.subtitle}</Text> : null}
               </View>
             </TouchableOpacity>
           );
@@ -114,7 +132,7 @@ const styles = StyleSheet.create({
   wrap: { marginBottom: 8 },
   strip: { paddingHorizontal: 16, gap: 12 },
   card: {
-    height: 148,
+    height: 168,
     borderRadius: 22,
     overflow: 'hidden',
     borderWidth: 1,
@@ -123,9 +141,17 @@ const styles = StyleSheet.create({
       : {}),
   },
   fade: { ...StyleSheet.absoluteFillObject },
-  cardBody: { flex: 1, justifyContent: 'flex-end', padding: 16, gap: 4 },
-  cardTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  cardSub: { color: 'rgba(255,255,255,0.88)', fontSize: 13, fontWeight: '600' },
+  cardBody: { flex: 1, justifyContent: 'flex-end', padding: 16, gap: 5 },
+  badge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    marginBottom: 2,
+  },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.2 },
+  cardTitle: { color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: -0.2 },
+  cardSub: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600', lineHeight: 18 },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 10 },
   dot: { width: 6, height: 6, borderRadius: 3 },
 });

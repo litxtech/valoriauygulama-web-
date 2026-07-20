@@ -1,6 +1,5 @@
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import type { RestaurantTokens } from '@/features/restaurant/tokens/restaurantTokens';
 
@@ -40,7 +39,7 @@ export function RestaurantDashboardHeader({
 }: Props) {
   const { t } = useTranslation();
   return (
-    <LinearGradient colors={[...tokens.gradientHero]} style={[styles.hero, { paddingTop: safeTop + 12 }]}>
+    <View style={[styles.hero, { paddingTop: safeTop + 12, backgroundColor: tokens.bg }]}>
       <View style={styles.topRow}>
         <View style={[styles.logo, { backgroundColor: tokens.accentSoft, borderColor: tokens.border }]}>
           <Ionicons name="restaurant" size={22} color={tokens.accent} />
@@ -49,14 +48,14 @@ export function RestaurantDashboardHeader({
           {guestMenu}
           {langToggle}
           {onThemeToggle ? (
-            <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border }]} onPress={onThemeToggle}>
+            <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onThemeToggle}>
               <Ionicons name={tokens.scheme === 'dark' ? 'sunny-outline' : 'moon-outline'} size={18} color={tokens.text} />
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border }]} onPress={onOrdersPress}>
+          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onOrdersPress}>
             <Ionicons name="receipt-outline" size={18} color={tokens.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border }]} onPress={onCartPress}>
+          <TouchableOpacity style={[styles.iconBtn, { borderColor: tokens.border, backgroundColor: tokens.bgElevated }]} onPress={onCartPress}>
             <Ionicons name="bag-handle-outline" size={18} color={tokens.text} />
             {cartCount > 0 ? (
               <View style={[styles.badge, { backgroundColor: tokens.accent }]}>
@@ -98,7 +97,7 @@ export function RestaurantDashboardHeader({
           {description}
         </Text>
       ) : null}
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -121,7 +120,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.06)' : 'transparent',
   },
   badge: {
     position: 'absolute',

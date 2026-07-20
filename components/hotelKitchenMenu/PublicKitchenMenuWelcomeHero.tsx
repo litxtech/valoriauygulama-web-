@@ -108,9 +108,21 @@ function PromoSlide({
   const wrapStyle = [styles.playerWrap, boxStyle, edgeToEdge && styles.playerWrapEdge];
 
   if (posterOnly) {
+    const note = video.note?.trim();
     return (
       <View style={wrapStyle}>
         <CachedImage uri={poster} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.72)']} style={StyleSheet.absoluteFillObject} />
+        <View style={styles.promoCaption}>
+          <Text style={styles.promoCaptionTitle} numberOfLines={2}>
+            {video.title}
+          </Text>
+          {note ? (
+            <Text style={styles.promoCaptionNote} numberOfLines={2}>
+              {note}
+            </Text>
+          ) : null}
+        </View>
       </View>
     );
   }
@@ -306,6 +318,11 @@ function PromoCarousel({
           <Text style={[styles.carouselTitle, { color: accent }]} numberOfLines={1}>
             {videos[promoIndex]?.title}
           </Text>
+          {videos[promoIndex]?.note?.trim() ? (
+            <Text style={styles.carouselNote} numberOfLines={1}>
+              {videos[promoIndex]?.note?.trim()}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -568,8 +585,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: 'rgba(0,0,0,0.42)',
+    gap: 2,
   },
   carouselTitle: { fontSize: 12, fontWeight: '800' },
+  carouselNote: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.85)' },
   playerWrap: {
     borderRadius: 14,
     overflow: 'hidden',
@@ -578,6 +597,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
     position: 'relative',
   },
+  promoCaption: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 3,
+  },
+  promoCaptionTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  promoCaptionNote: { color: 'rgba(255,255,255,0.88)', fontSize: 12, fontWeight: '600', lineHeight: 16 },
   playerWrapEdge: { borderRadius: 0, borderWidth: 0 },
   videoFill: { width: '100%', height: '100%' },
   playerOverlay: {

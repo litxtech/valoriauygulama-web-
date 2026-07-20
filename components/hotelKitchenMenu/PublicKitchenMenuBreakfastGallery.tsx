@@ -44,7 +44,6 @@ export function PublicKitchenMenuBreakfastGallery({
     urls: string[];
     index: number;
     title: string;
-    subtitle: string;
   } | null>(null);
 
   useEffect(() => {
@@ -76,11 +75,7 @@ export function PublicKitchenMenuBreakfastGallery({
     <View style={styles.section}>
       <View style={styles.head}>
         <View style={[styles.headAccent, { backgroundColor: accentColor }]} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>{t('publicMenuBreakfastKicker')}</Text>
-          <Text style={styles.title}>{t('publicMenuBreakfastTitle')}</Text>
-          <Text style={styles.sub}>{t('publicMenuBreakfastSub')}</Text>
-        </View>
+        <Text style={styles.title}>{t('publicMenuBreakfastTitle')}</Text>
       </View>
 
       <ScrollView
@@ -93,7 +88,6 @@ export function PublicKitchenMenuBreakfastGallery({
         {items.map((item) => {
           const dateLabel = formatBreakfastMenuDate(item.record_date, menuLang);
           const cover = item.photo_urls[0] ?? null;
-          const headline = t('publicMenuBreakfastDayTitle', { date: dateLabel });
           return (
             <TouchableOpacity
               key={item.id}
@@ -103,17 +97,10 @@ export function PublicKitchenMenuBreakfastGallery({
                 setLightbox({
                   urls: item.photo_urls,
                   index: 0,
-                  title: headline,
-                  subtitle: [
-                    t('publicMenuBreakfastGuests', { count: item.guest_count }),
-                    item.note?.trim(),
-                  ]
-                    .filter(Boolean)
-                    .join(' · '),
+                  title: dateLabel,
                 })
               }
             >
-              <View style={[styles.cardAccent, { backgroundColor: accentColor }]} />
               <View style={styles.mediaWrap}>
                 {cover ? (
                   <CachedImage
@@ -127,29 +114,15 @@ export function PublicKitchenMenuBreakfastGallery({
                     <Ionicons name="cafe" size={36} color="#b45309" />
                   </LinearGradient>
                 )}
-                <LinearGradient colors={['transparent', 'rgba(15,23,42,0.55)']} style={styles.mediaFade} />
+                <LinearGradient colors={['transparent', 'rgba(15,23,42,0.5)']} style={styles.mediaFade} />
+                <View style={styles.datePill}>
+                  <Text style={styles.datePillText}>{dateLabel}</Text>
+                </View>
                 {item.photo_urls.length > 1 ? (
                   <View style={styles.countPill}>
                     <Ionicons name="images" size={11} color="#fff" />
                     <Text style={styles.countPillText}>{item.photo_urls.length}</Text>
                   </View>
-                ) : null}
-              </View>
-
-              <View style={styles.body}>
-                <Text style={styles.dayTitle} numberOfLines={2}>
-                  {headline}
-                </Text>
-                <View style={styles.metaRow}>
-                  <Ionicons name="people-outline" size={13} color={accentColor} />
-                  <Text style={styles.metaText}>
-                    {t('publicMenuBreakfastGuests', { count: item.guest_count })}
-                  </Text>
-                </View>
-                {item.note?.trim() ? (
-                  <Text style={styles.note} numberOfLines={2}>
-                    {item.note.trim()}
-                  </Text>
                 ) : null}
               </View>
             </TouchableOpacity>
@@ -164,7 +137,6 @@ export function PublicKitchenMenuBreakfastGallery({
         onClose={() => setLightbox(null)}
         accentColor="#fef3c7"
         title={lightbox?.title}
-        subtitle={lightbox?.subtitle}
       />
     </View>
   );
@@ -179,36 +151,21 @@ const styles = StyleSheet.create({
   loadingWrap: { paddingVertical: 18, alignItems: 'center' },
   head: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
     marginBottom: 14,
   },
   headAccent: {
     width: 3,
-    alignSelf: 'stretch',
+    height: 22,
     borderRadius: 2,
-    minHeight: 42,
-  },
-  kicker: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: AMBER,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 3,
   },
   title: {
     fontSize: 18,
     fontWeight: '800',
     color: '#0f172a',
     letterSpacing: -0.3,
-  },
-  sub: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 3,
-    lineHeight: 17,
-    fontWeight: '500',
+    flex: 1,
   },
   row: { gap: 14, paddingRight: 8, paddingVertical: 2 },
   card: {
@@ -232,16 +189,8 @@ const styles = StyleSheet.create({
       default: {},
     }),
   },
-  cardAccent: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    zIndex: 2,
-  },
   mediaWrap: {
-    height: 148,
+    height: 168,
     backgroundColor: '#1c1917',
     position: 'relative',
   },
@@ -254,6 +203,18 @@ const styles = StyleSheet.create({
   mediaFade: {
     ...StyleSheet.absoluteFillObject,
   },
+  datePill: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    backgroundColor: 'rgba(15,23,42,0.72)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  datePillText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   countPill: {
     position: 'absolute',
     top: 12,
@@ -269,26 +230,4 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
   },
   countPillText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  body: {
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.72)',
-  },
-  dayTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
-    lineHeight: 19,
-    marginBottom: 6,
-  },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  metaText: { fontSize: 12, fontWeight: '700', color: '#92400e' },
-  note: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 17,
-    color: '#64748b',
-    fontWeight: '500',
-  },
 });

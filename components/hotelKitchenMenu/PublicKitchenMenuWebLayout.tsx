@@ -25,9 +25,9 @@ import { PublicKitchenMenuGuestRails } from '@/components/hotelKitchenMenu/Publi
 import { PublicKitchenMenuBreakfastGallery } from '@/components/hotelKitchenMenu/PublicKitchenMenuBreakfastGallery';
 import {
   menuUi,
-  menuWebPageBg,
   PUBLIC_MENU_WEB_BUILD,
 } from '@/components/hotelKitchenMenu/hotelKitchenMenuUi';
+import { useRestaurantAppearance } from '@/features/restaurant/hooks/useRestaurantAppearance';
 import type { PublicKitchenMenuOrg } from '@/lib/publicKitchenMenu';
 import type { HotelKitchenMenuItemWithImages } from '@/lib/hotelKitchenMenu';
 import type { MenuSectionFilter } from '@/lib/hotelKitchenMenuFilters';
@@ -154,6 +154,14 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const accent = menuTheme.primaryColor;
   const navy = menuTheme.navyColor;
+  const { tokens, toggleScheme } = useRestaurantAppearance(accent, navy);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.body.style.backgroundColor = tokens.bg;
+    document.documentElement.style.backgroundColor = tokens.bg;
+  }, [tokens.bg]);
+
   const heroImage = menuTheme.heroImageUrl;
   const isRtl = menuLang === 'ar';
   const heroTitle =
@@ -292,7 +300,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   );
 
   return (
-    <View style={[styles.root, menuWebPageBg, isRtl && styles.rtl]}>
+    <View style={[styles.root, { backgroundColor: tokens.bg }, isRtl && styles.rtl]}>
       <KitchenMenuUpdatedToast visible={updateToast} kind={updateToastKind} onHidden={onUpdateToastHidden} />
 
       {paymentBanner ? (
@@ -340,6 +348,8 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           orderMode={orderMode}
           onOrderModeChange={setOrderMode}
           showExplore={menuTab === 'explore'}
+          tokens={tokens}
+          onThemeToggle={toggleScheme}
         />
 
         <PublicKitchenMenuBreakfastGallery
@@ -470,10 +480,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           </View>
         </View>
 
-        <View style={styles.footer}>
+        <View style={[styles.footer, { backgroundColor: tokens.bg, borderTopColor: tokens.border }]}>
           <View style={[styles.footerAccent, { backgroundColor: accent }]} />
-          <Text style={styles.footerBrand}>{org.name}</Text>
-          <Text style={styles.footerMeta}>{t('homePortalMenu')} · {PUBLIC_MENU_WEB_BUILD}</Text>
+          <Text style={[styles.footerBrand, { color: tokens.text }]}>{org.name}</Text>
+          <Text style={[styles.footerMeta, { color: tokens.textMuted }]}>
+            {t('homePortalMenu')} · {PUBLIC_MENU_WEB_BUILD}
+          </Text>
         </View>
         </View>
       </ScrollView>
@@ -725,12 +737,10 @@ const styles = StyleSheet.create({
     marginTop: 12,
     position: 'relative',
     borderTopWidth: 1,
-    borderTopColor: menuUi.border,
-    backgroundColor: menuUi.webSurface,
   },
   footerAccent: { position: 'absolute', top: 0, left: '35%', right: '35%', height: 2, borderRadius: 1 },
-  footerBrand: { fontSize: 15, fontWeight: '800', color: menuUi.navy },
-  footerMeta: { fontSize: 11, color: menuUi.webMuted, marginTop: 6, letterSpacing: 0.5 },
+  footerBrand: { fontSize: 15, fontWeight: '800' },
+  footerMeta: { fontSize: 11, marginTop: 6, letterSpacing: 0.5 },
   payBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: 10, zIndex: 50 },
   payOk: { backgroundColor: '#ecfdf3' },
   payCancel: { backgroundColor: '#fffbeb' },

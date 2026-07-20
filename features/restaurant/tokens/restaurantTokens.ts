@@ -27,10 +27,12 @@ export function restaurantTokens(
   navy: string
 ): RestaurantTokens {
   const isDark = scheme === 'dark';
+  const bg = isDark ? '#0b0f17' : '#f8f7f4';
+  const bgElevated = isDark ? '#141b28' : '#ffffff';
   return {
     scheme,
-    bg: isDark ? '#0b0f17' : '#f8f7f4',
-    bgElevated: isDark ? '#141b28' : '#ffffff',
+    bg,
+    bgElevated,
     bgGlass: isDark ? 'rgba(20,27,40,0.88)' : 'rgba(255,255,255,0.92)',
     border: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,15,26,0.06)',
     text: isDark ? '#f8fafc' : '#0a0f1a',
@@ -42,9 +44,8 @@ export function restaurantTokens(
     success: '#22c55e',
     danger: '#ef4444',
     shadow: isDark ? 'rgba(0,0,0,0.45)' : 'rgba(10,15,26,0.12)',
-    gradientHero: isDark
-      ? ([navy, '#0f172a', '#1e293b'] as const)
-      : (['#faf9f7', '#ffffff', '#f3f0ea'] as const),
+    // Header = sayfa rengi (mavi/lacivert şerit yok)
+    gradientHero: [bg, bg, bg] as const,
     cardRadius: 20,
     pillRadius: 999,
   };
