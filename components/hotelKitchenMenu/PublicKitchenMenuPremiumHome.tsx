@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,11 +21,14 @@ import { RestaurantExploreSection } from '@/features/restaurant/components/Resta
 import { buildExploreSections } from '@/features/restaurant/utils/exploreSections';
 import { PublicKitchenMenuLangToggle } from '@/components/hotelKitchenMenu/PublicKitchenMenuLangToggle';
 import { PublicKitchenMenuGuestMenuButton } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestMenuButton';
+import { PublicKitchenMenuHeaderExtras } from '@/components/hotelKitchenMenu/PublicKitchenMenuHeaderExtras';
+import { PublicKitchenMenuGuestBook } from '@/components/hotelKitchenMenu/PublicKitchenMenuGuestBook';
 
 type CategoryChip = { title: string; count: number };
 
 type Props = {
   org: PublicKitchenMenuOrg;
+  orgSlug: string;
   items: HotelKitchenMenuItemWithImages[];
   categoryChips: CategoryChip[];
   categoryFilter: string | null;
@@ -49,6 +52,7 @@ type Props = {
 
 export function PublicKitchenMenuPremiumHome({
   org,
+  orgSlug,
   items,
   categoryChips,
   categoryFilter,
@@ -72,6 +76,11 @@ export function PublicKitchenMenuPremiumHome({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { tokens, toggleScheme } = useRestaurantAppearance(menuTheme.primaryColor, menuTheme.navyColor);
+  const [guestRating, setGuestRating] = useState<{ avg: number; count: number } | null>(null);
+
+  const onGuestRatingChange = useCallback((avg: number, count: number) => {
+    setGuestRating(count > 0 ? { avg, count } : null);
+  }, []);
 
   const railItems = useMemo(
     () =>
@@ -106,10 +115,18 @@ export function PublicKitchenMenuPremiumHome({
       <RestaurantDashboardHeader
         tokens={tokens}
         orgName={org.name}
+        rating={guestRating?.avg ?? 4.8}
         description={heroSubtitle}
         cartCount={cartItemCount(cartLines)}
         onCartPress={onCartPress}
         onOrdersPress={onOrdersPress}
+        titleAccessory={
+          <PublicKitchenMenuHeaderExtras
+            organizationId={org.id}
+            menuLang={menuLang}
+            tokens={tokens}
+          />
+        }
         guestMenu={
           <PublicKitchenMenuGuestMenuButton
             organizationId={org.id}
@@ -144,6 +161,13 @@ export function PublicKitchenMenuPremiumHome({
           labels={orderLabels}
         />
       </View>
+
+      <PublicKitchenMenuGuestBook
+        orgSlug={orgSlug}
+        tokens={tokens}
+        accentColor={menuTheme.primaryColor}
+        onRatingChange={onGuestRatingChange}
+      />
 
       <View style={styles.block}>
         <RestaurantPromoSlider tokens={tokens} promos={menuTheme.promoVideos} />

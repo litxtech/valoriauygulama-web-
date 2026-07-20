@@ -320,6 +320,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
       >
         <PublicKitchenMenuPremiumHome
           org={org}
+          orgSlug={orgSlug}
           items={items}
           categoryChips={categoryChips}
           categoryFilter={categoryFilter}

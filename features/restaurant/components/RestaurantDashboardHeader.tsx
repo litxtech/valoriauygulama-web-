@@ -16,6 +16,8 @@ type Props = {
   onOrdersPress: () => void;
   langToggle?: React.ReactNode;
   guestMenu?: React.ReactNode;
+  /** Compact actions opposite the hotel name (complaint, app stores, …) */
+  titleAccessory?: React.ReactNode;
   onThemeToggle?: () => void;
   safeTop: number;
 };
@@ -32,6 +34,7 @@ export function RestaurantDashboardHeader({
   onOrdersPress,
   langToggle,
   guestMenu,
+  titleAccessory,
   onThemeToggle,
   safeTop,
 }: Props) {
@@ -64,7 +67,12 @@ export function RestaurantDashboardHeader({
         </View>
       </View>
 
-      <Text style={[styles.name, { color: tokens.text }]}>{orgName}</Text>
+      <View style={styles.nameRow}>
+        <Text style={[styles.name, { color: tokens.text }]} numberOfLines={2}>
+          {orgName}
+        </Text>
+        {titleAccessory}
+      </View>
       <View style={styles.metaRow}>
         <View style={[styles.pill, { backgroundColor: tokens.bgGlass, borderColor: tokens.border }]}>
           <Ionicons name="star" size={12} color={tokens.accent} />
@@ -127,7 +135,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  name: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 10 },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 10,
+  },
+  name: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, minWidth: 0 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: {
     flexDirection: 'row',
