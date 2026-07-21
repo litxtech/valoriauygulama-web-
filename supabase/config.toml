@@ -77,6 +77,10 @@ verify_jwt = false
 [functions.kbs-staff-ops]
 verify_jwt = false
 
+# Kimlik OCR sunucu fallback — JWT Edge içinde getUser ile doğrulanır
+[functions.kbs-ocr-worker]
+verify_jwt = false
+
 # Hesap silme: JWT gateway'de RN'de 401 verebiliyor; fonksiyon Bearer + getUser ile doğrular
 [functions.delete-user-account]
 verify_jwt = false

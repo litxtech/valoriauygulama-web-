@@ -13,11 +13,21 @@ import {
   type CaptureStats,
   type KbsWebHotel,
 } from '../lib/captures';
-import { buildKbsCopyFields, kbsDisplayFullName } from '../lib/parse';
+import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
 import { CaptureCard } from './CaptureCard';
 import { CaptureDetailModal } from './CaptureDetailModal';
 
 type RangeKey = 'all' | 'today' | 'week';
+type OcrFilterKey = 'all' | 'reading' | 'partial' | 'manual' | 'failed';
+
+function ocrBucket(item: CaptureItem): OcrFilterKey | 'ok' {
+  const status = kbsCaptureCardStatus(item.parsed, { ocrStatus: item.ocr_status });
+  if (status.tone === 'progress') return 'reading';
+  if (status.tone === 'warn' && status.label.startsWith('Manuel')) return 'manual';
+  if (status.tone === 'warn') return 'partial';
+  if (status.label === 'Okunamadı' || status.label === 'Bekleniyor') return 'failed';
+  return 'ok';
+}
 
 function matchesQuery(item: CaptureItem, q: string): boolean {
   if (!q) return true;
@@ -69,6 +79,7 @@ export function CapturesPage() {
   const [queryInput, setQueryInput] = useState('');
   const [query, setQuery] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
+  const [ocrFilter, setOcrFilter] = useState<OcrFilterKey>('all');
   const [selected, setSelected] = useState<CaptureItem | null>(null);
   const [live, setLive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -210,10 +221,24 @@ export function CapturesPage() {
         if (!inRange(i, range)) return false;
         if (staffFilter !== 'all' && i.scanned_by_user_id !== staffFilter) return false;
         if (!matchesQuery(i, query)) return false;
+        if (ocrFilter !== 'all' && ocrBucket(i) !== ocrFilter) return false;
         return true;
       }),
-    [items, range, query, staffFilter]
+    [items, range, query, staffFilter, ocrFilter]
   );
+
+  const ocrCounts = useMemo(() => {
+    const base = items.filter((i) => inRange(i, range));
+    const counts = { reading: 0, partial: 0, manual: 0, failed: 0 };
+    for (const i of base) {
+      const b = ocrBucket(i);
+      if (b === 'reading') counts.reading += 1;
+      else if (b === 'partial') counts.partial += 1;
+      else if (b === 'manual') counts.manual += 1;
+      else if (b === 'failed') counts.failed += 1;
+    }
+    return counts;
+  }, [items, range]);
 
   const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
   const hasMore = visible.length < filtered.length;
@@ -343,6 +368,35 @@ export function CapturesPage() {
               </option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="filter-bar">
+        <div className="filter-group">
+          <span className="filter-label">Okuma durumu</span>
+          <div className="filter-chips">
+            {(
+              [
+                ['all', 'Tümü'],
+                ['reading', `Okunuyor (${ocrCounts.reading})`],
+                ['partial', `Eksik (${ocrCounts.partial})`],
+                ['manual', `Manuel (${ocrCounts.manual})`],
+                ['failed', `Okunamadı (${ocrCounts.failed})`],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                className={`filter-chip${ocrFilter === k ? ' active' : ''}`}
+                onClick={() => {
+                  setOcrFilter(k);
+                  setVisibleCount(36);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

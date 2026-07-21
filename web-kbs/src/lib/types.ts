@@ -20,6 +20,14 @@ export type ParsedDocument = {
   confidence: number | null;
   checksumsValid: boolean | null;
   warnings: string[];
+  /** Aynı belge no geçmişte varsa — “daha önce geldi” meta. */
+  returningGuest?: {
+    previousDocumentId: string;
+    previousGuestId?: string | null;
+    previousCapturedAt?: string | null;
+    previousGuestName?: string | null;
+    documentNumber?: string | null;
+  };
 };
 
 export type KbsCapturedDocumentRow = {
@@ -31,6 +39,7 @@ export type KbsCapturedDocumentRow = {
   back_image_url: string | null;
   parsed_payload: ParsedDocument | Record<string, unknown> | null;
   scan_status: string;
+  ocr_status?: string | null;
   ocr_engine: string | null;
   room_number: string | null;
   mrz_batch_key: string | null;

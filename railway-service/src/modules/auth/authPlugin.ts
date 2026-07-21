@@ -109,15 +109,32 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
       throw Errors.forbidden('User inactive');
     }
 
+    // Personel hesabı kitliyse KBS/ops erişimi yok
+    {
+      const { data: lockStaff } = await app.supabase
+        .from('staff')
+        .select('account_locked')
+        .eq('auth_id', authUserId)
+        .maybeSingle();
+      if (lockStaff?.account_locked === true) {
+        req.log.warn({ event: 'auth_account_locked', path: req.url, authUserId }, 'Account locked');
+        throw Errors.forbidden('Account locked');
+      }
+    }
+
     // Eski receptionist kaydı kalmış Valoria admin: ops rolünü staff.admin ile hizala.
     if (appUser.role !== 'admin') {
       const { data: staff } = await app.supabase
         .from('staff')
-        .select('role')
+        .select('role, account_locked')
         .eq('auth_id', authUserId)
         .eq('is_active', true)
         .is('deleted_at', null)
         .maybeSingle();
+      if (staff?.account_locked === true) {
+        req.log.warn({ event: 'auth_account_locked', path: req.url, authUserId }, 'Account locked');
+        throw Errors.forbidden('Account locked');
+      }
       if (staff?.role === 'admin') {
         const { error: syncErr } = await app.supabase
           .schema('ops')

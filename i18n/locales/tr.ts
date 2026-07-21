@@ -183,7 +183,7 @@ const translation = {
       accountBannedMessage: 'Hesabınız {{until}} tarihine kadar erişime kapatıldı.',
       accountLockedTitle: 'Hesabınız kitlendi',
       accountLockedMessage:
-        'Yönetici hesabınıza erişimi geçici olarak kapattı. Sorularınız için yöneticinizle iletişime geçin.',
+        'Yönetici hesabınıza erişimi kapattı. Giriş yapamazsınız; KBS ve diğer sistemler de kapalı. Sorularınız için yöneticinizle iletişime geçin.',
       accountStatusReason: 'Gerekçe: {{reason}}',
       screenConvertToFullAccount: 'Şahsi hesaba geç',
       convertToFullAccountMenuSub: 'E-posta ve şifre belirleyin; isterseniz sonra değiştirebilirsiniz.',

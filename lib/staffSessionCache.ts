@@ -31,6 +31,8 @@ export async function peekStaffSessionCache(): Promise<{
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { auth_id?: string; staff?: CachedStaffProfile };
     if (!parsed?.auth_id || !parsed?.staff?.id || parsed.staff.deleted_at) return null;
+    if (parsed.staff.account_locked === true) return null;
+    if (parsed.staff.banned_until && new Date(parsed.staff.banned_until) > new Date()) return null;
     return { auth_id: parsed.auth_id, staff: parsed.staff };
   } catch {
     return null;

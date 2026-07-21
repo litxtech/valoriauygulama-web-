@@ -20,6 +20,7 @@ import { CachedImage } from '@/components/CachedImage';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { pickGalleryImages } from '@/lib/galleryPicker';
+import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
 
 const CRIT = [
   { value: 'low', label: 'Düşük' },
@@ -48,6 +49,9 @@ export default function AdminTechnicalAssetNewScreen() {
   const [affected, setAffected] = useState('');
   const [emergency, setEmergency] = useState('');
   const [warnings, setWarnings] = useState('');
+  const [description, setDescription] = useState('');
+  const [usageGuideText, setUsageGuideText] = useState('');
+  const [usageVideoUri, setUsageVideoUri] = useState('');
   const whoCloseDefault = 'Teknik personel / Yönetici';
   const whoOpenDefault = 'Teknik personel';
   const [tagline, setTagline] = useState('');
@@ -197,6 +201,21 @@ export default function AdminTechnicalAssetNewScreen() {
     setPhotoUris((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const pickUsageVideo = async () => {
+    const granted = await ensureMediaLibraryPermission({
+      title: 'Galeri izni',
+      message: 'Kullanım videosu seçmek için galeri erişimi gerekiyor.',
+      settingsMessage: 'Galeri izni kapalı. Ayarlardan galeri iznini açın.',
+    });
+    if (!granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      quality: 0.85,
+      videoMaxDuration: 600,
+    });
+    if (!result.canceled && result.assets[0]?.uri) setUsageVideoUri(result.assets[0].uri);
+  };
+
   const save = async () => {
     if (!orgId || !staff?.id) return;
     if (!name.trim()) {
@@ -244,6 +263,16 @@ export default function AdminTechnicalAssetNewScreen() {
         );
       }
       const urls = [...uploadedUrls, ...manualUrls];
+      let usageGuideVideoUrl: string | null = null;
+      if (usageVideoUri) {
+        const uploaded = await uploadUriToPublicBucket({
+          bucketId: 'tech-assets',
+          uri: usageVideoUri,
+          kind: 'video',
+          subfolder: `usage-guides/${orgId}/new`,
+        });
+        usageGuideVideoUrl = uploaded.publicUrl;
+      }
       const { data, error } = await supabase
         .from('tech_assets')
         .insert({
@@ -259,12 +288,16 @@ export default function AdminTechnicalAssetNewScreen() {
           affected_areas: affected.trim() || null,
           emergency_action: emergency.trim() || null,
           warning_text: warnings.trim() || null,
+          description: description.trim() || null,
+          usage_guide_text: usageGuideText.trim() || null,
+          usage_guide_video_url: usageGuideVideoUrl,
           who_can_close: whoCloseDefault,
           who_can_open: whoOpenDefault,
           criticality,
           status: 'active',
           photo_urls: urls,
           qr_payload: '',
+          is_public: true,
           label_tagline: tagline.trim() || null,
           created_by_staff_id: staff.id,
         })
@@ -351,6 +384,36 @@ export default function AdminTechnicalAssetNewScreen() {
       <Text style={styles.label}>Uyarılar (isteğe bağlı)</Text>
       <TextInput style={[styles.input, styles.tall]} value={warnings} onChangeText={setWarnings} multiline placeholderTextColor="#a0aec0" />
 
+      <Text style={styles.label}>Hakkında / açıklama</Text>
+      <TextInput
+        style={[styles.input, styles.tall]}
+        value={description}
+        onChangeText={setDescription}
+        multiline
+        placeholder="QR sayfasında gösterilecek ürün veya ekipman açıklaması"
+        placeholderTextColor="#a0aec0"
+      />
+
+      <Text style={styles.label}>Kullanım talimatı</Text>
+      <TextInput
+        style={[styles.input, styles.tall]}
+        value={usageGuideText}
+        onChangeText={setUsageGuideText}
+        multiline
+        placeholder="Kullanım adımları, dikkat edilecek noktalar…"
+        placeholderTextColor="#a0aec0"
+      />
+
+      <Text style={styles.label}>Kullanım videosu (en fazla 10 dakika)</Text>
+      <TouchableOpacity style={styles.videoBtn} onPress={pickUsageVideo} disabled={saving}>
+        <Text style={styles.videoBtnText}>{usageVideoUri ? 'Video seçildi — değiştirmek için dokun' : 'Galeriden video seç'}</Text>
+      </TouchableOpacity>
+      {usageVideoUri ? (
+        <TouchableOpacity style={styles.videoRemove} onPress={() => setUsageVideoUri('')} disabled={saving}>
+          <Text style={styles.videoRemoveText}>Videoyu kaldır</Text>
+        </TouchableOpacity>
+      ) : null}
+
       <Text style={styles.label}>Etiket kısa satır — fiziksel etiket (isteğe bağlı)</Text>
       <TextInput style={styles.input} value={tagline} onChangeText={setTagline} placeholderTextColor="#a0aec0" />
 
@@ -422,6 +485,10 @@ const styles = StyleSheet.create({
   photoBtnCamera: { backgroundColor: '#0284c7' },
   photoBtnGallery: { backgroundColor: '#1a365d' },
   photoBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  videoBtn: { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#93c5fd', borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  videoBtnText: { color: '#1a365d', fontWeight: '800', fontSize: 14 },
+  videoRemove: { alignSelf: 'center', paddingVertical: 10 },
+  videoRemoveText: { color: '#dc2626', fontWeight: '700', fontSize: 13 },
   photosWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
   photoTile: { position: 'relative' },
   photoThumb: { width: 96, height: 96, borderRadius: 10, backgroundColor: '#e2e8f0' },

@@ -3,13 +3,21 @@ import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { isKbsPlaceholderName, mergeKbsOcrIntoExisting } from '@/lib/kbsCaptureOcrMerge';
-import { enrichKbsParsedFromSources, isKbsTcOnlyCapture } from '@/lib/kbsCaptureParsedFields';
+import { enrichKbsParsedFromSources, isKbsTcOnlyCapture, listCoreMissingIdFields, withMissingFieldWarnings } from '@/lib/kbsCaptureParsedFields';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
-import { findGuestDocumentByIdentity } from '@/lib/kbsGuestDocumentIdentity';
+import { findGuestDocumentByIdentity, withReturningGuestWarning, buildReturningGuestMeta } from '@/lib/kbsGuestDocumentIdentity';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
+import { withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
 import { log } from '@/lib/logger';
+
+/** Zayıf ağda takılı istek OCR kuyruğunu süresiz bloke etmesin. */
+const OCR_DB_TIMEOUT_MS = 15_000;
+
+function bounded<T>(query: PromiseLike<T>): Promise<T> {
+  return withPromiseTimeout(query, OCR_DB_TIMEOUT_MS, 'OCR kayıt zaman aşımı');
+}
 
 export type KbsCapturedDocumentRow = {
   id: string;
@@ -21,6 +29,8 @@ export type KbsCapturedDocumentRow = {
   front_image_url: string | null;
   parsed_payload: ParsedDocument | Record<string, unknown> | null;
   scan_status: string;
+  /** Kaynak gerçek OCR durumu (queued/processing/partial/succeeded/manual_review/…). */
+  ocr_status?: string | null;
   ocr_engine: string | null;
   room_number: string | null;
   /** Aynı toplu çekim / MRZ partisi — listede aile grubu. */
@@ -100,6 +110,8 @@ function stripOcrFlags(parsed: ParsedDocument): ParsedDocument {
       w !== 'ocr_pending' &&
       w !== 'ocr_processing' &&
       w !== 'ocr_failed' &&
+      w !== 'ocr_partial' &&
+      w !== 'ocr_manual_review' &&
       w !== 'manual_capture' &&
       !w.startsWith('kbs_side:')
   );
@@ -109,29 +121,75 @@ function stripOcrFlags(parsed: ParsedDocument): ParsedDocument {
 /** OCR kuyruk durumu (parsed_payload.warnings içinde). */
 export async function markKbsCaptureOcrState(
   docId: string,
-  state: 'pending' | 'processing' | 'failed'
+  state: 'pending' | 'processing' | 'failed' | 'partial' | 'manual_review'
 ): Promise<void> {
-  const { data, error: loadErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select('parsed_payload')
-    .eq('id', docId)
-    .maybeSingle();
+  try {
+    await markKbsCaptureOcrStateInner(docId, state);
+  } catch (e) {
+    // Zayıf ağda zaman aşımı — OCR kuyruğu durum yazamasa da akmaya devam etmeli.
+    log.warn('kbsCaptureHistory', 'markKbsCaptureOcrState timeout', { docId, state, e });
+  }
+}
+
+async function markKbsCaptureOcrStateInner(
+  docId: string,
+  state: 'pending' | 'processing' | 'failed' | 'partial' | 'manual_review'
+): Promise<void> {
+  const { data, error: loadErr } = await bounded(
+    supabase
+      .schema('ops')
+      .from('guest_documents')
+      .select('parsed_payload')
+      .eq('id', docId)
+      .maybeSingle()
+  );
   if (loadErr) return;
   const prev = (data?.parsed_payload ?? {}) as ParsedDocument;
   let warnings = (prev.warnings ?? []).filter(
-    (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
+    (w) =>
+      w !== 'ocr_pending' &&
+      w !== 'ocr_processing' &&
+      w !== 'ocr_failed' &&
+      w !== 'ocr_partial' &&
+      w !== 'ocr_manual_review'
   );
   if (state === 'pending') warnings = [...warnings, 'ocr_pending'];
   if (state === 'processing') warnings = [...warnings, 'ocr_processing'];
   if (state === 'failed') warnings = [...warnings, 'ocr_failed'];
-  const { error: updateErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .update({ parsed_payload: { ...prev, warnings } })
-    .eq('id', docId);
+  if (state === 'partial') warnings = [...warnings, 'ocr_partial'];
+  if (state === 'manual_review') warnings = [...warnings, 'ocr_manual_review'];
+  const ocrStatus =
+    state === 'pending'
+      ? 'queued'
+      : state === 'processing'
+        ? 'processing'
+        : state === 'partial'
+          ? 'partial'
+          : state === 'manual_review'
+            ? 'manual_review'
+            : 'failed_terminal';
+  const { error: updateErr } = await bounded(
+    supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update({
+        parsed_payload: { ...prev, warnings },
+        ocr_status: ocrStatus,
+      })
+      .eq('id', docId)
+  );
   if (updateErr) {
-    log.warn('kbsCaptureHistory', 'markKbsCaptureOcrState failed', { docId, state, updateErr });
+    // ocr_status kolonu henüz yoksa yalnız payload güncelle
+    const { error: fallbackErr } = await bounded(
+      supabase
+        .schema('ops')
+        .from('guest_documents')
+        .update({ parsed_payload: { ...prev, warnings } })
+        .eq('id', docId)
+    );
+    if (fallbackErr) {
+      log.warn('kbsCaptureHistory', 'markKbsCaptureOcrState failed', { docId, state, updateErr });
+    }
   }
 }
 
@@ -150,7 +208,9 @@ type KbsOcrCommitArgs = {
 async function commitKbsCaptureOcrPatch(
   args: KbsOcrCommitArgs
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { docId, guestId, payload, scanConfidence, ocrEngine, writeDocumentNumber } = args;
+  const { docId, guestId, payload: rawPayload, scanConfidence, ocrEngine, writeDocumentNumber } = args;
+  const payload = withMissingFieldWarnings(rawPayload);
+  const missingCore = listCoreMissingIdFields(payload);
   const fullName =
     payload.fullName ??
     ([payload.firstName, payload.lastName].filter(Boolean).join(' ').trim() || null);
@@ -161,7 +221,7 @@ async function commitKbsCaptureOcrPatch(
   const docNo = writeDocumentNumber
     ? (payload.documentNumber ?? '').trim().replace(/\s+/g, '').toUpperCase() || null
     : null;
-  const coreReady = !!(docNo && fullName);
+  const coreReady = missingCore.length === 0;
   const effectiveConfidence =
     scanConfidence != null
       ? Math.max(scanConfidence, payload.confidence ?? 0)
@@ -174,11 +234,23 @@ async function commitKbsCaptureOcrPatch(
     documentType: payload.documentType,
   });
 
+  const ocrStatus = coreReady
+    ? 'succeeded'
+    : missingCore.length >= 4
+      ? 'manual_review'
+      : 'partial';
+
   const patch: Record<string, unknown> = {
     parsed_payload: {
       ...payload,
       documentSeries: series,
       documentNumber: writeDocumentNumber ? docNo ?? payload.documentNumber : payload.documentNumber,
+      warnings:
+        ocrStatus === 'manual_review' && !(payload.warnings ?? []).includes('ocr_manual_review')
+          ? [...(payload.warnings ?? []).filter((w) => w !== 'ocr_partial'), 'ocr_manual_review']
+          : ocrStatus === 'partial' && !(payload.warnings ?? []).includes('ocr_partial')
+            ? [...(payload.warnings ?? []).filter((w) => w !== 'ocr_manual_review'), 'ocr_partial']
+            : payload.warnings ?? [],
     },
     scan_confidence: effectiveConfidence,
     ocr_engine: ocrEngine ?? MRZ_OCR_ENGINE_VISION_MLKIT,
@@ -189,59 +261,89 @@ async function commitKbsCaptureOcrPatch(
     document_series: series,
     kbs_person_kind: kind,
     document_type: payload.documentType,
-    scan_status: coreReady ? 'ready_to_submit' : payload.rawMrz ? 'scanned' : 'draft',
+    scan_status: coreReady ? 'ready_to_submit' : payload.rawMrz ? 'scanned' : 'incomplete',
+    ocr_status: ocrStatus,
+    ocr_last_error: coreReady ? null : missingCore.join(', '),
+    ocr_next_retry_at: ocrStatus === 'partial' ? new Date(Date.now() + 2000).toISOString() : null,
   };
   if (writeDocumentNumber) {
     patch.document_number = docNo;
   }
 
-  const { error: docErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .update(patch)
-    .eq('id', docId);
+  const applyGuestPatch = async (): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const guestPatch: Record<string, string | null> = {};
+    if (fullName) guestPatch.full_name = fullName;
+    if (payload.firstName) guestPatch.first_name = payload.firstName;
+    if (payload.lastName) guestPatch.last_name = payload.lastName;
+    if (payload.middleName) guestPatch.middle_name = payload.middleName;
+    if (payload.nationalityCode) guestPatch.nationality_code = payload.nationalityCode;
+    if (payload.gender) guestPatch.gender = payload.gender;
+    if (birthDate) guestPatch.birth_date = birthDate;
+    if (payload.fatherName) guestPatch.father_name = payload.fatherName;
+    if (payload.motherName) guestPatch.mother_name = payload.motherName;
+
+    if (Object.keys(guestPatch).length > 0) {
+      const { error: guestErr } = await bounded(
+        supabase
+          .schema('ops')
+          .from('guests')
+          .update(guestPatch)
+          .eq('id', guestId)
+      );
+      if (guestErr) return { ok: false, message: guestErr.message };
+    }
+    return { ok: true };
+  };
+
+  let { error: docErr } = await bounded(
+    supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update(patch)
+      .eq('id', docId)
+  );
+
+  if (docErr && /ocr_status|ocr_last_error|ocr_next_retry/i.test(docErr.message)) {
+    const { ocr_status: _s, ocr_last_error: _e, ocr_next_retry_at: _r, ...legacyPatch } = patch;
+    const legacy = await bounded(
+      supabase
+        .schema('ops')
+        .from('guest_documents')
+        .update(legacyPatch)
+        .eq('id', docId)
+    );
+    docErr = legacy.error;
+  }
 
   if (docErr) {
     if (writeDocumentNumber && docNo && docErr.code === '23505' && args.hotelId) {
       const conflict = await findGuestDocumentByIdentity(args.hotelId, args.documentType, docNo);
       if (conflict && conflict.id !== docId) {
-        const dupPayload: ParsedDocument = {
-          ...payload,
-          documentNumber: null,
-          warnings: [...(payload.warnings ?? []), 'duplicate_identity'],
-        };
+        const meta = buildReturningGuestMeta(conflict, docNo);
+        const dupPayload = withReturningGuestWarning(
+          { ...payload, documentNumber: null },
+          meta
+        );
         const dupRes = await commitKbsCaptureOcrPatch({
           ...args,
           payload: dupPayload,
           writeDocumentNumber: false,
         });
         if (!dupRes.ok) return dupRes;
-        return applyKbsCaptureOcrResult(conflict.id, conflict.guest_id, payload, scanConfidence, ocrEngine);
+        const canonicalPayload = withReturningGuestWarning(payload, meta);
+        return applyKbsCaptureOcrResult(
+          conflict.id,
+          conflict.guest_id,
+          canonicalPayload,
+          scanConfidence,
+          ocrEngine
+        );
       }
     }
     return { ok: false, message: docErr.message };
   }
 
-  const guestPatch: Record<string, string | null> = {};
-  if (fullName) guestPatch.full_name = fullName;
-  if (payload.firstName) guestPatch.first_name = payload.firstName;
-  if (payload.lastName) guestPatch.last_name = payload.lastName;
-  if (payload.middleName) guestPatch.middle_name = payload.middleName;
-  if (payload.nationalityCode) guestPatch.nationality_code = payload.nationalityCode;
-  if (payload.gender) guestPatch.gender = payload.gender;
-  if (birthDate) guestPatch.birth_date = birthDate;
-  if (payload.fatherName) guestPatch.father_name = payload.fatherName;
-  if (payload.motherName) guestPatch.mother_name = payload.motherName;
-
-  if (Object.keys(guestPatch).length > 0) {
-    const { error: guestErr } = await supabase
-      .schema('ops')
-      .from('guests')
-      .update(guestPatch)
-      .eq('id', guestId);
-    if (guestErr) return { ok: false, message: guestErr.message };
-  }
-  return { ok: true };
+  return applyGuestPatch();
 }
 
 /** OCR sonucu: belge + misafir kaydı güncellenir (mevcut dolu alanlar korunur). */
@@ -252,13 +354,21 @@ export async function applyKbsCaptureOcrResult(
   scanConfidence: number | null,
   ocrEngine?: string | null
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { data: docRow, error: loadErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select('parsed_payload, hotel_id, document_type')
-    .eq('id', docId)
-    .maybeSingle();
-  if (loadErr) return { ok: false, message: loadErr.message };
+  let docRow: { parsed_payload: unknown; hotel_id: unknown; document_type: unknown } | null;
+  try {
+    const res = await bounded(
+      supabase
+        .schema('ops')
+        .from('guest_documents')
+        .select('parsed_payload, hotel_id, document_type')
+        .eq('id', docId)
+        .maybeSingle()
+    );
+    if (res.error) return { ok: false, message: res.error.message };
+    docRow = res.data;
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
+  }
 
   const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
   const merged = mergeKbsOcrIntoExisting(existing, parsed);
@@ -270,34 +380,43 @@ export async function applyKbsCaptureOcrResult(
 
   let writeDocumentNumber = !!docNo;
   if (docNo && hotelId) {
-    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo);
+    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
+      excludeDocumentId: docId,
+    });
     if (conflict && conflict.id !== docId) {
-      const canonical = await applyKbsCaptureOcrResult(
-        conflict.id,
-        conflict.guest_id,
-        payload,
+      const meta = buildReturningGuestMeta(conflict, docNo);
+      const returningForCanonical = withReturningGuestWarning(payload, meta);
+      // Kanonik kaydı doğrudan güncelle (recursion yok)
+      const canonical = await commitKbsCaptureOcrPatch({
+        docId: conflict.id,
+        guestId: conflict.guest_id,
+        hotelId,
+        documentType,
+        payload: returningForCanonical,
         scanConfidence,
-        ocrEngine
-      );
+        ocrEngine,
+        writeDocumentNumber: true,
+      });
       if (!canonical.ok) return canonical;
       writeDocumentNumber = false;
-      if (!(payload.warnings ?? []).includes('duplicate_identity')) {
-        payload.warnings = [...(payload.warnings ?? []), 'duplicate_identity'];
-      }
-      payload.documentNumber = null;
+      Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
     }
   }
 
-  return commitKbsCaptureOcrPatch({
-    docId,
-    guestId,
-    hotelId,
-    documentType,
-    payload,
-    scanConfidence,
-    ocrEngine,
-    writeDocumentNumber,
-  });
+  try {
+    return await commitKbsCaptureOcrPatch({
+      docId,
+      guestId,
+      hotelId,
+      documentType,
+      payload,
+      scanConfidence,
+      ocrEngine,
+      writeDocumentNumber,
+    });
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
+  }
 }
 
 /** Düzelt — ad/soyad dahil OCR sonucunu zorla günceller (manuel ad korunur). */
@@ -308,13 +427,21 @@ export async function applyKbsCaptureOcrCorrection(
   scanConfidence: number | null,
   ocrEngine?: string | null
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { data: docRow, error: loadErr } = await supabase
-    .schema('ops')
-    .from('guest_documents')
-    .select('parsed_payload, hotel_id, document_type')
-    .eq('id', docId)
-    .maybeSingle();
-  if (loadErr) return { ok: false, message: loadErr.message };
+  let docRow: { parsed_payload: unknown; hotel_id: unknown; document_type: unknown } | null;
+  try {
+    const res = await bounded(
+      supabase
+        .schema('ops')
+        .from('guest_documents')
+        .select('parsed_payload, hotel_id, document_type')
+        .eq('id', docId)
+        .maybeSingle()
+    );
+    if (res.error) return { ok: false, message: res.error.message };
+    docRow = res.data;
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
+  }
 
   const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
   const merged = mergeKbsOcrIntoExisting(existing, parsed, { correction: true });
@@ -326,34 +453,42 @@ export async function applyKbsCaptureOcrCorrection(
 
   let writeDocumentNumber = !!docNo;
   if (docNo && hotelId) {
-    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo);
+    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
+      excludeDocumentId: docId,
+    });
     if (conflict && conflict.id !== docId) {
-      const canonical = await applyKbsCaptureOcrCorrection(
-        conflict.id,
-        conflict.guest_id,
-        payload,
+      const meta = buildReturningGuestMeta(conflict, docNo);
+      const returningForCanonical = withReturningGuestWarning(payload, meta);
+      const canonical = await commitKbsCaptureOcrPatch({
+        docId: conflict.id,
+        guestId: conflict.guest_id,
+        hotelId,
+        documentType,
+        payload: returningForCanonical,
         scanConfidence,
-        ocrEngine
-      );
+        ocrEngine,
+        writeDocumentNumber: true,
+      });
       if (!canonical.ok) return canonical;
       writeDocumentNumber = false;
-      if (!(payload.warnings ?? []).includes('duplicate_identity')) {
-        payload.warnings = [...(payload.warnings ?? []), 'duplicate_identity'];
-      }
-      payload.documentNumber = null;
+      Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
     }
   }
 
-  return commitKbsCaptureOcrPatch({
-    docId,
-    guestId,
-    hotelId,
-    documentType,
-    payload,
-    scanConfidence,
-    ocrEngine,
-    writeDocumentNumber,
-  });
+  try {
+    return await commitKbsCaptureOcrPatch({
+      docId,
+      guestId,
+      hotelId,
+      documentType,
+      payload,
+      scanConfidence,
+      ocrEngine,
+      writeDocumentNumber,
+    });
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
+  }
 }
 
 /** Manuel okuma sonucunu belgeye yazar. */
@@ -395,7 +530,7 @@ export async function fetchKbsCapturedDocumentById(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -414,6 +549,7 @@ export async function fetchKbsCapturedDocumentById(
     front_image_url: string | null;
     parsed_payload: KbsCapturedDocumentRow['parsed_payload'];
     scan_status: string;
+    ocr_status?: string | null;
     ocr_engine: string | null;
     mrz_batch_key: string | null;
     scanned_by_user_id: string | null;
@@ -473,6 +609,7 @@ export async function fetchKbsCapturedDocumentById(
       guest: row.guest,
     }),
     scan_status: row.scan_status,
+    ocr_status: row.ocr_status ?? null,
     ocr_engine: row.ocr_engine ?? null,
     room_number: roomNumber,
     mrz_batch_key: row.mrz_batch_key ?? null,

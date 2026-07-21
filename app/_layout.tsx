@@ -854,6 +854,7 @@ function RootLayoutInner() {
         <Stack.Screen name="sözleşme" options={{ headerShown: false }} />
         <Stack.Screen name="maliye" options={{ headerShown: false }} />
         <Stack.Screen name="breakfast-pass" options={{ headerShown: false }} />
+        <Stack.Screen name="bilgi" options={{ headerShown: false }} />
         <Stack.Screen name="customer" options={{ headerShown: false }} />
         <Stack.Screen name="payment" options={{ headerShown: false }} />
         <Stack.Screen name="odeme" options={{ headerShown: false }} />

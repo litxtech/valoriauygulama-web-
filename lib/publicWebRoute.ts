@@ -10,6 +10,7 @@ import {
   PUBLIC_MALIYE_PATH,
   PUBLIC_COMPLAINT_PATH,
   PUBLIC_STAFF_PROFILE_PATH,
+  PUBLIC_TECH_ASSET_INFO_PATH,
 } from '@/constants/publicWebPaths';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
@@ -20,6 +21,7 @@ export type PublicWebRoute =
   | { kind: 'breakfast-pass'; token: string }
   | { kind: 'sikayet' }
   | { kind: 'profil'; staffId: string }
+  | { kind: 'bilgi'; token: string }
   | null;
 
 /** Path eşleştirme: menü/menu, sözleşme/sozlesme/guest/sign-one, maliye */
@@ -99,6 +101,12 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
     return null;
   }
 
+  if (head === foldTrPathSegment(PUBLIC_TECH_ASSET_INFO_PATH) || head === 'bilgi') {
+    const infoToken = parts[1]?.trim();
+    if (infoToken) return { kind: 'bilgi', token: decodeURIComponent(infoToken) };
+    return null;
+  }
+
   return null;
 }
 
@@ -153,6 +161,11 @@ export function applyPublicWebRoute(
     return true;
   }
 
+  if (route.kind === 'bilgi') {
+    router.replace({ pathname: '/bilgi/[token]', params: { token: route.token } });
+    return true;
+  }
+
   return false;
 }
 
@@ -165,6 +178,7 @@ export function isPublicWebPath(pathname: string, search?: string): boolean {
   if (p === '/breakfast-pass' || p.startsWith('/breakfast-pass/')) return true;
   if (p === '/sikayet' || p.startsWith('/sikayet/')) return true;
   if (p === '/profil' || p.startsWith('/profil/')) return true;
+  if (p === '/bilgi' || p.startsWith('/bilgi/')) return true;
   if (isPaymentPublicPath(p)) return true;
   if (search?.includes('token=') && p === '/guest') return true;
   return resolvePublicWebRoute(pathname, search) != null;
@@ -178,4 +192,14 @@ export function parsePublicMenuSlugFromLocation(
   const route = resolvePublicWebRoute(pathname ?? '', search ?? '');
   if (route?.kind !== 'menu') return '';
   return route.slug.trim().toLowerCase();
+}
+
+/** Vercel statik export: expo-router bazen [token] paramını boş bırakır; adres çubuğundan oku. */
+export function parsePublicTechAssetTokenFromLocation(
+  pathname?: string | null,
+  search?: string | null
+): string {
+  const route = resolvePublicWebRoute(pathname ?? '', search ?? '');
+  if (route?.kind !== 'bilgi') return '';
+  return route.token.trim();
 }

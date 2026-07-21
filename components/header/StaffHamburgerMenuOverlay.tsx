@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useCallback } from 'react';
-import { Alert, Platform, View, StyleSheet } from 'react-native';
+import { Platform, View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -16,6 +16,7 @@ import { useStaffHamburgerRecentsStore } from '@/stores/staffHamburgerRecentsSto
 import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActions';
 import { useStaffMenuRealtime } from '@/hooks/useStaffMenuRealtime';
 import { useStaffHamburgerTheme } from '@/hooks/useStaffHamburgerTheme';
+import { confirmDialog } from '@/lib/confirmDialog';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { safeRouterReplace } from '@/lib/safeRouter';
 
@@ -162,20 +163,19 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   });
 
   const handleSignOutPress = useCallback(() => {
-    Alert.alert(t('signOut'), t('signOutConfirm'), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('signOut'),
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            closeMenu();
-            await signOut();
-            safeRouterReplace(router, '/');
-          })();
-        },
-      },
-    ]);
+    void (async () => {
+      const ok = await confirmDialog({
+        title: t('signOut'),
+        message: t('signOutConfirm'),
+        cancelText: t('cancel'),
+        confirmText: t('signOut'),
+        destructive: true,
+      });
+      if (!ok) return;
+      closeMenu();
+      await signOut();
+      safeRouterReplace(router, '/');
+    })();
   }, [t, closeMenu, signOut, router]);
 
   if (!sheetEverMounted) return null;

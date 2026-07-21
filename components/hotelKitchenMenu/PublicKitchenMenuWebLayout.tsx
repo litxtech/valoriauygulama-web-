@@ -154,13 +154,17 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const accent = menuTheme.primaryColor;
   const navy = menuTheme.navyColor;
-  const { tokens, toggleScheme } = useRestaurantAppearance(accent, navy);
+  const { tokens, toggleScheme } = useRestaurantAppearance(accent, navy, {
+    followSystem: false,
+    defaultScheme: 'light',
+  });
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     document.body.style.backgroundColor = tokens.bg;
     document.documentElement.style.backgroundColor = tokens.bg;
-  }, [tokens.bg]);
+    document.documentElement.style.colorScheme = tokens.scheme;
+  }, [tokens.bg, tokens.scheme]);
 
   const heroImage = menuTheme.heroImageUrl;
   const isRtl = menuLang === 'ar';
@@ -181,6 +185,12 @@ export function PublicKitchenMenuWebLayout(props: Props) {
   const featured = useMemo(() => items.filter((it) => coverImageUrl(it)).slice(0, 3), [items]);
   const showFeatured =
     menuTheme.layout !== 'compact' && featured.length >= 2 && !hasActiveFilters && section === 'all' && !categoryFilter && menuTab === 'menu';
+  const dishSurface = {
+    cardBg: tokens.bgElevated,
+    border: tokens.border,
+    name: tokens.text,
+    desc: tokens.textMuted,
+  };
 
   const activeGrouped =
     menuTab === 'explore' ? [{ title: '', items: filtered }] : grouped;
@@ -200,7 +210,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
 
   const filterSidebar = (
     <View style={[styles.sidebar, wide && styles.sidebarWide]}>
-      <Text style={styles.sidebarTitle}>{t('hotelKitchenMenuSectionAll')}</Text>
+      <Text style={[styles.sidebarTitle, { color: tokens.text }]}>{t('hotelKitchenMenuSectionAll')}</Text>
 
       <View style={styles.sectionToggle}>
         {(['all', 'breakfast'] as const).map((key) => {
@@ -356,6 +366,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
           organizationId={org.id}
           menuLang={menuLang}
           accentColor={accent}
+          titleColor={tokens.text}
         />
 
         <View
@@ -419,14 +430,14 @@ export function PublicKitchenMenuWebLayout(props: Props) {
             {filtered.length === 0 ? (
               <View style={styles.empty}>
                 <Ionicons name="restaurant-outline" size={36} color={accent} />
-                <Text style={styles.emptyTitle}>{t('hotelKitchenMenuEmptyTitle')}</Text>
+                <Text style={[styles.emptyTitle, { color: tokens.text }]}>{t('hotelKitchenMenuEmptyTitle')}</Text>
                 <Text style={styles.emptyBody}>{t('hotelKitchenMenuEmptyBody')}</Text>
               </View>
             ) : (
               <>
                 {showFeatured ? (
                   <View style={styles.block}>
-                    <Text style={[styles.blockTitle, { color: navy }]}>{t('publicKitchenMenuFeatured')}</Text>
+                    <Text style={[styles.blockTitle, { color: tokens.text }]}>{t('publicKitchenMenuFeatured')}</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredRow}>
                       {featured.map((item) => (
                         <View key={item.id} style={{ width: width >= 720 ? 240 : 200 }}>
@@ -435,6 +446,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                             layout="featured"
                             themeAccent={accent}
                             themeNavy={navy}
+                            surface={dishSurface}
                             displayLang={menuLang}
                             onPress={() => setDetailItem(item)}
                             onAddToCart={() => onAddToCart(item)}
@@ -450,7 +462,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                   <View key={grp.title || 'all'} style={styles.block}>
                     {grp.title ? (
                       <View style={styles.catHead}>
-                        <Text style={[styles.blockTitle, { color: navy }]}>
+                        <Text style={[styles.blockTitle, { color: tokens.text }]}>
                           {resolveKitchenMenuCategoryTitle(grp.items[0]!, menuLang)}
                         </Text>
                         <View style={[styles.catLine, { backgroundColor: `${accent}55` }]} />
@@ -465,6 +477,7 @@ export function PublicKitchenMenuWebLayout(props: Props) {
                             layout="premium"
                             themeAccent={accent}
                             themeNavy={navy}
+                            surface={dishSurface}
                             displayLang={menuLang}
                             onPress={() => setDetailItem(item)}
                             onAddToCart={() => onAddToCart(item)}

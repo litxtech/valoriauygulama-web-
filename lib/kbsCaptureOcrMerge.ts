@@ -289,6 +289,7 @@ export function mergeKbsOcrIntoExisting(
         w !== 'ocr_pending' &&
         w !== 'ocr_processing' &&
         w !== 'ocr_failed' &&
+        w !== 'ocr_partial' &&
         !w.startsWith('kbs_side:')
     ),
     ...(inc.warnings ?? []).filter(
@@ -296,6 +297,7 @@ export function mergeKbsOcrIntoExisting(
         w !== 'ocr_pending' &&
         w !== 'ocr_processing' &&
         w !== 'ocr_failed' &&
+        w !== 'ocr_partial' &&
         w !== 'manual_capture' &&
         !w.startsWith('kbs_side:')
     ),
@@ -334,6 +336,7 @@ export function mergeKbsOcrIntoExisting(
     confidence: Math.max(ex.confidence ?? 0, inc.confidence ?? 0) || inc.confidence || ex.confidence,
     checksumsValid: ex.checksumsValid ?? inc.checksumsValid,
     warnings,
+    returningGuest: inc.returningGuest ?? ex.returningGuest,
   };
 }
 

@@ -49,7 +49,11 @@ export type StaffProfile = CachedStaffProfile;
 type StaffResolveResult =
   | { status: 'staff'; staff: StaffProfile }
   | { status: 'guest' }
+  | { status: 'locked' }
   | { status: 'unknown'; reason: string };
+
+/** Son personel çözümlemesi — kilitli hesap girişi için. */
+let lastStaffResolveDeny: 'locked' | null = null;
 
 interface AuthState {
   user: User | null;
@@ -94,7 +98,7 @@ function scheduleStaffBootWatchdog(userId: string) {
       const cached = await readStaffSessionCache(userId);
       const existingStaff = s.staff?.auth_id === userId ? s.staff : null;
       const staff =
-        existingStaff ?? (cached && !cached.deleted_at ? cached : null);
+        existingStaff ?? (cached && !cached.deleted_at && cached.account_locked !== true ? cached : null);
       lastStaffCheckUserId = userId;
       if (staff) hydrateOrg(staff);
       useAuthStore.setState({
@@ -118,6 +122,7 @@ function staffFromRow(row: StaffRow, org?: StaffProfile['organization']): StaffP
   if (row.deleted_at) return null;
   if (row.banned_until && new Date(row.banned_until) > new Date()) return null;
   if (row.is_active === false) return null;
+  if (row.account_locked === true) return null;
 
   const perms =
     typeof row.app_permissions === 'object' && row.app_permissions !== null && !Array.isArray(row.app_permissions)
@@ -135,7 +140,7 @@ function staffFromRow(row: StaffRow, org?: StaffProfile['organization']): StaffP
     work_status: row.work_status,
     banned_until: row.banned_until,
     deleted_at: row.deleted_at,
-    account_locked: row.account_locked === true,
+    account_locked: false,
     app_permissions: perms,
     hidden_menu_item_ids: normalizeHiddenMenuItemIds(row.hidden_menu_item_ids),
     kbs_access_enabled: true,
@@ -226,6 +231,10 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
 
   if (!error && row) {
     staffEmptyRowStreak = 0;
+    if (row.account_locked === true) {
+      await clearStaffSessionCache();
+      return { status: 'locked' };
+    }
     const staff = staffFromRow(row);
     if (staff) {
       await writeStaffSessionCache(user.id, staff);
@@ -233,6 +242,9 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
       hydrateOrg(staff);
       return { status: 'staff', staff };
     }
+    // Ban / pasif / silinmiş — önbellekte personel oturumu bırakma
+    await clearStaffSessionCache();
+    return { status: 'guest' };
   }
 
   if (!error && !row) {
@@ -241,7 +253,7 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
     // tek seferde misafire düşürüp önbelleği silmek "veriler kayboluyor sonra geliyor"
     // titremesine yol açıyordu. Bu yüzden önce bir kez daha doğrula (retry), ardından düşür.
     const cachedForEmpty = await readStaffSessionCache(user.id);
-    if (cachedForEmpty && !cachedForEmpty.deleted_at) {
+    if (cachedForEmpty && !cachedForEmpty.deleted_at && cachedForEmpty.account_locked !== true) {
       staffEmptyRowStreak += 1;
       if (staffEmptyRowStreak < 2) {
         log.warn('authStore', 'staff boş döndü — geçici sayılıp tekrar denenecek', {
@@ -258,7 +270,7 @@ async function resolveStaffForUser(user: User): Promise<StaffResolveResult> {
   if (error) log.warn('authStore', 'staff fetch', isSupabaseUnavailableError(error) ? 'Supabase geçici kapalı (522)' : error);
 
   const cached = await readStaffSessionCache(user.id);
-  if (cached && !cached.deleted_at) {
+  if (cached && !cached.deleted_at && cached.account_locked !== true) {
     log.info('authStore', 'staff önbellek kullanılıyor');
     hydrateOrg(cached);
     return { status: 'staff', staff: cached };
@@ -294,6 +306,33 @@ function scheduleStaffRetry(user: User, slow = false) {
 function applyStaffResolve(user: User, result: StaffResolveResult): void {
   const cur = useAuthStore.getState();
   if (cur.user?.id !== user.id) return;
+
+  if (result.status === 'locked') {
+    lastStaffResolveDeny = 'locked';
+    clearStaffRetryTimer();
+    clearStaffBootWatchdog();
+    staffFastRetryCount = 0;
+    staffRetryUserId = null;
+    staffEmptyRowStreak = 0;
+    lastStaffCheckUserId = user.id;
+    const hadStaff = !!cur.staff;
+    useAuthStore.setState({
+      user,
+      staff: null,
+      staffCheckComplete: true,
+      staffCheckUnavailable: false,
+      loading: false,
+    });
+    log.info('authStore', 'staffCheckComplete', { hasStaff: false, denied: 'locked' });
+    // Oturumdayken kilitlenince JWT'yi de kapat (giriş akışında completeSignIn signOut yapar)
+    if (hadStaff) {
+      void clearStaffSessionCache();
+      void useAuthStore.getState().signOut();
+    }
+    return;
+  }
+
+  lastStaffResolveDeny = null;
 
   if (result.status === 'unknown') {
     const existingStaff = cur.staff?.auth_id === user.id ? cur.staff : null;
@@ -352,25 +391,22 @@ function clearPartnerStoresForStaff(): void {
   useTradePartnerAuthStore.getState().clearPartner();
 }
 
+export type CompleteSignInResult = { denied?: 'account_locked' };
+
 /** Giriş sonrası oturum — personel ise partner sorgusu yok (yavaşlık / yanlış panele düşme). */
-export async function completeSignIn(user: User): Promise<void> {
+export async function completeSignIn(user: User): Promise<CompleteSignInResult> {
+  lastStaffResolveDeny = null;
   const cur = useAuthStore.getState();
   if (cur.user?.id !== user.id) {
     clearPartnerSession();
     clearTradePartnerSession();
   }
 
-  // Aynı kullanıcı + personel zaten biliniyor: arka planda yenile, partner yok.
-  if (cur.user?.id === user.id && cur.staffCheckComplete && cur.staff?.auth_id === user.id) {
-    void runStaffCheck(user, { background: true });
-    clearPartnerStoresForStaff();
-    return;
-  }
-
   resetAuthPipeline();
   const cached = await readStaffSessionCache(user.id);
 
-  if (cached) {
+  // Önbellek varsa anlık göster; kilit kontrolü için mutlaka sunucuyu bekle
+  if (cached && cached.account_locked !== true) {
     useAuthStore.setState({
       user,
       staff: cached,
@@ -378,25 +414,27 @@ export async function completeSignIn(user: User): Promise<void> {
       staffCheckComplete: true,
       staffCheckUnavailable: false,
     });
-    void runStaffCheck(user, { background: true });
-    clearPartnerStoresForStaff();
-    return;
+  } else {
+    useAuthStore.setState({
+      user,
+      staff: null,
+      loading: false,
+      staffCheckComplete: false,
+      staffCheckUnavailable: false,
+    });
   }
 
-  // Önbellek yok: yönlendirmeden önce personel satırını bekle (admin → müşteri paneli hatası).
-  useAuthStore.setState({
-    user,
-    staff: null,
-    loading: false,
-    staffCheckComplete: false,
-    staffCheckUnavailable: false,
-  });
   await runStaffCheck(user);
+
+  if (lastStaffResolveDeny === 'locked') {
+    await useAuthStore.getState().signOut();
+    return { denied: 'account_locked' };
+  }
 
   const staff = useAuthStore.getState().staff;
   if (staff) {
     clearPartnerStoresForStaff();
-    return;
+    return {};
   }
 
   // Gerçek misafir / partner hesabı
@@ -404,6 +442,7 @@ export async function completeSignIn(user: User): Promise<void> {
     usePartnerAuthStore.getState().resolvePartner(user),
     useTradePartnerAuthStore.getState().resolvePartner(user),
   ]);
+  return {};
 }
 
 function runStaffCheck(user: User, _opts?: { background?: boolean }): Promise<void> {

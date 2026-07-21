@@ -3,8 +3,8 @@
  * ops tablolarına public RPC (SECURITY DEFINER) ile erişir → PGRST106 / exposed ops gerekmez.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { encryptCredential } from "../_shared/kbsCredentialCrypto.ts";
-import { testKbsConnectionViaGateway } from "../_shared/kbsGatewayTestConnection.ts";
+import { decryptCredential, encryptCredential } from "../_shared/kbsCredentialCrypto.ts";
+import { testJandarmaKbsConnection } from "../_shared/kbsJandarmaSoapTest.ts";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -181,6 +181,9 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
     const cred = (credData as RpcEnvelope).data as {
       is_active?: boolean;
       hotel_id?: string;
+      facility_code?: string;
+      username?: string;
+      password_encrypted?: string;
     };
     if (cred.is_active === false) {
       return json({
@@ -189,29 +192,49 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
       });
     }
 
-    const hotelId = typeof cred.hotel_id === "string" ? cred.hotel_id : "";
-    if (!hotelId) {
+    const facilityCode = typeof cred.facility_code === "string" ? cred.facility_code : "";
+    const username = typeof cred.username === "string" ? cred.username : "";
+    const passwordEncrypted =
+      typeof cred.password_encrypted === "string" ? cred.password_encrypted : "";
+    if (!facilityCode || !username || !passwordEncrypted) {
       return json({
         ok: false,
         error: {
           code: "CONFIG",
-          message: "hotel_id eksik. supabase/migrations/533_kbs_edge_test_connection_hotel_id.sql uygulayın.",
+          message: "KBS kimlik alanları eksik. Önce Kaydet ile tesis kodu / TC / şifre girin.",
         },
       });
     }
 
-    // JWT / Railway ops oturumu yok — doğrudan kbs-core HMAC.
-    const testRes = await testKbsConnectionViaGateway(hotelId);
+    let password: string;
+    try {
+      password = await decryptCredential(passwordEncrypted, credSecret);
+    } catch {
+      return json({
+        ok: false,
+        error: {
+          code: "CONFIG",
+          message:
+            "Şifre çözülemedi. KBS_CREDENTIAL_SECRET Edge ile kayıt sırasında kullanılan değer aynı olmalı; şifreyi yeniden Kaydet.",
+        },
+      });
+    }
+
+    // Doğrudan Edge → Jandarma (Railway kbs-core / eski egress-ip 404 yolunu atla).
+    const testRes = await testJandarmaKbsConnection({
+      facilityCode,
+      kullaniciTc: username,
+      password,
+    });
     console.log(
       JSON.stringify({
         scope: "kbs-admin-credentials",
         action: "test_connection",
         userId,
         ok: testRes.ok,
-        code: testRes.code ?? null,
-        httpStatus: testRes.httpStatus ?? null,
-        via: testRes.via,
-      })
+        via: "edge_soap",
+        egressIp: testRes.egressIp ?? null,
+      }),
     );
 
     if (testRes.ok) {
@@ -222,11 +245,10 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
       return json({
         ok: false,
         error: {
-          code: testRes.code ?? "KBS_GATEWAY",
+          code: /yetkisiz\s*ip|yetkihatasi/i.test(testRes.message) ? "KBS" : "KBS_SOAP",
           message: testRes.message,
           details: {
-            httpStatus: testRes.httpStatus ?? null,
-            via: testRes.via,
+            via: "edge_soap",
             egressIp: testRes.egressIp ?? null,
           },
         },
@@ -237,8 +259,8 @@ async function handleKbsAdminCredentials(req: Request): Promise<Response> {
       ok: true,
       data: {
         message: testRes.message,
-        via: testRes.via,
-        code: testRes.code,
+        via: "edge_soap",
+        code: "OK",
         egressIp: testRes.egressIp ?? null,
       },
     });

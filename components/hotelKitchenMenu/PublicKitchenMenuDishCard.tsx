@@ -25,6 +25,14 @@ import type { PublicMenuLang } from '@/lib/publicKitchenMenuLang';
 
 type Layout = 'grid' | 'list' | 'compact' | 'premium' | 'featured';
 
+/** Optional surface colors so dark page scheme keeps dish names readable. */
+export type DishCardSurface = {
+  cardBg?: string;
+  border?: string;
+  name?: string;
+  desc?: string;
+};
+
 type Props = {
   item: HotelKitchenMenuItemWithImages;
   onPress: () => void;
@@ -34,6 +42,7 @@ type Props = {
   cartQuantity?: number;
   themeAccent?: string;
   themeNavy?: string;
+  surface?: DishCardSurface;
   /** Personel — kart notunu (açıklama) canlı karttan düzenle */
   onEditNote?: () => void;
   displayLang?: PublicMenuLang;
@@ -56,6 +65,7 @@ export function PublicKitchenMenuDishCard({
   cartQuantity = 0,
   themeAccent = menuUi.accent,
   themeNavy = menuUi.navy,
+  surface,
   onEditNote,
   displayLang = 'tr',
 }: Props) {
@@ -77,6 +87,10 @@ export function PublicKitchenMenuDishCard({
   const isList = layout === 'list' || (Platform.OS !== 'web' && layout !== 'grid' && !isPremium && !isFeatured);
   const desc = (resolveKitchenMenuItemDescription(item, displayLang) ?? '').trim();
   const premiumImageH = imageW > 0 ? Math.round(imageW / PREMIUM_IMAGE_RATIO) : undefined;
+  const cardBg = surface?.cardBg ?? menuUi.cardBg;
+  const cardBorder = surface?.border ?? menuUi.border;
+  const nameColor = surface?.name ?? themeNavy;
+  const descColor = surface?.desc ?? menuUi.webMuted;
 
   const noteEditBtn = onEditNote ? (
     <Pressable
@@ -131,7 +145,7 @@ export function PublicKitchenMenuDishCard({
 
   if (isPremium) {
     return (
-      <View style={[styles.premiumCard, menuUi.shadowMd, menuWebCardHoverLift]}>
+      <View style={[styles.premiumCard, { backgroundColor: cardBg, borderColor: cardBorder }, menuUi.shadowMd, menuWebCardHoverLift]}>
         <View
           style={styles.premiumImageWrap}
           onLayout={(e) => setImageW(e.nativeEvent.layout.width)}
@@ -172,15 +186,18 @@ export function PublicKitchenMenuDishCard({
           style={({ pressed }) => [styles.premiumBody, pressed && styles.pressed]}
           onPress={onPress}
         >
-          <Text style={[styles.premiumName, { color: themeNavy }]} numberOfLines={2}>{displayName}</Text>
-          {desc ? <Text style={styles.premiumDesc} numberOfLines={2}>{desc}</Text> : null}
+          <Text style={[styles.premiumName, { color: nameColor }]} numberOfLines={2}>{displayName}</Text>
+          {desc ? <Text style={[styles.premiumDesc, { color: descColor }]} numberOfLines={2}>{desc}</Text> : null}
           <View style={styles.premiumFooter}>
             <Text style={[styles.premiumPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
             {onAddToCart ? (
               <Pressable
                 style={[
                   styles.addBtn,
-                  { borderColor: `${themeAccent}55`, backgroundColor: cartQuantity > 0 ? themeNavy : '#fff' },
+                  {
+                    borderColor: `${themeAccent}55`,
+                    backgroundColor: cartQuantity > 0 ? nameColor : cardBg,
+                  },
                 ]}
                 onPress={(e) => {
                   e?.stopPropagation?.();
@@ -190,9 +207,9 @@ export function PublicKitchenMenuDishCard({
                 <Ionicons
                   name={cartQuantity > 0 ? 'checkmark' : 'bag-add-outline'}
                   size={16}
-                  color={cartQuantity > 0 ? '#fff' : themeNavy}
+                  color={cartQuantity > 0 ? '#fff' : nameColor}
                 />
-                <Text style={[styles.addBtnText, { color: cartQuantity > 0 ? '#fff' : themeNavy }]}>
+                <Text style={[styles.addBtnText, { color: cartQuantity > 0 ? '#fff' : nameColor }]}>
                   {cartQuantity > 0 ? `${cartQuantity}` : t('publicKitchenMenuAddToCart')}
                 </Text>
               </Pressable>
@@ -206,7 +223,10 @@ export function PublicKitchenMenuDishCard({
 
   if (isCompact) {
     return (
-      <Pressable style={[styles.compactCard, menuUi.shadowSm]} onPress={onPress}>
+      <Pressable
+        style={[styles.compactCard, { backgroundColor: cardBg, borderColor: cardBorder }, menuUi.shadowSm]}
+        onPress={onPress}
+      >
         <View style={[styles.compactAccent, { backgroundColor: catColor }]} />
         <Pressable
           style={styles.compactThumbWrap}
@@ -228,8 +248,8 @@ export function PublicKitchenMenuDishCard({
         </Pressable>
         <View style={styles.compactBody}>
           <Text style={[styles.compactCategory, { color: catColor }]} numberOfLines={1}>{displayCategory}</Text>
-          <Text style={styles.compactName} numberOfLines={2}>{displayName}</Text>
-          {desc ? <Text style={styles.compactDesc} numberOfLines={2}>{desc}</Text> : null}
+          <Text style={[styles.compactName, { color: nameColor }]} numberOfLines={2}>{displayName}</Text>
+          {desc ? <Text style={[styles.compactDesc, { color: descColor }]} numberOfLines={2}>{desc}</Text> : null}
           <Text style={[styles.compactPrice, { color: themeAccent }]}>{formatMenuPrice(item.price)}</Text>
           {noteEditBtn}
         </View>
@@ -238,7 +258,15 @@ export function PublicKitchenMenuDishCard({
   }
 
   return (
-    <Pressable style={[styles.card, isGrid ? styles.cardGrid : styles.cardList, menuUi.shadowSm]} onPress={onPress}>
+    <Pressable
+      style={[
+        styles.card,
+        { backgroundColor: cardBg, borderColor: cardBorder },
+        isGrid ? styles.cardGrid : styles.cardList,
+        menuUi.shadowSm,
+      ]}
+      onPress={onPress}
+    >
       <Pressable
         style={[styles.imageWrap, isGrid ? styles.imageWrapGrid : styles.imageWrapList]}
         onPress={(e) => {
@@ -258,8 +286,8 @@ export function PublicKitchenMenuDishCard({
         )}
       </Pressable>
       <View style={styles.body}>
-        <Text style={styles.name} numberOfLines={2}>{displayName}</Text>
-        {desc ? <Text style={styles.desc} numberOfLines={2}>{desc}</Text> : null}
+        <Text style={[styles.name, { color: nameColor }]} numberOfLines={2}>{displayName}</Text>
+        {desc ? <Text style={[styles.desc, { color: descColor }]} numberOfLines={2}>{desc}</Text> : null}
         <Text style={styles.price}>{formatMenuPrice(item.price)}</Text>
         {noteEditBtn}
       </View>

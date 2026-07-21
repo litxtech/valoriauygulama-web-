@@ -57,11 +57,16 @@ export default function AuthCallbackScreen() {
         if (cancelled) return;
         const sessionUser = sessionData.user ?? (await supabase.auth.getUser()).data.user;
         if (!sessionUser) throw new Error('Oturum kullanıcısı alınamadı');
-        await completeSignIn(sessionUser);
+        const signInResult = await completeSignIn(sessionUser);
         if (type === 'recovery') {
           log.info('AuthCallback', 'Şifre sıfırlama linki ile geldi, şifre belirleme ekranına yönlendiriliyor');
           router.replace('/auth/set-password');
           setStatus('ok');
+          return;
+        }
+        if (signInResult.denied === 'account_locked') {
+          setStatus('error');
+          setMessage('Hesabınız kitlendi. Yönetici ile iletişime geçin.');
           return;
         }
         const { user, staff } = useAuthStore.getState();

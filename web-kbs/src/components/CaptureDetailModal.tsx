@@ -7,7 +7,13 @@ import {
   updateCaptureManualFields,
   type CaptureItem,
 } from '../lib/captures';
-import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
+import {
+  buildKbsCopyFields,
+  formatKbsReturningGuestWarning,
+  isKbsReturningGuest,
+  kbsCaptureCardStatus,
+  kbsDisplayFullName,
+} from '../lib/parse';
 import { fetchOpsRooms, notifyCaptureToKbs, type OpsRoom } from '../lib/kbsOpsApi';
 import { useAuth } from '../auth/AuthContext';
 import { StatusBadge } from './StatusBadge';
@@ -36,8 +42,9 @@ export function CaptureDetailModal({
   const canNotify = staffPerms?.kbs_bildir === true;
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
-  const status = kbsCaptureCardStatus(parsed);
+  const status = kbsCaptureCardStatus(parsed, { ocrStatus: item.ocr_status });
   const fields = buildKbsCopyFields(parsed, { showEmpty: true });
+  const returningWarn = formatKbsReturningGuestWarning(parsed);
   const [copied, setCopied] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -53,6 +60,9 @@ export function CaptureDetailModal({
   const [docNo, setDocNo] = useState(parsed?.documentNumber ?? '');
   const [birthDate, setBirthDate] = useState(parsed?.birthDate?.slice(0, 10) ?? '');
   const [nationality, setNationality] = useState(parsed?.nationalityCode ?? '');
+  const [expiryDate, setExpiryDate] = useState(parsed?.expiryDate?.slice(0, 10) ?? '');
+  const [gender, setGender] = useState(parsed?.gender ?? '');
+  const [docSeries, setDocSeries] = useState(parsed?.documentSeries ?? '');
   const [rooms, setRooms] = useState<OpsRoom[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [opsBusy, setOpsBusy] = useState(false);
@@ -72,6 +82,9 @@ export function CaptureDetailModal({
     setDocNo(item.parsed?.documentNumber ?? '');
     setBirthDate(item.parsed?.birthDate?.slice(0, 10) ?? '');
     setNationality(item.parsed?.nationalityCode ?? '');
+    setExpiryDate(item.parsed?.expiryDate?.slice(0, 10) ?? '');
+    setGender(item.parsed?.gender ?? '');
+    setDocSeries(item.parsed?.documentSeries ?? '');
   }, [item.id]);
 
   // OCR sonucu gelince boş/elle dokunulmayan alanları doldur
@@ -83,6 +96,9 @@ export function CaptureDetailModal({
     if (!dirtyKeys.current.has('docNo')) setDocNo(p.documentNumber ?? '');
     if (!dirtyKeys.current.has('birthDate')) setBirthDate(p.birthDate?.slice(0, 10) ?? '');
     if (!dirtyKeys.current.has('nationality')) setNationality(p.nationalityCode ?? '');
+    if (!dirtyKeys.current.has('expiryDate')) setExpiryDate(p.expiryDate?.slice(0, 10) ?? '');
+    if (!dirtyKeys.current.has('gender')) setGender(p.gender ?? '');
+    if (!dirtyKeys.current.has('docSeries')) setDocSeries(p.documentSeries ?? '');
   }, [item.parsed]);
 
   useEffect(() => {
@@ -126,6 +142,9 @@ export function CaptureDetailModal({
         documentNumber: docNo,
         birthDate,
         nationalityCode: nationality,
+        expiryDate,
+        gender,
+        documentSeries: docSeries,
       });
       onCaptureUpdated?.(updated);
       setOpsMsg('Düzeltmeler kaydedildi');
@@ -151,6 +170,9 @@ export function CaptureDetailModal({
         documentNumber: docNo,
         birthDate,
         nationalityCode: nationality,
+        expiryDate,
+        gender,
+        documentSeries: docSeries,
       });
       onCaptureUpdated?.(saved);
       const res = await notifyCaptureToKbs({ guestDocumentId: item.id, roomId });
@@ -206,7 +228,7 @@ export function CaptureDetailModal({
     try {
       const updated = await requestCaptureRead(item);
       onReadRequested?.(updated);
-      setReadMsg('Okuma kuyruğa alındı. Sonuç geldiğinde liste otomatik güncellenecek.');
+      setReadMsg('Okuma kuyruğa alındı (cihaz + sunucu). Sonuç gelmezse alanları elle girin.');
     } catch (e) {
       setReadMsg(e instanceof Error ? e.message : 'Okuma başlatılamadı');
     } finally {
@@ -241,6 +263,11 @@ export function CaptureDetailModal({
                   ✓ Yeni
                 </span>
               ) : null}
+              {isKbsReturningGuest(parsed) ? (
+                <span className="chip chip-returning" title="Bu belge daha önce sisteme eklendi">
+                  Daha önce geldi
+                </span>
+              ) : null}
               {item.room_number ? <span className="chip">Oda {item.room_number}</span> : null}
               {(item.hotel_name ?? item.captured_by_hotel_name) ? (
                 <span className="chip">🏨 {item.hotel_name ?? item.captured_by_hotel_name}</span>
@@ -253,6 +280,12 @@ export function CaptureDetailModal({
         </header>
 
         <div className="modal-body">
+          {returningWarn ? (
+            <div className="returning-banner" role="alert">
+              <span aria-hidden>⚠</span>
+              <span>{returningWarn}</span>
+            </div>
+          ) : null}
           <div className="modal-images">
             {images.length ? (
               images.map((src) => (
@@ -365,6 +398,31 @@ export function CaptureDetailModal({
                     value={nationality}
                     onChange={(e) => setDirty('nationality', e.target.value, setNationality)}
                     disabled={opsBusy}
+                  />
+                </label>
+                <label>
+                  Son geçerlilik (YYYY-MM-DD)
+                  <input
+                    value={expiryDate}
+                    onChange={(e) => setDirty('expiryDate', e.target.value, setExpiryDate)}
+                    disabled={opsBusy}
+                  />
+                </label>
+                <label>
+                  Seri no
+                  <input
+                    value={docSeries}
+                    onChange={(e) => setDirty('docSeries', e.target.value, setDocSeries)}
+                    disabled={opsBusy}
+                  />
+                </label>
+                <label>
+                  Cinsiyet (M/F)
+                  <input
+                    value={gender}
+                    onChange={(e) => setDirty('gender', e.target.value, setGender)}
+                    disabled={opsBusy}
+                    maxLength={1}
                   />
                 </label>
               </div>

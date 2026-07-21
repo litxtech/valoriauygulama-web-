@@ -192,7 +192,7 @@ export async function fetchKbsBrowseDocuments(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, hotel_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+      `id, guest_id, hotel_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -284,6 +284,7 @@ export async function fetchKbsBrowseDocuments(
         guest: d.guest,
       }),
       scan_status: d.scan_status,
+      ocr_status: (d as { ocr_status?: string | null }).ocr_status ?? null,
       ocr_engine: d.ocr_engine ?? null,
       room_number: roomKey ? roomByGuestHotel.get(roomKey) ?? null : null,
       mrz_batch_key: d.mrz_batch_key ?? null,

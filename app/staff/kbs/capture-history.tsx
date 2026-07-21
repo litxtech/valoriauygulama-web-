@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -41,7 +41,16 @@ import {
   loadKbsCaptureHistoryCacheFromDisk,
   setKbsCaptureHistoryCache,
 } from '@/lib/kbsCaptureHistoryCache';
-import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete, isKbsTcOnlyCapture } from '@/lib/kbsCaptureParsedFields';
+import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete, isKbsTcOnlyCapture, isKbsOcrManualReview, isKbsOcrInProgress, kbsCaptureIsPartialReadable, isKbsOcrFailed } from '@/lib/kbsCaptureParsedFields';
+import { isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
+import {
+  isKbsDocInOcrQueue,
+  kickUnreadCapturesOcr,
+  kbsCaptureOcrQueueSize,
+  startKbsOcrClaimLoop,
+  kickKbsOcrRecovery,
+  subscribeKbsOcrQueue,
+} from '@/lib/kbsCaptureOcrQueue';
 import { buildKbsCaptureReportHtml } from '@/lib/kbsCaptureReportHtml';
 import { buildKbsCaptureListItems } from '@/lib/kbsCaptureListGroups';
 import {
@@ -70,6 +79,31 @@ function detailRoute(id: string): Href {
 }
 
 type FilterKey = 'day' | 'week' | 'month' | 'all';
+type OcrFilterKey = 'all' | 'reading' | 'partial' | 'manual' | 'failed';
+
+function matchesOcrFilter(
+  parsed: ParsedDocument | null,
+  key: OcrFilterKey,
+  opts?: { ocrStatus?: string | null; activelyReading?: boolean }
+): boolean {
+  if (key === 'all') return true;
+  const status = kbsCaptureCardStatus(parsed, opts);
+  if (key === 'reading') return status?.tone === 'progress';
+  if (key === 'manual') return status?.label.startsWith('Manuel') === true || isKbsOcrManualReview(parsed);
+  if (key === 'partial') return status?.tone === 'warn' && !status.label.startsWith('Manuel');
+  if (key === 'failed') {
+    return (
+      status?.tone === 'muted' ||
+      isKbsOcrFailed(parsed) ||
+      (!status &&
+        !isKbsOcrInProgress(parsed) &&
+        !isKbsCaptureOcrCoreComplete(parsed) &&
+        !kbsCaptureIsPartialReadable(parsed) &&
+        !isKbsOcrManualReview(parsed))
+    );
+  }
+  return true;
+}
 
 function inRange(ts: string, key: FilterKey) {
   if (key === 'all') return true;
@@ -101,9 +135,11 @@ type CaptureCardProps = {
   showHotel?: boolean;
   selectionMode?: boolean;
   selected?: boolean;
+  /** Kuyruk epoch — yalnız gerçek Okunuyor için. */
+  ocrEpoch?: number;
 };
 
-function CaptureCard({
+function CaptureCardInner({
   item,
   canSeeImages,
   canDelete,
@@ -118,13 +154,32 @@ function CaptureCard({
   showHotel = false,
   selectionMode = false,
   selected = false,
+  ocrEpoch = 0,
 }: CaptureCardProps) {
   const { t } = useTranslation();
   const parsed = asParsed(item);
-  const cardStatus = kbsCaptureCardStatus(parsed);
-  const statusChipStyle = cardStatus?.tone === 'ok' ? styles.statusChipOk : styles.statusChipMuted;
+  void ocrEpoch;
+  const activelyReading = isKbsDocInOcrQueue(item.id);
+  const cardStatus = kbsCaptureCardStatus(parsed, {
+    ocrStatus: item.ocr_status,
+    activelyReading,
+  });
+  const statusChipStyle =
+    cardStatus?.tone === 'ok'
+      ? styles.statusChipOk
+      : cardStatus?.tone === 'warn'
+        ? styles.statusChipWarn
+        : cardStatus?.tone === 'progress'
+          ? styles.statusChipBusy
+          : styles.statusChipMuted;
   const statusChipTextStyle =
-    cardStatus?.tone === 'ok' ? styles.statusChipTextOk : styles.statusChipText;
+    cardStatus?.tone === 'ok'
+      ? styles.statusChipTextOk
+      : cardStatus?.tone === 'warn'
+        ? styles.statusChipTextWarn
+        : cardStatus?.tone === 'progress'
+          ? styles.statusChipTextBusy
+          : styles.statusChipText;
 
   const isFirst = groupPosition === 'first' || groupPosition === 'only';
   const isLast = groupPosition === 'last' || groupPosition === 'only';
@@ -191,9 +246,32 @@ function CaptureCard({
           </Text>
         ) : null}
         <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
-        {cardStatus?.tone === 'ok' ? (
-          <Text style={styles.okLine}>
-            {parsed && isKbsCaptureOcrCoreComplete(parsed) ? 'Tüm alanlar okundu' : 'Okundu'}
+        {isKbsReturningGuest(parsed) ? (
+          <Text style={styles.returningLine}>Daha önce geldi</Text>
+        ) : null}
+        {cardStatus ? (
+          <Text
+            style={
+              cardStatus.tone === 'ok'
+                ? styles.okLine
+                : cardStatus.tone === 'warn'
+                  ? styles.warnLine
+                  : cardStatus.tone === 'progress'
+                    ? styles.meta
+                    : styles.meta
+            }
+          >
+            {cardStatus.label === 'Tamam'
+              ? 'Tüm alanlar okundu'
+              : cardStatus.tone === 'progress'
+                ? 'Şu an okunuyor'
+                : cardStatus.label === 'Okunamadı'
+                  ? 'Boş / okunamadı — otomatik okuma denenecek'
+                  : cardStatus.label.startsWith('Manuel')
+                    ? 'Manuel kontrol gerekli'
+                    : cardStatus.label.startsWith('Eksik')
+                      ? 'Eksik alanlar var'
+                      : cardStatus.label}
           </Text>
         ) : null}
       </View>
@@ -207,6 +285,8 @@ function CaptureCard({
   );
 }
 
+const CaptureCard = memo(CaptureCardInner);
+
 export default function KbsCaptureHistoryScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -214,6 +294,7 @@ export default function KbsCaptureHistoryScreen() {
   const user = useAuthStore((s) => s.user);
   const viewAllCaptures = canStaffViewAllKbsCaptures(staff);
   const [filter, setFilter] = useState<FilterKey>(viewAllCaptures ? 'all' : 'day');
+  const [ocrFilter, setOcrFilter] = useState<OcrFilterKey>('all');
   const [rows, setRows] = useState<KbsCapturedDocumentRow[]>(() => getKbsCaptureHistoryCache() ?? []);
   const [loading, setLoading] = useState(() => !getKbsCaptureHistoryCache()?.length);
   const [refreshing, setRefreshing] = useState(false);
@@ -232,6 +313,10 @@ export default function KbsCaptureHistoryScreen() {
   const [hotelFilter, setHotelFilter] = useState('all');
   const reloadSeqRef = useRef(0);
   const lastFocusReloadAtRef = useRef(0);
+  const rowsLenRef = useRef(0);
+  const softReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [ocrEpoch, setOcrEpoch] = useState(0);
+  rowsLenRef.current = rows.length;
 
   const canDelete = staffCanDeleteKbsCaptures(staff);
   const canSeeImages =
@@ -240,10 +325,11 @@ export default function KbsCaptureHistoryScreen() {
     staff?.kbs_access_enabled !== false ||
     canStaffUseIdCapture(staff);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (opts?: { showRefresh?: boolean }) => {
     const authId = user?.id ?? staff?.auth_id;
     if (!authId) return;
     const seq = ++reloadSeqRef.current;
+    if (opts?.showRefresh) setRefreshing(true);
     try {
       setError(null);
       const ctx = await resolveKbsMultiHotelContext(authId);
@@ -265,9 +351,13 @@ export default function KbsCaptureHistoryScreen() {
       const scoped = filterKbsCapturesForViewer(data, staff, staff?.auth_id);
       setRows(scoped);
       setKbsCaptureHistoryCache(scoped);
+
+      // Boş / eksik kayıtları bir kez okumaya al (listeyi sürekli yenilemeden)
+      const kicked = kickUnreadCapturesOcr(scoped, 10);
+      if (kicked > 0) setOcrEpoch((n) => n + 1);
     } catch (e) {
       if (seq !== reloadSeqRef.current) return;
-      if (isAbortLikeError(e) && (getKbsCaptureHistoryCache()?.length ?? rows.length) > 0) {
+      if (isAbortLikeError(e) && (getKbsCaptureHistoryCache()?.length ?? rowsLenRef.current) > 0) {
         return;
       }
       setError(toSupabaseUserMessage(e, t('kbsListLoadFailed')));
@@ -276,12 +366,25 @@ export default function KbsCaptureHistoryScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [hotelFilter, rows.length, staff, user?.id, t]);
+  }, [hotelFilter, staff, user?.id, t]);
+
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
 
   const refresh = useCallback(() => {
-    setRefreshing(true);
-    void reload();
+    void reload({ showRefresh: true });
   }, [reload]);
+
+  useEffect(() => {
+    return subscribeKbsOcrQueue(() => {
+      setOcrEpoch((n) => n + 1);
+      if (softReloadTimerRef.current) clearTimeout(softReloadTimerRef.current);
+      softReloadTimerRef.current = setTimeout(() => {
+        if (kbsCaptureOcrQueueSize() > 0) return;
+        void reloadRef.current({ showRefresh: false });
+      }, 1_800);
+    });
+  }, []);
 
   useEffect(() => {
     if (getKbsCaptureHistoryCache()?.length) return;
@@ -302,28 +405,54 @@ export default function KbsCaptureHistoryScreen() {
       const now = Date.now();
       if (now - lastFocusReloadAtRef.current < 2500) return;
       lastFocusReloadAtRef.current = now;
-      void reload();
+      void reloadRef.current({ showRefresh: false });
+      startKbsOcrClaimLoop();
+      void kickKbsOcrRecovery();
       return () => {
+        void setKbsCaptureHistoryLastSeenAt(new Date().toISOString());
         reloadSeqRef.current += 1;
       };
-    }, [reload])
+    }, [])
   );
 
   useEffect(() => {
     if (!user?.id && !staff?.auth_id) return;
-    setRefreshing(true);
-    void reload();
-  }, [hotelFilter, user?.id, staff?.auth_id, reload]);
+    setLoading((prev) => (rowsLenRef.current === 0 ? true : prev));
+    void reloadRef.current({ showRefresh: false });
+  }, [hotelFilter, user?.id, staff?.auth_id]);
 
   const combined = useMemo(
     () =>
       rows
         .filter((r) => inRange(capturedAtTs(r), filter))
+        .filter((r) =>
+          matchesOcrFilter(asParsed(r), ocrFilter, {
+            ocrStatus: r.ocr_status,
+            activelyReading: isKbsDocInOcrQueue(r.id),
+          })
+        )
         .sort((a, b) => new Date(capturedAtTs(b)).getTime() - new Date(capturedAtTs(a)).getTime()),
-    [rows, filter]
+    [rows, filter, ocrFilter, ocrEpoch]
   );
 
-  // Okuma yalnızca kayıt anında (saveKbsCaptureItemsParallel) ve "Düzelt" ile; sürekli tarama yok.
+  const ocrCounts = useMemo(() => {
+    const base = rows.filter((r) => inRange(capturedAtTs(r), filter));
+    let reading = 0;
+    let partial = 0;
+    let manual = 0;
+    let failed = 0;
+    for (const r of base) {
+      const p = asParsed(r);
+      const opts = { ocrStatus: r.ocr_status, activelyReading: isKbsDocInOcrQueue(r.id) };
+      if (matchesOcrFilter(p, 'reading', opts)) reading += 1;
+      else if (matchesOcrFilter(p, 'manual', opts)) manual += 1;
+      else if (matchesOcrFilter(p, 'partial', opts)) partial += 1;
+      else if (matchesOcrFilter(p, 'failed', opts)) failed += 1;
+    }
+    return { reading, partial, manual, failed };
+  }, [rows, filter, ocrEpoch]);
+
+  // Boş/eksik tespit + okuma: reload içinde kickUnreadCapturesOcr (tek sefer).
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -596,6 +725,26 @@ export default function KbsCaptureHistoryScreen() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.filterRow}>
+        {(
+          [
+            ['all', 'Tümü'],
+            ['reading', `Okunuyor${ocrCounts.reading ? ` (${ocrCounts.reading})` : ''}`],
+            ['partial', `Eksik${ocrCounts.partial ? ` (${ocrCounts.partial})` : ''}`],
+            ['manual', `Manuel${ocrCounts.manual ? ` (${ocrCounts.manual})` : ''}`],
+            ['failed', `Okunamadı${ocrCounts.failed ? ` (${ocrCounts.failed})` : ''}`],
+          ] as const
+        ).map(([k, l]) => (
+          <TouchableOpacity
+            key={k}
+            style={[styles.chip, ocrFilter === k && styles.chipOn]}
+            onPress={() => setOcrFilter(k)}
+          >
+            <Text style={[styles.chipText, ocrFilter === k && styles.chipTextOn]}>{l}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {canDelete ? (
         <View style={styles.toolRow}>
           {selectionMode ? (
@@ -700,6 +849,7 @@ export default function KbsCaptureHistoryScreen() {
 
       <FlatList
         data={listItems}
+        extraData={ocrEpoch}
         keyExtractor={(entry) =>
           entry.kind === 'single' ? entry.row.id : `grp-${entry.batchKey}`
         }
@@ -741,6 +891,7 @@ export default function KbsCaptureHistoryScreen() {
                 showHotel={canViewAllHotels}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(row.id)}
+                ocrEpoch={ocrEpoch}
                 onPress={() => openRow(row)}
                 onLongPress={() => {
                   if (selectionMode) toggleSelect(row.id);
@@ -821,6 +972,7 @@ export default function KbsCaptureHistoryScreen() {
                         groupPosition={pos}
                         selectionMode={selectionMode}
                         selected={selectedIds.has(row.id)}
+                        ocrEpoch={ocrEpoch}
                         onPress={() => openRow(row)}
                         onLongPress={() => {
                           if (selectionMode) toggleSelect(row.id);
@@ -946,10 +1098,12 @@ const styles = StyleSheet.create({
   },
   statusChipOk: { backgroundColor: '#ecfdf5' },
   statusChipBusy: { backgroundColor: '#eff6ff' },
-  statusChipWarn: { backgroundColor: '#fffbeb' },
+  statusChipWarn: { backgroundColor: '#fff7ed' },
   statusChipMuted: { backgroundColor: '#f1f5f9' },
   statusChipText: { fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary },
   statusChipTextOk: { color: '#059669' },
+  statusChipTextWarn: { color: '#c2410c' },
+  statusChipTextBusy: { color: '#2563eb' },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   toolChip: {
     flexDirection: 'row',
@@ -1182,6 +1336,8 @@ const styles = StyleSheet.create({
   parsedHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontStyle: 'italic' },
   missingLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '700' },
   okLine: { fontSize: 11, color: '#059669', marginTop: 4, fontWeight: '700' },
+  warnLine: { fontSize: 11, color: '#c2410c', marginTop: 4, fontWeight: '700' },
+  returningLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '800' },
   busyLine: { fontSize: 11, color: '#2563eb', marginTop: 4, fontWeight: '700' },
   deleteBtn: { padding: 6 },
   bulkFooter: {

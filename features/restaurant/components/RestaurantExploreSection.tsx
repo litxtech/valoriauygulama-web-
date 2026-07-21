@@ -33,6 +33,12 @@ export function RestaurantExploreSection({
 }: Props) {
   const { t } = useTranslation();
   const title = t(section.titleKey, { defaultValue: section.id });
+  const dishSurface = {
+    cardBg: tokens.bgElevated,
+    border: tokens.border,
+    name: tokens.text,
+    desc: tokens.textMuted,
+  };
 
   return (
     <View style={styles.wrap}>
@@ -48,6 +54,7 @@ export function RestaurantExploreSection({
               layout="premium"
               themeAccent={accent}
               themeNavy={navy}
+              surface={dishSurface}
               displayLang={menuLang}
               onPress={() => onItemPress(item)}
               onAddToCart={() => onAddToCart(item)}

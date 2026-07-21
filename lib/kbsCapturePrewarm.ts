@@ -1,5 +1,5 @@
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
-import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
+import { prepareKbsCaptureImageUri, prepareKbsCaptureUploadUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
 import { startKbsCaptureOcrPrewarm } from '@/lib/kbsCaptureOcrQueue';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
@@ -65,8 +65,10 @@ function runPrewarm(args: {
       captureSide: args.captureSide ?? 'front',
       captureSource: args.captureSource ?? 'camera',
     });
+    // OCR yerel tam kaliteli dosyadan çalışır; ağa küçültülmüş kopya gider (zayıf internet).
+    const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
     const upload = await uploadPassportPrivateFromUri({
-      uri: preparedUri,
+      uri: uploadUri,
       subfolder: 'kbs-documents',
     });
     return {
@@ -95,14 +97,40 @@ export function startKbsCapturePrewarm(args: {
   void entry.promise.catch(() => {});
 }
 
+const PREWARM_AWAIT_MS = 55_000;
+/** Zaman aşımında aynı işi beklemeye devam et — paralel ikinci yükleme zayıf interneti ikiye böler. */
+const PREWARM_GRACE_MS = 45_000;
+
+function raceWithTimeout(
+  entry: Entry,
+  ms: number
+): Promise<KbsCapturePrewarmReady> {
+  return Promise.race([
+    entry.promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('kbs_prewarm_TIMEOUT')), ms)
+    ),
+  ]);
+}
+
 export async function awaitKbsCapturePrewarm(itemId: string): Promise<KbsCapturePrewarmReady | null> {
   const entry = entries.get(itemId);
   if (!entry || entry.cancelled) return null;
   try {
-    const ready = await entry.promise;
+    const ready = await raceWithTimeout(entry, PREWARM_AWAIT_MS);
     if (entry.cancelled) return null;
     return ready;
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.message === 'kbs_prewarm_TIMEOUT') {
+      try {
+        const ready = await raceWithTimeout(entry, PREWARM_GRACE_MS);
+        if (entry.cancelled) return null;
+        return ready;
+      } catch {
+        // Grace de doldu / iş hata verdi — aşağıda temiz denemeye düş.
+      }
+    }
+    entries.delete(itemId);
     return null;
   }
 }

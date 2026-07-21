@@ -85,7 +85,7 @@ function shortenHotelLabel(name: string, code: string): string {
 }
 
 const SELECT_COLS = `id, guest_id, hotel_id, captured_at, created_at, front_image_url, back_image_url, parsed_payload,
-  scan_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+  scan_status, ocr_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
   document_number, nationality_code, issuing_country_code, expiry_date, document_type,
   guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`;
 
@@ -217,6 +217,7 @@ export async function fetchCaptures(opts: FetchCapturesOpts): Promise<CaptureIte
       back_image_url: d.back_image_url ?? null,
       parsed_payload: d.parsed_payload,
       scan_status: d.scan_status,
+      ocr_status: (d as { ocr_status?: string | null }).ocr_status ?? null,
       ocr_engine: d.ocr_engine ?? null,
       room_number: roomKey ? roomByGuestHotel.get(roomKey) ?? null : null,
       mrz_batch_key: d.mrz_batch_key ?? null,
@@ -351,15 +352,20 @@ function withOcrPending(payload: unknown): Record<string, unknown> {
   const warnings = Array.isArray(warningsRaw)
     ? warningsRaw.filter((w): w is string => typeof w === 'string')
     : [];
-  const cleaned = warnings.filter((w) => w !== 'ocr_failed' && w !== 'ocr_processing');
+  const cleaned = warnings.filter(
+    (w) =>
+      w !== 'ocr_failed' &&
+      w !== 'ocr_processing' &&
+      w !== 'ocr_partial' &&
+      w !== 'ocr_manual_review'
+  );
   if (!cleaned.includes('ocr_pending')) cleaned.push('ocr_pending');
   return { ...next, warnings: cleaned };
 }
 
 /**
- * Web panelinden "Oku": kaydı OCR kuyruğuna alınmış gibi işaretler.
- * Mobil/ops tarafındaki okuma işçisi bu bayrağı gördüğünde yeniden okuma yapabilir;
- * web UI da anında "Okunuyor…" durumuna geçer.
+ * Web panelinden "Oku": kalıcı OCR job enqueue + sunucu worker tetikle.
+ * Mobil cihaz da aynı job'ı claim edebilir.
  */
 export async function requestCaptureRead(item: CaptureItem): Promise<CaptureItem> {
   const nextPayload = withOcrPending(item.parsed_payload);
@@ -369,9 +375,89 @@ export async function requestCaptureRead(item: CaptureItem): Promise<CaptureItem
     .update({
       parsed_payload: nextPayload,
       scan_status: item.scan_status === 'ready_to_submit' ? item.scan_status : 'draft',
+      ocr_status: 'queued',
     })
     .eq('id', item.id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    // ocr_status kolonu yoksa payload-only
+    const { error: e2 } = await supabase
+      .schema('ops')
+      .from('guest_documents')
+      .update({
+        parsed_payload: nextPayload,
+        scan_status: item.scan_status === 'ready_to_submit' ? item.scan_status : 'draft',
+      })
+      .eq('id', item.id);
+    if (e2) throw new Error(e2.message);
+  }
+
+  // Kalıcı job — önce sunucu (web panelde cihaz OCR yok), paralel deep cihaz için de kuyruk
+  const { error: enqServer } = await supabase.rpc('enqueue_document_ocr_job', {
+    p_guest_document_id: item.id,
+    p_strategy: 'server_fallback',
+    p_requested_side: 'front',
+    p_pipeline_version: 'v1',
+    p_force: true,
+  });
+  if (enqServer) {
+    console.warn('[requestCaptureRead] server enqueue failed', enqServer.message);
+  }
+  const { error: enqErr } = await supabase.rpc('enqueue_document_ocr_job', {
+    p_guest_document_id: item.id,
+    p_strategy: 'device_deep',
+    p_requested_side: 'front',
+    p_pipeline_version: 'v1',
+    p_force: false,
+  });
+  if (enqErr) {
+    console.warn('[requestCaptureRead] device enqueue failed', enqErr.message);
+  }
+
+  // Sunucu OCR'yi hemen çalıştır
+  try {
+    await supabase.functions.invoke('kbs-ocr-worker', {
+      body: { action: 'process', guestDocumentId: item.id },
+    });
+  } catch {
+    /* mobil worker / cron devam eder */
+  }
+
+  // 40 sn sonra hâlâ pending ise manuel kontrole düş (sonsuz Okunuyor engeli)
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .schema('ops')
+          .from('guest_documents')
+          .select('parsed_payload, ocr_status')
+          .eq('id', item.id)
+          .maybeSingle();
+        const payload = (data?.parsed_payload ?? {}) as { warnings?: string[] };
+        const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+        const stillPending =
+          data?.ocr_status === 'queued' ||
+          data?.ocr_status === 'processing' ||
+          warnings.includes('ocr_pending') ||
+          warnings.includes('ocr_processing');
+        if (!stillPending) return;
+        const cleaned = warnings.filter(
+          (w) => w !== 'ocr_pending' && w !== 'ocr_processing' && w !== 'ocr_failed'
+        );
+        if (!cleaned.includes('ocr_manual_review')) cleaned.push('ocr_manual_review');
+        await supabase
+          .schema('ops')
+          .from('guest_documents')
+          .update({
+            parsed_payload: { ...payload, warnings: cleaned },
+            ocr_status: 'manual_review',
+            ocr_last_error: 'Okuma zaman aşımı — alanları kontrol edin',
+          })
+          .eq('id', item.id);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, 40_000);
 
   const nextRow: KbsCapturedDocumentRow = { ...item, parsed_payload: nextPayload };
   return { ...nextRow, parsed: parseRow(nextRow) };
@@ -420,6 +506,11 @@ export type CaptureManualEdit = {
   documentNumber: string;
   birthDate: string;
   nationalityCode: string;
+  expiryDate?: string;
+  gender?: string;
+  documentSeries?: string;
+  motherName?: string;
+  fatherName?: string;
 };
 
 /** Elle alan düzeltmesi — parsed_payload + guests. */
@@ -429,8 +520,28 @@ export async function updateCaptureManualFields(item: CaptureItem, edit: Capture
   const documentNumber = edit.documentNumber.trim() || null;
   const birthDate = edit.birthDate.trim().slice(0, 10) || null;
   const nationalityCode = edit.nationalityCode.trim().toUpperCase() || null;
+  const expiryDate = edit.expiryDate?.trim().slice(0, 10) || null;
+  const genderRaw = edit.gender?.trim().toUpperCase() || null;
+  const gender = genderRaw === 'M' || genderRaw === 'F' || genderRaw === 'X' ? genderRaw : null;
+  const documentSeries = edit.documentSeries?.trim().toUpperCase() || null;
+  const motherName = edit.motherName?.trim() || null;
+  const fatherName = edit.fatherName?.trim() || null;
   const fullName = [firstName, lastName].filter(Boolean).join(' ') || null;
   const prev = (item.parsed_payload ?? {}) as Record<string, unknown>;
+  const prevWarnings = Array.isArray(prev.warnings)
+    ? (prev.warnings as unknown[]).filter((w): w is string => typeof w === 'string')
+    : [];
+  const warnings = [
+    ...prevWarnings.filter(
+      (w) =>
+        w !== 'ocr_pending' &&
+        w !== 'ocr_processing' &&
+        w !== 'ocr_failed' &&
+        w !== 'ocr_partial' &&
+        w !== 'ocr_manual_review'
+    ),
+    'manual_name',
+  ];
   const payload = {
     ...prev,
     firstName,
@@ -439,8 +550,38 @@ export async function updateCaptureManualFields(item: CaptureItem, edit: Capture
     documentNumber,
     birthDate,
     nationalityCode,
+    expiryDate: expiryDate ?? prev.expiryDate ?? null,
+    gender: gender ?? prev.gender ?? null,
+    documentSeries: documentSeries ?? prev.documentSeries ?? null,
+    motherName: motherName ?? prev.motherName ?? null,
+    fatherName: fatherName ?? prev.fatherName ?? null,
+    warnings,
   };
-  const coreReady = !!(documentNumber && fullName);
+  const coreReady = !!(documentNumber && fullName && birthDate && nationalityCode && (expiryDate || prev.expiryDate));
+
+  // Atomik RPC tercih
+  const { error: rpcErr } = await supabase.rpc('save_document_manual_fields', {
+    p_guest_document_id: item.id,
+    p_fields: payload,
+    p_locked_fields: ['firstName', 'lastName', 'documentNumber', 'birthDate', 'nationalityCode', 'expiryDate'],
+  });
+  if (!rpcErr) {
+    return {
+      ...item,
+      parsed_payload: payload,
+      document_number: documentNumber,
+      nationality_code: nationalityCode,
+      expiry_date: expiryDate ?? item.expiry_date,
+      scan_status: coreReady ? 'ready_to_submit' : item.scan_status,
+      parsed: parseRow({
+        ...item,
+        parsed_payload: payload,
+        document_number: documentNumber,
+        nationality_code: nationalityCode,
+        expiry_date: expiryDate ?? item.expiry_date,
+      }),
+    };
+  }
 
   const { error: docErr } = await supabase
     .schema('ops')
@@ -449,7 +590,11 @@ export async function updateCaptureManualFields(item: CaptureItem, edit: Capture
       parsed_payload: payload,
       document_number: documentNumber,
       nationality_code: nationalityCode,
-      scan_status: coreReady ? 'ready_to_submit' : item.scan_status,
+      expiry_date: expiryDate,
+      document_series: documentSeries,
+      scan_status: coreReady ? 'ready_to_submit' : item.scan_status === 'submitted' ? 'submitted' : 'incomplete',
+      ocr_status: coreReady ? 'succeeded' : 'manual_review',
+      manual_fields: ['firstName', 'lastName', 'documentNumber', 'birthDate', 'nationalityCode', 'expiryDate'],
     })
     .eq('id', item.id);
   if (docErr) throw new Error(docErr.message);
@@ -464,6 +609,9 @@ export async function updateCaptureManualFields(item: CaptureItem, edit: Capture
         full_name: fullName,
         birth_date: birthDate,
         nationality_code: nationalityCode,
+        gender,
+        mother_name: motherName,
+        father_name: fatherName,
       })
       .eq('id', item.guest_id);
     if (guestErr) throw new Error(guestErr.message);
@@ -474,12 +622,14 @@ export async function updateCaptureManualFields(item: CaptureItem, edit: Capture
     parsed_payload: payload,
     document_number: documentNumber,
     nationality_code: nationalityCode,
+    expiry_date: expiryDate ?? item.expiry_date,
     scan_status: coreReady ? 'ready_to_submit' : item.scan_status,
     parsed: parseRow({
       ...item,
       parsed_payload: payload,
       document_number: documentNumber,
       nationality_code: nationalityCode,
+      expiry_date: expiryDate ?? item.expiry_date,
     }),
   };
 }

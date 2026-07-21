@@ -11,8 +11,14 @@ node_modules/
 # Expo
 .expo/
 .expo-tmp-bundle-test/
+.expo-tmp-ios-test/
+.expo-tmp-parse-test/
 dist/
 web-build/
+
+# Local scratch / debug files
+.tmp-*.cjs
+.tmp-*.sql
 
 # i18n script çıktıları (scripts/list-i18n-gaps.js)
 i18n/_ar_gap_en.json

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { canSaveMrzDocument, isMrzPayload, type MrzSaveBlockReason } from '@/lib/scanner/mrzScanGate';
 import { OPS_SCHEMA_NOT_EXPOSED_MSG, resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
@@ -10,6 +11,13 @@ import {
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 
 export type UpsertOk = { guestId: string; guestDocumentId: string; scanStatus: string };
+
+/** Zayıf ağda PostgREST isteği süresiz askıda kalabilir — kayıt akışı kilitlenmesin. */
+const OPS_DB_TIMEOUT_MS = 20_000;
+
+function bounded<T>(query: PromiseLike<T>): Promise<T> {
+  return withPromiseTimeout(query, OPS_DB_TIMEOUT_MS, 'Kayıt zaman aşımı — bağlantınızı kontrol edip tekrar deneyin');
+}
 
 function mapOpsTableError(err: { code?: string; message?: string } | null): string {
   if (isOpsSchemaNotExposedError(err)) return OPS_SCHEMA_NOT_EXPOSED_MSG;
@@ -27,7 +35,21 @@ const MRZ_CODE: Record<MrzSaveBlockReason, string> = {
  * MRZ sonrası belge kaydı — VPS köprüsü olmadan ops.guests + ops.guest_documents (RLS).
  * Sunucu route ile aynı mantık (documentsRoutes) özetlenmiştir.
  */
-export async function upsertGuestDocumentLocal(args: {
+export async function upsertGuestDocumentLocal(
+  args: Parameters<typeof upsertGuestDocumentLocalInner>[0]
+): Promise<{ ok: true; data: UpsertOk } | { ok: false; message: string; code?: string }> {
+  try {
+    return await upsertGuestDocumentLocalInner(args);
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Veritabanı hatası',
+      code: 'TIMEOUT',
+    };
+  }
+}
+
+async function upsertGuestDocumentLocalInner(args: {
   parsed: ParsedDocument;
   scanConfidence: number | null;
   rawMrz: string | null;
@@ -149,7 +171,7 @@ export async function upsertGuestDocumentLocal(args: {
     id: string;
     guest_id: string;
   }): Promise<{ ok: true; data: UpsertOk } | { ok: false; message: string; code?: string }> => {
-    const { data: updated, error: updErr } = await supabase
+    const { data: updated, error: updErr } = await bounded(supabase
       .schema('ops')
       .from('guest_documents')
       .update({
@@ -171,7 +193,7 @@ export async function upsertGuestDocumentLocal(args: {
       })
       .eq('id', existing.id)
       .select('id, guest_id, scan_status')
-      .single();
+      .single());
     if (updErr || !updated) {
       return { ok: false, message: mapOpsTableError(updErr), code: updErr?.code };
     }
@@ -187,7 +209,9 @@ export async function upsertGuestDocumentLocal(args: {
     };
     if (fatherName !== undefined) guestUp.father_name = fatherName;
     if (motherName !== undefined) guestUp.mother_name = motherName;
-    await supabase.schema('ops').from('guests').update(guestUp).eq('id', existing.guest_id).eq('hotel_id', hotelId);
+    await bounded(
+      supabase.schema('ops').from('guests').update(guestUp).eq('id', existing.guest_id).eq('hotel_id', hotelId)
+    ).catch(() => null);
 
     return {
       ok: true,
@@ -202,11 +226,73 @@ export async function upsertGuestDocumentLocal(args: {
   if (normalizedDocNo) {
     const existing = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
     if (existing) {
-      return applyUpdate(existing);
+      const { buildReturningGuestMeta, withReturningGuestWarning } = await import(
+        '@/lib/kbsGuestDocumentIdentity'
+      );
+      const meta = buildReturningGuestMeta(existing, normalizedDocNo);
+      const flagged = withReturningGuestWarning(parsed, meta);
+      const flaggedJson = JSON.parse(
+        JSON.stringify({
+          ...flagged,
+          documentSeries: series,
+          documentNumber: normalizedDocNo,
+        })
+      ) as Record<string, unknown>;
+      // applyUpdate payloadJson yerine flagged kullan
+      const { data: updated, error: updErr } = await bounded(
+        supabase
+          .schema('ops')
+          .from('guest_documents')
+          .update({
+            document_number: normalizedDocNo,
+            document_type: parsed.documentType,
+            issuing_country_code: parsed.issuingCountryCode,
+            nationality_code: parsed.nationalityCode,
+            expiry_date: expiryDate,
+            raw_mrz: parsed.rawMrz ?? rawMrz ?? null,
+            parsed_payload: flaggedJson,
+            scan_confidence: scanConfidence ?? parsed.confidence ?? null,
+            scan_status: scanStatus,
+            front_image_url: frontImageUrl ?? null,
+            back_image_url: backImageUrl ?? null,
+            capture_source: captureSource ?? null,
+            captured_at: capturedAt ?? new Date().toISOString(),
+            ...kbsExtras,
+            ...mrzAudit,
+          })
+          .eq('id', existing.id)
+          .select('id, guest_id, scan_status')
+          .single()
+      );
+      if (updErr || !updated) {
+        return { ok: false, message: mapOpsTableError(updErr), code: updErr?.code };
+      }
+      const guestUp: Record<string, unknown> = {
+        full_name: fullName ?? 'UNKNOWN',
+        first_name: parsed.firstName,
+        last_name: parsed.lastName,
+        middle_name: parsed.middleName,
+        nationality_code: parsed.nationalityCode,
+        gender: parsed.gender,
+        birth_date: birthDate,
+      };
+      if (fatherName !== undefined) guestUp.father_name = fatherName;
+      if (motherName !== undefined) guestUp.mother_name = motherName;
+      await bounded(
+        supabase.schema('ops').from('guests').update(guestUp).eq('id', existing.guest_id).eq('hotel_id', hotelId)
+      ).catch(() => null);
+      return {
+        ok: true,
+        data: {
+          guestId: updated.guest_id,
+          guestDocumentId: updated.id,
+          scanStatus: updated.scan_status,
+        },
+      };
     }
   }
 
-  const { data: guest, error: gErr } = await supabase
+  const { data: guest, error: gErr } = await bounded(supabase
     .schema('ops')
     .from('guests')
     .insert({
@@ -223,13 +309,13 @@ export async function upsertGuestDocumentLocal(args: {
       mother_name: motherName ?? null
     })
     .select('id')
-    .single();
+    .single());
 
   if (gErr || !guest) {
     return { ok: false, message: mapOpsTableError(gErr), code: gErr?.code };
   }
 
-  const { data: doc, error: dErr } = await supabase
+  const { data: doc, error: dErr } = await bounded(supabase
     .schema('ops')
     .from('guest_documents')
     .insert({
@@ -252,7 +338,7 @@ export async function upsertGuestDocumentLocal(args: {
       ...mrzAudit
     })
     .select('id, scan_status')
-    .single();
+    .single());
 
   if (dErr || !doc) {
     if (normalizedDocNo && dErr?.code === '23505') {

@@ -13,6 +13,8 @@ type AuthState = {
 
 const AuthCtx = createContext<AuthState | null>(null);
 
+const LOCKED_MSG = 'Hesabınız kitlendi. Yönetici ile iletişime geçin.';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,8 +50,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     let active = true;
-    void loadStaffKbsPerms(uid).then((p) => {
-      if (active) setStaffPerms(p);
+    void loadStaffKbsPerms(uid).then(async (p) => {
+      if (!active) return;
+      if (p.account_locked) {
+        setStaffPerms(null);
+        await supabase.auth.signOut();
+        return;
+      }
+      if (!p.role) {
+        setStaffPerms(null);
+        await supabase.auth.signOut();
+        return;
+      }
+      setStaffPerms(p);
     });
     return () => {
       active = false;
@@ -62,11 +75,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       staffPerms,
       signIn: async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password,
         });
-        return { error: error?.message ?? null };
+        if (error) return { error: error.message };
+        const uid = data.user?.id;
+        if (!uid) return { error: 'Oturum oluşturulamadı' };
+        const perms = await loadStaffKbsPerms(uid);
+        if (perms.account_locked) {
+          await supabase.auth.signOut();
+          return { error: LOCKED_MSG };
+        }
+        if (!perms.role) {
+          await supabase.auth.signOut();
+          return { error: 'Personel kaydı bulunamadı veya hesap pasif' };
+        }
+        return { error: null };
       },
       signOut: async () => {
         await supabase.auth.signOut();

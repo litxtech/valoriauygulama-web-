@@ -69,7 +69,11 @@ export default function AuthCodeScreen() {
       if (sessionErr) throw sessionErr;
       const sessionUser = sessionData.session?.user;
       if (!sessionUser) throw new Error('Oturum kullanıcısı alınamadı');
-      await completeSignIn(sessionUser);
+      const signInResult = await completeSignIn(sessionUser);
+      if (signInResult.denied === 'account_locked') {
+        Alert.alert(t('accountLockedTitle'), t('accountLockedMessage'));
+        return;
+      }
       const { user } = useAuthStore.getState();
       const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
       if (pendingRoom && user?.email) {

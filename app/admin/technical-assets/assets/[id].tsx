@@ -15,7 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import ViewShot from 'react-native-view-shot';
 import * as Print from 'expo-print';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import type { QRCodeRef } from '@/components/DesignableQR';
@@ -25,6 +25,7 @@ import { canAccessTechnicalAssetsAdminRoutes } from '@/lib/staffPermissions';
 import {
   fetchRelatedAssets,
   fetchTechAssetDetail,
+  buildPublicTechAssetUrl,
   TECH_CATEGORY_GROUPS,
   type TechAssetDetail,
   type TechAssetRow,
@@ -81,6 +82,7 @@ export default function AdminTechnicalAssetDetailScreen() {
   const [usageGuideText, setUsageGuideText] = useState('');
   const [usageGuideVideoUrl, setUsageGuideVideoUrl] = useState('');
   const [usageVideoUploading, setUsageVideoUploading] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
 
   const locFiltered = useMemo(() => locations.filter((l) => l.building_id === buildingId), [locations, buildingId]);
 
@@ -106,6 +108,7 @@ export default function AdminTechnicalAssetDetailScreen() {
     setPhotosRaw(Array.isArray(pu) ? (pu as string[]).join('\n') : '');
     setUsageGuideText(row.usage_guide_text ?? '');
     setUsageGuideVideoUrl(row.usage_guide_video_url ?? '');
+    setIsPublic(Boolean(row.is_public));
   }, []);
 
   const load = useCallback(async () => {
@@ -155,7 +158,7 @@ export default function AdminTechnicalAssetDetailScreen() {
       imgSrc = '';
     }
     if (!imgSrc) {
-      const dataEnc = encodeURIComponent(asset.qr_payload);
+      const dataEnc = encodeURIComponent(buildPublicTechAssetUrl(asset.public_token));
       imgSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${dataEnc}`;
     }
     const title = esc(String(asset.name).toUpperCase());
@@ -168,7 +171,7 @@ export default function AdminTechnicalAssetDetailScreen() {
       .code { font: 700 13px monospace; margin: 0 0 10px; }
       .tag { font-size: 11px; margin: 8px 0; line-height: 1.35; }
       .hint { font-size: 10px; color: #333; margin-top: 8px; }
-    </style></head><body><div class="box"><h1>${title}</h1><p class="code">Kod: ${code}</p>${tag ? `<p class="tag">${tag}</p>` : ''}<img width="220" height="220" src="${imgSrc}" alt="QR"/><p class="hint">QR okut — Detay / acil talimat uygulamada.</p></div></body></html>`;
+    </style></head><body><div class="box"><h1>${title}</h1><p class="code">Kod: ${code}</p>${tag ? `<p class="tag">${tag}</p>` : ''}<img width="220" height="220" src="${imgSrc}" alt="QR"/><p class="hint">QR okut — Bilgileri, fotoğrafları ve kullanım videosunu internette aç.</p></div></body></html>`;
     try {
       await Print.printAsync({ html });
     } catch (e: unknown) {
@@ -304,6 +307,7 @@ export default function AdminTechnicalAssetDetailScreen() {
           photo_urls: urls,
           usage_guide_text: usageGuideText.trim() || null,
           usage_guide_video_url: usageGuideVideoUrl.trim() || null,
+          is_public: isPublic,
           criticality,
           updated_by_staff_id: staff?.id ?? null,
         })
@@ -410,6 +414,8 @@ export default function AdminTechnicalAssetDetailScreen() {
   }
 
   const locLine = [asset.buildingName, asset.locationName].filter(Boolean).join(' / ');
+  const publicUrl = asset.public_token ? buildPublicTechAssetUrl(asset.public_token) : '';
+  const canShowPublicQr = Boolean(publicUrl);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -418,18 +424,32 @@ export default function AdminTechnicalAssetDetailScreen() {
       {locLine ? <Text style={styles.loc}>{locLine}</Text> : null}
 
       <View style={styles.qrBox}>
-        <ViewShot ref={qrShotRef} options={{ format: 'png', quality: 0.95 }} style={{ backgroundColor: '#fff', padding: 8 }}>
-          <QRCode
-            value={asset.qr_payload}
-            size={200}
-            backgroundColor="#fff"
-            color="#000"
-            getRef={(r) => {
-              qrSvgRef.current = r as QRCodeRef;
-            }}
+        {canShowPublicQr ? (
+          <ViewShot ref={qrShotRef} options={{ format: 'png', quality: 0.95 }} style={{ backgroundColor: '#fff', padding: 8 }}>
+            <QRCode
+              value={publicUrl}
+              size={200}
+              backgroundColor="#fff"
+              color="#000"
+              getRef={(r) => {
+                qrSvgRef.current = r as QRCodeRef;
+              }}
+            />
+          </ViewShot>
+        ) : (
+          <Text style={styles.qrHint}>Public QR anahtarı henüz hazır değil. Sayfayı yenileyin.</Text>
+        )}
+        {canShowPublicQr ? <Text style={styles.qrHint} selectable>{publicUrl}</Text> : null}
+        <View style={[styles.publishBadge, isPublic ? styles.publishBadgeOn : styles.publishBadgeOff]}>
+          <Ionicons
+            name={isPublic ? 'globe-outline' : 'lock-closed-outline'}
+            size={16}
+            color={isPublic ? '#047857' : '#b45309'}
           />
-        </ViewShot>
-        <Text style={styles.qrHint}>{asset.qr_payload}</Text>
+          <Text style={[styles.publishBadgeText, isPublic ? styles.publishTextOn : styles.publishTextOff]}>
+            {isPublic ? 'İnternette yayında' : 'Yayın kapalı'}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.qrActions}>
@@ -442,7 +462,7 @@ export default function AdminTechnicalAssetDetailScreen() {
           <Text style={styles.btnPrintText}>Yazdır</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.qrActionHint}>Yazdır: etiket düzeni (QR cihazda üretilir; olmazsa ağ görseli kullanılır).</Text>
+      <Text style={styles.qrActionHint}>Bu QR, uygulama gerektirmeden telefonun internet tarayıcısında açılır.</Text>
 
       <TouchableOpacity style={styles.btnSecondary} onPress={cycleStatus}>
         <Text style={styles.btnSecondaryText}>Durum: {asset.status} (döngü)</Text>
@@ -548,6 +568,26 @@ export default function AdminTechnicalAssetDetailScreen() {
         ) : null}
       </View>
 
+      <Text style={[styles.section, { marginTop: 20 }]}>İnternet yayını</Text>
+      <Text style={styles.publishHelp}>
+        Açıldığında QR’ı okutan herkes ürün adı, açıklama, fotoğraflar, kullanım metni, video ve uyarıları görebilir.
+        Bakım kayıtları ve personel bilgileri paylaşılmaz.
+      </Text>
+      <TouchableOpacity
+        style={[styles.publishToggle, isPublic && styles.publishToggleOn]}
+        onPress={() => setIsPublic((value) => !value)}
+        activeOpacity={0.85}
+      >
+        <Ionicons
+          name={isPublic ? 'globe-outline' : 'lock-closed-outline'}
+          size={21}
+          color={isPublic ? '#fff' : '#1a365d'}
+        />
+        <Text style={[styles.publishToggleText, isPublic && styles.publishToggleTextOn]}>
+          {isPublic ? 'Yayında — kapatmak için dokun' : 'Yayına aç'}
+        </Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.7 }]} onPress={saveFields} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Değişiklikleri kaydet</Text>}
       </TouchableOpacity>
@@ -593,6 +633,12 @@ const styles = StyleSheet.create({
   loc: { fontSize: 14, color: '#2d3748', marginTop: 8, textAlign: 'center' },
   qrBox: { marginTop: 20, padding: 16, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', alignSelf: 'stretch' },
   qrHint: { fontSize: 11, color: '#718096', marginTop: 10, textAlign: 'center' },
+  publishBadge: { marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
+  publishBadgeOn: { backgroundColor: '#ecfdf5' },
+  publishBadgeOff: { backgroundColor: '#fffbeb' },
+  publishBadgeText: { fontSize: 12, fontWeight: '800' },
+  publishTextOn: { color: '#047857' },
+  publishTextOff: { color: '#b45309' },
   qrActions: {
     marginTop: 16,
     flexDirection: 'row',
@@ -650,6 +696,23 @@ const styles = StyleSheet.create({
   },
   btnClearVideo: { alignSelf: 'center', paddingVertical: 8 },
   btnClearVideoText: { color: '#e53e3e', fontWeight: '700', fontSize: 14 },
+  publishHelp: { alignSelf: 'stretch', marginTop: 8, color: '#64748b', fontSize: 13, lineHeight: 19 },
+  publishToggle: {
+    marginTop: 12,
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#1a365d',
+    borderRadius: 12,
+    paddingVertical: 13,
+    backgroundColor: '#fff',
+  },
+  publishToggleOn: { backgroundColor: '#047857', borderColor: '#047857' },
+  publishToggleText: { color: '#1a365d', fontSize: 14, fontWeight: '800' },
+  publishToggleTextOn: { color: '#fff' },
   section: { alignSelf: 'stretch', marginTop: 20, fontWeight: '900', color: '#1a365d', fontSize: 16 },
   label: { alignSelf: 'stretch', marginTop: 12, fontSize: 12, fontWeight: '700', color: '#4a5568' },
   input: {

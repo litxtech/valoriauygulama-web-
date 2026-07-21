@@ -178,7 +178,7 @@ const translation = {
       accountBannedMessage: 'Your account is blocked until {{until}}.',
       accountLockedTitle: 'Your account is locked',
       accountLockedMessage:
-        'An administrator has temporarily locked your account. Contact your manager if you have questions.',
+        'An administrator has locked your account. You cannot sign in; KBS and other systems are also blocked. Contact your manager if you have questions.',
       accountStatusReason: 'Reason: {{reason}}',
       screenConvertToFullAccount: 'Create a full account',
       convertToFullAccountMenuSub: 'Set an email and password; you can change them later in profile settings.',

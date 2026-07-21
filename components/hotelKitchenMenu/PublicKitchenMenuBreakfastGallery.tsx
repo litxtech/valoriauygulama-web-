@@ -25,6 +25,7 @@ type Props = {
   organizationId: string;
   menuLang: PublicMenuLang;
   accentColor?: string;
+  titleColor?: string;
 };
 
 const AMBER = '#F59E0B';
@@ -35,6 +36,7 @@ export function PublicKitchenMenuBreakfastGallery({
   organizationId,
   menuLang,
   accentColor = AMBER,
+  titleColor = '#0f172a',
 }: Props) {
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
@@ -75,7 +77,7 @@ export function PublicKitchenMenuBreakfastGallery({
     <View style={styles.section}>
       <View style={styles.head}>
         <View style={[styles.headAccent, { backgroundColor: accentColor }]} />
-        <Text style={styles.title}>{t('publicMenuBreakfastTitle')}</Text>
+        <Text style={[styles.title, { color: titleColor }]}>{t('publicMenuBreakfastTitle')}</Text>
       </View>
 
       <ScrollView
@@ -163,7 +165,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0f172a',
     letterSpacing: -0.3,
     flex: 1,
   },

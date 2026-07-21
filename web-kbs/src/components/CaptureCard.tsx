@@ -1,6 +1,11 @@
 import { memo, useCallback } from 'react';
 import { isRecentlyAddedCapture, type CaptureItem } from '../lib/captures';
-import { buildKbsCopyFields, kbsCaptureCardStatus, kbsDisplayFullName } from '../lib/parse';
+import {
+  buildKbsCopyFields,
+  isKbsReturningGuest,
+  kbsCaptureCardStatus,
+  kbsDisplayFullName,
+} from '../lib/parse';
 import { StatusBadge } from './StatusBadge';
 
 type Props = {
@@ -19,7 +24,7 @@ const DOC_TYPE_LABEL: Record<string, string> = {
 function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
-  const status = kbsCaptureCardStatus(parsed);
+  const status = kbsCaptureCardStatus(parsed, { ocrStatus: item.ocr_status });
   const isNew = isRecentlyAddedCapture(item);
   void freshnessTick;
   const fields = buildKbsCopyFields(parsed);
@@ -73,6 +78,12 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
           <h3 title={name}>{name}</h3>
           <StatusBadge status={status} />
         </div>
+
+        {isKbsReturningGuest(parsed) ? (
+          <div className="returning-pill" title="Bu belge daha önce sisteme eklendi">
+            Daha önce geldi
+          </div>
+        ) : null}
 
         <div className="card-tags">
           {nationality ? <span className="tag">{nationality}</span> : null}

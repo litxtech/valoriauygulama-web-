@@ -32,5 +32,15 @@ export function isOcrLabelOnlyName(raw: string | null | undefined): boolean {
 
 export function isUsablePersonName(raw: string | null | undefined): boolean {
   const s = sanitizePersonName(raw);
-  return !!s && s.length >= 2 && !isOcrLabelOnlyName(s);
+  if (!s || s.length < 2) return false;
+  if (isOcrLabelOnlyName(s)) return false;
+  if (
+    /^(?:VALORIA|HOTEL|OTEL|WIFI|RECEPTION|RESEPSİYON|TABLE|MASA|MENU|MENÜ|WHATSAPP|INSTAGRAM|SPECIMEN|DOCUMENT|IDENTITY|CARD)$/i.test(
+      s
+    )
+  ) {
+    return false;
+  }
+  if (/^[A-ZÇĞİÖŞÜ]\.?$/i.test(s)) return false;
+  return true;
 }

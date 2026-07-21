@@ -14,6 +14,8 @@ export const PUBLIC_BREAKFAST_PASS_PATH = 'breakfast-pass';
 export const PUBLIC_COMPLAINT_PATH = 'sikayet';
 /** Otel sorumlusu / personel public web profili — valoria.tr/profil/{staffId} */
 export const PUBLIC_STAFF_PROFILE_PATH = 'profil';
+/** Ürün / ekipman bilgi QR — valoria.tr/bilgi/{publicToken} */
+export const PUBLIC_TECH_ASSET_INFO_PATH = 'bilgi';
 /** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
 export const LEGACY_PAYMENT_PATH = 'odeme';
 export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';

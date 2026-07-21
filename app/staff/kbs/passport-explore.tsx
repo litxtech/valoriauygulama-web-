@@ -288,7 +288,7 @@ export default function KbsPassportExploreScreen() {
         }
         renderItem={({ item }) => {
           const parsed = asParsed(item);
-          const status = kbsCaptureCardStatus(parsed);
+          const status = kbsCaptureCardStatus(parsed, { ocrStatus: item.ocr_status });
           const nat = nationalityCodeOf(item);
           return (
             <Pressable style={styles.card} onPress={() => router.push(detailRoute(item.id))}>

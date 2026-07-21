@@ -73,6 +73,7 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
     expoPath === '/breakfast-pass' ||
     expoPath.startsWith('/breakfast-pass/') ||
     expoPath.startsWith('/profil/') ||
+    expoPath.startsWith('/bilgi/') ||
     expoPath === '/guest' ||
     expoPath.startsWith('/guest/')
   ) {
@@ -102,6 +103,13 @@ export function usePublicWebRouteRedirect(): ReactElement | null {
       return null;
     }
     return <Redirect href={{ pathname: '/profil/[id]', params: { id: route.staffId } }} />;
+  }
+
+  if (route.kind === 'bilgi') {
+    if (expoPath === `/bilgi/${route.token}` || expoPath.startsWith(`/bilgi/${route.token}/`)) {
+      return null;
+    }
+    return <Redirect href={{ pathname: '/bilgi/[token]', params: { token: route.token } }} />;
   }
 
   return null;

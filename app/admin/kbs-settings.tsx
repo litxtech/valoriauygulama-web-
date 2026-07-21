@@ -173,10 +173,10 @@ export default function AdminKbsSettingsScreen() {
     }
     if (/yetkisiz\s*ip|yetkihatasi/i.test(message)) {
       hint +=
-        '\n\nBu hata Jandarma’dan: çağrı Railway kbs-core IP’sinden gidiyor, panelde yetkisiz görünüyor.' +
+        '\n\nBu hata Jandarma’dan: çağrı Supabase Edge çıkış IP’sinden gidiyor, panelde yetkisiz görünüyor.' +
         (egressIp
-          ? `\nKaydedilecek IP: ${egressIp}`
-          : '\nIP görünmüyor → Railway kbs-core’u Redeploy edin, sonra /gateway/egress-ip açın.') +
+          ? `\n★ Kaydedilecek IP: ${egressIp}`
+          : '\nIP satırda yoksa mesajdaki IP’yi veya paneldeki TÜM IP listesini silin.') +
         '\nPanelde IP listesini boşaltın veya bu IP’yi ekleyin. Sabit IP şart değil.';
     }
 

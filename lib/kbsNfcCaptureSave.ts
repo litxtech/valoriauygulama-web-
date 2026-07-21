@@ -1,6 +1,6 @@
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
-import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
+import { prepareKbsCaptureImageUri, prepareKbsCaptureUploadUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
 import { assignKbsRoomsBatch, type KbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
 import { checkoutRoomOtherGuests } from '@/lib/hotelInHouse';
@@ -58,7 +58,9 @@ export async function saveKbsNfcCaptureItemsParallel(
   const packs: Pack[] = await Promise.all(
     items.map(async (item, index) => {
       const preparedUri = await prepareKbsCaptureImageUri(item.portraitUri);
-      const upload = await uploadPassportPrivateFromUri({ uri: preparedUri, subfolder: 'kbs-documents' });
+      // Zayıf internette ağa küçültülmüş kopya gider (OCR gerekmez, parsed hazır).
+      const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
+      const upload = await uploadPassportPrivateFromUri({ uri: uploadUri, subfolder: 'kbs-documents' });
       return { index, preparedUri, upload };
     })
   );

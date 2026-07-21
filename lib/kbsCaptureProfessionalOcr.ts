@@ -154,6 +154,9 @@ export async function parseIdCardImageUriForUpload(
   const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true, fast: true };
 
   let best = await parseIdCardImageUriProfessional(prepared, baseOpts);
+  const passes: { parsed: typeof best.parsed; engine: string }[] = [
+    { parsed: best.parsed, engine: best.engine },
+  ];
   if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
     return best;
   }
@@ -169,6 +172,7 @@ export async function parseIdCardImageUriForUpload(
       imagePrepared: true,
       fast: true,
     });
+    passes.push({ parsed: mrzPass.parsed, engine: mrzPass.engine });
     best = pickBetterKbsOcrResult(best, mrzPass);
     if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
       return best;
@@ -179,10 +183,14 @@ export async function parseIdCardImageUriForUpload(
     ...baseOpts,
     fast: false,
   });
+  passes.push({ parsed: refined.parsed, engine: refined.engine });
   best = pickBetterKbsOcrResult(best, refined);
   if (shouldApplyKbsOcrResult(best) || hasKbsOcrApplyableData(best)) {
     if (listCoreMissingIdFields(best.parsed).length === 0 || options?.galleryDeep !== true) {
-      return best;
+      // Alan bazında birleşim — tek geçişte eksik kalanları tamamla
+      const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
+      const merged = mergeKbsOcrPassResults(passes);
+      return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || best.engine };
     }
   }
 
@@ -194,23 +202,33 @@ export async function parseIdCardImageUriForUpload(
         imagePrepared: true,
         fast: false,
       });
+      passes.push({ parsed: mrzSlow.parsed, engine: mrzSlow.engine });
       best = pickBetterKbsOcrResult(best, mrzSlow);
     }
-    return best;
+    const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
+    const merged = mergeKbsOcrPassResults(passes);
+    return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || best.engine };
   }
 
   const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
-  return pickBetterKbsOcrResult(best, await parseIdCardImageUriMaximum(prepared, { captureSide: side }));
+  const max = await parseIdCardImageUriMaximum(prepared, { captureSide: side });
+  passes.push({ parsed: max.parsed, engine: max.engine });
+  const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
+  const merged = mergeKbsOcrPassResults(passes);
+  return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || max.engine };
 }
 
-/** Kayda yazılacak anlamlı OCR verisi var mı (kısmi sonuç dahil). */
+/** Kayda yazılacak anlamlı OCR verisi var mı (kısmi sonuç dahil; documentType tek başına yetmez). */
 export function hasKbsOcrApplyableData(result: KbsOcrResult): boolean {
   if (shouldApplyKbsOcrResult(result)) return true;
-  if (buildKbsCopyFields(result.parsed).length >= 1) return true;
   const p = result.parsed;
   if (p.rawMrz) return true;
   if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) return true;
-  return false;
+  if (p.firstName || p.lastName || p.birthDate || p.expiryDate || p.nationalityCode) return true;
+  if (p.gender === 'M' || p.gender === 'F' || p.gender === 'X') return true;
+  // documentType tek başına uygulanabilir sayılmaz.
+  const identityFields = buildKbsCopyFields(p).filter((f) => f.key !== 'documentType' && f.key !== 'age');
+  return identityFields.length >= 1;
 }
 
 export function shouldApplyKbsOcrResult(result: KbsOcrResult): boolean {

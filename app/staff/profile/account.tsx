@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   Modal,
   Pressable,
 } from 'react-native';
@@ -19,6 +18,7 @@ import { theme } from '@/constants/theme';
 import { profileScreenTheme as P } from '@/constants/profileScreenTheme';
 import { LANGUAGES, LANG_STORAGE_KEY, changeAppLanguage, type LangCode } from '@/i18n';
 import { applyRTLAndReloadIfNeeded } from '@/lib/reloadForRTL';
+import { confirmDialog } from '@/lib/confirmDialog';
 import { safeRouterReplace } from '@/lib/safeRouter';
 import { listBlockedUsersForStaff } from '@/lib/userBlocks';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
@@ -93,19 +93,18 @@ export default function StaffProfileAccountScreen() {
   };
 
   const handleSignOut = () => {
-    Alert.alert(t('signOut'), t('signOutConfirm'), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('signOut'),
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            await signOut();
-            safeRouterReplace(router, '/');
-          })();
-        },
-      },
-    ]);
+    void (async () => {
+      const ok = await confirmDialog({
+        title: t('signOut'),
+        message: t('signOutConfirm'),
+        cancelText: t('cancel'),
+        confirmText: t('signOut'),
+        destructive: true,
+      });
+      if (!ok) return;
+      await signOut();
+      safeRouterReplace(router, '/');
+    })();
   };
 
   const langLabel =

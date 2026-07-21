@@ -24,6 +24,14 @@ export type ParsedDocument = {
   confidence: number | null;
   checksumsValid: boolean | null;
   warnings: string[];
+  /** Aynı belge no geçmişte varsa — “daha önce geldi” meta. */
+  returningGuest?: {
+    previousDocumentId: string;
+    previousGuestId?: string | null;
+    previousCapturedAt?: string | null;
+    previousGuestName?: string | null;
+    documentNumber?: string | null;
+  };
 };
 
 export type ScanResult = {

@@ -84,6 +84,10 @@ export function normalizeKbsParsedPayload(
     confidence: typeof inner.confidence === 'number' ? inner.confidence : null,
     checksumsValid: typeof inner.checksumsValid === 'boolean' ? inner.checksumsValid : null,
     warnings,
+    returningGuest:
+      inner.returningGuest && typeof inner.returningGuest === 'object'
+        ? (inner.returningGuest as ParsedDocument['returningGuest'])
+        : undefined,
   };
 }
 
@@ -133,9 +137,9 @@ export function enrichKbsParsedFromSources(
   const baseIsPlaceholder = isKbsPlaceholderName(baseForPlaceholder);
 
   const firstName =
-    base?.firstName && !baseIsPlaceholder ? base.firstName : str(guest?.first_name) ?? base?.firstName;
+    (base?.firstName && !baseIsPlaceholder ? base.firstName : str(guest?.first_name) ?? base?.firstName) ?? null;
   const lastName =
-    base?.lastName && !baseIsPlaceholder ? base.lastName : str(guest?.last_name) ?? base?.lastName;
+    (base?.lastName && !baseIsPlaceholder ? base.lastName : str(guest?.last_name) ?? base?.lastName) ?? null;
   const fullName =
     base?.fullName ??
     kbsDisplayFullName({ ...(base ?? {}), firstName, lastName } as ParsedDocument) ??
@@ -169,6 +173,7 @@ export function enrichKbsParsedFromSources(
     confidence: base?.confidence ?? null,
     checksumsValid: base?.checksumsValid ?? null,
     warnings: base?.warnings ?? [],
+    returningGuest: base?.returningGuest,
   };
 }
 
@@ -321,53 +326,195 @@ export function isKbsOcrFailed(payload: ParsedDocument | Record<string, unknown>
   return Array.isArray(w) && w.includes('ocr_failed');
 }
 
+export function isKbsOcrManualReview(
+  payload: ParsedDocument | Record<string, unknown> | null | undefined
+): boolean {
+  const w = (payload as ParsedDocument | null)?.warnings;
+  return Array.isArray(w) && w.includes('ocr_manual_review');
+}
+
+export function isKbsOcrPartial(
+  payload: ParsedDocument | Record<string, unknown> | null | undefined
+): boolean {
+  const w = (payload as ParsedDocument | null)?.warnings;
+  return Array.isArray(w) && w.includes('ocr_partial');
+}
+
 export function isKbsOcrInProgress(
   payload: ParsedDocument | Record<string, unknown> | null | undefined
 ): boolean {
+  // Çekirdek tamamsa bayrak bayat — "Okunuyor" göstermeyelim.
+  if (isKbsCaptureOcrCoreComplete(payload)) return false;
   return isKbsOcrPending(payload) || isKbsOcrProcessing(payload);
 }
 
-/** Ekranda gösterilecek en az bir kimlik alanı var mı. */
+/** Eksik alan listesini payload uyarılarına yaz (UI / recovery). */
+export function withMissingFieldWarnings(parsed: ParsedDocument): ParsedDocument {
+  const missing = listCoreMissingIdFields(parsed);
+  const cleaned = (parsed.warnings ?? []).filter(
+    (w) =>
+      w !== 'ocr_pending' &&
+      w !== 'ocr_processing' &&
+      !w.startsWith('missing_fields:')
+  );
+  if (missing.length === 0) {
+    return { ...parsed, warnings: cleaned };
+  }
+  return {
+    ...parsed,
+    warnings: [...cleaned, `missing_fields:${missing.join('|')}`],
+  };
+}
+
+export function readMissingFieldsFromWarnings(
+  payload: ParsedDocument | Record<string, unknown> | null | undefined
+): string[] {
+  const w = (payload as ParsedDocument | null)?.warnings;
+  if (!Array.isArray(w)) return [];
+  const tag = w.find((x) => typeof x === 'string' && x.startsWith('missing_fields:'));
+  if (!tag) return [];
+  return tag
+    .slice('missing_fields:'.length)
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Gerçek kimlik alanı var mı — documentType tek başına yeterli sayılmaz.
+ * Ad, soyad, belge no, doğum, uyruk, son geçerlilik, MRZ veya ebeveyn adı.
+ */
 export function kbsCaptureHasReadableData(
   payload: ParsedDocument | Record<string, unknown> | null | undefined
 ): boolean {
   if (!payload || typeof payload !== 'object') return false;
-  return buildKbsCopyFields(payload as ParsedDocument).length >= 1;
+  const p = payload as ParsedDocument;
+  if (isUsablePersonName(p.firstName) || isUsablePersonName(p.lastName)) return true;
+  if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) return true;
+  if (p.birthDate || p.expiryDate || p.nationalityCode) return true;
+  if (p.rawMrz) return true;
+  if (isUsablePersonName(p.motherName) || isUsablePersonName(p.fatherName)) return true;
+  if (p.gender === 'M' || p.gender === 'F' || p.gender === 'X') return true;
+  return false;
+}
+
+/** Kısmi okuma: en az bir alan var ama çekirdek tamam değil. */
+export function kbsCaptureIsPartialReadable(
+  payload: ParsedDocument | Record<string, unknown> | null | undefined
+): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  if (isKbsCaptureOcrCoreComplete(payload)) return false;
+  return kbsCaptureHasReadableData(payload);
 }
 
 export type KbsCaptureCardStatus = {
   label: string;
-  tone: 'ok' | 'muted';
+  tone: 'ok' | 'muted' | 'warn' | 'progress';
 };
 
-/** Liste/detay rozeti — herhangi bir alan okunduysa yeşil; tam çekirdek alanlarda Tamam. */
+/**
+ * Liste/detay rozeti — Tamam / Eksik / Manuel kontrol / Okunuyor / Okunamadı.
+ * `activelyReading`: yalnız gerçek cihaz kuyruğundayken "Okunuyor" göster (bayat bayrakta takılı kalmasın).
+ */
 export function kbsCaptureCardStatus(
-  parsed: ParsedDocument | null | undefined
+  parsed: ParsedDocument | null | undefined,
+  opts?: { ocrStatus?: string | null; activelyReading?: boolean }
 ): KbsCaptureCardStatus | null {
-  if (!parsed) return null;
-  if (isKbsTcOnlyCapture(parsed) && parsed.documentNumber) {
+  if (!parsed && !opts?.ocrStatus) return null;
+  const ocrStatus = (opts?.ocrStatus ?? '').trim().toLowerCase();
+  const missingOf = (p: ParsedDocument) => {
+    const fromWarn = readMissingFieldsFromWarnings(p);
+    return fromWarn.length > 0 ? fromWarn : listCoreMissingIdFields(p);
+  };
+  const partialLabel = (p: ParsedDocument): KbsCaptureCardStatus => {
+    const missing = missingOf(p);
+    return {
+      label: missing.length ? `Eksik · ${missing.slice(0, 2).join(', ')}` : 'Eksik',
+      tone: 'warn',
+    };
+  };
+
+  if (parsed && isKbsTcOnlyCapture(parsed) && parsed.documentNumber) {
     return { label: 'T.C.', tone: 'ok' };
   }
-  if (isKbsOcrInProgress(parsed)) return null;
 
-  if (kbsCaptureHasReadableData(parsed)) {
+  const coreOk = parsed ? isKbsCaptureOcrCoreComplete(parsed) : false;
+  if (ocrStatus === 'succeeded' || coreOk) {
+    return { label: 'Tamam', tone: 'ok' };
+  }
+
+  if (ocrStatus === 'manual_review' || (parsed && isKbsOcrManualReview(parsed))) {
+    const missing = parsed ? missingOf(parsed) : [];
     return {
-      label: isKbsCaptureOcrCoreComplete(parsed) ? 'Tamam' : 'Okundu',
-      tone: 'ok',
+      label: missing.length ? `Manuel · ${missing.slice(0, 2).join(', ')}` : 'Manuel kontrol',
+      tone: 'warn',
     };
   }
-  if (isKbsOcrFailed(parsed)) {
+
+  const dbInProgress =
+    ocrStatus === 'queued' || ocrStatus === 'processing' || ocrStatus === 'retry_wait';
+  const flagInProgress = parsed ? isKbsOcrInProgress(parsed) : false;
+  const looksBusy = dbInProgress || flagInProgress;
+
+  // "Okunuyor" yalnız gerçekten kuyruktayken — aksi halde kesin durum.
+  if (looksBusy && opts?.activelyReading === true) {
+    if (parsed && kbsCaptureHasReadableData(parsed)) {
+      const missing = listCoreMissingIdFields(parsed);
+      return {
+        label: missing.length ? `Okunuyor · ${missing.slice(0, 2).join(', ')}` : 'Okunuyor…',
+        tone: 'progress',
+      };
+    }
+    return { label: 'Okunuyor…', tone: 'progress' };
+  }
+
+  if (ocrStatus === 'partial' || (parsed && (kbsCaptureHasReadableData(parsed) || isKbsOcrPartial(parsed)))) {
+    return partialLabel(parsed!);
+  }
+
+  if (ocrStatus === 'failed_terminal' || (parsed && isKbsOcrFailed(parsed))) {
     return { label: 'Okunamadı', tone: 'muted' };
   }
+
+  // Bayat queued/processing bayrağı veya hiç okunmamış boş kayıt
+  if (looksBusy || !parsed || !kbsCaptureHasReadableData(parsed)) {
+    return { label: 'Okunamadı', tone: 'muted' };
+  }
+
   return null;
+}
+
+/** Boş / eksik / takılı — otomatik okuma adayı mı? */
+export function needsKbsCaptureOcrRead(
+  parsed: ParsedDocument | null | undefined,
+  opts?: { ocrStatus?: string | null }
+): boolean {
+  if (isKbsCaptureOcrCoreComplete(parsed) || isKbsOcrManualReview(parsed)) return false;
+  const ocrStatus = (opts?.ocrStatus ?? '').trim().toLowerCase();
+  if (ocrStatus === 'succeeded' || ocrStatus === 'manual_review') return false;
+  if (!kbsCaptureHasReadableData(parsed)) return true;
+  if (isKbsOcrFailed(parsed) || isKbsOcrPartial(parsed) || isKbsOcrInProgress(parsed)) return true;
+  if (
+    ocrStatus === 'queued' ||
+    ocrStatus === 'processing' ||
+    ocrStatus === 'retry_wait' ||
+    ocrStatus === 'partial' ||
+    ocrStatus === 'failed_terminal'
+  ) {
+    return true;
+  }
+  return !isKbsCaptureOcrCoreComplete(parsed) && kbsCaptureIsPartialReadable(parsed);
 }
 
 export function kbsOcrStatusLabel(
   payload: ParsedDocument | Record<string, unknown> | null | undefined
-): 'pending' | 'processing' | 'ready' | 'empty' {
+): 'pending' | 'processing' | 'ready' | 'partial' | 'manual_review' | 'failed' | 'empty' {
   if (!payload || typeof payload !== 'object') return 'empty';
   if (isKbsOcrProcessing(payload)) return 'processing';
   if (isKbsOcrPending(payload)) return 'pending';
-  if (isKbsCaptureOcrCoreComplete(payload) || kbsCaptureHasReadableData(payload)) return 'ready';
+  if (isKbsOcrManualReview(payload)) return 'manual_review';
+  if (isKbsCaptureOcrCoreComplete(payload)) return 'ready';
+  if (kbsCaptureHasReadableData(payload) || isKbsOcrPartial(payload)) return 'partial';
+  if (isKbsOcrFailed(payload)) return 'failed';
   return 'empty';
 }

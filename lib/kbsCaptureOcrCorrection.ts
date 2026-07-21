@@ -12,7 +12,7 @@ import {
 import { parseKbsCaptureSideFromWarnings } from '@/lib/kbsCaptureSideMeta';
 import {
   listCoreMissingIdFields,
-  normalizeKbsParsedPayload,
+  withMissingFieldWarnings,
 } from '@/lib/kbsCaptureParsedFields';
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
@@ -20,6 +20,7 @@ import { applyBestPassportIdentityToParsed } from '@/lib/kbsPassportFieldResolve
 import { prepareProfessionalKbsOcrUri } from '@/lib/kbsOcrImageEnhance';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import type { KbsOcrResult } from '@/lib/kbsCaptureOcr';
+import { applyDocumentOcrResultRpc, requestServerOcrFallback } from '@/lib/kbsDocumentOcrJobs';
 
 async function downloadForCorrection(url: string, docId: string): Promise<string> {
   const local = `${FileSystem.cacheDirectory ?? ''}kbs-fix-${docId}.jpg`;
@@ -116,21 +117,37 @@ export async function correctKbsCapturedDocument(
       }
     }
 
-    const res = await applyKbsCaptureOcrCorrection(
-      row.id,
-      row.guest_id,
-      corrected,
-      corrected.confidence ?? ocr.parsed.confidence,
-      ocr.engine
-    );
-    if (!res.ok) {
-      await markKbsCaptureOcrState(row.id, 'failed');
-      return res;
+    const correctedWithScan = withMissingFieldWarnings(corrected);
+    const rpc = await applyDocumentOcrResultRpc({
+      guestDocumentId: row.id,
+      parsed: correctedWithScan,
+      scanConfidence: correctedWithScan.confidence ?? ocr.parsed.confidence,
+      ocrEngine: ocr.engine,
+      outcome: 'auto',
+    });
+
+    if (!rpc.ok) {
+      const res = await applyKbsCaptureOcrCorrection(
+        row.id,
+        row.guest_id,
+        correctedWithScan,
+        correctedWithScan.confidence ?? ocr.parsed.confidence,
+        ocr.engine
+      );
+      if (!res.ok) {
+        await markKbsCaptureOcrState(row.id, 'failed');
+        return res;
+      }
     }
 
     const coreComplete = coreMissing.length === 0;
-    if (!coreComplete && !hasKbsOcrApplyableData(ocr)) {
-      await markKbsCaptureOcrState(row.id, 'failed');
+    if (!coreComplete) {
+      // Eksik alan kaldıysa sunucu OCR dene; gelmezse manuel kontrol
+      void requestServerOcrFallback({ guestDocumentId: row.id }).catch(() => null);
+      await markKbsCaptureOcrState(
+        row.id,
+        hasKbsOcrApplyableData(ocr) || coreMissing.length < 4 ? 'partial' : 'manual_review'
+      );
     }
 
     return { ok: true, coreComplete };

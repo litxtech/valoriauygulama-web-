@@ -297,6 +297,8 @@ export default function HomeScreen() {
         pathname.startsWith('/sikayet/') ||
         pathname === '/profil' ||
         pathname.startsWith('/profil/') ||
+        pathname === '/bilgi' ||
+        pathname.startsWith('/bilgi/') ||
         pathname === '/payment' ||
         pathname === '/payment/qr' ||
         pathname === '/payment/new' ||

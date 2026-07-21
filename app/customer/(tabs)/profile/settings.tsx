@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
+import { confirmDialog } from '@/lib/confirmDialog';
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
 import { LANGUAGES, LANG_STORAGE_KEY, changeAppLanguage, type LangCode } from '@/i18n';
@@ -101,19 +102,18 @@ export default function CustomerProfileSettings() {
   }, [user?.id, user?.email]);
 
   const handleSignOut = () => {
-    Alert.alert(t('signOut'), t('signOutConfirm'), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('signOut'),
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            await signOut();
-            safeRouterReplace(router, '/');
-          })();
-        },
-      },
-    ]);
+    void (async () => {
+      const ok = await confirmDialog({
+        title: t('signOut'),
+        message: t('signOutConfirm'),
+        cancelText: t('cancel'),
+        confirmText: t('signOut'),
+        destructive: true,
+      });
+      if (!ok) return;
+      await signOut();
+      safeRouterReplace(router, '/');
+    })();
   };
 
   const handleLanguageSelect = async (code: LangCode) => {

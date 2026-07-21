@@ -91,6 +91,47 @@ export function normalizeKbsParsedPayload(
     ? warningsRaw.filter((w): w is string => typeof w === 'string')
     : [];
 
+  const returningRaw = inner.returningGuest ?? inner.returning_guest;
+  let returningGuest: ParsedDocument['returningGuest'];
+  if (returningRaw && typeof returningRaw === 'object') {
+    const m = returningRaw as Record<string, unknown>;
+    const previousDocumentId =
+      typeof m.previousDocumentId === 'string'
+        ? m.previousDocumentId
+        : typeof m.previous_document_id === 'string'
+          ? m.previous_document_id
+          : null;
+    if (previousDocumentId) {
+      returningGuest = {
+        previousDocumentId,
+        previousGuestId:
+          typeof m.previousGuestId === 'string'
+            ? m.previousGuestId
+            : typeof m.previous_guest_id === 'string'
+              ? m.previous_guest_id
+              : null,
+        previousCapturedAt:
+          typeof m.previousCapturedAt === 'string'
+            ? m.previousCapturedAt
+            : typeof m.previous_captured_at === 'string'
+              ? m.previous_captured_at
+              : null,
+        previousGuestName:
+          typeof m.previousGuestName === 'string'
+            ? m.previousGuestName
+            : typeof m.previous_guest_name === 'string'
+              ? m.previous_guest_name
+              : null,
+        documentNumber:
+          typeof m.documentNumber === 'string'
+            ? m.documentNumber
+            : typeof m.document_number === 'string'
+              ? m.document_number
+              : null,
+      };
+    }
+  }
+
   return {
     documentType,
     fullName: pickPayloadString(inner, 'fullName', 'full_name'),
@@ -111,6 +152,7 @@ export function normalizeKbsParsedPayload(
     confidence: typeof inner.confidence === 'number' ? inner.confidence : null,
     checksumsValid: typeof inner.checksumsValid === 'boolean' ? inner.checksumsValid : null,
     warnings,
+    returningGuest,
   };
 }
 
@@ -195,7 +237,38 @@ export function enrichKbsParsedFromSources(
     confidence: base?.confidence ?? null,
     checksumsValid: base?.checksumsValid ?? null,
     warnings: base?.warnings ?? [],
+    returningGuest: base?.returningGuest,
   };
+}
+
+export function isKbsReturningGuest(parsed: ParsedDocument | null | undefined): boolean {
+  if (!parsed) return false;
+  if (parsed.returningGuest) return true;
+  const w = parsed.warnings;
+  return Array.isArray(w) && (w.includes('returning_guest') || w.includes('duplicate_identity'));
+}
+
+export function formatKbsReturningGuestWarning(
+  parsed: ParsedDocument | null | undefined
+): string | null {
+  if (!isKbsReturningGuest(parsed)) return null;
+  const meta = parsed?.returningGuest;
+  const when = meta?.previousCapturedAt
+    ? new Date(meta.previousCapturedAt).toLocaleString('tr-TR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null;
+  const who = meta?.previousGuestName?.trim() || null;
+  const doc = meta?.documentNumber?.trim() || null;
+  const parts = ['Bu pasaport / kimlik daha önce sisteme eklendi — daha önce geldi.'];
+  if (who) parts.push(`Önceki kayıt: ${who}`);
+  if (when) parts.push(`Tarih: ${when}`);
+  if (doc) parts.push(`Belge no: ${doc}`);
+  return parts.join(' ');
 }
 
 export function buildKbsCopyFields(
@@ -262,12 +335,27 @@ export function buildKbsCopyFields(
   return out;
 }
 
+function isPlausibleDocNo(docNumber: string | null | undefined, documentType?: string | null): boolean {
+  const raw = (docNumber ?? '').trim().toUpperCase();
+  if (!raw) return false;
+  const digits = raw.replace(/\D/g, '');
+  if (/^[1-9]\d{10}$/.test(digits) && !/[A-Z]/.test(raw.replace(/[^A-Z0-9]/g, ''))) return true;
+  if (/^99\d{9}$/.test(digits) && !/[A-Z]/.test(raw.replace(/[^A-Z0-9]/g, ''))) return true;
+  const alnum = raw.replace(/[^A-Z0-9]/g, '');
+  if (alnum.length < 5 || alnum.length > 14) return false;
+  if (/[A-Z]/.test(alnum) && /\d/.test(alnum) && alnum.length >= 5) return true;
+  if (/^\d{6,14}$/.test(digits)) return true;
+  if (documentType === 'passport' && alnum.length >= 5) return true;
+  return false;
+}
+
 export function listCoreMissingIdFields(parsed: ParsedDocument): string[] {
   const missing: string[] = [];
   if (!isUsablePersonName(parsed.firstName)) missing.push('Ad');
   if (!isUsablePersonName(parsed.lastName)) missing.push('Soyad');
-  const docDigits = (parsed.documentNumber ?? '').replace(/\D/g, '');
-  if (docDigits.length < 6) missing.push('Kimlik / pasaport no');
+  if (!isPlausibleDocNo(parsed.documentNumber, parsed.documentType)) {
+    missing.push('Kimlik / pasaport no');
+  }
   if (!parsed.birthDate) missing.push('Doğum tarihi');
   if (!parsed.nationalityCode) missing.push('Uyruk');
   if (!parsed.expiryDate) missing.push('Son kullanım tarihi');
@@ -281,10 +369,17 @@ export function isKbsCaptureOcrCoreComplete(parsed: ParsedDocument | null | unde
 
 export function kbsCaptureHasReadableData(parsed: ParsedDocument | null | undefined): boolean {
   if (!parsed) return false;
-  return buildKbsCopyFields(parsed).length >= 1;
+  if (isUsablePersonName(parsed.firstName) || isUsablePersonName(parsed.lastName)) return true;
+  if (isPlausibleDocNo(parsed.documentNumber, parsed.documentType)) return true;
+  if (parsed.birthDate || parsed.expiryDate || parsed.nationalityCode) return true;
+  if (parsed.rawMrz) return true;
+  if (isUsablePersonName(parsed.motherName) || isUsablePersonName(parsed.fatherName)) return true;
+  if (parsed.gender === 'M' || parsed.gender === 'F' || parsed.gender === 'X') return true;
+  return false;
 }
 
 function isKbsOcrInProgress(parsed: ParsedDocument | null | undefined): boolean {
+  if (isKbsCaptureOcrCoreComplete(parsed)) return false;
   const w = parsed?.warnings;
   return Array.isArray(w) && (w.includes('ocr_pending') || w.includes('ocr_processing'));
 }
@@ -294,16 +389,84 @@ function isKbsOcrFailed(parsed: ParsedDocument | null | undefined): boolean {
   return Array.isArray(w) && w.includes('ocr_failed');
 }
 
-export type KbsCaptureCardStatus = { label: string; tone: 'ok' | 'muted' | 'progress' };
+function isKbsOcrManualReview(parsed: ParsedDocument | null | undefined): boolean {
+  const w = parsed?.warnings;
+  return Array.isArray(w) && w.includes('ocr_manual_review');
+}
 
-export function kbsCaptureCardStatus(parsed: ParsedDocument | null | undefined): KbsCaptureCardStatus {
-  if (!parsed) return { label: 'Bekleniyor', tone: 'muted' };
-  if (isKbsOcrInProgress(parsed)) return { label: 'Okunuyor…', tone: 'progress' };
-  if (kbsCaptureHasReadableData(parsed)) {
-    return { label: isKbsCaptureOcrCoreComplete(parsed) ? 'Tamam' : 'Okundu', tone: 'ok' };
+function isKbsOcrPartial(parsed: ParsedDocument | null | undefined): boolean {
+  const w = parsed?.warnings;
+  return Array.isArray(w) && w.includes('ocr_partial');
+}
+
+function listMissingFromWarnings(parsed: ParsedDocument | null | undefined): string[] {
+  const w = parsed?.warnings;
+  if (!Array.isArray(w)) return [];
+  const tag = w.find((x) => typeof x === 'string' && x.startsWith('missing_fields:'));
+  if (!tag) return [];
+  return tag
+    .slice('missing_fields:'.length)
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export type KbsCaptureCardStatus = { label: string; tone: 'ok' | 'muted' | 'progress' | 'warn' };
+
+export function kbsCaptureCardStatus(
+  parsed: ParsedDocument | null | undefined,
+  opts?: { ocrStatus?: string | null; activelyReading?: boolean }
+): KbsCaptureCardStatus {
+  if (!parsed && !opts?.ocrStatus) return { label: 'Okunamadı', tone: 'muted' };
+  const ocrStatus = (opts?.ocrStatus ?? '').trim().toLowerCase();
+  const missingOf = (p: ParsedDocument) => {
+    const fromWarn = listMissingFromWarnings(p);
+    return fromWarn.length > 0 ? fromWarn : listCoreMissingIdFields(p);
+  };
+  const partialLabel = (p: ParsedDocument): KbsCaptureCardStatus => {
+    const missing = missingOf(p);
+    return {
+      label: missing.length ? `Eksik · ${missing.slice(0, 2).join(', ')}` : 'Eksik',
+      tone: 'warn',
+    };
+  };
+
+  if (ocrStatus === 'succeeded' || (parsed && isKbsCaptureOcrCoreComplete(parsed))) {
+    return { label: 'Tamam', tone: 'ok' };
   }
-  if (isKbsOcrFailed(parsed)) return { label: 'Okunamadı', tone: 'muted' };
-  return { label: 'Bekleniyor', tone: 'muted' };
+  if (ocrStatus === 'manual_review' || (parsed && isKbsOcrManualReview(parsed))) {
+    const missing = parsed ? missingOf(parsed) : [];
+    return {
+      label: missing.length ? `Manuel · ${missing.slice(0, 2).join(', ')}` : 'Manuel kontrol',
+      tone: 'warn',
+    };
+  }
+  const dbInProgress =
+    ocrStatus === 'queued' || ocrStatus === 'processing' || ocrStatus === 'retry_wait';
+  const flagInProgress = parsed ? isKbsOcrInProgress(parsed) : false;
+  const looksBusy = dbInProgress || flagInProgress;
+
+  if (looksBusy && opts?.activelyReading === true) {
+    if (parsed && kbsCaptureHasReadableData(parsed)) {
+      const missing = listCoreMissingIdFields(parsed);
+      return {
+        label: missing.length ? `Okunuyor · ${missing.slice(0, 2).join(', ')}` : 'Okunuyor…',
+        tone: 'progress',
+      };
+    }
+    return { label: 'Okunuyor…', tone: 'progress' };
+  }
+
+  if (ocrStatus === 'partial' || (parsed && (kbsCaptureHasReadableData(parsed) || isKbsOcrPartial(parsed)))) {
+    return partialLabel(parsed!);
+  }
+  if (ocrStatus === 'failed_terminal' || (parsed && isKbsOcrFailed(parsed))) {
+    return { label: 'Okunamadı', tone: 'muted' };
+  }
+  if (looksBusy || !parsed || !kbsCaptureHasReadableData(parsed)) {
+    return { label: 'Okunamadı', tone: 'muted' };
+  }
+  return { label: 'Okunamadı', tone: 'muted' };
 }
 
 /** Bir satırdan (payload + sütunlar) zenginleştirilmiş temiz parsed üretir. */

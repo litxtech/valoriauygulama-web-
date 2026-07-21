@@ -112,7 +112,7 @@ export function KbsCaptureWatermarkHost() {
         ref={shotRef}
         options={{ format: 'jpg', quality: CAPTURE_QUALITY }}
         style={{ width: frame.width, height: frame.height }}
-        collapsable={false}
+        {...({ collapsable: false } as object)}
       >
         <View style={{ width: frame.width, height: frame.height }}>
           <Image

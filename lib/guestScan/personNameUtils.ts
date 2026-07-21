@@ -33,7 +33,19 @@ export function sanitizePersonName(raw: string | null | undefined): string | nul
 
 export function isUsablePersonName(raw: string | null | undefined): boolean {
   const s = sanitizePersonName(raw);
-  return !!s && s.length >= 2 && !isOcrLabelOnlyName(s);
+  if (!s || s.length < 2) return false;
+  if (isOcrLabelOnlyName(s)) return false;
+  // Otel / UI gürültüsü — ad sanılmasın
+  if (
+    /^(?:VALORIA|HOTEL|OTEL|WIFI|RECEPTION|RESEPSİYON|RESEPSiyon|TABLE|MASA|MENU|MENÜ|WHATSAPP|INSTAGRAM|SPECIMEN|DOCUMENT|IDENTITY|CARD)$/i.test(
+      s
+    )
+  ) {
+    return false;
+  }
+  // Tek harf + nokta gibi anlamsız
+  if (/^[A-ZÇĞİÖŞÜ]\.?$/i.test(s)) return false;
+  return true;
 }
 
 export function coalescePersonName(...candidates: (string | null | undefined)[]): string | null {

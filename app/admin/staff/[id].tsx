@@ -592,8 +592,8 @@ export default function EditStaffScreen() {
       Alert.alert(
         'Başarılı',
         locked
-          ? 'Hesap kilitlendi. Personelin ekranında anında "Hesabınız kitlendi" mesajı görünür.'
-          : 'Hesap kilidi kaldırıldı. Personel uygulamaya devam edebilir.'
+          ? 'Hesap kilitlendi. Personel giriş yapamaz; KBS ve diğer sistemlere erişimi kapatıldı.'
+          : 'Hesap kilidi kaldırıldı. Personel uygulamaya ve sistemlere tekrar erişebilir.'
       );
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message ?? 'Hesap kilitleme işlemi tamamlanamadı.');
@@ -610,7 +610,7 @@ export default function EditStaffScreen() {
     }
     Alert.alert(
       'Hesabı kilitle',
-      'Personelin uygulamasında anında "Hesabınız kitlendi" ekranı görünür. Devam edilsin mi?',
+      'Personel giriş yapamaz; KBS ve diğer tüm sistem erişimi kapanır. Devam edilsin mi?',
       [
         { text: 'İptal', style: 'cancel' },
         { text: 'Kilitle', style: 'destructive', onPress: () => void applyAccountLock(true) },
@@ -1053,18 +1053,20 @@ export default function EditStaffScreen() {
 
         <SectionCard
           title="Hesap kilitleme"
-          subtitle="Anında uygulanır; personelin ekranında kilit bildirimi görünür."
+          subtitle="Kilitlenen personel giriş yapamaz; KBS ve diğer sistem erişimi kapanır."
           icon="lock-closed-outline"
         >
           {!supportsAccountLockedColumn ? (
             <Text style={styles.hintInline}>
-              Veritabanı migration 438 uygulanmadı; hesap kilitleme kullanılamaz.
+              Veritabanı migration 438/539 uygulanmadı; hesap kilitleme kullanılamaz.
             </Text>
           ) : accountLocked ? (
             <>
               <View style={styles.lockStatusBanner}>
                 <Ionicons name="lock-closed" size={20} color="#b45309" />
-                <Text style={styles.lockStatusText}>Bu hesap şu an kilitli.</Text>
+                <Text style={styles.lockStatusText}>
+                  Bu hesap kilitli — giriş ve KBS/sistem erişimi kapalı.
+                </Text>
               </View>
               {accountLockReason.trim() ? (
                 <Text style={styles.hintInline}>Gerekçe: {accountLockReason.trim()}</Text>

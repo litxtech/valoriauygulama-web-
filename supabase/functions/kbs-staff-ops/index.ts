@@ -2,7 +2,9 @@
  * KBS personel: oda listesi + oda ataması + Bildir (VPS/Railway JWT gerekmez).
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { postKbsCoreGateway } from "../_shared/kbsCoreGateway.ts";
+import { decryptCredential } from "../_shared/kbsCredentialCrypto.ts";
+import { detectEgressIpv4 } from "../_shared/kbsEgressIp.ts";
+import { submitJandarmaCheckIn } from "../_shared/kbsJandarmaSoapSubmit.ts";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -71,6 +73,30 @@ Deno.serve(async (req: Request) => {
     }
 
     const userId = userData.user.id;
+
+    const { data: lockRow } = await admin
+      .from("staff")
+      .select("account_locked, is_active, deleted_at")
+      .eq("auth_id", userId)
+      .maybeSingle();
+    if (
+      !lockRow ||
+      lockRow.deleted_at ||
+      lockRow.is_active === false ||
+      lockRow.account_locked === true
+    ) {
+      return json({
+        ok: false,
+        error: {
+          code: lockRow?.account_locked === true ? "ACCOUNT_LOCKED" : "AUTH",
+          message:
+            lockRow?.account_locked === true
+              ? "Hesap kilitli; KBS erişimi yok"
+              : "Personel kaydı bulunamadı veya pasif",
+        },
+      });
+    }
+
     const action = meta.action ?? "list_rooms";
 
     if (action === "list_rooms") {
@@ -231,6 +257,7 @@ Deno.serve(async (req: Request) => {
         .select("role, app_permissions, is_active")
         .eq("auth_id", userId)
         .eq("is_active", true)
+        .eq("account_locked", false)
         .is("deleted_at", null)
         .maybeSingle();
       const opsRole = String(
@@ -449,23 +476,81 @@ Deno.serve(async (req: Request) => {
         .update({ kbs_status: "pending", kbs_last_attempt_at: now })
         .eq("id", txId);
 
-      const gwRes = await postKbsCoreGateway<{ externalReference?: string }>("/gateway/check-in", gwPayload);
-      if (!gwRes.ok) {
+      const credSecret = (Deno.env.get("KBS_CREDENTIAL_SECRET") ?? "").trim();
+      if (credSecret.length < 16) {
+        return json({
+          ok: false,
+          error: {
+            code: "CONFIG",
+            message: "KBS_CREDENTIAL_SECRET Edge secret eksik — Bildir SOAP için gerekli.",
+          },
+        });
+      }
+
+      const { data: credRow, error: credLoadErr } = await admin
+        .schema("ops")
+        .from("hotel_kbs_credentials")
+        .select("facility_code, username, password_encrypted, is_active")
+        .eq("hotel_id", hotelId)
+        .maybeSingle();
+      if (credLoadErr || !credRow?.password_encrypted || !credRow.facility_code || !credRow.username) {
+        return json({
+          ok: false,
+          error: {
+            code: "CONFIG",
+            message: "KBS kimlik kaydı yok/eksik. Admin → KBS Ayarları → Kaydet.",
+          },
+        });
+      }
+      if (credRow.is_active === false) {
+        return json({
+          ok: false,
+          error: { code: "VALIDATION", message: "KBS kimlik kaydı pasif (is_active=false)" },
+        });
+      }
+
+      let password: string;
+      try {
+        password = await decryptCredential(String(credRow.password_encrypted), credSecret);
+      } catch {
+        return json({
+          ok: false,
+          error: {
+            code: "CONFIG",
+            message: "KBS şifresi çözülemedi. Admin panelinden şifreyi yeniden Kaydet.",
+          },
+        });
+      }
+
+      const soapRes = await submitJandarmaCheckIn(gwPayload, {
+        facilityCode: String(credRow.facility_code),
+        username: String(credRow.username),
+        password,
+      });
+
+      if (!soapRes.ok) {
+        let msg = soapRes.message;
+        if (/yetkisiz\s*ip|yetkihatasi/i.test(msg)) {
+          const egressIp = await detectEgressIpv4();
+          msg = egressIp
+            ? `${msg} ★ KAYDEDİLECEK IP (Edge): ${egressIp} — Jandarma panelinde bunu yazın veya tüm IP listesini SİLİN.`
+            : `${msg} ★ Jandarma panelinde yetkili IP listesini tamamen SİLİN/BOŞALTIN.`;
+        }
         await admin
           .schema("ops")
           .from("official_submission_transactions")
           .update({
             status: "failed",
-            error_message: gwRes.message,
+            error_message: msg,
             kbs_status: "failed",
             kbs_last_attempt_at: now,
-            kbs_error_code: gwRes.code,
-            kbs_error_message: gwRes.message,
+            kbs_error_code: soapRes.code,
+            kbs_error_message: msg,
           })
           .eq("id", txId);
         return json({
           ok: false,
-          error: { code: gwRes.code, message: gwRes.message, details: gwRes.details },
+          error: { code: soapRes.code, message: msg, details: { via: "edge_soap" } },
         });
       }
 
@@ -475,14 +560,14 @@ Deno.serve(async (req: Request) => {
         .from("official_submission_transactions")
         .update({
           status: "submitted",
-          external_reference: gwRes.data?.externalReference ?? null,
+          external_reference: null,
           submitted_at: sentAt,
           kbs_status: "success",
           kbs_last_attempt_at: sentAt,
           kbs_sent_at: sentAt,
           kbs_error_code: null,
           kbs_error_message: null,
-          kbs_response_payload: gwRes.data as object,
+          kbs_response_payload: soapRes.summary as object,
         })
         .eq("id", txId);
 

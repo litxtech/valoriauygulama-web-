@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { getShareablePublicOrigin } from '@/lib/appPublicUrl';
 
 /** QR içeriği (eski etiketler): valoria://tech-asset/<uuid> — pathname yalnızca /uuid olduğu için kök [id] yönlendirmesi gerekir. */
 export const TECH_ASSET_QR_SCHEME = 'valoria://tech-asset/';
@@ -14,6 +15,12 @@ export const TECH_CATEGORY_GROUPS: { value: string; label: string }[] = [
   { value: 'security', label: 'Kamera / Güvenlik' },
   { value: 'internet', label: 'İnternet hattı' },
   { value: 'heating', label: 'Isıtma / Sıcak Su' },
+  { value: 'room', label: 'Oda ekipmanı' },
+  { value: 'kitchen', label: 'Mutfak ekipmanı' },
+  { value: 'cleaning', label: 'Temizlik ekipmanı' },
+  { value: 'furniture', label: 'Mobilya / Demirbaş' },
+  { value: 'garden', label: 'Bahçe / Dış alan' },
+  { value: 'product', label: 'Ürün / Malzeme' },
   { value: 'other', label: 'Diğer' },
 ];
 
@@ -60,6 +67,8 @@ export type TechAssetRow = {
   label_tagline: string | null;
   usage_guide_text: string | null;
   usage_guide_video_url: string | null;
+  public_token?: string | null;
+  is_public?: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -117,6 +126,41 @@ export function parseTechnicalAssetIdFromScan(raw: string): string | null {
 
 export function buildTechAssetQrPayload(assetId: string): string {
   return `${TECH_ASSET_QR_SCHEME_PATH}${assetId}`;
+}
+
+export function buildPublicTechAssetUrl(publicToken: string | null | undefined, origin?: string | null): string {
+  const base = getShareablePublicOrigin(origin).replace(/\/$/, '');
+  const token = String(publicToken ?? '').trim();
+  if (!token) return `${base}/bilgi`;
+  return `${base}/bilgi/${encodeURIComponent(token)}`;
+}
+
+export type PublicTechAsset = Pick<
+  TechAssetRow,
+  | 'id'
+  | 'name'
+  | 'asset_code'
+  | 'category_label'
+  | 'description'
+  | 'function_text'
+  | 'warning_text'
+  | 'label_tagline'
+  | 'photo_urls'
+  | 'usage_guide_text'
+  | 'usage_guide_video_url'
+  | 'updated_at'
+> & {
+  building_name: string | null;
+  location_name: string | null;
+};
+
+export async function fetchPublicTechAsset(
+  publicToken: string
+): Promise<{ data: PublicTechAsset | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('get_public_tech_asset', { p_token: publicToken });
+  if (error) return { data: null, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  return { data: (row as PublicTechAsset | null) ?? null, error: null };
 }
 
 export async function fetchTechAssetDetail(assetId: string): Promise<{ data: TechAssetDetail | null; error: string | null }> {

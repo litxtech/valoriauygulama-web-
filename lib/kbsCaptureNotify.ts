@@ -155,6 +155,44 @@ export async function updateKbsCaptureManualFields(
     ),
   };
 
+  // Önce atomik RPC (migration varsa)
+  try {
+    const { saveDocumentManualFieldsRpc } = await import('@/lib/kbsDocumentOcrJobs');
+    const rpc = await saveDocumentManualFieldsRpc({
+      guestDocumentId: row.id,
+      fields: {
+        firstName,
+        lastName,
+        middleName,
+        fullName,
+        documentNumber,
+        documentSeries,
+        birthDate,
+        expiryDate,
+        nationalityCode,
+        issuingCountryCode,
+        gender,
+        motherName,
+        fatherName,
+        maritalStatus,
+        placeOfBirth,
+        personalNumber,
+        documentType: looksLikeAlphanumericPassportNo(documentNumber) ? 'passport' : undefined,
+      },
+      lockedFields: [
+        'firstName',
+        'lastName',
+        'documentNumber',
+        'birthDate',
+        'nationalityCode',
+        'expiryDate',
+      ],
+    });
+    if (rpc.ok) return { ok: true };
+  } catch {
+    // fallback below
+  }
+
   const documentType =
     looksLikeAlphanumericPassportNo(documentNumber) && payload.documentType !== 'passport'
       ? 'passport'
@@ -167,9 +205,33 @@ export async function updateKbsCaptureManualFields(
     documentType,
   });
 
-  const coreReady = !!(documentNumber && fullName);
+  const coreReady = !!(
+    documentNumber &&
+    fullName &&
+    birthDate &&
+    nationalityCode &&
+    expiryDate &&
+    firstName &&
+    lastName
+  );
   const docPatch: Record<string, unknown> = {
-    parsed_payload: { ...payloadTyped, documentSeries: seriesForDb },
+    parsed_payload: {
+      ...payloadTyped,
+      documentSeries: seriesForDb,
+      warnings: [
+        ...new Set([
+          ...(payloadTyped.warnings ?? []).filter(
+            (w) =>
+              w !== 'ocr_pending' &&
+              w !== 'ocr_processing' &&
+              w !== 'ocr_failed' &&
+              w !== 'ocr_partial' &&
+              w !== 'ocr_manual_review'
+          ),
+          'manual_name',
+        ]),
+      ],
+    },
     document_number: documentNumber,
     document_series: seriesForDb,
     nationality_code: nationalityCode,
@@ -177,7 +239,20 @@ export async function updateKbsCaptureManualFields(
     expiry_date: expiryDate,
     kbs_person_kind: kind,
     document_type: documentType,
-    scan_status: coreReady ? 'ready_to_submit' : row.scan_status ?? 'draft',
+    scan_status: coreReady
+      ? 'ready_to_submit'
+      : row.scan_status === 'submitted'
+        ? 'submitted'
+        : 'incomplete',
+    ocr_status: coreReady ? 'succeeded' : 'manual_review',
+    manual_fields: [
+      'firstName',
+      'lastName',
+      'documentNumber',
+      'birthDate',
+      'nationalityCode',
+      'expiryDate',
+    ],
   };
 
   const { error: docErr } = await supabase

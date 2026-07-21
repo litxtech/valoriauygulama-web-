@@ -19,6 +19,8 @@ import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import { displayCapturedName, capturedAtTs } from '@/lib/kbsCaptureHistory';
 import { buildKbsCopyFields, enrichKbsParsedFromSources, isKbsOcrInProgress, kbsCaptureCardStatus } from '@/lib/kbsCaptureParsedFields';
+import { formatKbsReturningGuestWarning, isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
+import { isKbsDocInOcrQueue, requeueStuckKbsCaptureOcr } from '@/lib/kbsCaptureOcrQueue';
 import { buildKbsCaptureSingleReportHtml } from '@/lib/kbsCaptureReportHtml';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { hapticImpactLight } from '@/lib/hapticsSafe';
@@ -41,14 +43,42 @@ function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
   return enrichKbsParsedFromSources(row.parsed_payload);
 }
 
-function statusUi(parsed: ParsedDocument | null) {
-  const card = kbsCaptureCardStatus(parsed);
-  if (!card || card.tone !== 'ok') return null;
+function statusUi(
+  parsed: ParsedDocument | null,
+  ocrStatus?: string | null,
+  activelyReading?: boolean
+) {
+  const card = kbsCaptureCardStatus(parsed, { ocrStatus, activelyReading });
+  if (!card) return null;
+  if (card.tone === 'ok') {
+    return {
+      label: card.label,
+      bg: '#ecfdf5',
+      fg: '#059669',
+      icon: 'checkmark-circle-outline' as const,
+    };
+  }
+  if (card.tone === 'warn') {
+    return {
+      label: card.label,
+      bg: '#fff7ed',
+      fg: '#c2410c',
+      icon: 'alert-circle-outline' as const,
+    };
+  }
+  if (card.tone === 'progress') {
+    return {
+      label: card.label,
+      bg: '#eff6ff',
+      fg: '#2563eb',
+      icon: 'sync-outline' as const,
+    };
+  }
   return {
     label: card.label,
-    bg: '#ecfdf5',
-    fg: '#059669',
-    icon: 'checkmark-circle-outline' as const,
+    bg: '#f1f5f9',
+    fg: '#64748b',
+    icon: 'close-circle-outline' as const,
   };
 }
 
@@ -63,10 +93,15 @@ export function KbsCaptureDetailView({
   opsActions,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
+  const [ocrQueueTick, setOcrQueueTick] = useState(0);
   const parsed = asParsed(row);
   const fields = useMemo(() => buildKbsCopyFields(parsed), [parsed]);
-  const ocrInProgress = isKbsOcrInProgress(parsed);
-  const badge = statusUi(parsed);
+  const flaggedOcr = isKbsOcrInProgress(parsed);
+  const inOcrQueue = isKbsDocInOcrQueue(row.id);
+  // Sonsuz spinner yok: bayrak var ama kuyruk boşsa kısa süre sonra yeniden kuyruğa alınır.
+  const ocrInProgress = flaggedOcr && (inOcrQueue || ocrQueueTick < 2);
+  const badge = statusUi(parsed, row.ocr_status, inOcrQueue);
+  const returningWarn = formatKbsReturningGuestWarning(parsed);
 
   const [phone, setPhone] = useState(row.guest_phone_submitted ?? '');
   const [phoneSaving, setPhoneSaving] = useState(false);
@@ -76,6 +111,28 @@ export function KbsCaptureDetailView({
     setPhone(row.guest_phone_submitted ?? '');
     setPhoneMsg(null);
   }, [row.id, row.guest_phone_submitted]);
+
+  useEffect(() => {
+    if (!flaggedOcr || !row.front_image_url) return;
+    if (isKbsDocInOcrQueue(row.id)) return;
+    const sideWarn = Array.isArray(parsed?.warnings)
+      ? parsed!.warnings!.find((w) => w.startsWith('kbs_side:'))
+      : null;
+    const captureSide =
+      sideWarn === 'kbs_side:mrz_back' ? ('mrz_back' as const) : ('front' as const);
+    const timer = setTimeout(() => {
+      requeueStuckKbsCaptureOcr({
+        docId: row.id,
+        guestId: row.guest_id,
+        imageUrl: row.front_image_url!,
+        captureSide,
+        captureSource: 'gallery',
+        strategy: 'device_deep',
+      });
+      setOcrQueueTick((n) => n + 1);
+    }, 2_000);
+    return () => clearTimeout(timer);
+  }, [flaggedOcr, row.id, row.guest_id, row.front_image_url, row.parsed_payload, parsed?.warnings]);
 
   const savePhone = useCallback(async () => {
     if (!onSavePhone || phoneSaving) return;
@@ -203,6 +260,11 @@ export function KbsCaptureDetailView({
                 <Text style={styles.newBadgeText}>Yeni</Text>
               </View>
             ) : null}
+            {isKbsReturningGuest(parsed) ? (
+              <View style={styles.returningBadge}>
+                <Text style={styles.returningBadgeText}>Daha önce geldi</Text>
+              </View>
+            ) : null}
           </View>
           <Text style={styles.meta}>Oda {row.room_number ?? '—'}</Text>
           {row.captured_by_staff_name || row.scanned_by_user_id ? (
@@ -219,6 +281,13 @@ export function KbsCaptureDetailView({
           </View>
         ) : null}
       </View>
+
+      {returningWarn ? (
+        <View style={styles.returningBanner}>
+          <Ionicons name="alert-circle" size={20} color="#b45309" />
+          <Text style={styles.returningBannerText}>{returningWarn}</Text>
+        </View>
+      ) : null}
 
       {onSavePhone ? (
         <View style={styles.phoneCard}>
@@ -413,6 +482,31 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   newBadgeText: { fontSize: 11, fontWeight: '800', color: '#0d9488' },
+  returningBadge: {
+    backgroundColor: '#ffedd5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  returningBadgeText: { fontSize: 11, fontWeight: '800', color: '#c2410c' },
+  returningBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fdba74',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  returningBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9a3412',
+    lineHeight: 18,
+  },
   meta: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
   metaStaff: { fontSize: 13, color: '#0f766e', marginTop: 2, fontWeight: '700' },
   badge: {

@@ -14,7 +14,11 @@ import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import {
   enrichKbsParsedFromSources,
+  isKbsCaptureOcrCoreComplete,
+  isKbsOcrFailed,
   isKbsOcrInProgress,
+  isKbsOcrManualReview,
+  isKbsOcrPartial,
   kbsCaptureHasReadableData,
 } from '@/lib/kbsCaptureParsedFields';
 import { fetchKbsOpsRooms } from '@/lib/kbsStaffOpsEdge';
@@ -28,10 +32,13 @@ import {
   duplicateNotifyWarning,
   fetchKbsActiveByDocument,
 } from '@/lib/kbsSubmissionBoard';
-import { isKbsDocInOcrQueue } from '@/lib/kbsCaptureOcrQueue';
-import { isKbsOcrPending } from '@/lib/kbsCaptureParsedFields';
+import { isKbsDocInOcrQueue, requeueStuckKbsCaptureOcr } from '@/lib/kbsCaptureOcrQueue';
 import { formatKbsTrDate } from '@/lib/kbsDisplayFormat';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
+import {
+  formatKbsReturningGuestWarning,
+  isKbsReturningGuest,
+} from '@/lib/kbsGuestDocumentIdentity';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 type Props = {
@@ -101,6 +108,7 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const [form, setForm] = useState<FormState>(() => formFromParsed(parsed));
   const dirtyRef = useRef<Set<keyof FormState>>(new Set());
   const autoReadDoneRef = useRef<string | null>(null);
+  const returningAlertShownRef = useRef<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [rooms, setRooms] = useState<{ id: string; room_number: string }[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
@@ -108,7 +116,7 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const [notifying, setNotifying] = useState(false);
   const [reading, setReading] = useState(false);
 
-  const ocrBusy = isKbsOcrInProgress(parsed) || reading;
+  const ocrBusy = reading || isKbsDocInOcrQueue(row.id);
 
   const patchField = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     dirtyRef.current.add(key);
@@ -127,8 +135,20 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   useEffect(() => {
     dirtyRef.current = new Set();
     autoReadDoneRef.current = null;
+    returningAlertShownRef.current = null;
     setRoomId(null);
   }, [row.id]);
+
+  useEffect(() => {
+    const p = enrichKbsParsedFromSources(row.parsed_payload);
+    if (!isKbsReturningGuest(p)) return;
+    if (returningAlertShownRef.current === row.id) return;
+    returningAlertShownRef.current = row.id;
+    const msg =
+      formatKbsReturningGuestWarning(p) ??
+      'Bu pasaport / kimlik daha önce sisteme eklendi — daha önce geldi.';
+    Alert.alert('Daha önce geldi', msg);
+  }, [row.id, row.parsed_payload]);
 
   const loadRooms = useCallback(async () => {
     if (!canNotify) return;
@@ -168,6 +188,8 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   runReadRef.current = runRead;
 
   // Arka plan OCR kuyruğu / processing bitmeden otomatik Oku tetikleme (çift okuma yok).
+  // DB’de ocr_* kalıp bellek kuyruğu boşsa (app kill) → yeniden kuyruğa al veya kurtar.
+  // Takılı "Okunuyor" (pending/processing + kuyruk boş) → 1.5 sn sonra otomatik derin Oku.
   useEffect(() => {
     if (autoReadDoneRef.current === row.id) return;
     if (!row.front_image_url) {
@@ -175,16 +197,64 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
       return;
     }
     const p = enrichKbsParsedFromSources(row.parsed_payload);
-    if (kbsCaptureHasReadableData(p) && !isKbsOcrInProgress(p)) {
+    // Çekirdek tamam veya manuel kontrol kuyruğundaysa otomatik okuma yok
+    if (isKbsCaptureOcrCoreComplete(p) || isKbsOcrManualReview(p)) {
       autoReadDoneRef.current = row.id;
       return;
     }
-    if (isKbsDocInOcrQueue(row.id) || isKbsOcrInProgress(p)) {
-      return;
-    }
-    autoReadDoneRef.current = row.id;
-    void runReadRef.current();
-  }, [row.id, row.front_image_url, row.parsed_payload]);
+
+    let cancelled = false;
+    let waitTimer: ReturnType<typeof setTimeout> | null = null;
+    let forceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryKick = () => {
+      if (cancelled || autoReadDoneRef.current === row.id) return;
+      if (isKbsDocInOcrQueue(row.id)) {
+        // Kuyruk bitince tekrar dene (liste jank yok — yalnız detay)
+        waitTimer = setTimeout(tryKick, 2_000);
+        return;
+      }
+      const sideWarn = Array.isArray(p?.warnings)
+        ? p!.warnings!.find((w) => w.startsWith('kbs_side:'))
+        : null;
+      const captureSide = sideWarn === 'kbs_side:mrz_back' ? ('mrz_back' as const) : ('front' as const);
+      const stuckReading =
+        isKbsOcrInProgress(p) || isKbsOcrPartial(p) || isKbsOcrFailed(p) || !kbsCaptureHasReadableData(p);
+
+      if (!stuckReading && isKbsCaptureOcrCoreComplete(p)) {
+        autoReadDoneRef.current = row.id;
+        return;
+      }
+
+      const requeued = requeueStuckKbsCaptureOcr({
+        docId: row.id,
+        guestId: row.guest_id,
+        imageUrl: row.front_image_url!,
+        captureSide,
+        captureSource: 'gallery',
+        strategy: 'device_deep',
+      });
+      if (requeued) {
+        forceTimer = setTimeout(() => {
+          if (cancelled || autoReadDoneRef.current === row.id) return;
+          if (isKbsDocInOcrQueue(row.id)) return;
+          autoReadDoneRef.current = row.id;
+          void runReadRef.current();
+        }, 20_000);
+        return;
+      }
+      autoReadDoneRef.current = row.id;
+      void runReadRef.current();
+    };
+
+    const start = setTimeout(tryKick, 1_500);
+    return () => {
+      cancelled = true;
+      clearTimeout(start);
+      if (waitTimer) clearTimeout(waitTimer);
+      if (forceTimer) clearTimeout(forceTimer);
+    };
+  }, [row.id, row.front_image_url, row.guest_id, row.parsed_payload, onUpdated]);
 
   const roomChips = useMemo(() => rooms.slice(0, 48), [rooms]);
 

@@ -1,6 +1,6 @@
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
-import { prepareKbsCaptureImageUri } from '@/lib/kbsCaptureUpload';
+import { prepareKbsCaptureImageUri, prepareKbsCaptureUploadUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
 import { assignKbsRoomsBatch, type KbsOpsRoom } from '@/lib/kbsStaffOpsEdge';
 import { checkoutRoomOtherGuests } from '@/lib/hotelInHouse';
@@ -218,8 +218,10 @@ export async function saveKbsCaptureItemsParallel(
         };
       }
 
+      // Prewarm yetişmedi/başarısız: hazır dosya önbellekten gelir, ağa küçük kopya gider.
       const preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
-      const upload = await uploadPassportPrivateFromUri({ uri: preparedUri, subfolder: 'kbs-documents' });
+      const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
+      const upload = await uploadPassportPrivateFromUri({ uri: uploadUri, subfolder: 'kbs-documents' });
       return { index: item.index, preparedUri, upload };
     })
   );

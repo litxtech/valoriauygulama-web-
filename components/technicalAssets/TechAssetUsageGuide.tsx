@@ -7,9 +7,10 @@ import { useTranslation } from 'react-i18next';
 type Props = {
   text: string | null | undefined;
   videoUrl: string | null | undefined;
+  clean?: boolean;
 };
 
-export function TechAssetUsageGuide({ text, videoUrl }: Props) {
+export function TechAssetUsageGuide({ text, videoUrl, clean = false }: Props) {
   const { t } = useTranslation();
   const videoRef = useRef<Video>(null);
   const [videoReady, setVideoReady] = useState(false);
@@ -19,7 +20,7 @@ export function TechAssetUsageGuide({ text, videoUrl }: Props) {
   if (!body && !url) return null;
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, clean && styles.wrapClean]}>
       <View style={styles.titleRow}>
         <Ionicons name="school-outline" size={22} color="#1a365d" />
         <Text style={styles.title}>{t('techUsageGuideTitle')}</Text>
@@ -70,6 +71,12 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#bfdbfe',
+  },
+  wrapClean: {
+    backgroundColor: '#fff',
+    borderColor: '#e2e8f0',
+    padding: 16,
+    overflow: 'hidden',
   },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   title: { fontSize: 17, fontWeight: '800', color: '#1a365d' },

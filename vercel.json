@@ -93,7 +93,16 @@
       ]
     },
     {
-      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass|sikayet).*)",
+      "source": "/bilgi/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass|sikayet|bilgi).*)",
       "headers": [
         {
           "key": "Cache-Control",

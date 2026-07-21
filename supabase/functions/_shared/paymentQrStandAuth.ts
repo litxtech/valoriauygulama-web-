@@ -21,12 +21,15 @@ export async function resolveStaffCaller(
 
   const { data: staffRow } = await admin
     .from("staff")
-    .select("id, organization_id, role, full_name, is_active, deleted_at")
+    .select("id, organization_id, role, full_name, is_active, deleted_at, account_locked")
     .eq("auth_id", user.id)
     .maybeSingle();
 
   if (!staffRow?.id || staffRow.deleted_at || staffRow.is_active === false) {
     return { error: "Personel kaydı bulunamadı", status: 403 };
+  }
+  if (staffRow.account_locked === true) {
+    return { error: "Hesap kilitli", status: 403 };
   }
   if (!staffRow.organization_id && staffRow.role !== "admin") {
     return { error: "Otel (organization) atanmamış", status: 400 };

@@ -58,7 +58,11 @@ export default function AuthPasswordScreen() {
         const { data, error } = await supabase.auth.signInWithPassword({ email: e, password });
         if (error) throw error;
         if (data.user) {
-          await completeSignIn(data.user);
+          const signInResult = await completeSignIn(data.user);
+          if (signInResult.denied === 'account_locked') {
+            Alert.alert(t('accountLockedTitle'), t('accountLockedMessage'));
+            return;
+          }
           const { user, staff } = useAuthStore.getState();
           const { pendingRoom, clearPendingRoom } = useCustomerRoomStore.getState();
           if (!staff && pendingRoom && user?.email) {
