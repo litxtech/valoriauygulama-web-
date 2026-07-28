@@ -1,17 +1,20 @@
 import { useCallback, useState } from 'react';
 import {
   View,
+  Text,
   StyleSheet,
   FlatList,
   RefreshControl,
   ActivityIndicator,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useFocusEffect } from 'expo-router';
 import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
 import { PartnerEntryLedgerRow } from '@/components/breakfastPartner/PartnerEntryLedgerRow';
+import { PartnerLaundryLedgerRow } from '@/components/breakfastPartner/PartnerLaundryLedgerRow';
 import {
   PartnerBottomSheet,
   PartnerEmptyState,
@@ -29,16 +32,24 @@ import {
   upsertPartnerDailyEntry,
   type PartnerDailyEntryLedgerRow,
 } from '@/lib/breakfastPartner';
+import {
+  listPartnerLaundryLedger,
+  type PartnerLaundryLedgerRow as LaundryLedgerRow,
+} from '@/lib/breakfastPartnerLaundry';
 import { refreshPartnerAccountAfterPayment } from '@/lib/partnerAccountCache';
 import { PartnerStripeCheckoutHost } from '@/components/payment/PartnerStripeCheckoutHost';
 import { usePartnerStripeCheckout } from '@/hooks/usePartnerStripeCheckout';
-import { partnerTheme } from '@/lib/breakfastPartnerTheme';
+import { partnerRadii, partnerTheme } from '@/lib/breakfastPartnerTheme';
+
+type HistoryTab = 'breakfast' | 'laundry';
 
 export default function PartnerHistoryScreen() {
   const insets = useSafeAreaInsets();
   const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
   const partner = usePartnerAuthStore((s) => s.partner)!;
+  const [tab, setTab] = useState<HistoryTab>('breakfast');
   const [entries, setEntries] = useState<PartnerDailyEntryLedgerRow[]>([]);
+  const [laundryEntries, setLaundryEntries] = useState<LaundryLedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [payingEntryId, setPayingEntryId] = useState<string | null>(null);
@@ -56,15 +67,20 @@ export default function PartnerHistoryScreen() {
   );
 
   const load = useCallback(async () => {
-    try {
-      const rows = await listPartnerDailyEntriesLedger(90, partner.hotel.id);
-      setEntries(rows);
-    } catch {
-      setEntries([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    const [breakfastResult, laundryResult] = await Promise.allSettled([
+      listPartnerDailyEntriesLedger(90, partner.hotel.id),
+      listPartnerLaundryLedger(90, partner.hotel.id),
+    ]);
+    setEntries(breakfastResult.status === 'fulfilled' ? breakfastResult.value : []);
+    setLaundryEntries(laundryResult.status === 'fulfilled' ? laundryResult.value : []);
+    if (laundryResult.status === 'rejected') {
+      console.warn(
+        '[partner/history] laundry ledger',
+        laundryResult.reason instanceof Error ? laundryResult.reason.message : laundryResult.reason
+      );
     }
+    setLoading(false);
+    setRefreshing(false);
   }, [partner.hotel.id]);
 
   useFocusEffect(
@@ -74,7 +90,20 @@ export default function PartnerHistoryScreen() {
     }, [load])
   );
 
-  const payEntry = async (entry: PartnerDailyEntryLedgerRow) => {
+  const payBreakfastEntry = async (entry: PartnerDailyEntryLedgerRow) => {
+    if (!entry.agreement_id) {
+      Alert.alert('Hata', 'Bu kayıt için ödeme oluşturulamadı.');
+      return;
+    }
+    setPayingEntryId(entry.id);
+    try {
+      await startPayment({ agreementId: entry.agreement_id, amount: entry.amount_remaining }, entry.id);
+    } finally {
+      setPayingEntryId(null);
+    }
+  };
+
+  const payLaundryEntry = async (entry: LaundryLedgerRow) => {
     if (!entry.agreement_id) {
       Alert.alert('Hata', 'Bu kayıt için ödeme oluşturulamadı.');
       return;
@@ -123,43 +152,128 @@ export default function PartnerHistoryScreen() {
 
   return (
     <View style={styles.root}>
-      <PartnerScreenTitle title="Geçmiş kayıtlar" subtitle="Son 90 gün · ödeme ve düzenleme" />
+      <PartnerScreenTitle title="Geçmiş kayıtlar" subtitle="Kahvaltı ve çamaşır · ödeme / PDF" />
       <View style={styles.exportWrap}>
         <PartnerGlassCard>
           <PartnerReportExportButtons
             compact
-            hint="Son 90 günlük kayıtlarınızı PDF olarak alın veya yazdırın."
+            hint="Kahvaltı + çamaşır cari özetinizi PDF alın veya yazdırın."
             loadReport={() => loadPartnerPortalActivityReport(partner.hotel.id, 90)}
             disabled={loading}
           />
         </PartnerGlassCard>
       </View>
-      <FlatList
-        style={styles.list}
-        data={entries}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: scrollBottomPad, paddingHorizontal: 18, paddingTop: 8, flexGrow: 1 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={partnerTheme.accent} />
-        }
-        ListEmptyComponent={<PartnerEmptyState icon="calendar-outline" title="Henüz kayıt yok" body="İlk kahvaltı sayınızı ana sayfadan girebilirsiniz." />}
-        renderItem={({ item }) => (
-          <PartnerEntryLedgerRow
-            entry={item}
-            paying={payingEntryId === item.id || payingKey === item.id}
-            onPay={(row) => void payEntry(row)}
-            onEdit={openEdit}
-            showEdit={canEdit(item)}
-          />
-        )}
-      />
+
+      <View style={styles.segment}>
+        <TouchableOpacity
+          style={[styles.segmentBtn, tab === 'breakfast' && styles.segmentBtnActive]}
+          onPress={() => setTab('breakfast')}
+        >
+          <Text style={[styles.segmentText, tab === 'breakfast' && styles.segmentTextActive]}>
+            Kahvaltı ({entries.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.segmentBtn, tab === 'laundry' && styles.segmentBtnActive]}
+          onPress={() => setTab('laundry')}
+        >
+          <Text style={[styles.segmentText, tab === 'laundry' && styles.segmentTextActive]}>
+            Çamaşır ({laundryEntries.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {tab === 'breakfast' ? (
+        <FlatList
+          style={styles.list}
+          data={entries}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{
+            paddingBottom: scrollBottomPad,
+            paddingHorizontal: 18,
+            paddingTop: 8,
+            flexGrow: 1,
+          }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                void load();
+              }}
+              tintColor={partnerTheme.accent}
+            />
+          }
+          ListEmptyComponent={
+            <PartnerEmptyState
+              icon="calendar-outline"
+              title="Henüz kahvaltı kaydı yok"
+              body="İlk kahvaltı sayınızı ana sayfadan girebilirsiniz."
+            />
+          }
+          renderItem={({ item }) => (
+            <PartnerEntryLedgerRow
+              entry={item}
+              paying={payingEntryId === item.id || payingKey === item.id}
+              onPay={(row) => void payBreakfastEntry(row)}
+              onEdit={openEdit}
+              showEdit={canEdit(item)}
+            />
+          )}
+        />
+      ) : (
+        <FlatList
+          style={styles.list}
+          data={laundryEntries}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{
+            paddingBottom: scrollBottomPad,
+            paddingHorizontal: 18,
+            paddingTop: 8,
+            flexGrow: 1,
+          }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                void load();
+              }}
+              tintColor={partnerTheme.accent}
+            />
+          }
+          ListEmptyComponent={
+            <PartnerEmptyState
+              icon="shirt-outline"
+              title="Henüz çamaşır kaydı yok"
+              body="Personel yıkama kaydı girdiğinde burada görünecek; satırdan ödeyebilirsiniz."
+            />
+          }
+          renderItem={({ item }) => (
+            <PartnerLaundryLedgerRow
+              entry={item}
+              paying={payingEntryId === item.id || payingKey === item.id}
+              onPay={(row) => void payLaundryEntry(row)}
+            />
+          )}
+        />
+      )}
 
       <PartnerBottomSheet
         visible={!!editEntry}
-        title={editEntry ? `${formatPartnerDateTurkish(editEntry.record_date, { weekday: true })} · düzenle` : 'Düzenle'}
+        title={
+          editEntry
+            ? `${formatPartnerDateTurkish(editEntry.record_date, { weekday: true })} · düzenle`
+            : 'Düzenle'
+        }
         onClose={() => setEditEntry(null)}
       >
-        <PartnerField label="Kişi sayısı" value={editCount} onChangeText={setEditCount} keyboardType="number-pad" />
+        <PartnerField
+          label="Kişi sayısı"
+          value={editCount}
+          onChangeText={setEditCount}
+          keyboardType="number-pad"
+        />
         <PartnerField
           label="Not"
           value={editNote}
@@ -180,4 +294,19 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   exportWrap: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 },
   boot: { flex: 1, backgroundColor: partnerTheme.bg, alignItems: 'center', justifyContent: 'center' },
+  segment: {
+    flexDirection: 'row',
+    marginHorizontal: 18,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 4,
+    borderRadius: partnerRadii.md,
+    backgroundColor: partnerTheme.card,
+    borderWidth: 1,
+    borderColor: partnerTheme.cardBorder,
+  },
+  segmentBtn: { flex: 1, paddingVertical: 10, borderRadius: partnerRadii.sm, alignItems: 'center' },
+  segmentBtnActive: { backgroundColor: partnerTheme.accent },
+  segmentText: { color: partnerTheme.muted, fontWeight: '700', fontSize: 13 },
+  segmentTextActive: { color: '#0f172a' },
 });

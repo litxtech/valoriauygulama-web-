@@ -10,6 +10,8 @@ export type MrzDocumentOcrPassId =
   | 'document_crop'
   | 'full'
   | 'mrz_band'
+  | 'mrz_mid'
+  | 'sheet_center'
   | 'pro_full'
   | 'pro_document_crop'
   | 'pro_mrz_band'
@@ -29,6 +31,8 @@ export type MrzDocumentOcrResult = {
 };
 
 const GALLERY_REGION_PRIORITY = [
+  'mrz_mid',
+  'sheet_center',
   'mrz_band',
   'bottom_half',
   'document_crop',
@@ -86,9 +90,23 @@ function hasEnoughFastLines(lineSets: MrzDocumentOcrLineSet[], mrzFocused: boole
   const flat = flattenMrzDocumentOcrLineSets(lineSets);
   if (flat.length < 4) return false;
   // MRZ odaklı: band geçişi şart.
-  if (mrzFocused) return lineSets.some((s) => s.pass === 'mrz_band' || s.pass === 'pro_mrz_band');
+  if (mrzFocused) {
+    return lineSets.some(
+      (s) =>
+        s.pass === 'mrz_band' ||
+        s.pass === 'pro_mrz_band' ||
+        s.pass === 'mrz_mid' ||
+        s.pass === 'sheet_center'
+    );
+  }
   // Ön yüz TC kimlik: belge kırpımı yeterli olabilir — ama MRZ denenmeden çıkma (pasaport kırılır).
-  const hasBand = lineSets.some((s) => s.pass === 'mrz_band' || s.pass === 'pro_mrz_band');
+  const hasBand = lineSets.some(
+    (s) =>
+      s.pass === 'mrz_band' ||
+      s.pass === 'pro_mrz_band' ||
+      s.pass === 'mrz_mid' ||
+      s.pass === 'sheet_center'
+  );
   if (!hasBand) return false;
   return lineSets.some((s) => s.pass === 'document_crop') && flat.length >= 6;
 }
@@ -230,18 +248,20 @@ export async function ocrLinesForGalleryDocument(uri: string): Promise<MrzDocume
 export function flattenMrzDocumentOcrLineSets(lineSets: MrzDocumentOcrLineSet[]): string[] {
   const ordered = [...lineSets].sort((a, b) => {
     const rank: Record<string, number> = {
-      pro_mrz_band: 0,
-      mrz_band: 1,
-      bottom_half: 2,
-      pro_document_crop: 3,
-      document_crop: 4,
-      center: 5,
-      top_half: 6,
-      pro_full: 7,
-      full: 8,
+      mrz_mid: 0,
+      sheet_center: 1,
+      pro_mrz_band: 2,
+      mrz_band: 3,
+      bottom_half: 4,
+      pro_document_crop: 5,
+      document_crop: 6,
+      center: 7,
+      top_half: 8,
+      pro_full: 9,
+      full: 10,
     };
-    const ra = rank[a.pass] ?? (String(a.pass).endsWith('_expo') ? 9 : 10);
-    const rb = rank[b.pass] ?? (String(b.pass).endsWith('_expo') ? 9 : 10);
+    const ra = rank[a.pass] ?? (String(a.pass).endsWith('_expo') ? 11 : 12);
+    const rb = rank[b.pass] ?? (String(b.pass).endsWith('_expo') ? 11 : 12);
     return ra - rb;
   });
   return [...new Set(ordered.flatMap((s) => s.lines.map((l) => l.trim()).filter(Boolean)))];

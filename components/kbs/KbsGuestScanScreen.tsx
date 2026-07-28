@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, View, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect, useNavigation, usePathname, type Href } from 'expo-router';
+import type { NavigationProp, ParamListBase } from '@react-navigation/native';
 import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { useTranslation } from 'react-i18next';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -43,7 +44,7 @@ export function KbsGuestScanScreen({ deniedFallback = '/staff' }: Props) {
   const isGroup = mode === 'group' || mode === 'family' || (session?.sessionType !== 'single');
 
   const goBack = useCallback(() => {
-    navigateStaffBack(router, navigation, pathname, (deniedFallback as Href) ?? STAFF_TABS_FALLBACK);
+    navigateStaffBack(router, navigation as NavigationProp<ParamListBase>, pathname, (deniedFallback as Href) ?? STAFF_TABS_FALLBACK);
   }, [router, navigation, pathname, deniedFallback]);
 
   useEffect(() => {

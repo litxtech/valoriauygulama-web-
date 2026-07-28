@@ -1,10 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { formatIsoDateTr } from '@/lib/scanner/mrzDates';
 import { formatIcao3ForTr } from '@/lib/scanner/mrzIssuingLabel';
+import { KbsPersonAvatar } from '@/components/kbs/KbsPersonAvatar';
 
 type Props = {
   index: number;
@@ -51,7 +51,7 @@ export function NfcFamilyMemberCard({ index, parsed, portraitUri, onPress, onRem
         <View style={styles.indexBadge}>
           <Text style={styles.indexText}>{index + 1}</Text>
         </View>
-        <Image source={{ uri: portraitUri }} style={styles.portrait} contentFit="cover" />
+        <KbsPersonAvatar uri={portraitUri} size={52} sourceKind="portrait" fallbackLabel={name} />
         <View style={styles.headerBody}>
           <Text style={styles.name} numberOfLines={2}>
             {name}
@@ -110,14 +110,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   indexText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  portrait: {
-    width: 52,
-    height: 66,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
   headerBody: { flex: 1, minWidth: 0 },
   name: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
   docNo: { fontSize: 13, color: '#64748b', marginTop: 2, fontWeight: '600' },

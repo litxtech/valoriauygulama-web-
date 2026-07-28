@@ -23,7 +23,7 @@ export const STAFF_NOTIFICATION_DESTINATIONS: StaffNotificationDestination[] = [
   { id: 'fnb_hub', label: 'F&B Merkezi', href: '/staff/fnb-hub', group: 'F&B' },
   { id: 'meal_menu', label: 'Personel yemek listesi', href: '/staff/meal-menu', group: 'Personel' },
   { id: 'breakfast_confirm', label: 'Kahvaltı teyidi', href: '/staff/breakfast-confirm', group: 'Personel' },
-  { id: 'cleaning_plan', label: 'Yarın temizlik planı', href: '/staff/cleaning-plan', group: 'Personel' },
+  { id: 'cleaning_plan', label: 'Temizlik', href: '/staff/cleaning-plan', group: 'Personel' },
   { id: 'department_rules', label: 'Bölüm kuralları', href: '/staff/department-rules', group: 'Personel' },
   { id: 'payments', label: 'Tahsilat merkezi', href: '/staff/payments', group: 'Finans' },
   { id: 'expenses', label: 'Harcamalarım', href: '/staff/expenses', group: 'Finans' },

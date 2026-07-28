@@ -193,6 +193,8 @@ function resolveByNotificationType(
     case 'breakfast_partner_remind':
     case 'breakfast_partner_suspended':
       return '/partner/(tabs)';
+    case 'breakfast_partner_laundry':
+      return '/partner/(tabs)/history';
     case 'breakfast_partner_camera_video': {
       const requestId = pickStr(data, 'requestId', 'request_id');
       if (requestId) {
@@ -263,6 +265,11 @@ function resolveByNotificationType(
       return '/staff/messages';
     case 'kbs_document_captured':
       return '/staff/kbs/capture-history';
+    case 'kbs_returning_guest': {
+      const docId = pickStr(data, 'guestDocumentId', 'documentId');
+      if (docId) return `/staff/kbs/capture/${docId}` as Href;
+      return '/staff/kbs/capture-history';
+    }
     case 'payment_received':
     case 'payment_failed':
     case 'admin_payment_received':
@@ -350,15 +357,17 @@ export function resolveNotificationHref(
     return '/staff/room-linen';
   }
 
-  if (
-    notificationType === 'staff_room_cleaning_status' ||
-    notificationType === 'staff_room_cleaning_plan_note_saved' ||
-    url === '/staff/cleaning-plan'
-  ) {
   if (url === '/staff/kbs/ready' || url === '/staff/kbs/capture-history') {
     return '/staff/kbs/capture-history';
   }
 
+  if (
+    notificationType === 'staff_room_cleaning_status' ||
+    notificationType === 'staff_room_cleaning_plan_note_saved' ||
+    notificationType === 'staff_room_cleaning_plan' ||
+    url === '/staff/cleaning-plan' ||
+    url === '/staff/housekeeping-board'
+  ) {
     return '/staff/cleaning-plan';
   }
 

@@ -67,6 +67,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/lost-found': 'emanet_buluntu',
   '/admin/facility-journal': 'tesis_gunlugu',
   '/admin/audits': 'denetim_panosu',
+  '/admin/staff-perf': 'denetim_panosu',
   '/admin/performance': 'performans_paneli',
   '/admin/contracts': 'tum_sozlesmeler',
   '/admin/managed-contracts': 'sozlesme_yonetimi',
@@ -127,6 +128,13 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
   if (href.startsWith('/admin/camera-requests')) return staff.role === 'admin';
   if (href.startsWith('/admin/trade-partners')) return staff.role === 'admin';
   if (href.startsWith('/staff/blacklist')) return canViewSecurityBlacklist(staff);
+  if (href === '/staff/housekeeping-board' || href === '/staff/cleaning-plan') {
+    return (
+      hasStaffAppPermission(staff, 'housekeeping_yonetim') ||
+      hasStaffAppPermission(staff, 'doluluk_operasyon') ||
+      hasStaffAppPermission(staff, 'yarin_oda_temizlik_listesi')
+    );
+  }
 
   const key = adminRoutePermissionKey(href);
   if (key) return hasStaffAppPermission(staff, key);

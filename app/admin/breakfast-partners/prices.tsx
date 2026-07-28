@@ -22,6 +22,7 @@ function AdminBreakfastPartnerPricesForm() {
   const insets = useSafeAreaInsets();
   const { orgId } = useBreakfastPartnerProviderOrgId();
   const [defaultPrice, setDefaultPrice] = useState(0);
+  const [defaultLaundryPrice, setDefaultLaundryPrice] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editorKey, setEditorKey] = useState(0);
 
@@ -32,6 +33,7 @@ function AdminBreakfastPartnerPricesForm() {
     }
     const settings = await fetchPartnerSettings(orgId);
     setDefaultPrice(settings?.default_unit_price ?? 0);
+    setDefaultLaundryPrice(settings?.default_laundry_unit_price ?? 0);
     setLoading(false);
   }, [orgId]);
 
@@ -57,10 +59,11 @@ function AdminBreakfastPartnerPricesForm() {
         <Text style={styles.backText}>Geri</Text>
       </TouchableOpacity>
 
-      <Text style={styles.title}>Otel bazlı kahvaltı fiyatları</Text>
+      <Text style={styles.title}>Otel bazlı fiyatlar</Text>
       <Text style={styles.subtitle}>
-        Her partner otel için ayrı kişi başı ücret tanımlayın. Varsayılan:{' '}
-        {defaultPrice > 0 ? fmtPartnerMoney(defaultPrice) : '—'} / kişi
+        Kahvaltı ve çamaşır birim ücretlerini otel bazında tanımlayın. Varsayılan:{' '}
+        {defaultPrice > 0 ? fmtPartnerMoney(defaultPrice) : '—'} / kişi ·{' '}
+        {defaultLaundryPrice > 0 ? fmtPartnerMoney(defaultLaundryPrice) : '—'} / çamaşır
       </Text>
 
       <TouchableOpacity style={styles.linkRow} onPress={() => router.push('/admin/breakfast-partners/settings')}>
@@ -75,6 +78,7 @@ function AdminBreakfastPartnerPricesForm() {
           key={editorKey}
           organizationId={orgId}
           defaultUnitPrice={defaultPrice}
+          defaultLaundryUnitPrice={defaultLaundryPrice}
           onSaved={() => setEditorKey((k) => k + 1)}
         />
       )}

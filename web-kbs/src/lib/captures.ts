@@ -490,6 +490,114 @@ export function normalizePhone(raw: string | null | undefined): string | null {
   return cleaned ? cleaned : null;
 }
 
+export function phoneDigits(phone: string | null | undefined): string {
+  return String(phone ?? '').replace(/\D/g, '');
+}
+
+export function phonesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const da = phoneDigits(a);
+  const db = phoneDigits(b);
+  if (da.length < 7 || db.length < 7) return false;
+  if (da === db) return true;
+  const canon = (d: string): string => {
+    let x = d;
+    if (x.startsWith('00')) x = x.slice(2);
+    if (x.startsWith('90') && x.length >= 12) x = x.slice(2);
+    if (x.startsWith('0') && x.length >= 11) x = x.slice(1);
+    return x.length > 10 ? x.slice(-10) : x;
+  };
+  const ca = canon(da);
+  const cb = canon(db);
+  return ca.length >= 7 && ca === cb;
+}
+
+export type DuplicatePhoneHit = {
+  documentId: string;
+  guestName: string;
+  phone: string;
+  capturedAt: string;
+  roomNumber: string | null;
+  hotelName: string | null;
+};
+
+/** Aynı telefonu taşıyan önceki çekim kaydı. */
+export async function findDuplicatePhoneHit(opts: {
+  phone: string;
+  excludeDocumentId: string;
+  hotelId?: string | null;
+  items?: CaptureItem[];
+}): Promise<DuplicatePhoneHit | null> {
+  const needle = normalizePhone(opts.phone);
+  if (!needle || phoneDigits(needle).length < 7) return null;
+
+  const fromItems = (opts.items ?? [])
+    .filter(
+      (it) =>
+        it.id !== opts.excludeDocumentId &&
+        phonesMatch(needle, it.guest_phone_submitted)
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.captured_at ?? a.created_at).getTime() -
+        new Date(b.captured_at ?? b.created_at).getTime()
+    );
+
+  if (fromItems[0]) {
+    const it = fromItems[0];
+    return {
+      documentId: it.id,
+      guestName: kbsDisplayNameFallback(it),
+      phone: it.guest_phone_submitted ?? needle,
+      capturedAt: it.captured_at ?? it.created_at,
+      roomNumber: it.room_number,
+      hotelName: it.hotel_name ?? it.captured_by_hotel_name ?? null,
+    };
+  }
+
+  let q = supabase
+    .schema('ops')
+    .from('guest_documents')
+    .select(
+      'id, guest_phone_submitted, captured_at, created_at, parsed_payload, document_number'
+    )
+    .not('guest_phone_submitted', 'is', null)
+    .neq('id', opts.excludeDocumentId)
+    .order('captured_at', { ascending: true })
+    .limit(300);
+
+  if (opts.hotelId) q = q.eq('hotel_id', opts.hotelId);
+
+  const { data, error } = await q;
+  if (error || !data) return null;
+
+  for (const raw of data as Array<Record<string, unknown>>) {
+    const phone = normalizePhone(
+      typeof raw.guest_phone_submitted === 'string' ? raw.guest_phone_submitted : null
+    );
+    if (!phone || !phonesMatch(needle, phone)) continue;
+    const parsed = raw.parsed_payload as { firstName?: string; lastName?: string } | null;
+    const guestName =
+      [parsed?.firstName, parsed?.lastName].filter(Boolean).join(' ').trim() ||
+      (typeof raw.document_number === 'string' ? raw.document_number : null) ||
+      '—';
+    return {
+      documentId: String(raw.id),
+      guestName,
+      phone,
+      capturedAt: String(raw.captured_at ?? raw.created_at ?? ''),
+      roomNumber: null,
+      hotelName: null,
+    };
+  }
+  return null;
+}
+
+function kbsDisplayNameFallback(it: CaptureItem): string {
+  const p = it.parsed;
+  const n = [p?.firstName, p?.lastName].filter(Boolean).join(' ').trim();
+  return n || p?.documentNumber || '—';
+}
+
 export async function updateCaptureGuestPhone(docId: string, phone: string | null): Promise<void> {
   const value = normalizePhone(phone);
   const { error } = await supabase
@@ -650,6 +758,42 @@ export function familyMembersOf(item: CaptureItem, index: Map<string, CaptureIte
   if (!item.mrz_batch_key) return [];
   const arr = index.get(item.mrz_batch_key) ?? [];
   return arr.length > 1 ? arr : [];
+}
+
+const ROOMMATE_TIME_MS = 4 * 60 * 60 * 1000;
+const MAX_ROOMMATES = 24;
+
+function captureTs(item: CaptureItem): number {
+  return captureDate(item).getTime();
+}
+
+/** Aynı odadaki veya aynı partideki pasaportlar — kaydırarak gezinme için. */
+export function roommatesOf(item: CaptureItem, items: CaptureItem[]): CaptureItem[] {
+  const batchKey = item.mrz_batch_key?.trim();
+  if (batchKey) {
+    const batch = items.filter((r) => r.mrz_batch_key?.trim() === batchKey);
+    if (batch.length >= 2) {
+      return [...batch].sort((a, b) => captureTs(b) - captureTs(a)).slice(0, MAX_ROOMMATES);
+    }
+  }
+
+  const room = item.room_number?.trim();
+  if (room) {
+    const sameRoom = items.filter((r) => r.room_number?.trim() === room);
+    if (sameRoom.length >= 2) {
+      const anchor = captureTs(item);
+      const clustered = sameRoom.filter((r) => Math.abs(captureTs(r) - anchor) <= ROOMMATE_TIME_MS);
+      const group = clustered.length >= 2 ? clustered : sameRoom;
+      return [...group].sort((a, b) => captureTs(b) - captureTs(a)).slice(0, MAX_ROOMMATES);
+    }
+  }
+
+  return [item];
+}
+
+export function indexOfRoommate(itemId: string, roommates: CaptureItem[]): number {
+  const idx = roommates.findIndex((r) => r.id === itemId);
+  return idx >= 0 ? idx : 0;
 }
 
 export function captureDate(item: CaptureItem): Date {

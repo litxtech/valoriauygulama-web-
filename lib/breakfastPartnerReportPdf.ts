@@ -23,12 +23,32 @@ import {
   type PartnerDailyEntryLedgerRow,
   type PartnerPaymentRow,
 } from '@/lib/breakfastPartner';
+import {
+  fetchPartnerLaundryMonthStats,
+  formatLaundryQty,
+  listPartnerLaundryLedger,
+  partnerLaundryPayLabel,
+  resolveEffectiveLaundryUnitPrice,
+  type PartnerLaundryLedgerRow,
+} from '@/lib/breakfastPartnerLaundry';
 
 export type PartnerActivityReportEntry = {
   record_date: string;
   guest_count: number;
   unit_price_snapshot: number;
   line_total: number;
+  note: string | null;
+  amount_remaining?: number;
+};
+
+export type PartnerLaundryReportEntry = {
+  wash_date: string;
+  quantity: number;
+  unit_label: string;
+  unit_price_snapshot: number;
+  line_total: number;
+  guest_name: string | null;
+  room_number: string | null;
   note: string | null;
   amount_remaining?: number;
 };
@@ -49,6 +69,7 @@ export type PartnerActivityReportData = {
     iban?: string | null;
     statusLabel: string;
     unitPrice: number;
+    laundryUnitPrice?: number;
     registeredAt?: string | null;
   };
   summary: {
@@ -60,8 +81,14 @@ export type PartnerActivityReportData = {
     periodGuestTotal: number;
     periodAmountTotal: number;
     entryCount: number;
+    monthLaundryQty: number;
+    monthLaundryAmount: number;
+    periodLaundryQty: number;
+    periodLaundryAmount: number;
+    laundryEntryCount: number;
   };
   entries: PartnerActivityReportEntry[];
+  laundryEntries: PartnerLaundryReportEntry[];
   payments: PartnerPaymentRow[];
 };
 
@@ -108,7 +135,8 @@ function resolvePeriodLabel(entries: PartnerActivityReportEntry[], days: number)
 
 function mapHotelToReportHotel(
   hotel: BreakfastPartnerHotel,
-  unitPrice: number
+  unitPrice: number,
+  laundryUnitPrice = 0
 ): PartnerActivityReportData['hotel'] {
   return {
     name: hotel.name,
@@ -122,8 +150,17 @@ function mapHotelToReportHotel(
     iban: hotel.iban,
     statusLabel: PARTNER_STATUS_LABELS[hotel.status as BreakfastPartnerHotelStatus] ?? hotel.status,
     unitPrice,
+    laundryUnitPrice,
     registeredAt: hotel.created_at?.slice(0, 10) ?? null,
   };
+}
+
+function laundryPayStatus(entry: PartnerLaundryReportEntry): string {
+  if (entry.amount_remaining == null) return '—';
+  return partnerLaundryPayLabel({
+    quantity: entry.quantity,
+    amount_remaining: entry.amount_remaining,
+  });
 }
 
 async function fetchOrgName(organizationId: string): Promise<string> {
@@ -154,8 +191,10 @@ async function fetchAdminPartnerPayments(counterpartyId: string, limit = 60): Pr
 
 function buildSummary(
   entries: PartnerActivityReportEntry[],
+  laundryEntries: PartnerLaundryReportEntry[],
   openBalance: number,
   monthStats: { monthGuestTotal: number; monthAmountTotal: number },
+  laundryMonth: { monthQty: number; monthAmount: number },
   lifetimeTotal: number,
   payments: PartnerPaymentRow[]
 ): PartnerActivityReportData['summary'] {
@@ -168,7 +207,26 @@ function buildSummary(
     periodGuestTotal: entries.reduce((s, e) => s + e.guest_count, 0),
     periodAmountTotal: entries.reduce((s, e) => s + e.line_total, 0),
     entryCount: entries.length,
+    monthLaundryQty: laundryMonth.monthQty,
+    monthLaundryAmount: laundryMonth.monthAmount,
+    periodLaundryQty: laundryEntries.reduce((s, e) => s + e.quantity, 0),
+    periodLaundryAmount: laundryEntries.reduce((s, e) => s + e.line_total, 0),
+    laundryEntryCount: laundryEntries.length,
   };
+}
+
+function mapLaundryLedgerEntries(rows: PartnerLaundryLedgerRow[]): PartnerLaundryReportEntry[] {
+  return rows.map((e) => ({
+    wash_date: e.wash_date,
+    quantity: e.quantity,
+    unit_label: e.unit_label,
+    unit_price_snapshot: e.unit_price_snapshot,
+    line_total: e.line_total,
+    guest_name: e.guest_name,
+    room_number: e.room_number,
+    note: e.note,
+    amount_remaining: e.amount_remaining,
+  }));
 }
 
 function mapLedgerEntries(rows: PartnerDailyEntryLedgerRow[]): PartnerActivityReportEntry[] {
@@ -199,32 +257,50 @@ export async function loadPartnerPortalActivityReport(
   partnerHotelId: string,
   days = 365
 ): Promise<PartnerActivityReportData> {
-  const [ledgerRows, payments, openBalance, monthStats, lifetimeTotal] = await Promise.all([
-    listPartnerDailyEntriesLedger(Math.min(days, 365), partnerHotelId),
-    fetchPartnerPaymentHistory(60).catch(() => [] as PartnerPaymentRow[]),
-    fetchPartnerPortalOpenBalance(),
-    fetchPartnerMonthStats(partnerHotelId).catch(() => ({
-      monthGuestTotal: 0,
-      monthAmountTotal: 0,
-      entryCount: 0,
-    })),
-    fetchPartnerLifetimeAmountTotal(partnerHotelId).catch(() => 0),
-  ]);
+  const [ledgerRows, laundryRows, payments, openBalance, monthStats, laundryMonth, lifetimeTotal] =
+    await Promise.all([
+      listPartnerDailyEntriesLedger(Math.min(days, 365), partnerHotelId),
+      listPartnerLaundryLedger(Math.min(days, 365), partnerHotelId).catch(
+        () => [] as PartnerLaundryLedgerRow[]
+      ),
+      fetchPartnerPaymentHistory(60).catch(() => [] as PartnerPaymentRow[]),
+      fetchPartnerPortalOpenBalance(),
+      fetchPartnerMonthStats(partnerHotelId).catch(() => ({
+        monthGuestTotal: 0,
+        monthAmountTotal: 0,
+        entryCount: 0,
+      })),
+      fetchPartnerLaundryMonthStats(partnerHotelId).catch(() => ({ monthQty: 0, monthAmount: 0 })),
+      fetchPartnerLifetimeAmountTotal(partnerHotelId).catch(() => 0),
+    ]);
 
   const hotel = await fetchPartnerHotel(partnerHotelId);
   if (!hotel) throw new Error('Partner otel bulunamadı');
 
-  const unitPrice = await resolveEffectiveUnitPrice(hotel);
-  const providerName = await fetchOrgName(hotel.organization_id);
+  const [unitPrice, laundryUnitPrice, providerName] = await Promise.all([
+    resolveEffectiveUnitPrice(hotel),
+    resolveEffectiveLaundryUnitPrice(hotel),
+    fetchOrgName(hotel.organization_id),
+  ]);
   const entries = mapLedgerEntries(ledgerRows);
+  const laundryEntries = mapLaundryLedgerEntries(laundryRows);
 
   return {
     generatedAt: new Date().toISOString(),
     periodLabel: resolvePeriodLabel(entries, days),
     providerName,
-    hotel: mapHotelToReportHotel(hotel, unitPrice),
-    summary: buildSummary(entries, openBalance, monthStats, lifetimeTotal, payments),
+    hotel: mapHotelToReportHotel(hotel, unitPrice, laundryUnitPrice),
+    summary: buildSummary(
+      entries,
+      laundryEntries,
+      openBalance,
+      monthStats,
+      laundryMonth,
+      lifetimeTotal,
+      payments
+    ),
     entries,
+    laundryEntries,
     payments,
   };
 }
@@ -238,34 +314,55 @@ export async function loadAdminPartnerActivityReport(
   if (!hotel) throw new Error('Partner otel bulunamadı');
 
   const limit = Math.min(days, 365);
-  const [entryRows, payments, openBalance, monthStats, lifetimeTotal, unitPrice, providerName] =
-    await Promise.all([
-      listPartnerDailyEntries(partnerHotelId, { limit }),
-      hotel.counterparty_id
-        ? fetchAdminPartnerPayments(hotel.counterparty_id, 60)
-        : Promise.resolve([] as PartnerPaymentRow[]),
-      hotel.counterparty_id
-        ? fetchPartnerOpenBalance(hotel.counterparty_id)
-        : Promise.resolve(0),
-      fetchPartnerMonthStats(partnerHotelId).catch(() => ({
-        monthGuestTotal: 0,
-        monthAmountTotal: 0,
-        entryCount: 0,
-      })),
-      fetchPartnerLifetimeAmountTotal(partnerHotelId).catch(() => 0),
-      resolveEffectiveUnitPrice(hotel),
-      fetchOrgName(hotel.organization_id),
-    ]);
+  const [
+    entryRows,
+    laundryRows,
+    payments,
+    openBalance,
+    monthStats,
+    laundryMonth,
+    lifetimeTotal,
+    unitPrice,
+    laundryUnitPrice,
+    providerName,
+  ] = await Promise.all([
+    listPartnerDailyEntries(partnerHotelId, { limit }),
+    listPartnerLaundryLedger(limit, partnerHotelId).catch(() => [] as PartnerLaundryLedgerRow[]),
+    hotel.counterparty_id
+      ? fetchAdminPartnerPayments(hotel.counterparty_id, 60)
+      : Promise.resolve([] as PartnerPaymentRow[]),
+    hotel.counterparty_id ? fetchPartnerOpenBalance(hotel.counterparty_id) : Promise.resolve(0),
+    fetchPartnerMonthStats(partnerHotelId).catch(() => ({
+      monthGuestTotal: 0,
+      monthAmountTotal: 0,
+      entryCount: 0,
+    })),
+    fetchPartnerLaundryMonthStats(partnerHotelId).catch(() => ({ monthQty: 0, monthAmount: 0 })),
+    fetchPartnerLifetimeAmountTotal(partnerHotelId).catch(() => 0),
+    resolveEffectiveUnitPrice(hotel),
+    resolveEffectiveLaundryUnitPrice(hotel),
+    fetchOrgName(hotel.organization_id),
+  ]);
 
   const entries = mapPlainEntries(entryRows);
+  const laundryEntries = mapLaundryLedgerEntries(laundryRows);
 
   return {
     generatedAt: new Date().toISOString(),
     periodLabel: resolvePeriodLabel(entries, days),
     providerName,
-    hotel: mapHotelToReportHotel(hotel, unitPrice),
-    summary: buildSummary(entries, openBalance, monthStats, lifetimeTotal, payments),
+    hotel: mapHotelToReportHotel(hotel, unitPrice, laundryUnitPrice),
+    summary: buildSummary(
+      entries,
+      laundryEntries,
+      openBalance,
+      monthStats,
+      laundryMonth,
+      lifetimeTotal,
+      payments
+    ),
     entries,
+    laundryEntries,
     payments,
   };
 }
@@ -297,6 +394,7 @@ const REPORT_CSS = `
 export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData): string {
   const h = data.hotel;
   const s = data.summary;
+  const laundryEntries = data.laundryEntries ?? [];
 
   const partnerMeta = [
     h.contactName,
@@ -307,6 +405,9 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
     h.taxOffice,
     h.iban,
     `${fmtPartnerMoney(h.unitPrice)}/kişi`,
+    h.laundryUnitPrice && h.laundryUnitPrice > 0
+      ? `${fmtPartnerMoney(h.laundryUnitPrice)}/çamaşır`
+      : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -320,6 +421,22 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
         <td>${esc(entryPayStatus(e))}</td>
       </tr>`
     )
+    .join('');
+
+  const laundryRows = laundryEntries
+    .map((e) => {
+      const who = [e.room_number ? `Oda ${e.room_number}` : null, e.guest_name || null]
+        .filter(Boolean)
+        .join(' · ');
+      const detail = [who || null, e.note || null].filter(Boolean).join(' — ') || '—';
+      return `<tr>
+        <td>${esc(formatPartnerDateTurkish(e.wash_date))}</td>
+        <td class="num">${esc(formatLaundryQty(e.quantity, e.unit_label))}</td>
+        <td>${esc(detail)}</td>
+        <td class="num">${esc(fmtPartnerMoney(e.line_total))}</td>
+        <td>${esc(laundryPayStatus(e))}</td>
+      </tr>`;
+    })
     .join('');
 
   const paymentRows = data.payments
@@ -344,7 +461,7 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
 <body>
   <div class="header">
     <div>
-      <div class="brand">${esc(data.providerName)} · Kahvaltı cari</div>
+      <div class="brand">${esc(data.providerName)} · Partner cari</div>
       <div class="partnerLine"><strong>${esc(h.name)}</strong></div>
       ${partnerMeta ? `<div class="partnerMeta">${esc(partnerMeta)}</div>` : ''}
     </div>
@@ -365,15 +482,15 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
       <div class="summaryVal">${s.monthGuestTotal}</div>
     </div>
     <div class="summaryCard">
-      <div class="summaryLbl">Bu ay tutar</div>
+      <div class="summaryLbl">Bu ay kahvaltı</div>
       <div class="summaryVal">${esc(fmtPartnerMoney(s.monthAmountTotal))}</div>
     </div>
     <div class="summaryCard">
-      <div class="summaryLbl">Dönem kişi</div>
-      <div class="summaryVal">${s.periodGuestTotal}</div>
+      <div class="summaryLbl">Bu ay çamaşır</div>
+      <div class="summaryVal">${esc(fmtPartnerMoney(s.monthLaundryAmount))}</div>
     </div>
     <div class="summaryCard">
-      <div class="summaryLbl">Dönem tutar</div>
+      <div class="summaryLbl">Dönem kahvaltı</div>
       <div class="summaryVal">${esc(fmtPartnerMoney(s.periodAmountTotal))}</div>
     </div>
     <div class="summaryCard">
@@ -382,7 +499,7 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
     </div>
   </div>
 
-  <div class="sectionTitle">Günlük kayıtlar (${s.entryCount})</div>
+  <div class="sectionTitle">Kahvaltı kayıtları (${s.entryCount})</div>
   ${
     data.entries.length
       ? `<table class="data">
@@ -396,7 +513,25 @@ export function buildBreakfastPartnerReportHtml(data: PartnerActivityReportData)
     </thead>
     <tbody>${entryRows}</tbody>
   </table>`
-      : `<p class="muted">Kayıt yok.</p>`
+      : `<p class="muted">Kahvaltı kaydı yok.</p>`
+  }
+
+  <div class="sectionTitle">Çamaşır kayıtları (${s.laundryEntryCount})</div>
+  ${
+    laundryEntries.length
+      ? `<table class="data">
+    <thead>
+      <tr>
+        <th>Tarih</th>
+        <th>Miktar</th>
+        <th>Kişi / Oda</th>
+        <th>Tutar</th>
+        <th>Durum</th>
+      </tr>
+    </thead>
+    <tbody>${laundryRows}</tbody>
+  </table>`
+      : `<p class="muted">Çamaşır kaydı yok.</p>`
   }
 
   <div class="sectionTitle">Tahsilatlar (${data.payments.length})</div>

@@ -20,7 +20,13 @@ export const StaffHamburgerNavigationHost = memo(function StaffHamburgerNavigati
 
     const state = useStaffHamburgerUiStore.getState();
 
-    if (state.navigatingAway && !isStaffFeedHomePath(pathname)) {
+    // navigatingAway Modal Android'de geri tuşunu yutar — hedef sayfaya geçince hemen kapat.
+    if (state.navigatingAway) {
+      if (!isStaffFeedHomePath(pathname)) {
+        state.finishNavTransition();
+        return;
+      }
+      // Hâlâ feed'deyse (push gecikti) kısa süre sonra temizle.
       InteractionManager.runAfterInteractions(() => {
         const next = useStaffHamburgerUiStore.getState();
         if (next.navigatingAway) next.finishNavTransition();

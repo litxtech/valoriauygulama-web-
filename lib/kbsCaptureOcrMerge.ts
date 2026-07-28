@@ -256,32 +256,48 @@ export function mergeKbsOcrIntoExisting(
     [firstName, lastName].filter(Boolean).join(' ').trim() ||
     pickString(ex.fullName, inc.fullName, incNamesTrusted);
 
+  // Checksum-geçerli MRZ kimlik kümesini ezer (eski hatalı OCR kalmasın).
+  const incMrzTrusted = inc.checksumsValid === true && !!inc.rawMrz;
+  const exMrzTrusted = ex.checksumsValid === true && !!ex.rawMrz;
+
   const documentNumber =
     opts?.correction && hasTrustedDocNumber(inc)
       ? inc.documentNumber
-      : hasTrustedDocNumber(ex)
-        ? ex.documentNumber
-        : hasTrustedDocNumber(inc)
-          ? inc.documentNumber
-          : pickString(ex.documentNumber, inc.documentNumber, !!inc.rawMrz);
+      : incMrzTrusted && hasTrustedDocNumber(inc)
+        ? inc.documentNumber
+        : exMrzTrusted && hasTrustedDocNumber(ex)
+          ? ex.documentNumber
+          : hasTrustedDocNumber(ex)
+            ? ex.documentNumber
+            : hasTrustedDocNumber(inc)
+              ? inc.documentNumber
+              : pickString(ex.documentNumber, inc.documentNumber, !!inc.rawMrz);
 
   const birthDate =
     opts?.correction && inc.birthDate && isPlausibleBirthDate(inc.birthDate)
       ? inc.birthDate
-      : ex.birthDate && isPlausibleBirthDate(ex.birthDate)
-        ? ex.birthDate
-        : inc.birthDate && isPlausibleBirthDate(inc.birthDate)
-          ? inc.birthDate
-          : null;
+      : incMrzTrusted && inc.birthDate && isPlausibleBirthDate(inc.birthDate)
+        ? inc.birthDate
+        : exMrzTrusted && ex.birthDate && isPlausibleBirthDate(ex.birthDate)
+          ? ex.birthDate
+          : ex.birthDate && isPlausibleBirthDate(ex.birthDate)
+            ? ex.birthDate
+            : inc.birthDate && isPlausibleBirthDate(inc.birthDate)
+              ? inc.birthDate
+              : null;
 
   const expiryDate =
     opts?.correction && inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
       ? inc.expiryDate
-      : ex.expiryDate && isPlausibleExpiryDate(ex.expiryDate)
-        ? ex.expiryDate
-        : inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
-          ? inc.expiryDate
-          : null;
+      : incMrzTrusted && inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
+        ? inc.expiryDate
+        : exMrzTrusted && ex.expiryDate && isPlausibleExpiryDate(ex.expiryDate)
+          ? ex.expiryDate
+          : ex.expiryDate && isPlausibleExpiryDate(ex.expiryDate)
+            ? ex.expiryDate
+            : inc.expiryDate && isPlausibleExpiryDate(inc.expiryDate)
+              ? inc.expiryDate
+              : null;
 
   const mergedWarnings = [
     ...(ex.warnings ?? []).filter(
@@ -307,13 +323,38 @@ export function mergeKbsOcrIntoExisting(
     warnings.push('manual_capture');
   }
 
-  const mergedRawMrz = ex.rawMrz ?? inc.rawMrz;
+  const mergedRawMrz = incMrzTrusted
+    ? inc.rawMrz
+    : exMrzTrusted
+      ? ex.rawMrz
+      : ex.rawMrz ?? inc.rawMrz;
   // TD3 pasaport MRZ'si varsa ön yüz OCR 'id_card' tahminini ezer.
   const mergedDocumentType = /^P[A-Z<]/.test(mergedRawMrz ?? '')
     ? 'passport'
     : ex.documentType !== 'other'
       ? ex.documentType
       : inc.documentType;
+
+  const nationalityCode = incMrzTrusted
+    ? inc.nationalityCode ?? ex.nationalityCode
+    : exMrzTrusted
+      ? ex.nationalityCode ?? inc.nationalityCode
+      : ex.nationalityCode ?? inc.nationalityCode;
+  const issuingCountryCode = incMrzTrusted
+    ? inc.issuingCountryCode ?? ex.issuingCountryCode
+    : exMrzTrusted
+      ? ex.issuingCountryCode ?? inc.issuingCountryCode
+      : ex.issuingCountryCode ?? inc.issuingCountryCode;
+  const gender = incMrzTrusted
+    ? inc.gender ?? ex.gender
+    : exMrzTrusted
+      ? ex.gender ?? inc.gender
+      : ex.gender ?? inc.gender;
+  const checksumsValid = incMrzTrusted
+    ? inc.checksumsValid
+    : exMrzTrusted
+      ? ex.checksumsValid
+      : ex.checksumsValid ?? inc.checksumsValid;
 
   return {
     ...ex,
@@ -324,17 +365,17 @@ export function mergeKbsOcrIntoExisting(
     middleName: ex.middleName ?? inc.middleName,
     documentNumber,
     documentSeries: ex.documentSeries ?? inc.documentSeries,
-    nationalityCode: ex.nationalityCode ?? inc.nationalityCode,
-    issuingCountryCode: ex.issuingCountryCode ?? inc.issuingCountryCode,
+    nationalityCode,
+    issuingCountryCode,
     birthDate,
     expiryDate,
-    gender: ex.gender ?? inc.gender,
+    gender,
     motherName: ex.motherName ?? inc.motherName,
     fatherName: ex.fatherName ?? inc.fatherName,
     maritalStatus: ex.maritalStatus ?? inc.maritalStatus,
     rawMrz: mergedRawMrz,
     confidence: Math.max(ex.confidence ?? 0, inc.confidence ?? 0) || inc.confidence || ex.confidence,
-    checksumsValid: ex.checksumsValid ?? inc.checksumsValid,
+    checksumsValid,
     warnings,
     returningGuest: inc.returningGuest ?? ex.returningGuest,
   };
@@ -402,9 +443,12 @@ export function mergeKbsOcrPassResults(
   }
 
   const ranked = [...usable].sort((a, b) => parsedPassRank(b.parsed) - parsedPassRank(a.parsed));
-  let merged = ranked[0]!.parsed;
+  // Checksum-geçerli MRZ varsa ondan başla — zayıf görsel OCR üzerine yazmasın.
+  const checksumBest = ranked.find((r) => r.parsed.checksumsValid === true && r.parsed.rawMrz);
+  let merged = checksumBest?.parsed ?? ranked[0]!.parsed;
 
-  for (let i = 1; i < ranked.length; i++) {
+  for (let i = 0; i < ranked.length; i++) {
+    if (ranked[i]!.parsed === merged) continue;
     merged = mergeKbsOcrIntoExisting(merged, ranked[i]!.parsed);
   }
 
@@ -430,9 +474,10 @@ export function mergeKbsOcrPassResults(
     ranked.find((r) => r.parsed.rawMrz)?.engine ??
     ranked[0]!.engine;
 
+  const cleaned = sanitizeKbsOcrForApply(merged);
   return {
-    parsed: sanitizeKbsOcrForApply(merged),
-    missingFields: listCoreMissingIdFields(merged),
+    parsed: cleaned,
+    missingFields: listCoreMissingIdFields(cleaned),
     engine,
   };
 }

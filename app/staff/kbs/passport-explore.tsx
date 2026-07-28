@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,7 +10,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -19,6 +17,7 @@ import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { KbsBrowseTabBar } from '@/components/kbs/KbsBrowseTabBar';
 import { KbsHotelFilterBar } from '@/components/kbs/KbsHotelFilterBar';
+import { KbsCaptureListCard } from '@/components/kbs/KbsCaptureListCard';
 import {
   buildNationalityFilterOptions,
   fetchKbsBrowseDocuments,
@@ -37,10 +36,11 @@ import {
   filterKbsCapturesForViewer,
   type KbsCapturedDocumentRow,
 } from '@/lib/kbsCaptureHistory';
-import { enrichKbsParsedFromSources, kbsCaptureCardStatus } from '@/lib/kbsCaptureParsedFields';
+import { enrichKbsParsedFromSources } from '@/lib/kbsCaptureParsedFields';
 import { formatIcao3ForTr } from '@/lib/scanner/mrzIssuingLabel';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { isAbortLikeError, toSupabaseUserMessage } from '@/lib/supabaseTransientErrors';
+import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
 import { useTranslation } from 'react-i18next';
 
 type RangeKey = 'all' | 'today' | 'week';
@@ -70,16 +70,22 @@ function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
 function matchesQuery(row: KbsCapturedDocumentRow, q: string): boolean {
   if (!q) return true;
   const parsed = asParsed(row);
+  const qLower = q.toLocaleLowerCase('tr-TR');
+  const qDigits = q.replace(/\D/g, '');
+  const phoneDigits = (row.guest_phone_submitted ?? '').replace(/\D/g, '');
+  if (qDigits.length >= 3 && phoneDigits.includes(qDigits)) return true;
   const haystack = [
     displayCapturedName(row),
     row.hotel_name ?? '',
     row.room_number ?? '',
     parsed?.documentNumber ?? '',
     nationalityCodeOf(row),
+    row.guest_phone_submitted ?? '',
+    phoneDigits,
   ]
     .join(' ')
     .toLocaleLowerCase('tr-TR');
-  return haystack.includes(q.toLocaleLowerCase('tr-TR'));
+  return haystack.includes(qLower);
 }
 
 export default function KbsPassportExploreScreen() {
@@ -178,6 +184,12 @@ export default function KbsPassportExploreScreen() {
 
   const showBreakdown = hotelFilter === 'all' && canViewAllHotels && breakdown.length > 0;
 
+  const canSeeImages =
+    staff?.role === 'admin' ||
+    staff?.role === 'reception_chief' ||
+    staff?.kbs_access_enabled !== false ||
+    canStaffUseIdCapture(staff);
+
   if (loading && rows.length === 0) {
     return (
       <View style={styles.centered}>
@@ -245,7 +257,7 @@ export default function KbsPassportExploreScreen() {
         <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Ad, pasaport no, uyruk, otel ara…"
+          placeholder="Ad, pasaport no, telefon, uyruk, otel ara…"
           placeholderTextColor={theme.colors.textMuted}
           value={query}
           onChangeText={setQuery}
@@ -287,32 +299,18 @@ export default function KbsPassportExploreScreen() {
           </Text>
         }
         renderItem={({ item }) => {
-          const parsed = asParsed(item);
-          const status = kbsCaptureCardStatus(parsed, { ocrStatus: item.ocr_status });
           const nat = nationalityCodeOf(item);
           return (
-            <Pressable style={styles.card} onPress={() => router.push(detailRoute(item.id))}>
-              {item.front_image_url ? (
-                <Image source={{ uri: item.front_image_url }} style={styles.thumb} contentFit="cover" />
-              ) : (
-                <View style={styles.thumbMask}>
-                  <Ionicons name="document-text-outline" size={24} color="#94a3b8" />
-                </View>
-              )}
-              <View style={styles.cardBody}>
-                <Text style={styles.name} numberOfLines={1}>
-                  {displayCapturedName(item)}
-                </Text>
-                {parsed?.documentNumber ? (
-                  <Text style={styles.metaMono}>{parsed.documentNumber}</Text>
-                ) : null}
-                {nat !== '—' ? <Text style={styles.meta}>{formatIcao3ForTr(nat)}</Text> : null}
-                {item.hotel_name ? <Text style={styles.metaHotel}>🏨 {item.hotel_name}</Text> : null}
-                {item.room_number ? <Text style={styles.meta}>Oda {item.room_number}</Text> : null}
-                {status ? <Text style={styles.status}>{status.label}</Text> : null}
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={theme.colors.textMuted} />
-            </Pressable>
+            <KbsCaptureListCard
+              item={item}
+              parsed={asParsed(item)}
+              canSeeImages={canSeeImages}
+              showCapturedBy
+              showHotel={canViewAllHotels || !!item.hotel_name}
+              variant="passport"
+              nationalityLabel={nat !== '—' ? formatIcao3ForTr(nat) : null}
+              onPress={() => router.push(detailRoute(item.id))}
+            />
           );
         }}
       />
@@ -389,31 +387,5 @@ const styles = StyleSheet.create({
   breakdownHotel: { fontSize: 13, fontWeight: '800', color: theme.colors.text },
   breakdownCount: { fontSize: 22, fontWeight: '800', color: theme.colors.primary, marginTop: 4 },
   breakdownUnit: { fontSize: 10, color: theme.colors.textMuted, textTransform: 'uppercase' },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-  },
-  thumb: { width: 56, height: 56, borderRadius: 10, backgroundColor: '#e2e8f0' },
-  thumbMask: {
-    width: 56,
-    height: 56,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardBody: { flex: 1, minWidth: 0 },
-  name: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
-  meta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  metaMono: { fontSize: 12, fontWeight: '700', color: theme.colors.text, marginTop: 2 },
-  metaHotel: { fontSize: 12, color: '#0d9488', marginTop: 2, fontWeight: '700' },
-  status: { fontSize: 11, color: '#059669', marginTop: 4, fontWeight: '700' },
   empty: { textAlign: 'center', color: theme.colors.textSecondary, marginTop: 24, fontSize: 14 },
 });

@@ -1,6 +1,10 @@
 import { Image, Platform } from 'react-native';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { applyKbsCaptureWatermark } from '@/lib/kbsCaptureWatermark';
+import {
+  exifOrientationToRotateDegrees,
+  takeKbsCaptureOrientation,
+} from '@/lib/kbsCaptureOrientation';
 import { KBS_OCR_PRO_MAX_LONG_EDGE, KBS_OCR_PRO_MIN_LONG_EDGE } from '@/lib/kbsOcrImageEnhance';
 
 /**
@@ -49,28 +53,51 @@ function imageDimensions(uri: string): Promise<{ width: number; height: number }
   );
 }
 
-/** Kimlik kaydı — OCR netliği için çözünürlük normalize (küçükleri büyüt, devleri küçült). */
+/** Kimlik kaydı — OCR yerel dosyası her zaman yüksek kalite (yükleme ayrı küçültülür). */
 export async function prepareKbsCaptureImageUri(uri: string): Promise<string> {
   const cached = preparedByInput.get(uri);
   if (cached) return cached;
   try {
-    const { width, height } = await imageDimensions(uri);
+    let sourceUri = uri.trim();
+    // Geçici / blob URI → önce kalıcı file:// (Unable to resolve data for blob önlemi).
+    if (
+      sourceUri.startsWith('blob:') ||
+      sourceUri.startsWith('ph://') ||
+      sourceUri.startsWith('content://') ||
+      sourceUri.startsWith('assets-library://') ||
+      (sourceUri.startsWith('/') && !sourceUri.startsWith('file://'))
+    ) {
+      const { copyUriToCacheForUpload } = await import('@/lib/uploadMedia');
+      sourceUri = await copyUriToCacheForUpload(sourceUri, 'image');
+    }
+
+    const { width, height } = await imageDimensions(sourceUri);
     const long = Math.max(width, height);
     const isAndroid = Platform.OS === 'android';
     const minLong = KBS_OCR_PRO_MIN_LONG_EDGE;
     const maxLong = isAndroid ? KBS_OCR_PRO_MAX_LONG_EDGE : 2800;
 
-    const actions: { resize: { width?: number; height?: number } }[] = [];
+    type Action =
+      | { rotate: number }
+      | { resize: { width?: number; height?: number } };
+    const actions: Action[] = [];
+
+    const orient = takeKbsCaptureOrientation(sourceUri);
+    if (orient != null) {
+      const deg = exifOrientationToRotateDegrees(orient);
+      if (deg != null) actions.push({ rotate: deg });
+    }
+
     if (long < minLong) {
       actions.push(width >= height ? { resize: { width: minLong } } : { resize: { height: minLong } });
     } else if (long > maxLong) {
       actions.push(width >= height ? { resize: { width: maxLong } } : { resize: { height: maxLong } });
     }
 
-    let prepared = uri;
-    if (actions.length) {
+    let prepared = sourceUri;
+    if (actions.length > 0) {
       const out = await withTimeout(
-        manipulateAsync(uri, actions, {
+        manipulateAsync(sourceUri, actions, {
           compress: isAndroid ? 0.96 : 0.92,
           format: SaveFormat.JPEG,
         }),

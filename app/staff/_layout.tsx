@@ -446,6 +446,8 @@ export default function StaffLayout() {
       <Stack.Screen name="breakfast-partners" options={{ headerShown: false }} />
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="cleaning-room/[roomId]" options={{ title: t('hkDetailTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="housekeeping-board" options={{ title: t('staffHkBoardNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="transfer-tour" options={{ headerShown: false }} />
       <Stack.Screen name="dining-venues" options={{ headerShown: false }} />

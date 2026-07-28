@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { upsertGuestDocumentLocal } from '@/lib/kbsDocumentUpsertLocal';
 import { prepareKbsCaptureImageUri, prepareKbsCaptureUploadUri } from '@/lib/kbsCaptureUpload';
@@ -7,13 +8,17 @@ import { checkoutRoomOtherGuests } from '@/lib/hotelInHouse';
 import {
   awaitKbsCapturePrewarm,
   getKbsCaptureOpsContext,
-  type KbsCapturePrewarmReady,
 } from '@/lib/kbsCapturePrewarm';
 import { type KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { kbsCaptureSideWarning } from '@/lib/kbsCaptureSideMeta';
-import { enqueueKbsCaptureOcrBatch, type KbsCaptureOcrJob } from '@/lib/kbsCaptureOcrQueue';
+import {
+  enqueueKbsCaptureOcrBatch,
+  setKbsOcrBulkMode,
+  type KbsCaptureOcrJob,
+} from '@/lib/kbsCaptureOcrQueue';
 import { isUsablePersonName, sanitizePersonName } from '@/lib/guestScan/personNameUtils';
 import { isTcFormatValid } from '@/lib/kbsTcValidation';
+import { mapPool } from '@/lib/kbsAsyncPool';
 
 export type KbsCaptureImageSaveItem = {
   kind: 'image';
@@ -147,7 +152,13 @@ export type KbsCaptureSaveResult = {
   guestId: string;
   frontImageUrl: string | null;
   localUri: string | null;
+  returningGuest?: boolean;
 };
+
+/** Toplu kayıt: upload paralelliği (prewarm varsa çoğunlukla cache hit). */
+const SAVE_UPLOAD_CONCURRENCY = Platform.OS === 'android' ? 2 : 3;
+/** DB upsert: hafif paralellik — ağ + local SQLite. */
+const SAVE_UPSERT_CONCURRENCY = Platform.OS === 'android' ? 2 : 3;
 
 /** `ops.guest_documents.mrz_batch_key` — PostgreSQL uuid. */
 function newCaptureBatchKey(): string {
@@ -160,6 +171,18 @@ function newCaptureBatchKey(): string {
   });
 }
 
+export type KbsCaptureSaveOptions = {
+  onProgress?: (message: string) => void;
+  existingBatchKey?: string | null;
+  /**
+   * Oda yoksa yalnızca pasaport havuzuna kaydet (oda ataması yok).
+   * Oda varsa mevcut davranış: kaydet + oda ata.
+   */
+  room?: KbsOpsRoom | null;
+  /** true: OCR concurrency 1 (büyük galeri). */
+  bulkOcr?: boolean;
+};
+
 /** Tek kimlik: sıkıştır → yükle → DB → oda. */
 export async function saveOneKbsCaptureItem(
   item: KbsCaptureSaveItem,
@@ -170,65 +193,53 @@ export async function saveOneKbsCaptureItem(
   return saved!;
 }
 
-/** Görselleri paralel kaydet; yükleme arka planda hazırlanmış olabilir. */
+/**
+ * Kimlikleri sınırlı paralellikte kaydet (upload+upsert örtüşür).
+ * Yükleme arka planda prewarm ile hazırlanmış olabilir.
+ */
 export async function saveKbsCaptureItemsParallel(
   items: KbsCaptureSaveItem[],
-  room: KbsOpsRoom,
+  room: KbsOpsRoom | null | undefined,
   onProgress?: (message: string) => void,
-  existingBatchKey?: string | null
+  existingBatchKey?: string | null,
+  saveOpts?: Omit<KbsCaptureSaveOptions, 'onProgress' | 'existingBatchKey' | 'room'>
 ): Promise<KbsCaptureSaveResult[]> {
   if (items.length === 0) return [];
+
+  const resolvedRoom = room ?? null;
+  const bulkOcr = saveOpts?.bulkOcr === true || items.length >= 4;
+  // Toplu kayıt sonrası OCR kuyruğu bitene kadar sınırlı paralellik.
+  setKbsOcrBulkMode(bulkOcr);
 
   const ctx = await getKbsCaptureOpsContext();
 
   const batchKey = existingBatchKey ?? (items.length > 1 ? newCaptureBatchKey() : null);
   const total = items.length;
   const capturedAt = new Date().toISOString();
+  const roomLabel = resolvedRoom ? String(resolvedRoom.room_number) : 'havuz';
 
-  onProgress?.(`Kayıt tamamlanıyor (0/${total})…`);
+  onProgress?.(`Hazırlanıyor (0/${total})…`);
 
-  type ImagePack = {
-    index: number;
-    preparedUri: string;
-    upload: { publicUrl: string };
-  };
-
-  const imageItems = items.filter((item): item is KbsCaptureImageSaveItem => item.kind === 'image');
-  const tcItems = items.filter((item): item is KbsCaptureTcSaveItem => item.kind === 'tc');
-
-  for (const tcItem of tcItems) {
-    if (!isTcFormatValid(tcItem.tcNumber.trim())) {
+  for (const tcItem of items) {
+    if (tcItem.kind === 'tc' && !isTcFormatValid(tcItem.tcNumber.trim())) {
       throw new Error(`Geçersiz T.C. kimlik no: ${tcItem.tcNumber}`);
     }
   }
 
-  const packs: ImagePack[] = await Promise.all(
-    imageItems.map(async (item) => {
-      const clientId = item.clientId;
-      let prewarm: KbsCapturePrewarmReady | null = null;
-      if (clientId) {
-        prewarm = await awaitKbsCapturePrewarm(clientId);
-      }
+  type UpsertRow = {
+    item: KbsCaptureSaveItem;
+    guestDocumentId: string;
+    guestId: string;
+    frontImageUrl: string | null;
+    localUri: string | null;
+    returningGuest: boolean;
+  };
 
-      if (prewarm) {
-        return {
-          index: item.index,
-          preparedUri: prewarm.preparedUri,
-          upload: prewarm.upload,
-        };
-      }
-
-      // Prewarm yetişmedi/başarısız: hazır dosya önbellekten gelir, ağa küçük kopya gider.
-      const preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
-      const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
-      const upload = await uploadPassportPrivateFromUri({ uri: uploadUri, subfolder: 'kbs-documents' });
-      return { index: item.index, preparedUri, upload };
-    })
-  );
-
-  onProgress?.(`Kayıtlar oluşturuluyor…`);
-  const upserted = await Promise.all(
-    items.map(async (item) => {
+  // Upload + upsert aynı pool’da — her kimlik yüklenir yüklenmez DB’ye yazılır.
+  const upserted = await mapPool(
+    items,
+    Math.max(SAVE_UPLOAD_CONCURRENCY, SAVE_UPSERT_CONCURRENCY),
+    async (item) => {
       if (item.kind === 'tc') {
         const parsed = buildTcOnlyParsed(item.tcNumber, item.fullName);
         const result = await upsertGuestDocumentLocal({
@@ -254,12 +265,37 @@ export async function saveKbsCaptureItemsParallel(
           guestId: result.data.guestId,
           frontImageUrl: null as string | null,
           localUri: null as string | null,
-        };
+          returningGuest: result.data.returningGuest === true,
+        } satisfies UpsertRow;
       }
 
-      const pack = packs.find((x) => x.index === item.index);
-      if (!pack) throw new Error('Görsel yükleme paketi bulunamadı');
-      const fallback = buildFallbackParsed(item.index, String(room.room_number), {
+      const clientId = item.clientId;
+      let preparedUri: string;
+      let upload: { publicUrl: string };
+
+      if (clientId) {
+        const prewarm = await awaitKbsCapturePrewarm(clientId);
+        if (prewarm) {
+          preparedUri = prewarm.preparedUri;
+          upload = prewarm.upload;
+        } else {
+          preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
+          const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
+          upload = await uploadPassportPrivateFromUri({
+            uri: uploadUri,
+            subfolder: 'kbs-documents',
+          });
+        }
+      } else {
+        preparedUri = await prepareKbsCaptureImageUri(item.imageUri);
+        const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
+        upload = await uploadPassportPrivateFromUri({
+          uri: uploadUri,
+          subfolder: 'kbs-documents',
+        });
+      }
+
+      const fallback = buildFallbackParsed(item.index, roomLabel, {
         firstName: item.firstName,
         lastName: item.lastName,
         captureSide: item.captureSide ?? 'front',
@@ -277,7 +313,7 @@ export async function saveKbsCaptureItemsParallel(
         usageKind: 'konaklama',
         mrzBatchKey: batchKey,
         guestPhone: item.guestPhone ?? null,
-        frontImageUrl: pack.upload.publicUrl,
+        frontImageUrl: upload.publicUrl,
         backImageUrl: null,
         captureSource: item.captureSource,
         capturedAt,
@@ -289,12 +325,15 @@ export async function saveKbsCaptureItemsParallel(
         item,
         guestDocumentId: result.data.guestDocumentId,
         guestId: result.data.guestId,
-        frontImageUrl: pack.upload.publicUrl,
-        localUri: pack.preparedUri,
-      };
-    })
+        frontImageUrl: upload.publicUrl,
+        localUri: preparedUri,
+        returningGuest: result.data.returningGuest === true,
+      } satisfies UpsertRow;
+    },
+    (done, n) => onProgress?.(`Kaydediliyor ${done}/${n}…`)
   );
 
+  // OCR: galeri de önce hızlı yol — eksikte kuyruk otomatik deep’e yükselir.
   const ocrJobs: KbsCaptureOcrJob[] = upserted
     .filter((row) => row.item.kind === 'image' && row.frontImageUrl && row.localUri)
     .map((row) => {
@@ -306,25 +345,32 @@ export async function saveKbsCaptureItemsParallel(
         localUri: row.localUri!,
         captureSide: imageItem.captureSide ?? 'front',
         captureSource: imageItem.captureSource,
+        strategy: (imageItem.captureSide === 'mrz_back'
+          ? 'device_deep'
+          : 'device_fast') as KbsCaptureOcrJob['strategy'],
       };
     });
   if (ocrJobs.length > 0) enqueueKbsCaptureOcrBatch(ocrJobs);
 
-  onProgress?.(`Oda atanıyor…`);
-  const assignRes = await assignKbsRoomsBatch({
-    roomId: room.id,
-    guestDocumentIds: upserted.map((r) => r.guestDocumentId),
-  });
-  if (!assignRes.ok) throw new Error(assignRes.error.message);
+  if (resolvedRoom) {
+    onProgress?.(`Oda atanıyor…`);
+    const assignRes = await assignKbsRoomsBatch({
+      roomId: resolvedRoom.id,
+      guestDocumentIds: upserted.map((r) => r.guestDocumentId),
+    });
+    if (!assignRes.ok) throw new Error(assignRes.error.message);
 
-  // Odaya bu çekimde giren misafirler kalır; önceki farklı misafirler otomatik çıkış yapar.
-  const keepGuestIds = [...new Set(upserted.map((r) => r.guestId).filter(Boolean))];
-  void checkoutRoomOtherGuests(room.id, keepGuestIds).catch(() => {});
+    const keepGuestIds = [...new Set(upserted.map((r) => r.guestId).filter(Boolean))];
+    void checkoutRoomOtherGuests(resolvedRoom.id, keepGuestIds).catch(() => {});
+  } else {
+    onProgress?.(`Pasaport havuzuna eklendi…`);
+  }
 
   return upserted.map((row) => ({
     guestDocumentId: row.guestDocumentId,
     guestId: row.guestId,
     frontImageUrl: row.frontImageUrl,
     localUri: row.localUri,
+    returningGuest: row.returningGuest === true,
   }));
 }

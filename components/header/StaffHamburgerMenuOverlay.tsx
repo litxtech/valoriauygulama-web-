@@ -13,9 +13,11 @@ import { useAuthStore } from '@/stores/authStore';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
 import { useStaffHamburgerRecentsStore } from '@/stores/staffHamburgerRecentsStore';
+import { useStaffHamburgerPinsStore } from '@/stores/staffHamburgerPinsStore';
 import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActions';
 import { useStaffMenuRealtime } from '@/hooks/useStaffMenuRealtime';
 import { useStaffHamburgerTheme } from '@/hooks/useStaffHamburgerTheme';
+import { applyPersonalPinsToLayout } from '@/lib/staffHamburgerPersonalPins';
 import { confirmDialog } from '@/lib/confirmDialog';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { safeRouterReplace } from '@/lib/safeRouter';
@@ -43,11 +45,16 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   const hydrateRecents = useStaffHamburgerRecentsStore((s) => s.hydrate);
   const recents = useStaffHamburgerRecentsStore((s) => s.recents);
   const resolveRecents = useStaffHamburgerRecentsStore((s) => s.resolveRecents);
+  const hydratePins = useStaffHamburgerPinsStore((s) => s.hydrate);
+  const pinnedIds = useStaffHamburgerPinsStore((s) => s.pinnedIds);
+  const togglePin = useStaffHamburgerPinsStore((s) => s.togglePin);
+  const movePin = useStaffHamburgerPinsStore((s) => s.movePin);
 
   useEffect(() => {
     if (!staff?.id) return;
     void hydrateRecents(staff.id);
-  }, [staff?.id, hydrateRecents]);
+    void hydratePins(staff.id);
+  }, [staff?.id, hydrateRecents, hydratePins]);
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -59,7 +66,7 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
     return () => task.cancel();
   }, [staff?.id, markSheetMounted]);
 
-  const menuLayout = useMemo(() => {
+  const baseMenuLayout = useMemo(() => {
     if (!staff) return null;
     return buildStaffHamburgerMenuLayout(
       t,
@@ -82,6 +89,11 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
     orgUiConfig,
   ]);
 
+  const { layout: menuLayout, pinnedItems } = useMemo(
+    () => applyPersonalPinsToLayout(baseMenuLayout, pinnedIds),
+    [baseMenuLayout, pinnedIds]
+  );
+
   const menuIdentity = useMemo(
     () =>
       staff
@@ -97,17 +109,33 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   );
 
   const allMenuItems = useMemo(() => {
-    if (!menuLayout) return [];
-    const flat = flattenStaffHamburgerMenu(menuLayout.sections);
-    const hubItems = menuLayout.hubs ?? [];
-    const primary = menuLayout.primary;
+    if (!baseMenuLayout) return [];
+    const flat = flattenStaffHamburgerMenu(baseMenuLayout.sections);
+    const hubItems = baseMenuLayout.hubs ?? [];
+    const primary = baseMenuLayout.primary;
     const merged = [
       ...(primary ? [primary] : []),
       ...hubItems.filter((item) => item.id !== primary?.id),
       ...flat.filter((item) => item.id !== primary?.id && !hubItems.some((h) => h.id === item.id)),
     ];
     return merged;
-  }, [menuLayout]);
+  }, [baseMenuLayout]);
+
+  const handleTogglePin = useCallback(
+    async (itemId: string) => {
+      if (!staff?.id) return false;
+      return togglePin(staff.id, itemId);
+    },
+    [staff?.id, togglePin]
+  );
+
+  const handleMovePin = useCallback(
+    async (itemId: string, direction: -1 | 1) => {
+      if (!staff?.id) return;
+      await movePin(staff.id, itemId, direction);
+    },
+    [staff?.id, movePin]
+  );
 
   const recentItems = useMemo(
     () => resolveRecents(allMenuItems),
@@ -199,6 +227,10 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
         layout={menuLayout}
         menuTheme={menuTheme}
         recentItems={recentItems}
+        pinnedItems={pinnedItems}
+        pinnedIdSet={pinnedIds}
+        onTogglePin={handleTogglePin}
+        onMovePin={handleMovePin}
         showAttendanceShortcuts={showAttendanceShortcuts}
         showAdminAttendancePanel={showAdminAttendancePanel}
         onAdminAttendanceNavigate={closeMenu}

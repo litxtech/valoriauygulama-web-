@@ -261,9 +261,9 @@ async function invokeUploadAppStorage(body: EdgeBody): Promise<{ publicUrl: stri
     'Görsel yükleme zaman aşımı — bağlantınızı kontrol edip tekrar deneyin'
   );
 
-  if (error) throw new Error(error.message ?? 'Edge yükleme hatası');
   const d = data as { public_url?: string; path?: string; error?: string } | null;
   if (d?.error) throw new Error(d.error);
+  if (error) throw new Error(error.message ?? 'Edge yükleme hatası');
   if (!d?.public_url) throw new Error('Sunucu yanıtı geçersiz');
   return { publicUrl: d.public_url, path: d.path ?? '' };
 }

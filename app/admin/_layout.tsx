@@ -334,7 +334,7 @@ export default function AdminLayout() {
         />
         <Stack.Screen name="approvals/index" options={{ title: t('adminApprovals'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/index" options={{ title: t('adminRooms'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="rooms/cleaning-plan" options={{ title: 'Oda temizlik planı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="rooms/cleaning-plan" options={{ title: 'Canlı temizlik', headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/[id]" options={{ title: t('adminRoomDetail'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="rooms/new" options={{ title: t('adminRoomNew'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="guests/index" options={{ title: t('adminGuests'), headerRight: renderHeaderRight }} />
@@ -342,7 +342,7 @@ export default function AdminLayout() {
       <Stack.Screen name="guest-welcome-card/index" options={{ title: 'Misafir karşılama kartı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="hotel-pulse/index" options={{ title: 'Misafir otel nabzı', headerRight: renderHeaderRight }} />
       <Stack.Screen name="checkin" options={{ title: t('adminCheckin'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="housekeeping" options={{ title: t('adminHousekeeping'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="housekeeping" options={{ title: 'Canlı temizlik tahtası', headerRight: renderHeaderRight }} />
       <Stack.Screen name="tasks/index" options={{ title: t('adminStaffTasks'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="tasks/assign" options={{ title: t('adminAssignTask'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="attendance/index" options={{ title: 'Mesai Takibi', headerRight: renderHeaderRight }} />
@@ -490,6 +490,7 @@ export default function AdminLayout() {
       <Stack.Screen name="map" options={{ title: 'Harita', headerShown: false }} />
       <Stack.Screen name="accounting" options={{ headerShown: false }} />
       <Stack.Screen name="audits" options={{ headerShown: false }} />
+      <Stack.Screen name="staff-perf" options={{ headerShown: false }} />
       <Stack.Screen name="performance" options={{ headerShown: false }} />
       <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />

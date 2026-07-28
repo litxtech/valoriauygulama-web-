@@ -59,10 +59,11 @@ export const useStaffHamburgerUiStore = create<State>((set, get) => ({
   beginNavTransition: () => {
     clearNavTransitionTimer();
     set({ visible: true, instant: true, navigatingAway: true });
+    // Failsafe: Modal navigatingAway dokunuş/geri tuşunu bloke eder — uzun süre kalmasın.
     navTransitionClearTimer = setTimeout(() => {
       navTransitionClearTimer = null;
       set({ visible: false, instant: false, navigatingAway: false });
-    }, 650);
+    }, IS_ANDROID ? 320 : 500);
   },
 
   finishNavTransition: () => {

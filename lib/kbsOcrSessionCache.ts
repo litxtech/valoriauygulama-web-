@@ -20,14 +20,18 @@ function touch<K, V>(map: Map<K, V>, key: K, value: V): V {
 }
 
 /** Oturum içi — aynı URI için tekrar ölçekleme / kırpım yapılmaz. */
-export function prepareProfessionalKbsOcrUriCached(uri: string): Promise<string> {
-  const key = uri.trim();
+export function prepareProfessionalKbsOcrUriCached(
+  uri: string,
+  opts?: { fast?: boolean }
+): Promise<string> {
+  const base = uri.trim();
+  const key = opts?.fast ? `${base}|fast` : base;
   const hit = preparedCache.get(key);
   if (hit) {
     touch(preparedCache, key, hit);
     return hit;
   }
-  const promise = prepareProfessionalKbsOcrUri(key);
+  const promise = prepareProfessionalKbsOcrUri(base, opts);
   return touch(preparedCache, key, promise);
 }
 

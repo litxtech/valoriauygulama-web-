@@ -1,7 +1,8 @@
 import { isUsablePersonName } from '@/lib/guestScan/personNameUtils';
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { formatKbsNationality, formatKbsTrDate, kbsAgeYearsFromBirthDate, kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
-import { isKbsPlaceholderName } from '@/lib/kbsCaptureOcrMerge';
+import { isKbsPlaceholderName, isPlausibleBirthDate, isPlausibleExpiryDate } from '@/lib/kbsCaptureOcrMerge';
+import { isKnownIcao3 } from '@/lib/kbsNationalityMap';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 
@@ -300,9 +301,18 @@ export function listCoreMissingIdFields(parsed: ParsedDocument): string[] {
   if (!hasPlausibleKbsDocumentNumber(parsed.documentNumber, parsed.documentType)) {
     missing.push('Kimlik / pasaport no');
   }
-  if (!parsed.birthDate) missing.push('Doğum tarihi');
-  if (!parsed.nationalityCode) missing.push('Uyruk');
-  if (!parsed.expiryDate) missing.push('Son kullanım tarihi');
+  if (!parsed.birthDate || !isPlausibleBirthDate(parsed.birthDate)) missing.push('Doğum tarihi');
+  const nat = (parsed.nationalityCode ?? '').trim().toUpperCase();
+  if (!nat || !(nat === 'TC' || nat === 'TR' || isKnownIcao3(nat))) missing.push('Uyruk');
+  if (!parsed.expiryDate || !isPlausibleExpiryDate(parsed.expiryDate)) {
+    missing.push('Son kullanım tarihi');
+  } else if (
+    parsed.birthDate &&
+    isPlausibleBirthDate(parsed.birthDate) &&
+    parsed.birthDate.slice(0, 10) > parsed.expiryDate.slice(0, 10)
+  ) {
+    missing.push('Son kullanım tarihi');
+  }
   return missing;
 }
 

@@ -35,10 +35,6 @@ import {
 import { isKbsDocInOcrQueue, requeueStuckKbsCaptureOcr } from '@/lib/kbsCaptureOcrQueue';
 import { formatKbsTrDate } from '@/lib/kbsDisplayFormat';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
-import {
-  formatKbsReturningGuestWarning,
-  isKbsReturningGuest,
-} from '@/lib/kbsGuestDocumentIdentity';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 type Props = {
@@ -108,7 +104,6 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   const [form, setForm] = useState<FormState>(() => formFromParsed(parsed));
   const dirtyRef = useRef<Set<keyof FormState>>(new Set());
   const autoReadDoneRef = useRef<string | null>(null);
-  const returningAlertShownRef = useRef<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [rooms, setRooms] = useState<{ id: string; room_number: string }[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
@@ -135,20 +130,8 @@ export function KbsCaptureOpsActions({ row, canNotify, onUpdated }: Props) {
   useEffect(() => {
     dirtyRef.current = new Set();
     autoReadDoneRef.current = null;
-    returningAlertShownRef.current = null;
     setRoomId(null);
   }, [row.id]);
-
-  useEffect(() => {
-    const p = enrichKbsParsedFromSources(row.parsed_payload);
-    if (!isKbsReturningGuest(p)) return;
-    if (returningAlertShownRef.current === row.id) return;
-    returningAlertShownRef.current = row.id;
-    const msg =
-      formatKbsReturningGuestWarning(p) ??
-      'Bu pasaport / kimlik daha önce sisteme eklendi — daha önce geldi.';
-    Alert.alert('Daha önce geldi', msg);
-  }, [row.id, row.parsed_payload]);
 
   const loadRooms = useCallback(async () => {
     if (!canNotify) return;

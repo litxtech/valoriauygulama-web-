@@ -517,12 +517,42 @@ button {
   overflow: hidden;
 }
 
+.card-thumb--avatar {
+  aspect-ratio: auto;
+  min-height: 108px;
+  display: grid;
+  place-items: center;
+  padding: 18px 12px 12px;
+}
+
 .card-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
   background: transparent;
+}
+
+.card-thumb--avatar .person-avatar {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  object-fit: cover;
+  /* Pasaport / kimlik içi kişi fotoğrafı (sol orta) */
+  object-position: 20% 36%;
+  border: 2px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  background: #1e293b;
+}
+
+.person-avatar--fallback {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 800;
+  background: linear-gradient(145deg, #475569, #334155);
+  object-position: center;
 }
 
 .card-thumb-empty {
@@ -699,20 +729,22 @@ button {
 .returning-pill {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   margin-top: 6px;
   padding: 3px 8px;
   border-radius: 8px;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.01em;
-  background: #ffedd5;
-  color: #c2410c;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .chip-returning {
-  background: #ffedd5;
-  color: #c2410c;
-  border: 1px solid #fdba74;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
 .returning-banner {
@@ -722,9 +754,9 @@ button {
   margin: 0 0 14px;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid #fdba74;
-  background: #fff7ed;
-  color: #9a3412;
+  border: 1px solid #6ee7b7;
+  background: #ecfdf5;
+  color: #047857;
   font-size: 13px;
   font-weight: 700;
   line-height: 1.45;
@@ -781,6 +813,26 @@ button {
   position: sticky;
   top: 0;
   background: var(--panel);
+}
+
+.modal-head-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+}
+
+.modal-person-avatar {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: 20% 36%;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  background: #1e293b;
 }
 
 .modal-head h2 {
@@ -927,6 +979,37 @@ button {
   margin-top: 8px;
   font-size: 13px;
   color: var(--ok-text);
+}
+
+.phone-dup-banner {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.phone-dup-banner strong {
+  display: block;
+  color: #fbbf24;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.phone-dup-banner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.phone-compare {
+  white-space: nowrap;
+  background: #b45309 !important;
 }
 
 .fields-head {
@@ -1495,3 +1578,315 @@ button {
 @media (max-width: 640px) {
   .ops-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- Passport Viewer (pv) ---------- */
+.pv-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 18, 0.82);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 12px;
+  z-index: 30;
+}
+
+.pv-modal {
+  width: 100%;
+  max-width: 1280px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.pv-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #0f172a, var(--panel));
+  flex-shrink: 0;
+}
+
+.pv-head-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.pv-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pv-nav-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pv-nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.pv-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pv-counter {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.65);
+  min-width: 48px;
+  text-align: center;
+}
+
+.pv-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  color: #fff;
+}
+
+.pv-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip-room {
+  color: #5eead4;
+  border-color: rgba(94, 234, 212, 0.35);
+  background: rgba(13, 148, 136, 0.2);
+  font-weight: 700;
+}
+
+.pv-banner {
+  margin: 0;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+.pv-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pv-image-panel {
+  display: flex;
+  flex-direction: column;
+  background: #0b1220;
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.pv-image-stage {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+}
+
+.pv-image-btn {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  cursor: zoom-in;
+}
+
+.pv-image-btn img {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0f172a;
+  display: block;
+}
+
+.pv-image-empty {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 14px;
+  padding: 48px;
+}
+
+.pv-thumb-strip {
+  padding: 12px 16px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.pv-thumb-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 8px;
+}
+
+.pv-thumbs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.pv-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  padding: 0;
+  background: #1e293b;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+
+.pv-thumb.active {
+  opacity: 1;
+  border-color: #2dd4bf;
+}
+
+.pv-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pv-thumb-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.pv-swipe-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: center;
+}
+
+.pv-info-panel {
+  overflow-y: auto;
+  padding: 16px 18px 24px;
+}
+
+.pv-quick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.pv-quick-chip {
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.pv-quick-chip:hover {
+  border-color: var(--primary);
+}
+
+.pv-quick-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 3px;
+}
+
+.pv-quick-value {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pv-detail-section {
+  margin-top: 16px;
+}
+
+.pv-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pv-field-card {
+  position: relative;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 28px 10px 12px;
+  cursor: pointer;
+}
+
+.pv-field-card:hover {
+  border-color: var(--primary);
+}
+
+@media (max-width: 900px) {
+  .pv-body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .pv-image-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    max-height: 50vh;
+  }
+
+  .pv-modal {
+    max-height: 96vh;
+    overflow-y: auto;
+  }
+}
+

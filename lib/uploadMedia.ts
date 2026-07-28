@@ -165,15 +165,15 @@ export async function copyAndroidContentUriToCacheForPreview(uri: string, kind: 
   return copyUriToCacheForUpload(normalized, kind);
 }
 
-/** Galeri/kamera URI → cache `file://` (iOS ph://, Android content:// dahil). */
+/** Galeri/kamera URI → cache `file://` (iOS ph://, Android content://, blob: dahil). */
 export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'video' | 'audio'): Promise<string> {
   const normalized = (uri || '').trim();
   if (!normalized) return normalized;
   if (normalized.startsWith('file://')) return normalized;
-  if (Platform.OS === 'android' && normalized.startsWith('/') && !normalized.startsWith('content://')) {
+  if (normalized.startsWith('/') && !normalized.startsWith('content://')) {
     return `file://${normalized}`;
   }
-  if (Platform.OS === 'web') return normalized;
+  if (Platform.OS === 'web' && !normalized.startsWith('blob:')) return normalized;
 
   const base = FileSystem.cacheDirectory;
   if (!base) {
@@ -182,8 +182,58 @@ export async function copyUriToCacheForUpload(uri: string, kind: 'image' | 'vide
   const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'm4a' : 'jpg';
   const name = `upload_${Date.now()}_${Math.random().toString(36).slice(2, 11)}.${ext}`;
   const dest = `${base}${name}`;
-  await FileSystem.copyAsync({ from: normalized, to: dest });
-  return dest.startsWith('file://') ? dest : `file://${dest}`;
+
+  // blob: — RN’de copyAsync çalışmaz; fetch + base64 yaz.
+  if (normalized.startsWith('blob:')) {
+    try {
+      const res = await fetch(normalized);
+      const ab = await res.arrayBuffer();
+      if (!ab.byteLength) throw new Error('empty_blob');
+      const bytes = new Uint8Array(ab);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const b64 =
+        typeof globalThis.btoa === 'function'
+          ? globalThis.btoa(binary)
+          : Buffer.from(bytes).toString('base64');
+      await FileSystem.writeAsStringAsync(dest, b64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      return dest.startsWith('file://') ? dest : `file://${dest}`;
+    } catch (e) {
+      throw new Error(
+        `Görsel okunamadı (blob). Galeriden tekrar seçin. ${e instanceof Error ? e.message : ''}`
+      );
+    }
+  }
+
+  try {
+    await FileSystem.copyAsync({ from: normalized, to: dest });
+    return dest.startsWith('file://') ? dest : `file://${dest}`;
+  } catch (copyErr) {
+    // iOS/Android: geçici galeri URI — JPEG’e yeniden yazarak kalıcı file:// üret.
+    if (kind === 'image') {
+      try {
+        const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+        const out = await manipulateAsync(normalized, [], {
+          compress: 0.92,
+          format: SaveFormat.JPEG,
+        });
+        const outUri = (out.uri || '').trim();
+        if (outUri.startsWith('file://')) return outUri;
+        if (outUri.startsWith('/') ) return `file://${outUri}`;
+        if (outUri.startsWith('blob:')) {
+          return copyUriToCacheForUpload(outUri, kind);
+        }
+      } catch {
+        /* aşağıda orijinal hata */
+      }
+    }
+    throw copyErr;
+  }
 }
 
 /** Yerel dosyadan doğrudan Storage REST yüklemesi mümkün mü? */

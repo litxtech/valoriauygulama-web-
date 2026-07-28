@@ -12,6 +12,7 @@ Her özellik için kısa, telifsiz (sentezlenmiş) bir WAV bildirim sesi üretir
   warning_alert.wav    - Resmi uyarı (ciddi çift bip)
   kbs_scan.wav         - Kimlik/pasaport (tarama onay bipleri)
   message_pop.wav      - Mesaj (Instagram DM tarzı yumuşak pop)
+  room_cleaning.wav    - Temizlik (modern sparkle: whoosh + kristal arpej)
 """
 import math
 import os
@@ -169,6 +170,24 @@ def make_message():
     return out
 
 
+# 8) Temizlik: modern “sparkle clean” — yumuşak whoosh + yükselen kristal
+def make_room_cleaning():
+    out = []
+    # hafif hava / whoosh
+    whoosh = tone(420, 0.18, amp=0.28, wave_type="sine", attack=0.02, release=0.08)
+    # yükselen frekans hissi
+    for i in range(len(whoosh)):
+        t = i / SAMPLE_RATE
+        whoosh[i] *= 1.0 + 0.12 * (t / 0.18)
+    out += whoosh
+    out += silence(0.02)
+    for f in (698, 880, 1175):  # F5 A5 D6
+        out += bell(f, 0.20, amp=0.58)
+        out += silence(0.025)
+    out += bell(1568, 0.55, amp=0.52)  # G6 sparkle
+    return out
+
+
 def main():
     print("Valoria bildirim sesleri üretiliyor...")
     _write_wav("emergency_alert.wav", make_emergency())
@@ -178,6 +197,7 @@ def main():
     _write_wav("warning_alert.wav", make_warning())
     _write_wav("kbs_scan.wav", make_kbs())
     _write_wav("message_pop.wav", make_message())
+    _write_wav("room_cleaning.wav", make_room_cleaning())
     print("Tamamlandı:", os.path.normpath(OUT_DIR))
 
 

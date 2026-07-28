@@ -1,17 +1,17 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseIdCapture, canStaffViewAllKbsCaptures, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import { KbsBrowseTabBar } from '@/components/kbs/KbsBrowseTabBar';
 import { KbsHotelFilterBar } from '@/components/kbs/KbsHotelFilterBar';
+import { KbsCaptureListCard } from '@/components/kbs/KbsCaptureListCard';
 import {
   fetchKbsBrowseDocuments,
   listAccessibleHotels,
@@ -31,7 +32,6 @@ import {
 import {
   capturedAtTs,
   deleteKbsCapturedDocument,
-  displayCapturedName,
   filterKbsCapturesForViewer,
   staffCanDeleteKbsCaptures,
   type KbsCapturedDocumentRow,
@@ -41,14 +41,11 @@ import {
   loadKbsCaptureHistoryCacheFromDisk,
   setKbsCaptureHistoryCache,
 } from '@/lib/kbsCaptureHistoryCache';
-import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete, isKbsTcOnlyCapture, isKbsOcrManualReview, isKbsOcrInProgress, kbsCaptureIsPartialReadable, isKbsOcrFailed } from '@/lib/kbsCaptureParsedFields';
-import { isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
+import { kbsCaptureCardStatus, enrichKbsParsedFromSources, isKbsCaptureOcrCoreComplete, isKbsOcrManualReview, isKbsOcrInProgress, kbsCaptureIsPartialReadable, isKbsOcrFailed } from '@/lib/kbsCaptureParsedFields';
 import {
   isKbsDocInOcrQueue,
   kickUnreadCapturesOcr,
   kbsCaptureOcrQueueSize,
-  startKbsOcrClaimLoop,
-  kickKbsOcrRecovery,
   subscribeKbsOcrQueue,
 } from '@/lib/kbsCaptureOcrQueue';
 import { buildKbsCaptureReportHtml } from '@/lib/kbsCaptureReportHtml';
@@ -61,6 +58,16 @@ import {
   filterKbsCapturesBySearchQuery,
   type KbsCaptureSearchSuggestion,
 } from '@/lib/kbsCaptureHistorySearch';
+import {
+  countKbsDetailFilters,
+  KBS_DETAIL_FILTER_OPTIONS,
+  matchesKbsDetailFilter,
+  type KbsDetailFilterKey,
+} from '@/lib/kbsCaptureDetailFilters';
+import {
+  fetchKbsGuestNoteSummaries,
+  type KbsGuestNoteSummary,
+} from '@/lib/kbsGuestNotes';
 import {
   consumeKbsCapturesJustSaved,
   getKbsCaptureHistoryLastSeenAt,
@@ -114,178 +121,28 @@ function inRange(ts: string, key: FilterKey) {
   return d <= 31 * 24 * 60 * 60 * 1000;
 }
 
+/** Bugün 14:32 · Dün 09:15 · 12 Tem 14:32 — listede kısa, taranabilir zaman. */
+function formatCapturedAt(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const time = d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Bugün ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Dün ${time}`;
+  const date =
+    d.getFullYear() === now.getFullYear()
+      ? d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
+      : d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${date} ${time}`;
+}
+
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
   const p = row.parsed_payload;
   if (!p || typeof p !== 'object') return null;
   return enrichKbsParsedFromSources(p) as ParsedDocument;
 }
-
-type CaptureCardProps = {
-  item: KbsCapturedDocumentRow;
-  canSeeImages: boolean;
-  canDelete: boolean;
-  onPress: () => void;
-  onLongPress: () => void;
-  onDelete: () => void;
-  onThumbPress?: (rowId: string) => void;
-  inGroup?: boolean;
-  groupPosition?: 'first' | 'middle' | 'last' | 'only';
-  isNew?: boolean;
-  showCapturedBy?: boolean;
-  showHotel?: boolean;
-  selectionMode?: boolean;
-  selected?: boolean;
-  /** Kuyruk epoch — yalnız gerçek Okunuyor için. */
-  ocrEpoch?: number;
-};
-
-function CaptureCardInner({
-  item,
-  canSeeImages,
-  canDelete,
-  onPress,
-  onLongPress,
-  onDelete,
-  onThumbPress,
-  inGroup,
-  groupPosition = 'only',
-  isNew = false,
-  showCapturedBy = false,
-  showHotel = false,
-  selectionMode = false,
-  selected = false,
-  ocrEpoch = 0,
-}: CaptureCardProps) {
-  const { t } = useTranslation();
-  const parsed = asParsed(item);
-  void ocrEpoch;
-  const activelyReading = isKbsDocInOcrQueue(item.id);
-  const cardStatus = kbsCaptureCardStatus(parsed, {
-    ocrStatus: item.ocr_status,
-    activelyReading,
-  });
-  const statusChipStyle =
-    cardStatus?.tone === 'ok'
-      ? styles.statusChipOk
-      : cardStatus?.tone === 'warn'
-        ? styles.statusChipWarn
-        : cardStatus?.tone === 'progress'
-          ? styles.statusChipBusy
-          : styles.statusChipMuted;
-  const statusChipTextStyle =
-    cardStatus?.tone === 'ok'
-      ? styles.statusChipTextOk
-      : cardStatus?.tone === 'warn'
-        ? styles.statusChipTextWarn
-        : cardStatus?.tone === 'progress'
-          ? styles.statusChipTextBusy
-          : styles.statusChipText;
-
-  const isFirst = groupPosition === 'first' || groupPosition === 'only';
-  const isLast = groupPosition === 'last' || groupPosition === 'only';
-
-  return (
-    <Pressable
-      style={[
-        styles.card,
-        inGroup && styles.cardInGroup,
-        inGroup && isFirst && styles.cardInGroupFirst,
-        inGroup && isLast && styles.cardInGroupLast,
-        selectionMode && selected && (inGroup ? styles.cardInGroupSelected : styles.cardSelected),
-      ]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-    >
-      {selectionMode ? (
-        <View style={[styles.check, selected && styles.checkOn]}>
-          {selected ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
-        </View>
-      ) : null}
-      {canSeeImages && item.front_image_url ? (
-        <Pressable
-          onPress={() => onThumbPress?.(item.id)}
-          accessibilityLabel={t('kbsEnlargeIdA11y')}
-        >
-          <Image source={{ uri: item.front_image_url }} style={styles.thumb} contentFit="cover" />
-        </Pressable>
-      ) : isKbsTcOnlyCapture(parsed) ? (
-        <View style={styles.tcThumb}>
-          <Ionicons name="finger-print" size={26} color="#2563eb" />
-          <Text style={styles.tcThumbText} numberOfLines={1}>
-            {parsed?.documentNumber ?? 'T.C.'}
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.thumbMask}>
-          <Ionicons name="id-card-outline" size={28} color="#94a3b8" />
-        </View>
-      )}
-      <View style={styles.cardBody}>
-        <View style={styles.nameRow}>
-          <Text style={styles.name} numberOfLines={1}>
-            {displayCapturedName(item)}
-          </Text>
-          {isNew ? (
-            <View style={styles.newBadge}>
-              <Text style={styles.newBadgeText}>Yeni</Text>
-            </View>
-          ) : null}
-          {cardStatus ? (
-            <View style={[styles.statusChip, statusChipStyle]}>
-              <Text style={[styles.statusChipText, statusChipTextStyle]}>{cardStatus.label}</Text>
-            </View>
-          ) : null}
-        </View>
-        {!inGroup ? <Text style={styles.meta}>Oda {item.room_number ?? '—'}</Text> : null}
-        {showHotel && item.hotel_name ? (
-          <Text style={styles.metaHotel}>🏨 {item.hotel_name}</Text>
-        ) : null}
-        {showCapturedBy && (item.captured_by_staff_name || item.scanned_by_user_id) ? (
-          <Text style={styles.metaStaff}>
-            Yükleyen: {item.captured_by_staff_name?.trim() || 'Personel'}
-          </Text>
-        ) : null}
-        <Text style={styles.meta}>{new Date(capturedAtTs(item)).toLocaleString('tr-TR')}</Text>
-        {isKbsReturningGuest(parsed) ? (
-          <Text style={styles.returningLine}>Daha önce geldi</Text>
-        ) : null}
-        {cardStatus ? (
-          <Text
-            style={
-              cardStatus.tone === 'ok'
-                ? styles.okLine
-                : cardStatus.tone === 'warn'
-                  ? styles.warnLine
-                  : cardStatus.tone === 'progress'
-                    ? styles.meta
-                    : styles.meta
-            }
-          >
-            {cardStatus.label === 'Tamam'
-              ? 'Tüm alanlar okundu'
-              : cardStatus.tone === 'progress'
-                ? 'Şu an okunuyor'
-                : cardStatus.label === 'Okunamadı'
-                  ? 'Boş / okunamadı — otomatik okuma denenecek'
-                  : cardStatus.label.startsWith('Manuel')
-                    ? 'Manuel kontrol gerekli'
-                    : cardStatus.label.startsWith('Eksik')
-                      ? 'Eksik alanlar var'
-                      : cardStatus.label}
-          </Text>
-        ) : null}
-      </View>
-      <Ionicons name="chevron-forward" size={22} color={theme.colors.textMuted} />
-      {canDelete && !selectionMode ? (
-        <TouchableOpacity style={styles.deleteBtn} onPress={onDelete} hitSlop={8}>
-          <Ionicons name="trash-outline" size={20} color="#dc2626" />
-        </TouchableOpacity>
-      ) : null}
-    </Pressable>
-  );
-}
-
-const CaptureCard = memo(CaptureCardInner);
 
 export default function KbsCaptureHistoryScreen() {
   const { t } = useTranslation();
@@ -311,6 +168,10 @@ export default function KbsCaptureHistoryScreen() {
   const [hotels, setHotels] = useState<KbsOpsHotel[]>([]);
   const [canViewAllHotels, setCanViewAllHotels] = useState(false);
   const [hotelFilter, setHotelFilter] = useState('all');
+  const [detailFilter, setDetailFilter] = useState<KbsDetailFilterKey>('all');
+  const [noteSummaries, setNoteSummaries] = useState<Map<string, KbsGuestNoteSummary>>(
+    () => new Map()
+  );
   const reloadSeqRef = useRef(0);
   const lastFocusReloadAtRef = useRef(0);
   const rowsLenRef = useRef(0);
@@ -352,8 +213,8 @@ export default function KbsCaptureHistoryScreen() {
       setRows(scoped);
       setKbsCaptureHistoryCache(scoped);
 
-      // Boş / eksik kayıtları bir kez okumaya al (listeyi sürekli yenilemeden)
-      const kicked = kickUnreadCapturesOcr(scoped, 10);
+      // Okunmamış / eksik: hızlı OCR kick (eksikte deep’e yükselir)
+      const kicked = kickUnreadCapturesOcr(scoped, 16);
       if (kicked > 0) setOcrEpoch((n) => n + 1);
     } catch (e) {
       if (seq !== reloadSeqRef.current) return;
@@ -382,7 +243,7 @@ export default function KbsCaptureHistoryScreen() {
       softReloadTimerRef.current = setTimeout(() => {
         if (kbsCaptureOcrQueueSize() > 0) return;
         void reloadRef.current({ showRefresh: false });
-      }, 1_800);
+      }, 600);
     });
   }, []);
 
@@ -406,10 +267,9 @@ export default function KbsCaptureHistoryScreen() {
       if (now - lastFocusReloadAtRef.current < 2500) return;
       lastFocusReloadAtRef.current = now;
       void reloadRef.current({ showRefresh: false });
-      startKbsOcrClaimLoop();
-      void kickKbsOcrRecovery();
       return () => {
-        void setKbsCaptureHistoryLastSeenAt(new Date().toISOString());
+        const staffId = useAuthStore.getState().staff?.id;
+        if (staffId) void setKbsCaptureHistoryLastSeenAt(staffId, new Date().toISOString());
         reloadSeqRef.current += 1;
       };
     }, [])
@@ -431,12 +291,48 @@ export default function KbsCaptureHistoryScreen() {
             activelyReading: isKbsDocInOcrQueue(r.id),
           })
         )
+        .filter((r) => matchesKbsDetailFilter(r, detailFilter, noteSummaries.get(r.guest_id)))
         .sort((a, b) => new Date(capturedAtTs(b)).getTime() - new Date(capturedAtTs(a)).getTime()),
-    [rows, filter, ocrFilter, ocrEpoch]
+    [rows, filter, ocrFilter, ocrEpoch, detailFilter, noteSummaries]
   );
 
+  const dateScopedRows = useMemo(
+    () => rows.filter((r) => inRange(capturedAtTs(r), filter)),
+    [rows, filter]
+  );
+
+  const detailCounts = useMemo(
+    () => countKbsDetailFilters(dateScopedRows, noteSummaries),
+    [dateScopedRows, noteSummaries]
+  );
+
+  useEffect(() => {
+    const guestIds = [...new Set(rows.map((r) => r.guest_id).filter(Boolean))];
+    if (guestIds.length === 0) {
+      setNoteSummaries(new Map());
+      return;
+    }
+    let cancelled = false;
+    const hotelIds = [
+      ...new Set(rows.map((r) => r.hotel_id).filter((id): id is string => !!id)),
+    ];
+    void fetchKbsGuestNoteSummaries({
+      guestIds,
+      hotelIds: hotelIds.length ? hotelIds : null,
+    })
+      .then((map) => {
+        if (!cancelled) setNoteSummaries(map);
+      })
+      .catch(() => {
+        if (!cancelled) setNoteSummaries(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
+
   const ocrCounts = useMemo(() => {
-    const base = rows.filter((r) => inRange(capturedAtTs(r), filter));
+    const base = dateScopedRows;
     let reading = 0;
     let partial = 0;
     let manual = 0;
@@ -450,9 +346,9 @@ export default function KbsCaptureHistoryScreen() {
       else if (matchesOcrFilter(p, 'failed', opts)) failed += 1;
     }
     return { reading, partial, manual, failed };
-  }, [rows, filter, ocrEpoch]);
+  }, [dateScopedRows, ocrEpoch]);
 
-  // Boş/eksik tespit + okuma: reload içinde kickUnreadCapturesOcr (tek sefer).
+  // Okunmayan/eksik: kickUnreadCapturesOcr (bir kez derin tarama, limitli).
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -467,16 +363,16 @@ export default function KbsCaptureHistoryScreen() {
   }, [staff?.id]);
 
   const searched = useMemo(
-    () => filterKbsCapturesBySearchQuery(combined, searchQuery),
-    [combined, searchQuery]
+    () => filterKbsCapturesBySearchQuery(combined, searchQuery, noteSummaries),
+    [combined, searchQuery, noteSummaries]
   );
 
   const searchSuggestions = useMemo(
     () =>
       searchFocused && searchQuery.trim().length >= 1
-        ? buildKbsCaptureSearchSuggestions(combined, searchQuery, 8)
+        ? buildKbsCaptureSearchSuggestions(combined, searchQuery, 8, noteSummaries)
         : [],
-    [combined, searchQuery, searchFocused]
+    [combined, searchQuery, searchFocused, noteSummaries]
   );
 
   const listItems = useMemo(() => buildKbsCaptureListItems(searched), [searched]);
@@ -500,6 +396,12 @@ export default function KbsCaptureHistoryScreen() {
   );
 
   const newCount = useMemo(() => combined.filter(isRowNew).length, [combined, isRowNew]);
+
+  const liveStats = useMemo(() => {
+    const today = rows.filter((r) => inRange(capturedAtTs(r), 'day')).length;
+    const attention = ocrCounts.partial + ocrCounts.manual + ocrCounts.failed;
+    return { today, attention, total: combined.length };
+  }, [rows, combined.length, ocrCounts.partial, ocrCounts.manual, ocrCounts.failed]);
 
   const onSearchSuggestionPress = useCallback(
     (suggestion: KbsCaptureSearchSuggestion) => {
@@ -672,8 +574,8 @@ export default function KbsCaptureHistoryScreen() {
     );
   }
 
-  return (
-    <View style={styles.container}>
+  const listHeader = (
+    <View style={styles.listHeader}>
       <KbsBrowseTabBar active="captures" />
 
       <KbsHotelFilterBar
@@ -683,100 +585,77 @@ export default function KbsCaptureHistoryScreen() {
         onChange={setHotelFilter}
       />
 
-      <TouchableOpacity
-        style={styles.captureLink}
-        onPress={() => router.push(CAPTURE_ID_ROUTE as never)}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="camera-outline" size={20} color={theme.colors.primary} />
-        <Text style={styles.captureLinkText}>Yeni kimlik çek</Text>
-        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-      </TouchableOpacity>
-
-      {newCount > 0 ? (
-        <View style={styles.newBanner}>
-          <Ionicons name="sparkles" size={16} color="#0d9488" />
-          <Text style={styles.newBannerText}>{newCount} yeni kimlik kaydedildi</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.filterRow}>
-        {([
-          ['day', t('kbsFilterDaily')],
-          ['week', t('kbsFilterWeekly')],
-          ['month', t('kbsFilterMonthly')],
-          ['all', t('kbsFilterAll')],
-        ] as const).map(([k, l]) => (
-          <TouchableOpacity key={k} style={[styles.chip, filter === k && styles.chipOn]} onPress={() => setFilter(k)}>
-            <Text style={[styles.chipText, filter === k && styles.chipTextOn]}>{l}</Text>
-          </TouchableOpacity>
-        ))}
-        <TouchableOpacity
-          style={[styles.reportBtn, pdfBusy && styles.reportBtnBusy]}
-          onPress={() => void onSharePrint()}
-          disabled={pdfBusy}
-        >
-          {pdfBusy ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="print-outline" size={14} color="#fff" />
-          )}
-          <Text style={styles.reportBtnText}>{pdfBusy ? '…' : 'PDF'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.filterRow}>
-        {(
-          [
-            ['all', 'Tümü'],
-            ['reading', `Okunuyor${ocrCounts.reading ? ` (${ocrCounts.reading})` : ''}`],
-            ['partial', `Eksik${ocrCounts.partial ? ` (${ocrCounts.partial})` : ''}`],
-            ['manual', `Manuel${ocrCounts.manual ? ` (${ocrCounts.manual})` : ''}`],
-            ['failed', `Okunamadı${ocrCounts.failed ? ` (${ocrCounts.failed})` : ''}`],
-          ] as const
-        ).map(([k, l]) => (
-          <TouchableOpacity
-            key={k}
-            style={[styles.chip, ocrFilter === k && styles.chipOn]}
-            onPress={() => setOcrFilter(k)}
-          >
-            <Text style={[styles.chipText, ocrFilter === k && styles.chipTextOn]}>{l}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {canDelete ? (
-        <View style={styles.toolRow}>
-          {selectionMode ? (
-            <>
-              <Text style={styles.selectHint} numberOfLines={2}>
-                {t('kbsSelectForMrz')}
-              </Text>
-              <TouchableOpacity style={styles.toolChip} onPress={selectAllVisible}>
-                <Ionicons name="checkbox-outline" size={14} color={theme.colors.text} />
-                <Text style={styles.toolChipText}>{t('kbsSelectAll')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolChip} onPress={exitSelectionMode}>
-                <Text style={styles.toolChipText}>{t('cancel')}</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={styles.toolChip}
-              onPress={() => setSelectionMode(true)}
-            >
-              <Ionicons name="trash-outline" size={14} color="#dc2626" />
-              <Text style={[styles.toolChipText, styles.toolChipDangerText]}>{t('kbsBulkDeleteMode')}</Text>
+      <View style={styles.toolbar}>
+        {selectionMode && canDelete ? (
+          <View style={styles.selectionBar}>
+            <TouchableOpacity style={styles.selectionCloseBtn} onPress={exitSelectionMode} hitSlop={8}>
+              <Ionicons name="close" size={18} color={theme.colors.text} />
             </TouchableOpacity>
-          )}
+            <Text style={styles.selectionTitle} numberOfLines={1}>
+              {selectedIds.size > 0 ? `${selectedIds.size} seçildi` : t('kbsSelectForMrz')}
+            </Text>
+            <TouchableOpacity style={styles.toolChip} onPress={selectAllVisible}>
+              <Text style={styles.toolChipText}>{t('kbsSelectAll')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.captureBtn}
+              onPress={() => router.push(CAPTURE_ID_ROUTE as never)}
+              activeOpacity={0.88}
+            >
+              <Ionicons name="camera" size={16} color="#fff" />
+              <Text style={styles.captureBtnText} numberOfLines={1}>
+                Yeni çek
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.iconBtn, pdfBusy && styles.iconBtnBusy]}
+              onPress={() => void onSharePrint()}
+              disabled={pdfBusy}
+              accessibilityLabel="PDF raporu paylaş"
+            >
+              {pdfBusy ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+              ) : (
+                <Ionicons name="share-outline" size={17} color={theme.colors.text} />
+              )}
+            </TouchableOpacity>
+            {canDelete ? (
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => setSelectionMode(true)}
+                accessibilityLabel={t('kbsBulkDeleteMode')}
+              >
+                <Ionicons name="checkbox-outline" size={17} color={theme.colors.text} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
+
+        <View style={styles.liveInline}>
+          <Text style={styles.liveInlineText}>
+            Bugün <Text style={styles.liveInlineStrong}>{liveStats.today}</Text>
+          </Text>
+          {ocrCounts.reading > 0 ? (
+            <Text style={[styles.liveInlineText, styles.liveInlineBusy]}>
+              · Okunuyor {ocrCounts.reading}
+            </Text>
+          ) : null}
+          {liveStats.attention > 0 ? (
+            <Text style={[styles.liveInlineText, styles.liveInlineWarn]}>
+              · Dikkat {liveStats.attention}
+            </Text>
+          ) : null}
         </View>
-      ) : null}
+      </View>
 
       <View style={styles.searchWrap}>
-        <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
+        <Ionicons name="search-outline" size={16} color={theme.colors.textMuted} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Ad, soyad, oda, kimlik no, uyruk, yaş…"
+          placeholder="Ad, pasaport no, telefon, oda, not…"
           placeholderTextColor={theme.colors.textMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -797,10 +676,87 @@ export default function KbsCaptureHistoryScreen() {
             }}
             hitSlop={8}
           >
-            <Ionicons name="close-circle" size={18} color={theme.colors.textMuted} />
+            <Ionicons name="close-circle" size={16} color={theme.colors.textMuted} />
           </TouchableOpacity>
         ) : null}
       </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
+        contentContainerStyle={styles.chipScrollContent}
+        nestedScrollEnabled
+      >
+        {([
+          ['day', t('kbsFilterDaily')],
+          ['week', t('kbsFilterWeekly')],
+          ['month', t('kbsFilterMonthly')],
+          ['all', t('kbsFilterAll')],
+        ] as const).map(([k, l]) => (
+          <TouchableOpacity key={k} style={[styles.chip, filter === k && styles.chipOn]} onPress={() => setFilter(k)}>
+            <Text style={[styles.chipText, filter === k && styles.chipTextOn]}>{l}</Text>
+          </TouchableOpacity>
+        ))}
+        <View style={styles.chipGap} />
+        {(
+          [
+            ['all', 'Tümü', null, 0],
+            ['reading', 'Okunuyor', '#2563eb', ocrCounts.reading],
+            ['partial', 'Eksik', '#ea580c', ocrCounts.partial],
+            ['manual', 'Manuel', '#b45309', ocrCounts.manual],
+            ['failed', 'Okunamadı', '#64748b', ocrCounts.failed],
+          ] as const
+        ).map(([k, l, dot, count]) => (
+          <TouchableOpacity
+            key={`ocr-${k}`}
+            style={[styles.chip, ocrFilter === k && styles.chipOn]}
+            onPress={() => setOcrFilter(k)}
+          >
+            <View style={styles.chipInner}>
+              {dot ? (
+                <View style={[styles.chipDot, { backgroundColor: ocrFilter === k ? '#fff' : dot }]} />
+              ) : null}
+              <Text style={[styles.chipText, ocrFilter === k && styles.chipTextOn]}>
+                {l}
+                {count ? ` ${count}` : ''}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
+        contentContainerStyle={styles.chipScrollContent}
+        nestedScrollEnabled
+      >
+        {KBS_DETAIL_FILTER_OPTIONS.map(({ key, label }) => {
+          const count = detailCounts[key];
+          const showCount = key !== 'all' && count > 0;
+          return (
+            <TouchableOpacity
+              key={`detail-${key}`}
+              style={[styles.chip, styles.detailChip, detailFilter === key && styles.chipOn]}
+              onPress={() => setDetailFilter(key)}
+            >
+              <Text style={[styles.chipText, detailFilter === key && styles.chipTextOn]}>
+                {label}
+                {showCount ? ` ${count}` : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {newCount > 0 ? (
+        <View style={styles.newBanner}>
+          <Ionicons name="sparkles" size={14} color="#0d9488" />
+          <Text style={styles.newBannerText}>{newCount} yeni kimlik kaydedildi</Text>
+        </View>
+      ) : null}
 
       {searchSuggestions.length > 0 ? (
         <View style={styles.suggestPanel}>
@@ -817,11 +773,15 @@ export default function KbsCaptureHistoryScreen() {
                       ? 'bed-outline'
                       : s.kind === 'document'
                         ? 'card-outline'
-                        : s.kind === 'staff'
-                          ? 'person-outline'
-                          : 'id-card-outline'
+                        : s.kind === 'phone'
+                          ? 'call-outline'
+                          : s.kind === 'staff'
+                            ? 'person-outline'
+                            : s.kind === 'note'
+                              ? 'document-text-outline'
+                              : 'id-card-outline'
                   }
-                  size={16}
+                  size={15}
                   color={theme.colors.primary}
                 />
               </View>
@@ -833,7 +793,7 @@ export default function KbsCaptureHistoryScreen() {
                   {s.subtitle}
                 </Text>
               </View>
-              <Ionicons name="arrow-forward" size={16} color={theme.colors.textMuted} />
+              <Ionicons name="arrow-forward" size={15} color={theme.colors.textMuted} />
             </Pressable>
           ))}
         </View>
@@ -846,24 +806,51 @@ export default function KbsCaptureHistoryScreen() {
       ) : null}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </View>
+  );
 
+  return (
+    <View style={styles.container}>
       <FlatList
         data={listItems}
-        extraData={ocrEpoch}
+        extraData={{ ocrEpoch, noteSummaries, detailFilter, selectedIds, selectionMode }}
         keyExtractor={(entry) =>
           entry.kind === 'single' ? entry.row.id : `grp-${entry.batchKey}`
         }
         initialNumToRender={8}
         windowSize={6}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={listHeader}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         ListEmptyComponent={
-          <Text style={styles.empty}>
-            {searchQuery.trim().length > 0
-              ? `"${searchQuery.trim()}" için sonuç bulunamadı`
-              : filter === 'day'
-                ? t('kbsEmptyToday')
-                : t('kbsEmptyRange')}
-          </Text>
+          <View style={styles.emptyWrap}>
+            <View style={styles.emptyIconCircle}>
+              <Ionicons
+                name={searchQuery.trim().length > 0 ? 'search-outline' : 'id-card-outline'}
+                size={30}
+                color="#94a3b8"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {searchQuery.trim().length > 0 ? 'Sonuç bulunamadı' : 'Henüz kayıt yok'}
+            </Text>
+            <Text style={styles.empty}>
+              {searchQuery.trim().length > 0
+                ? `"${searchQuery.trim()}" için sonuç bulunamadı`
+                : filter === 'day'
+                  ? t('kbsEmptyToday')
+                  : t('kbsEmptyRange')}
+            </Text>
+            {searchQuery.trim().length === 0 ? (
+              <TouchableOpacity
+                style={styles.emptyCta}
+                onPress={() => router.push(CAPTURE_ID_ROUTE as never)}
+              >
+                <Ionicons name="camera" size={16} color="#fff" />
+                <Text style={styles.emptyCtaText}>Yeni kimlik çek</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         }
         renderItem={({ item: entry }) => {
           const openRow = (row: KbsCapturedDocumentRow) => {
@@ -882,8 +869,9 @@ export default function KbsCaptureHistoryScreen() {
           if (entry.kind === 'single') {
             const row = entry.row;
             return (
-              <CaptureCard
+              <KbsCaptureListCard
                 item={row}
+                parsed={asParsed(row)}
                 canSeeImages={canSeeImages}
                 canDelete={canDelete}
                 isNew={isRowNew(row)}
@@ -891,7 +879,9 @@ export default function KbsCaptureHistoryScreen() {
                 showHotel={canViewAllHotels}
                 selectionMode={selectionMode}
                 selected={selectedIds.has(row.id)}
-                ocrEpoch={ocrEpoch}
+                activelyReading={isKbsDocInOcrQueue(row.id)}
+                noteSummary={noteSummaries.get(row.guest_id) ?? null}
+                formatTime={formatCapturedAt}
                 onPress={() => openRow(row)}
                 onLongPress={() => {
                   if (selectionMode) toggleSelect(row.id);
@@ -904,7 +894,7 @@ export default function KbsCaptureHistoryScreen() {
           }
 
           const { rows, roomNumber, capturedAt } = entry;
-          const capturedLabel = new Date(capturedAt).toLocaleString('tr-TR');
+          const capturedLabel = formatCapturedAt(capturedAt);
           const groupCapturer = rows.find((r) => r.captured_by_staff_name)?.captured_by_staff_name;
           const groupAllSelected = rows.every((r) => selectedIds.has(r.id));
           const groupSomeSelected = rows.some((r) => selectedIds.has(r.id));
@@ -961,8 +951,9 @@ export default function KbsCaptureHistoryScreen() {
                   return (
                     <View key={row.id}>
                       {index > 0 ? <View style={styles.groupInnerLine} /> : null}
-                      <CaptureCard
+                      <KbsCaptureListCard
                         item={row}
+                        parsed={asParsed(row)}
                         canSeeImages={canSeeImages}
                         canDelete={canDelete}
                         isNew={isRowNew(row)}
@@ -972,7 +963,9 @@ export default function KbsCaptureHistoryScreen() {
                         groupPosition={pos}
                         selectionMode={selectionMode}
                         selected={selectedIds.has(row.id)}
-                        ocrEpoch={ocrEpoch}
+                        activelyReading={isKbsDocInOcrQueue(row.id)}
+                        noteSummary={noteSummaries.get(row.guest_id) ?? null}
+                        formatTime={formatCapturedAt}
                         onPress={() => openRow(row)}
                         onLongPress={() => {
                           if (selectionMode) toggleSelect(row.id);
@@ -1023,21 +1016,69 @@ export default function KbsCaptureHistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.backgroundSecondary, padding: 12 },
+  container: { flex: 1, backgroundColor: '#f4f6f8' },
+  listHeader: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  listContent: { paddingBottom: 20, flexGrow: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   loadingText: { color: theme.colors.textSecondary, fontWeight: '600' },
-  captureLink: {
+  toolbar: { marginBottom: 8 },
+  liveInline: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingHorizontal: 2,
+  },
+  liveInlineText: { fontSize: 11, fontWeight: '600', color: theme.colors.textMuted },
+  liveInlineStrong: { fontWeight: '800', color: theme.colors.text },
+  liveInlineBusy: { color: '#2563eb' },
+  liveInlineWarn: { color: '#ea580c' },
+  actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    padding: 12,
-    marginBottom: 8,
   },
-  captureLinkText: { flex: 1, fontSize: 15, fontWeight: '700', color: theme.colors.text },
+  captureBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 36,
+  },
+  captureBtnText: { fontSize: 13, fontWeight: '800', color: '#fff', flexShrink: 1 },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  iconBtnBusy: { opacity: 0.7 },
+  selectionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fffbeb',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    paddingHorizontal: 10,
+    height: 36,
+  },
+  selectionCloseBtn: { padding: 2 },
+  selectionTitle: { flex: 1, fontSize: 13, fontWeight: '800', color: theme.colors.text },
   queueBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1051,20 +1092,22 @@ const styles = StyleSheet.create({
   newBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     backgroundColor: '#f0fdfa',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#99f6e4',
-    padding: 10,
-    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 6,
   },
-  newBannerText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#0f766e' },
+  newBannerText: { flex: 1, fontSize: 11, fontWeight: '700', color: '#0f766e' },
   newBadge: {
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
     backgroundColor: '#ccfbf1',
+    flexShrink: 0,
   },
   newBadgeText: { fontSize: 10, fontWeight: '800', color: '#0d9488' },
   retryOcrBtn: {
@@ -1089,11 +1132,15 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   retryAiText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 999,
     backgroundColor: '#fffbeb',
   },
   statusChipOk: { backgroundColor: '#ecfdf5' },
@@ -1104,54 +1151,108 @@ const styles = StyleSheet.create({
   statusChipTextOk: { color: '#059669' },
   statusChipTextWarn: { color: '#c2410c' },
   statusChipTextBusy: { color: '#2563eb' },
-  toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusDotOk: { backgroundColor: '#10b981' },
+  statusDotWarn: { backgroundColor: '#ea580c' },
+  statusDotBusy: { backgroundColor: '#3b82f6' },
+  statusDotMuted: { backgroundColor: '#94a3b8' },
+  returningChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  returningChipText: { fontSize: 10, fontWeight: '800', color: '#059669' },
+  noteChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  noteChipAttention: { backgroundColor: '#fff7ed' },
+  noteChipGood: { backgroundColor: '#ecfdf5' },
+  noteChipText: { fontSize: 10, fontWeight: '800', color: '#475569' },
+  noteChipTextAttention: { color: '#b45309' },
+  noteChipTextGood: { color: '#047857' },
+  detailChip: { borderStyle: 'dashed' as const },
+  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 8, minWidth: 0 },
+  metaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    maxWidth: '100%',
+  },
+  metaText: { fontSize: 11, fontWeight: '600', color: theme.colors.textSecondary, flexShrink: 1 },
+  metaDot: { fontSize: 12, color: theme.colors.textMuted, marginHorizontal: 2 },
+  staffLine: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontWeight: '600' },
   toolChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    backgroundColor: theme.colors.surface,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    flexShrink: 0,
   },
   toolChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  toolChipText: { fontSize: 12, fontWeight: '700', color: theme.colors.text },
+  toolChipText: { fontSize: 11, fontWeight: '700', color: theme.colors.text },
   toolChipTextOn: { color: '#fff' },
   toolChipDangerText: { color: '#dc2626' },
-  selectHint: { flex: 1, fontSize: 12, color: theme.colors.textSecondary },
-  filterRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  chipScroll: { flexGrow: 0, marginBottom: 2 },
+  chipScrollContent: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingRight: 4 },
+  chipGap: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#e2e8f0',
+    marginHorizontal: 3,
+  },
+  chipInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  chipDot: { width: 5, height: 5, borderRadius: 3 },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
+    gap: 6,
+    backgroundColor: '#fff',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: '#e2e8f0',
+    paddingHorizontal: 10,
+    height: 36,
     marginBottom: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     color: theme.colors.text,
-    paddingVertical: 2,
+    paddingVertical: 0,
   },
   searchMeta: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: theme.colors.textSecondary,
-    marginBottom: 8,
+    marginTop: 6,
   },
   suggestPanel: {
     backgroundColor: theme.colors.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    marginBottom: 8,
+    borderColor: '#e2e8f0',
+    marginTop: 6,
     overflow: 'hidden',
   },
   suggestRow: {
@@ -1177,36 +1278,26 @@ const styles = StyleSheet.create({
   suggestSub: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   chip: {
     paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 16,
-    backgroundColor: theme.colors.surface,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: '#e2e8f0',
   },
   chipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  chipText: { fontSize: 12, fontWeight: '700', color: theme.colors.textSecondary },
+  chipText: { fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary },
   chipTextOn: { color: '#fff' },
-  reportBtn: {
-    marginLeft: 'auto',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#0d9488',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  reportBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  reportBtnBusy: { opacity: 0.75 },
-  errorText: { color: theme.colors.error, marginBottom: 8, fontSize: 13 },
+  errorText: { color: theme.colors.error, marginTop: 6, fontSize: 12 },
   groupBlock: {
-    marginBottom: 12,
-    borderRadius: 14,
+    marginBottom: 10,
+    marginHorizontal: 12,
+    borderRadius: 16,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#99f6e4',
     overflow: 'hidden',
     position: 'relative',
+    ...theme.shadows.sm,
   },
   groupAccent: {
     position: 'absolute',
@@ -1215,8 +1306,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 4,
     backgroundColor: '#0d9488',
-    borderTopLeftRadius: 14,
-    borderBottomLeftRadius: 14,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
   },
   groupHeader: {
     flexDirection: 'row',
@@ -1224,7 +1315,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 14,
     paddingLeft: 16,
-    paddingVertical: 11,
+    paddingVertical: 12,
     backgroundColor: '#f0fdfa',
   },
   groupHeaderIcon: {
@@ -1235,7 +1326,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  groupHeaderText: { flex: 1 },
+  groupHeaderText: { flex: 1, minWidth: 0 },
   groupTitle: { fontSize: 14, fontWeight: '800', color: '#0f766e' },
   groupSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
   groupDeleteBtn: { padding: 6 },
@@ -1248,7 +1339,7 @@ const styles = StyleSheet.create({
   groupInnerLine: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.borderLight,
-    marginLeft: 124,
+    marginLeft: 100,
     marginRight: 12,
   },
   card: {
@@ -1256,19 +1347,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: theme.colors.surface,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    borderColor: '#eef2f6',
     padding: 12,
-    marginBottom: 8,
+    marginBottom: 10,
+    marginHorizontal: 12,
+    ...theme.shadows.sm,
   },
+  cardPressed: { opacity: 0.92 },
   cardInGroup: {
     marginBottom: 0,
+    marginHorizontal: 0,
     borderWidth: 0,
     borderRadius: 0,
     backgroundColor: 'transparent',
-    paddingVertical: 11,
+    paddingVertical: 12,
     paddingRight: 12,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   cardInGroupFirst: { paddingTop: 10 },
   cardInGroupLast: { paddingBottom: 12 },
@@ -1277,11 +1374,12 @@ const styles = StyleSheet.create({
   check: {
     width: 24,
     height: 24,
-    borderRadius: 6,
+    borderRadius: 7,
     borderWidth: 2,
-    borderColor: theme.colors.borderLight,
+    borderColor: '#cbd5e1',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   checkOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   checkPartial: {
@@ -1290,73 +1388,91 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: theme.colors.primary,
   },
-  thumb: {
-    width: 88,
-    height: 112,
-    borderRadius: 10,
-    backgroundColor: '#e2e8f0',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#cbd5e1',
-  },
-  thumbMask: {
-    width: 88,
-    height: 112,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#e2e8f0',
-  },
+  thumbWrap: { flexShrink: 0 },
   tcThumb: {
-    width: 88,
-    height: 112,
-    borderRadius: 10,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#bfdbfe',
-    paddingHorizontal: 6,
-    gap: 6,
+    paddingHorizontal: 4,
+    gap: 4,
+    flexShrink: 0,
   },
   tcThumbText: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     color: '#1d4ed8',
     textAlign: 'center',
     letterSpacing: 0.2,
   },
   cardBody: { flex: 1, minWidth: 0 },
-  name: { fontSize: 15, fontWeight: '800', color: theme.colors.text },
-  meta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  metaStaff: { fontSize: 12, color: '#0f766e', marginTop: 2, fontWeight: '700' },
-  metaHotel: { fontSize: 12, color: '#0d9488', marginTop: 2, fontWeight: '700' },
-  parsedLine: { fontSize: 11, color: theme.colors.text, marginTop: 6, lineHeight: 15 },
-  parsedHint: { fontSize: 11, color: theme.colors.textMuted, marginTop: 6, fontStyle: 'italic' },
-  missingLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '700' },
-  okLine: { fontSize: 11, color: '#059669', marginTop: 4, fontWeight: '700' },
-  warnLine: { fontSize: 11, color: '#c2410c', marginTop: 4, fontWeight: '700' },
-  returningLine: { fontSize: 11, color: '#b45309', marginTop: 4, fontWeight: '800' },
-  busyLine: { fontSize: 11, color: '#2563eb', marginTop: 4, fontWeight: '700' },
-  deleteBtn: { padding: 6 },
+  name: { fontSize: 15, fontWeight: '800', color: theme.colors.text, flexShrink: 1 },
+  metaHotel: { fontSize: 11, color: '#0d9488', fontWeight: '700', flexShrink: 1 },
+  deleteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#fef2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  chevronWrap: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   bulkFooter: {
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.borderLight,
-    marginTop: 4,
+    backgroundColor: '#fff',
   },
   bulkDeleteBtn: {
     backgroundColor: '#dc2626',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 50,
   },
   bulkDeleteBtnDisabled: { opacity: 0.45 },
   bulkDeleteBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  empty: { textAlign: 'center', color: theme.colors.textSecondary, marginTop: 40, lineHeight: 20, paddingHorizontal: 16 },
-  permHint: { fontSize: 12, color: theme.colors.textMuted, marginTop: 6, textAlign: 'center' },
+  emptyWrap: { alignItems: 'center', paddingTop: 56, paddingHorizontal: 28 },
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#eef2f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginBottom: 6 },
+  empty: { textAlign: 'center', color: theme.colors.textSecondary, lineHeight: 20 },
+  emptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginTop: 18,
+  },
+  emptyCtaText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  permHint: {
+    fontSize: 12,
+    color: theme.colors.textMuted,
+    marginTop: 6,
+    textAlign: 'center',
+    paddingHorizontal: 14,
+  },
 });

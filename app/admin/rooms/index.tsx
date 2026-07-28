@@ -13,8 +13,6 @@ import {
   ADMIN_ROOMS_FOCUS_REFRESH_MS,
 } from '@/lib/adminRoomsListCache';
 
-const DONE_GRACE_MS = 60 * 1000;
-
 type Room = {
   id: string;
   room_number: string;
@@ -87,42 +85,6 @@ export default function RoomsList() {
   const initialCached = getAdminRoomsListCache(true);
   const [rooms, setRooms] = useState<Room[]>(initialCached ?? []);
   const [loading, setLoading] = useState(!(initialCached && initialCached.length > 0));
-  const [cleaningPlanLocked, setCleaningPlanLocked] = useState(false);
-  const [cleaningPlanApproved, setCleaningPlanApproved] = useState(false);
-
-  const loadCleaningPlanLockState = async () => {
-    const now = new Date();
-    const todayIso = now.toISOString().slice(0, 10);
-
-    const { data: planRows } = await supabase
-      .from('room_cleaning_plans')
-      .select('id, target_date')
-      .gte('target_date', todayIso)
-      .order('target_date', { ascending: true })
-      .limit(1);
-
-    const activePlanId = planRows?.[0]?.id as string | undefined;
-    const activePlanDate = (planRows?.[0]?.target_date as string | undefined) ?? null;
-    let allRoomsDone = false;
-    if (activePlanId) {
-      const { data: planRoomRows } = await supabase
-        .from('room_cleaning_plan_rooms')
-        .select('id, is_done, done_at')
-        .eq('plan_id', activePlanId);
-
-      const rows = (planRoomRows ?? []) as { id: string; is_done: boolean; done_at: string | null }[];
-      allRoomsDone = rows.length > 0 && rows.every((r) => {
-        if (!r.is_done || !r.done_at) return false;
-        const doneAtMs = new Date(r.done_at).getTime();
-        return !Number.isNaN(doneAtMs) && now.getTime() - doneAtMs >= DONE_GRACE_MS;
-      });
-    }
-
-    const dayPassed = activePlanDate ? todayIso > activePlanDate : false;
-    const shouldLock = dayPassed || allRoomsDone;
-    setCleaningPlanLocked(shouldLock);
-    setCleaningPlanApproved(shouldLock);
-  };
 
   const loadRooms = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
     if (!opts?.force) {
@@ -189,11 +151,7 @@ export default function RoomsList() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      await loadRooms({ silent: Boolean(initialCached?.length) });
-      // Temizlik planı kilidi ikincil — oda listesi göründükten sonra
-      void loadCleaningPlanLockState();
-    })();
+    void loadRooms({ silent: Boolean(initialCached?.length) });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ilk mount
   }, [loadRooms]);
 
@@ -205,7 +163,6 @@ export default function RoomsList() {
       const roomsFresh = age != null && age < ADMIN_ROOMS_FOCUS_REFRESH_MS;
       if (!roomsFresh) {
         void loadRooms({ silent: Boolean(stale?.length) });
-        void loadCleaningPlanLockState();
       }
     }, [loadRooms])
   );
@@ -225,23 +182,12 @@ export default function RoomsList() {
       <View style={styles.topBar}>
         {paths.scope === 'admin' ? (
         <AdminButton
-          title={cleaningPlanApproved ? 'Yarın temizlenecek odalar - ONAYLANDI' : 'Yarın temizlenecek odalar'}
-          onPress={() => {
-            if (cleaningPlanLocked) return;
-            router.push(paths.scope === 'admin' ? '/admin/rooms/cleaning-plan' : paths.hub);
-          }}
-          variant={cleaningPlanApproved ? 'primary' : 'secondary'}
+          title="Temizlik"
+          onPress={() => router.push('/staff/cleaning-plan')}
+          variant="secondary"
           size="md"
-          leftIcon={
-            <Ionicons
-              name={cleaningPlanApproved ? 'checkmark-circle' : 'checkbox-outline'}
-              size={18}
-              color={cleaningPlanApproved ? '#fff' : adminTheme.colors.text}
-            />
-          }
-          disabled={cleaningPlanLocked}
-          style={[{ marginBottom: 10 }, cleaningPlanApproved ? styles.cleaningApprovedBtn : undefined]}
-          textStyle={cleaningPlanApproved ? styles.cleaningApprovedBtnText : undefined}
+          leftIcon={<Ionicons name="sparkles-outline" size={18} color={adminTheme.colors.text} />}
+          style={{ marginBottom: 10 }}
           fullWidth
         />
         ) : null}
@@ -397,12 +343,5 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.textSecondary,
     marginBottom: 8,
     lineHeight: 18,
-  },
-  cleaningApprovedBtn: {
-    backgroundColor: adminTheme.colors.success,
-    opacity: 1,
-  },
-  cleaningApprovedBtnText: {
-    color: '#fff',
   },
 });

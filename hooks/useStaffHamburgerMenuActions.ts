@@ -6,9 +6,9 @@ import { useStaffNewAssignmentHintStore } from '@/stores/staffNewAssignmentHintS
 import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
 import { useStaffHamburgerRecentsStore } from '@/stores/staffHamburgerRecentsStore';
 import {
-  clearStaffHamburgerReopenPending,
   navigateStaffFromHamburgerMenu,
   signalStaffNavigatedFromHamburger,
+  clearStaffHamburgerReopenPending,
 } from '@/lib/staffHamburgerNavigation';
 import type { StaffHamburgerMenuItem } from '@/lib/staffHamburgerMenu';
 
@@ -50,9 +50,18 @@ export function useStaffHamburgerMenuActions() {
       }
       signalStaffNavigatedFromHamburger(target);
       beginNavTransition();
-      navigateStaffFromHamburgerMenu(router, href);
+      const ok = navigateStaffFromHamburgerMenu(router, href);
+      if (!ok) {
+        finishNavTransition();
+        return;
+      }
+      // Modal navigatingAway Android'de dokunuş/geri tuşunu yutar; geçişi kısa tut.
+      setTimeout(() => {
+        const state = useStaffHamburgerUiStore.getState();
+        if (state.navigatingAway) state.finishNavTransition();
+      }, IS_ANDROID ? 180 : 280);
     },
-    [closeMenu, router, staffId, pushRecent, beginNavTransition]
+    [closeMenu, router, staffId, pushRecent, beginNavTransition, finishNavTransition]
   );
 
   return {

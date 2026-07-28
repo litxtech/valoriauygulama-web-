@@ -6,11 +6,18 @@ import { OPS_SCHEMA_NOT_EXPOSED_MSG, resolveOpsHotelIdForCaller } from '@/lib/re
 import { isOpsSchemaNotExposedError } from '@/lib/supabaseTransientErrors';
 import {
   findGuestDocumentByIdentity,
+  findPriorGuestVisit,
   normalizeGuestDocumentNumber,
 } from '@/lib/kbsGuestDocumentIdentity';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 
-export type UpsertOk = { guestId: string; guestDocumentId: string; scanStatus: string };
+export type UpsertOk = {
+  guestId: string;
+  guestDocumentId: string;
+  scanStatus: string;
+  /** Belge no / ad+doğum ile önceki ziyaret eşleşti. */
+  returningGuest?: boolean;
+};
 
 /** Zayıf ağda PostgREST isteği süresiz askıda kalabilir — kayıt akışı kilitlenmesin. */
 const OPS_DB_TIMEOUT_MS = 20_000;
@@ -218,11 +225,13 @@ async function upsertGuestDocumentLocalInner(args: {
       data: {
         guestId: updated.guest_id,
         guestDocumentId: updated.id,
-        scanStatus: updated.scan_status
+        scanStatus: updated.scan_status,
+        returningGuest: true,
       }
     };
   };
 
+  let returningFromPersonMatch = false;
   if (normalizedDocNo) {
     const existing = await findGuestDocumentByIdentity(hotelId, parsed.documentType, normalizedDocNo);
     if (existing) {
@@ -287,8 +296,31 @@ async function upsertGuestDocumentLocalInner(args: {
           guestId: updated.guest_id,
           guestDocumentId: updated.id,
           scanStatus: updated.scan_status,
+          returningGuest: true,
         },
       };
+    }
+  } else {
+    // Belge no yok — ad+soyad+doğum veya kişisel no ile önceki ziyaret
+    const prior = await findPriorGuestVisit(
+      hotelId,
+      {
+        documentType: parsed.documentType,
+        documentNumber: null,
+        firstName: parsed.firstName,
+        lastName: parsed.lastName,
+        birthDate: parsed.birthDate,
+        personalNumber: parsed.personalNumber,
+      },
+      {}
+    );
+    if (prior) {
+      const { buildReturningGuestMeta, withReturningGuestWarning } = await import(
+        '@/lib/kbsGuestDocumentIdentity'
+      );
+      const meta = buildReturningGuestMeta(prior, prior.document_number);
+      Object.assign(payloadJson, withReturningGuestWarning(parsed as ParsedDocument, meta));
+      returningFromPersonMatch = true;
     }
   }
 
@@ -361,7 +393,8 @@ async function upsertGuestDocumentLocalInner(args: {
     data: {
       guestId: guest.id,
       guestDocumentId: doc.id,
-      scanStatus: doc.scan_status
+      scanStatus: doc.scan_status,
+      returningGuest: returningFromPersonMatch || undefined,
     }
   };
 }

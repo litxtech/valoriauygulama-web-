@@ -43,6 +43,7 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'breakfast_staff', labelTr: 'Kahvaltı teyidi yükle', section: 'staff' },
   { id: 'breakfast_briefing', labelTr: 'Sabah kahvaltı sayısı', section: 'hotel' },
   { id: 'breakfast_partner_board', labelTr: 'Partner kahvaltı panosu', section: 'kitchen' },
+  { id: 'breakfast_partner_laundry', labelTr: 'Partner çamaşır kaydı', section: 'hotel' },
   { id: 'salary_history', labelTr: 'Maaş geçmişim', section: 'staff' },
   { id: 'cleaning', labelTr: 'Yarın temizlik planı', section: 'staff' },
   { id: 'room_linen', labelTr: 'Oda malzeme teslimi', section: 'staff' },
@@ -118,6 +119,7 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   // Yönetim
   { id: 'admin_tab', labelTr: 'Yönetim sekmesi', section: 'admin' },
   { id: 'attendance_admin', labelTr: 'Mesai takibi (yönetim)', section: 'admin' },
+  { id: 'staff_perf', labelTr: 'Personel Denetim & Performans', section: 'admin' },
   { id: 'audits', labelTr: 'Denetim panosu', section: 'admin' },
   { id: 'staff_month_best', labelTr: 'Ayın en iyi personeli', section: 'admin' },
   { id: 'transfer_a', labelTr: 'Transfer & tur (yönetim)', section: 'admin' },

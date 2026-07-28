@@ -3,12 +3,15 @@ import {
   buildKbsCopyFields,
   normalizeKbsParsedPayload,
 } from '@/lib/kbsCaptureParsedFields';
+import { noteSearchBlobFromSummary } from '@/lib/kbsCaptureDetailFilters';
 import {
   formatKbsNationality,
   formatKbsTrDate,
   kbsAgeYearsFromBirthDate,
   kbsDisplayFullName,
 } from '@/lib/kbsDisplayFormat';
+import type { KbsGuestNoteSummary } from '@/lib/kbsGuestNotes';
+import { kbsGuestPhoneSearchParts } from '@/lib/kbsGuestPhoneContacts';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
 export type KbsCaptureSearchSuggestion = {
@@ -17,7 +20,7 @@ export type KbsCaptureSearchSuggestion = {
   label: string;
   subtitle: string;
   score: number;
-  kind: 'person' | 'room' | 'document' | 'staff';
+  kind: 'person' | 'room' | 'document' | 'staff' | 'note' | 'phone';
 };
 
 function foldTr(s: string): string {
@@ -41,7 +44,10 @@ function digitsOnly(s: string): string {
   return s.replace(/\D/g, '');
 }
 
-function buildRowSearchBlob(row: KbsCapturedDocumentRow): string {
+function buildRowSearchBlob(
+  row: KbsCapturedDocumentRow,
+  noteSummary?: KbsGuestNoteSummary | null
+): string {
   const parsed = rowParsed(row);
   const fields = parsed ? buildKbsCopyFields(parsed) : [];
   const name = displayCapturedName(row);
@@ -68,6 +74,8 @@ function buildRowSearchBlob(row: KbsCapturedDocumentRow): string {
     row.room_number,
     row.hotel_name,
     row.captured_by_staff_name,
+    noteSearchBlobFromSummary(noteSummary),
+    ...kbsGuestPhoneSearchParts(row.guest_phone_submitted),
     ...fields.map((f) => `${f.label} ${f.value}`),
     fields.map((f) => f.value).join(' '),
   ];
@@ -78,11 +86,16 @@ function tokenizeQuery(query: string): string[] {
   return normalizeKbsSearchQuery(query).split(' ').filter(Boolean);
 }
 
-function scoreRowMatch(row: KbsCapturedDocumentRow, query: string, tokens: string[]): number {
+function scoreRowMatch(
+  row: KbsCapturedDocumentRow,
+  query: string,
+  tokens: string[],
+  noteSummary?: KbsGuestNoteSummary | null
+): number {
   const q = normalizeKbsSearchQuery(query);
   if (!q) return 0;
 
-  const blob = buildRowSearchBlob(row);
+  const blob = buildRowSearchBlob(row, noteSummary);
   if (!tokens.every((t) => blob.includes(t))) return 0;
 
   const parsed = rowParsed(row);
@@ -90,7 +103,9 @@ function scoreRowMatch(row: KbsCapturedDocumentRow, query: string, tokens: strin
   const full = foldTr(kbsDisplayFullName(parsed) ?? '');
   const doc = digitsOnly(parsed?.documentNumber ?? '');
   const room = foldTr(row.room_number ?? '');
+  const phoneDigits = digitsOnly(row.guest_phone_submitted ?? '');
   const qDigits = digitsOnly(q);
+  const noteBlob = foldTr(noteSearchBlobFromSummary(noteSummary));
 
   let score = 40 + tokens.length * 8;
 
@@ -98,6 +113,7 @@ function scoreRowMatch(row: KbsCapturedDocumentRow, query: string, tokens: strin
   else if (name.includes(q) || full.includes(q)) score += 70;
 
   if (qDigits.length >= 3 && doc.includes(qDigits)) score += 90;
+  if (qDigits.length >= 3 && phoneDigits.includes(qDigits)) score += 100;
   if (room && (room === q || room.startsWith(q))) score += 85;
 
   const nat = foldTr(formatKbsNationality(parsed?.nationalityCode) ?? '');
@@ -105,17 +121,22 @@ function scoreRowMatch(row: KbsCapturedDocumentRow, query: string, tokens: strin
 
   if (row.captured_by_staff_name && foldTr(row.captured_by_staff_name).includes(q)) score += 35;
 
+  if (noteBlob && noteBlob.includes(q)) score += 55;
+
   return score;
 }
 
 /** Liste filtresi — tüm tokenlar eşleşmeli. */
 export function filterKbsCapturesBySearchQuery(
   rows: KbsCapturedDocumentRow[],
-  query: string
+  query: string,
+  noteSummaries?: Map<string, KbsGuestNoteSummary>
 ): KbsCapturedDocumentRow[] {
   const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return rows;
-  return rows.filter((row) => scoreRowMatch(row, query, tokens) > 0);
+  return rows.filter(
+    (row) => scoreRowMatch(row, query, tokens, noteSummaries?.get(row.guest_id)) > 0
+  );
 }
 
 function personSubtitle(row: KbsCapturedDocumentRow, parsed: ParsedDocument | null): string {
@@ -131,11 +152,18 @@ function personSubtitle(row: KbsCapturedDocumentRow, parsed: ParsedDocument | nu
   return bits.join(' · ') || 'Kimlik kaydı';
 }
 
+function parsedDocHint(row: KbsCapturedDocumentRow): string {
+  const parsed = rowParsed(row);
+  const doc = parsed?.documentNumber?.trim();
+  return doc ? ` · Pasaport ${doc}` : '';
+}
+
 /** Yazarken öneri listesi (en iyi eşleşmeler üstte). */
 export function buildKbsCaptureSearchSuggestions(
   rows: KbsCapturedDocumentRow[],
   query: string,
-  limit = 10
+  limit = 10,
+  noteSummaries?: Map<string, KbsGuestNoteSummary>
 ): KbsCaptureSearchSuggestion[] {
   const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return [];
@@ -145,7 +173,8 @@ export function buildKbsCaptureSearchSuggestions(
   const suggestions: KbsCaptureSearchSuggestion[] = [];
 
   for (const row of rows) {
-    const score = scoreRowMatch(row, query, tokens);
+    const note = noteSummaries?.get(row.guest_id);
+    const score = scoreRowMatch(row, query, tokens, note);
     if (score <= 0) continue;
     const parsed = rowParsed(row);
     const label = displayCapturedName(row);
@@ -157,6 +186,17 @@ export function buildKbsCaptureSearchSuggestions(
       score,
       kind: 'person',
     });
+
+    if (note && foldTr(note.latestBody).includes(q)) {
+      suggestions.push({
+        id: `note-${row.id}`,
+        rowId: row.id,
+        label: label,
+        subtitle: `Not: ${note.latestBody.slice(0, 72)}${note.latestBody.length > 72 ? '…' : ''}`,
+        score: score + 20,
+        kind: 'note',
+      });
+    }
   }
 
   if (/^\d+$/.test(q) || q.startsWith('oda')) {
@@ -193,6 +233,20 @@ export function buildKbsCaptureSearchSuggestions(
         subtitle: `${displayCapturedName(row)} · Oda ${row.room_number ?? '—'}`,
         score: doc.startsWith(qDigits) ? 180 : 100,
         kind: 'document',
+      });
+    }
+
+    for (const row of rows) {
+      const phone = row.guest_phone_submitted?.trim();
+      const phoneDigits = digitsOnly(phone ?? '');
+      if (!phone || phoneDigits.length < 7 || !phoneDigits.includes(qDigits)) continue;
+      suggestions.push({
+        id: `phone-${row.id}`,
+        rowId: row.id,
+        label: phone,
+        subtitle: `${displayCapturedName(row)}${parsedDocHint(row)}`,
+        score: phoneDigits.endsWith(qDigits) || phoneDigits.includes(qDigits) ? 175 : 95,
+        kind: 'phone',
       });
     }
   }

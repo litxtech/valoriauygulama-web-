@@ -1,15 +1,38 @@
 import { supabase } from '@/lib/supabase';
 import { edgeInvokeToApiResult } from '@/lib/functionsError';
 import { invokeSupabaseEdgeFunction, withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
+import { apiGet, type ApiResult } from '@/lib/kbsApi';
+import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 const OPS_ROOMS_QUERY_TIMEOUT_MS = 18_000;
-import type { ApiResult } from '@/lib/kbsApi';
 
 export type KbsOpsRoom = { id: string; room_number: string; floor?: string | null; capacity?: number | null };
 
 const FN = 'kbs-staff-ops';
 const DEPLOY_HINT =
   'kbs-staff-ops deploy edilmemiş. Çalıştırın: supabase functions deploy kbs-staff-ops — SQL: 285_kbs_edge_rooms_and_assign.sql';
+
+function mapOpsRoomRows(rows: unknown[]): KbsOpsRoom[] {
+  const out: KbsOpsRoom[] = [];
+  const seen = new Set<string>();
+  for (const raw of rows) {
+    const r = raw as Record<string, unknown>;
+    const id = r?.id != null ? String(r.id) : '';
+    const room_number = String(r?.room_number ?? '').trim();
+    if (!id || !room_number) continue;
+    const key = room_number.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id,
+      room_number,
+      floor: (r.floor as string | null) ?? null,
+      capacity: typeof r.capacity === 'number' ? r.capacity : null,
+    });
+  }
+  out.sort((a, b) => a.room_number.localeCompare(b.room_number, 'tr', { numeric: true }));
+  return out;
+}
 
 async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
@@ -37,41 +60,69 @@ async function invokeStaffOps<T>(body: Record<string, unknown>): Promise<ApiResu
   }
 }
 
-/** ops.rooms — önce doğrudan Supabase, olmazsa Edge RPC. */
+/**
+ * KBS oda listesi — KBS Odalar / gateway ile aynı kapsam:
+ * 1) Gateway GET /rooms (hotel_id scoped)
+ * 2) ops.rooms + açık hotel_id filtresi
+ * 3) Edge list_rooms RPC
+ */
 export async function fetchKbsOpsRooms(): Promise<ApiResult<KbsOpsRoom[]>> {
-  const roomsQuery = supabase
-    .schema('ops')
-    .from('rooms')
-    .select('id, room_number, floor, capacity')
-    .eq('is_active', true)
-    .order('room_number');
-  const { data, error } = await withPromiseTimeout(roomsQuery, OPS_ROOMS_QUERY_TIMEOUT_MS, 'ops.rooms');
-
-  if (!error && data && data.length > 0) {
-    return {
-      ok: true,
-      data: data.map((r) => ({
-        id: String(r.id),
-        room_number: String(r.room_number),
-        floor: r.floor as string | null,
-        capacity: r.capacity as number | null,
-      })),
-    };
+  // 1) KBS gateway — Odalar ekranı ile aynı kaynak
+  try {
+    const gateway = await apiGet<KbsOpsRoom[]>('/rooms');
+    if (gateway.ok && Array.isArray(gateway.data)) {
+      return { ok: true, data: mapOpsRoomRows(gateway.data) };
+    }
+  } catch {
+    /* gateway yoksa ops / edge */
   }
 
+  // 2) ops.rooms — mutlaka hotel_id ile (RLS yetmez; yanlış otel sızıntısını keser)
+  const ctx = await resolveOpsHotelIdForCaller();
+  let directError: { message?: string; code?: string } | null = null;
+  if (ctx.ok) {
+    const roomsQuery = supabase
+      .schema('ops')
+      .from('rooms')
+      .select('id, room_number, floor, capacity')
+      .eq('hotel_id', ctx.hotelId)
+      .eq('is_active', true)
+      .order('room_number')
+      .limit(300);
+    try {
+      const { data, error } = await withPromiseTimeout(
+        roomsQuery,
+        OPS_ROOMS_QUERY_TIMEOUT_MS,
+        'ops.rooms'
+      );
+      directError = error;
+      if (!error && data) {
+        return { ok: true, data: mapOpsRoomRows(data) };
+      }
+    } catch (e) {
+      directError = { message: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // 3) Edge RPC (kbs_edge_list_rooms — hotel scoped)
   const edge = await invokeStaffOps<KbsOpsRoom[]>({ action: 'list_rooms' });
-  if (edge.ok) return edge;
+  if (edge.ok) {
+    const rows = Array.isArray(edge.data) ? edge.data : [];
+    return { ok: true, data: mapOpsRoomRows(rows) };
+  }
 
   const hint =
-    error?.message?.includes('PGRST106') || error?.message?.includes('schema')
+    directError?.message?.includes('PGRST106') ||
+    directError?.message?.includes('schema') ||
+    (!ctx.ok && ctx.code === 'PGRST106')
       ? ' ops şeması expose değil; Edge deploy + migration 285 gerekli.'
       : '';
   return {
     ok: false,
     error: {
       code: edge.error.code,
-      message: (edge.error.message || 'Oda listesi alınamadı') + hint,
-      details: error?.message,
+      message: (edge.error.message || (!ctx.ok ? ctx.message : null) || 'Oda listesi alınamadı') + hint,
+      details: directError?.message ?? (!ctx.ok ? ctx.message : undefined),
     },
   };
 }

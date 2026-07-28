@@ -49,6 +49,8 @@ export default function PartnerAccountScreen() {
   const [monthAmount, setMonthAmount] = useState(cached?.monthAmount ?? 0);
   const [monthGuests, setMonthGuests] = useState(cached?.monthGuests ?? 0);
   const [totalAmount, setTotalAmount] = useState(cached?.totalAmount ?? 0);
+  const [monthLaundryQty, setMonthLaundryQty] = useState(cached?.monthLaundryQty ?? 0);
+  const [monthLaundryAmount, setMonthLaundryAmount] = useState(cached?.monthLaundryAmount ?? 0);
   const [payments, setPayments] = useState<PartnerPaymentRow[]>(cached?.payments ?? []);
   const [refreshing, setRefreshing] = useState(false);
   const inFlightRef = useRef(false);
@@ -60,6 +62,8 @@ export default function PartnerAccountScreen() {
     setMonthAmount(snap.monthAmount);
     setMonthGuests(snap.monthGuests);
     setTotalAmount(snap.totalAmount);
+    setMonthLaundryQty(snap.monthLaundryQty ?? 0);
+    setMonthLaundryAmount(snap.monthLaundryAmount ?? 0);
     setPayments(snap.payments);
   }, []);
 
@@ -129,7 +133,9 @@ export default function PartnerAccountScreen() {
             ) : (
               <Text style={styles.balanceValue}>{fmtPartnerMoney(openBalance)}</Text>
             )}
-            <Text style={styles.balanceHint}>Kahvaltı kayıtlarınız alacak olarak işlenir; tahsilatlar aşağıda listelenir.</Text>
+            <Text style={styles.balanceHint}>
+              Kahvaltı ve çamaşır kayıtları aynı caride alacak olarak işlenir; tahsilatlar aşağıda listelenir.
+            </Text>
             {openBalance > 0 ? (
               <View style={styles.payBlock}>
                 <PartnerPrimaryButton
@@ -153,7 +159,7 @@ export default function PartnerAccountScreen() {
 
           <View style={styles.grid}>
             <View style={styles.gridCard}>
-              <Text style={styles.gridLabel}>Bu ay tutar</Text>
+              <Text style={styles.gridLabel}>Bu ay kahvaltı</Text>
               <Text style={styles.gridValue}>{fmtPartnerMoney(monthAmount)}</Text>
             </View>
             <View style={styles.gridCard}>
@@ -161,11 +167,19 @@ export default function PartnerAccountScreen() {
               <Text style={styles.gridValue}>{monthGuests}</Text>
             </View>
             <View style={styles.gridCard}>
+              <Text style={styles.gridLabel}>Bu ay çamaşır</Text>
+              <Text style={styles.gridValue}>{fmtPartnerMoney(monthLaundryAmount)}</Text>
+            </View>
+            <View style={styles.gridCard}>
+              <Text style={styles.gridLabel}>Bu ay yıkama</Text>
+              <Text style={styles.gridValue}>{monthLaundryQty}</Text>
+            </View>
+            <View style={styles.gridCard}>
               <Text style={styles.gridLabel}>Kişi başı kahvaltı</Text>
               <Text style={styles.gridValue}>{fmtPartnerMoney(partner.effectiveUnitPrice)}</Text>
             </View>
             <View style={styles.gridCard}>
-              <Text style={styles.gridLabel}>Toplam kayıt</Text>
+              <Text style={styles.gridLabel}>Toplam kahvaltı</Text>
               <Text style={styles.gridValue}>{fmtPartnerMoney(totalAmount)}</Text>
             </View>
           </View>

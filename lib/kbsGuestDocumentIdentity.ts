@@ -139,6 +139,121 @@ export async function findPriorPassportVisit(
   });
 }
 
+function normalizePersonToken(raw: string | null | undefined): string {
+  return (raw ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+/**
+ * Ad + soyad + doğum tarihi eşleşmesi (belge no yokken / ek sinyal).
+ */
+export async function findPriorGuestByPersonFields(
+  hotelId: string,
+  firstName: string | null | undefined,
+  lastName: string | null | undefined,
+  birthDate: string | null | undefined,
+  opts?: { excludeDocumentId?: string | null }
+): Promise<GuestDocumentIdentityRow | null> {
+  const fn = normalizePersonToken(firstName);
+  const ln = normalizePersonToken(lastName);
+  const bd = (birthDate ?? '').trim().slice(0, 10);
+  if (!hotelId || !fn || !ln || bd.length < 10) return null;
+
+  let guests: {
+    id: string;
+    full_name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  }[] | null;
+  try {
+    const res = await withPromiseTimeout(
+      supabase
+        .schema('ops')
+        .from('guests')
+        .select('id, full_name, first_name, last_name')
+        .eq('hotel_id', hotelId)
+        .eq('birth_date', bd)
+        .limit(40),
+      IDENTITY_LOOKUP_TIMEOUT_MS,
+      'Kimlik kişi sorgusu zaman aşımı'
+    );
+    if (res.error) return null;
+    guests = res.data;
+  } catch {
+    return null;
+  }
+  if (!guests?.length) return null;
+
+  const matchedGuestIds = guests
+    .filter((g) => normalizePersonToken(g.first_name) === fn && normalizePersonToken(g.last_name) === ln)
+    .map((g) => g.id);
+  if (!matchedGuestIds.length) return null;
+
+  const exclude = opts?.excludeDocumentId?.trim() || null;
+  try {
+    const res = await withPromiseTimeout(
+      supabase
+        .schema('ops')
+        .from('guest_documents')
+        .select(
+          'id, guest_id, scan_status, document_number, document_type, captured_at, created_at, guest:guest_id(full_name, first_name, last_name)'
+        )
+        .eq('hotel_id', hotelId)
+        .in('guest_id', matchedGuestIds)
+        .order('updated_at', { ascending: false })
+        .limit(10),
+      IDENTITY_LOOKUP_TIMEOUT_MS,
+      'Kimlik kişi belge sorgusu zaman aşımı'
+    );
+    if (res.error || !res.data?.length) return null;
+    const hit = (res.data as RawIdentityDoc[]).find((row) => !exclude || row.id !== exclude);
+    return hit ? toIdentityRow(hit) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Belge no VEYA kişisel no VEYA ad+soyad+doğum — herhangi biri eşleşirse önceki ziyaret.
+ */
+export async function findPriorGuestVisit(
+  hotelId: string,
+  fields: {
+    documentType?: string | null;
+    documentNumber?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    birthDate?: string | null;
+    personalNumber?: string | null;
+  },
+  opts?: { excludeDocumentId?: string | null }
+): Promise<GuestDocumentIdentityRow | null> {
+  const docType = fields.documentType || 'id_card';
+  const byDoc = await findGuestDocumentByIdentity(hotelId, docType, fields.documentNumber, opts);
+  if (byDoc) return byDoc;
+
+  const personal = normalizeGuestDocumentNumber(fields.personalNumber);
+  const docNo = normalizeGuestDocumentNumber(fields.documentNumber);
+  if (personal && personal !== docNo) {
+    for (const t of [docType, 'id_card', 'passport'] as const) {
+      const hit = await findGuestDocumentByIdentity(hotelId, t, personal, opts);
+      if (hit) return hit;
+    }
+  }
+
+  return findPriorGuestByPersonFields(
+    hotelId,
+    fields.firstName,
+    fields.lastName,
+    fields.birthDate,
+    opts
+  );
+}
+
 export function buildReturningGuestMeta(
   prior: GuestDocumentIdentityRow,
   documentNumber?: string | null

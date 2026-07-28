@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Text, View, StyleSheet } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
@@ -19,11 +19,152 @@ import {
 import { isKbsCaptureRowNew } from '@/lib/kbsCaptureHistoryMrzTargets';
 import { KbsCaptureDetailView } from '@/components/kbs/KbsCaptureDetailView';
 import { KbsCaptureOpsActions } from '@/components/kbs/KbsCaptureOpsActions';
+import { KbsPassportViewerPager } from '@/components/kbs/KbsPassportViewerPager';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
 import { buildKbsCaptureGalleryItems } from '@/lib/kbsCaptureGallery';
 import { correctKbsCapturedDocument } from '@/lib/kbsCaptureOcrCorrection';
 import { canKbsCheckin } from '@/lib/kbsStaysPermissions';
 import { Redirect } from 'expo-router';
+import {
+  findKbsDuplicatePhoneHits,
+  kbsDuplicatePhoneCompareHref,
+  pickPrimaryKbsDuplicatePhoneHit,
+  showKbsDuplicatePhoneAlert,
+  type KbsDuplicatePhoneHit,
+} from '@/lib/kbsDuplicatePhone';
+import {
+  findKbsCaptureRoommates,
+  indexOfKbsCaptureRoommate,
+} from '@/lib/kbsCaptureRoommates';
+
+type PageProps = {
+  row: KbsCapturedDocumentRow;
+  canSeeImage: boolean;
+  isNew: boolean;
+  onImagePress: () => void;
+  onReload: () => Promise<void>;
+};
+
+function CaptureDetailPage({ row, canSeeImage, isNew, onImagePress, onReload }: PageProps) {
+  const router = useRouter();
+  const staff = useAuthStore((s) => s.staff);
+  const [correctBusy, setCorrectBusy] = useState(false);
+  const [phoneDuplicate, setPhoneDuplicate] = useState<KbsDuplicatePhoneHit | null>(null);
+
+  const handleCorrect = useCallback(async () => {
+    if (correctBusy) return;
+    setCorrectBusy(true);
+    try {
+      const res = await correctKbsCapturedDocument(row);
+      if (!res.ok) {
+        Alert.alert('Düzelt', res.message);
+        return;
+      }
+      await onReload();
+      if (!res.coreComplete) {
+        Alert.alert(
+          'Kısmi okuma',
+          'Belge yeniden tarandı. Bazı alanlar hâlâ eksik veya belirsiz olabilir; gerekirse ad/soyadı elle düzenleyin.'
+        );
+      }
+    } finally {
+      setCorrectBusy(false);
+    }
+  }, [correctBusy, onReload, row]);
+
+  const refreshPhoneDuplicate = useCallback(async (doc: KbsCapturedDocumentRow) => {
+    const phone = doc.guest_phone_submitted?.trim();
+    if (!phone) {
+      setPhoneDuplicate(null);
+      return null;
+    }
+    try {
+      const hits = await findKbsDuplicatePhoneHits({
+        phone,
+        excludeDocumentId: doc.id,
+        hotelId: doc.hotel_id ?? null,
+      });
+      const primary = pickPrimaryKbsDuplicatePhoneHit(hits);
+      setPhoneDuplicate(primary);
+      return primary;
+    } catch {
+      setPhoneDuplicate(null);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!row.guest_phone_submitted) {
+      setPhoneDuplicate(null);
+      return;
+    }
+    void refreshPhoneDuplicate(row);
+  }, [row.id, row.guest_phone_submitted, row.hotel_id, refreshPhoneDuplicate]);
+
+  const openPhoneCompare = useCallback(
+    (hit: KbsDuplicatePhoneHit, currentId: string) => {
+      if (!hit.documentId) return;
+      router.push(kbsDuplicatePhoneCompareHref(currentId, hit.documentId));
+    },
+    [router]
+  );
+
+  const handleSavePhone = useCallback(
+    async (phone: string | null): Promise<{ ok: boolean; message?: string }> => {
+      const res = await updateKbsCaptureGuestPhone(row.id, phone);
+      if (!res.ok) return { ok: false, message: res.message };
+      const nextRow = { ...row, guest_phone_submitted: res.phone };
+      const cache = getKbsCaptureHistoryCache();
+      if (cache) {
+        setKbsCaptureHistoryCache(
+          cache.map((r) => (r.id === row.id ? { ...r, guest_phone_submitted: res.phone } : r))
+        );
+      }
+
+      if (res.phone) {
+        const hit = await refreshPhoneDuplicate(nextRow);
+        if (hit) {
+          showKbsDuplicatePhoneAlert(hit, {
+            onCompare: hit.documentId ? () => openPhoneCompare(hit, row.id) : undefined,
+          });
+        }
+      } else {
+        setPhoneDuplicate(null);
+      }
+
+      await onReload();
+      return { ok: true };
+    },
+    [onReload, openPhoneCompare, refreshPhoneDuplicate, row]
+  );
+
+  return (
+    <KbsCaptureDetailView
+      row={row}
+      canSeeImage={canSeeImage}
+      isNew={isNew}
+      onImagePress={onImagePress}
+      onCorrect={() => void handleCorrect()}
+      correctBusy={correctBusy}
+      onSavePhone={handleSavePhone}
+      phoneDuplicate={phoneDuplicate}
+      onComparePhoneDuplicate={
+        phoneDuplicate?.documentId ? () => openPhoneCompare(phoneDuplicate, row.id) : undefined
+      }
+      notesHotelId={row.hotel_id ?? null}
+      notesAuthUserId={staff?.auth_id ?? null}
+      notesStaffName={staff?.full_name ?? null}
+      canWriteNotes={canStaffUseIdCapture(staff) || canStaffViewKbsCaptureHistory(staff)}
+      opsActions={
+        <KbsCaptureOpsActions
+          row={row}
+          canNotify={canKbsCheckin(staff)}
+          onUpdated={() => void onReload()}
+        />
+      }
+    />
+  );
+}
 
 export default function KbsCaptureDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,11 +174,7 @@ export default function KbsCaptureDetailScreen() {
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
   const [justSavedIds] = useState(() => consumeKbsCapturesJustSaved());
-  const [correctBusy, setCorrectBusy] = useState(false);
-
-  const isNew = row
-    ? isKbsCaptureRowNew(row, justSavedIds, lastSeenAt)
-    : false;
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const canSeeImage =
     staff?.role === 'admin' ||
@@ -45,16 +182,30 @@ export default function KbsCaptureDetailScreen() {
     staff?.kbs_access_enabled !== false ||
     canStaffUseIdCapture(staff);
 
-  const galleryItems = useMemo(() => {
+  const roommates = useMemo(() => {
     if (!row) return [];
-    return buildKbsCaptureGalleryItems([row], canSeeImage);
-  }, [row, canSeeImage]);
+    const pool = getKbsCaptureHistoryCache() ?? [];
+    const merged = pool.some((r) => r.id === row.id) ? pool : [row, ...pool];
+    return findKbsCaptureRoommates(row, merged);
+  }, [row]);
 
-  const openGallery = useCallback(() => {
-    if (!row?.front_image_url) return;
-    const idx = galleryItems.findIndex((item) => item.id === row.id);
-    setGalleryIndex(idx >= 0 ? idx : 0);
-  }, [galleryItems, row]);
+  const initialIndex = useMemo(() => {
+    if (!row) return 0;
+    return indexOfKbsCaptureRoommate(row.id, roommates);
+  }, [row, roommates]);
+
+  const galleryItems = useMemo(() => {
+    return buildKbsCaptureGalleryItems(roommates.length ? roommates : row ? [row] : [], canSeeImage);
+  }, [roommates, row, canSeeImage]);
+
+  const openGallery = useCallback(
+    (targetRow: KbsCapturedDocumentRow) => {
+      if (!targetRow.front_image_url) return;
+      const idx = galleryItems.findIndex((item) => item.id === targetRow.id);
+      setGalleryIndex(idx >= 0 ? idx : 0);
+    },
+    [galleryItems]
+  );
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -77,27 +228,6 @@ export default function KbsCaptureDetailScreen() {
     }
   }, [id, staff]);
 
-  const handleCorrect = useCallback(async () => {
-    if (!row || correctBusy) return;
-    setCorrectBusy(true);
-    try {
-      const res = await correctKbsCapturedDocument(row);
-      if (!res.ok) {
-        Alert.alert('Düzelt', res.message);
-        return;
-      }
-      await load();
-      if (!res.coreComplete) {
-        Alert.alert(
-          'Kısmi okuma',
-          'Belge yeniden tarandı. Bazı alanlar hâlâ eksik veya belirsiz olabilir; gerekirse ad/soyadı elle düzenleyin.'
-        );
-      }
-    } finally {
-      setCorrectBusy(false);
-    }
-  }, [correctBusy, load, row]);
-
   useEffect(() => {
     if (!staff?.id) return;
     void getKbsCaptureHistoryLastSeenAt(staff.id).then(setLastSeenAt);
@@ -117,7 +247,6 @@ export default function KbsCaptureDetailScreen() {
     void load().finally(() => setLoading(false));
   }, [id, load, staff?.auth_id]);
 
-  // Realtime: müşteri numarası (veya OCR) başka cihazdan/web'den değişince güncelle.
   useEffect(() => {
     if (!id) return;
     const channel = supabase
@@ -135,21 +264,17 @@ export default function KbsCaptureDetailScreen() {
     };
   }, [id, load]);
 
-  const handleSavePhone = useCallback(
-    async (phone: string | null): Promise<{ ok: boolean; message?: string }> => {
-      if (!row) return { ok: false, message: 'Kayıt bulunamadı' };
-      const res = await updateKbsCaptureGuestPhone(row.id, phone);
-      if (!res.ok) return { ok: false, message: res.message };
-      setRow((cur) => (cur ? { ...cur, guest_phone_submitted: res.phone } : cur));
-      const cache = getKbsCaptureHistoryCache();
-      if (cache) {
-        setKbsCaptureHistoryCache(
-          cache.map((r) => (r.id === row.id ? { ...r, guest_phone_submitted: res.phone } : r))
-        );
-      }
-      return { ok: true };
-    },
-    [row]
+  const renderPage = useCallback(
+    (pageRow: KbsCapturedDocumentRow) => (
+      <CaptureDetailPage
+        row={pageRow}
+        canSeeImage={canSeeImage}
+        isNew={isKbsCaptureRowNew(pageRow, justSavedIds, lastSeenAt)}
+        onImagePress={() => openGallery(pageRow)}
+        onReload={load}
+      />
+    ),
+    [canSeeImage, justSavedIds, lastSeenAt, openGallery, load]
   );
 
   if (!canStaffViewKbsCaptureHistory(staff)) {
@@ -174,25 +299,16 @@ export default function KbsCaptureDetailScreen() {
 
   return (
     <>
-      <KbsCaptureDetailView
-        row={row}
+      <KbsPassportViewerPager
+        roommates={roommates}
+        initialIndex={initialIndex}
         canSeeImage={canSeeImage}
-        isNew={isNew}
-        onImagePress={openGallery}
-        onCorrect={() => void handleCorrect()}
-        correctBusy={correctBusy}
-        onSavePhone={handleSavePhone}
-        opsActions={
-          <KbsCaptureOpsActions
-            row={row}
-            canNotify={canKbsCheckin(staff)}
-            onUpdated={() => void load()}
-          />
-        }
+        onIndexChange={(index) => setActiveIndex(index)}
+        renderPage={(pageRow) => renderPage(pageRow)}
       />
       <KbsZoomImageModal
         items={galleryItems}
-        initialIndex={galleryIndex ?? 0}
+        initialIndex={galleryIndex ?? activeIndex}
         visible={galleryIndex !== null}
         onClose={() => setGalleryIndex(null)}
       />

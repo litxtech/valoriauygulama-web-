@@ -1,6 +1,7 @@
 /**
  * Pasaport kimlik alanları (no / doğum / son geçerlilik / cinsiyet / uyruk):
- * İsimlerdeki gibi — MRZ güvenilirken MRZ; bozulunca etiketli görsel OCR; ezber yok.
+ * Checksum’lu MRZ otoriter; şüphede MRZ hâlâ kimlik için öncelikli (görsel ezmesin);
+ * belge no check-digit onarımı; çelişkide mrz_needs_review.
  */
 import {
   extractGenderFromOcr,
@@ -9,6 +10,14 @@ import {
 } from '@/lib/guestScan/idCardOcrParser';
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { isPlausibleBirthDate, isPlausibleExpiryDate } from '@/lib/kbsCaptureOcrMerge';
+import {
+  MRZ_DOC_REPAIRED_WARNING,
+  MRZ_IDENTITY_CONFLICT_WARNING,
+  isMrzChecksumSuspicious,
+  pushParsedWarning,
+  withMrzNeedsReviewWarning,
+} from '@/lib/kbsMrzSuspicion';
+import { repairDocumentNumberFromRawMrz } from '@/lib/scanner/mrzDocumentNumberRepair';
 import { isGccNationality } from '@/lib/scanner/mrzPersonNames';
 import type { ParsedDocument } from '@/lib/scanner/types';
 
@@ -47,62 +56,55 @@ function docsAgree(a: string | null | undefined, b: string | null | undefined): 
   return na.includes(nb) || nb.includes(na);
 }
 
+/**
+ * Belge no: MRZ (onarılmış dahil) öncelikli.
+ * Çelişkide görsel MRZ’yi ezmez — yalnız MRZ yok/geçersizse görsel.
+ */
 function pickDocumentNumber(
   mrz: string | null | undefined,
   visual: string | null | undefined,
-  mrzTrusted: boolean,
-  preferVisual: boolean
-): string | null {
+  mrzTrusted: boolean
+): { value: string | null; conflict: boolean } {
   const m = (mrz ?? '').trim().toUpperCase() || null;
   const v = (visual ?? '').trim().toUpperCase() || null;
   const mOk = hasPlausibleKbsDocumentNumber(m, 'passport');
   const vOk = hasPlausibleKbsDocumentNumber(v, 'passport');
 
-  if (mOk && vOk && docsAgree(m, v)) return m!;
-  if (mrzTrusted && mOk) return m!;
-  if (preferVisual && vOk) return v!;
-  if (!mrzTrusted && vOk && (!mOk || !docsAgree(m, v))) return v!;
-  if (mOk) return m!;
-  if (vOk) return v!;
-  return m ?? v;
+  if (mOk && vOk && docsAgree(m, v)) return { value: m!, conflict: false };
+  if (mOk && vOk && !docsAgree(m, v)) {
+    // A: çelişkide her zaman MRZ (görsel ezmesin)
+    return { value: m!, conflict: true };
+  }
+  if (mrzTrusted && mOk) return { value: m!, conflict: false };
+  if (mOk) return { value: m!, conflict: false };
+  if (vOk) return { value: v!, conflict: false };
+  return { value: m ?? v, conflict: false };
 }
 
 function pickIsoDate(
   mrz: string | null | undefined,
   visual: string | null | undefined,
   kind: 'birth' | 'expiry',
-  mrzTrusted: boolean,
-  preferVisual: boolean
-): string | null {
+  mrzTrusted: boolean
+): { value: string | null; conflict: boolean } {
   const m = (mrz ?? '').slice(0, 10) || null;
   const v = (visual ?? '').slice(0, 10) || null;
   const ok = kind === 'birth' ? isPlausibleBirthDate : isPlausibleExpiryDate;
   const mOk = !!(m && ok(m));
   const vOk = !!(v && ok(v));
 
-  if (mOk && vOk && m === v) return m!;
-  if (mrzTrusted && mOk) return m!;
-  if (preferVisual && vOk) return v!;
-  if (!mrzTrusted && vOk && (!mOk || m !== v)) return v!;
-  if (mOk) return m!;
-  if (vOk) return v!;
-  return null;
-}
-
-function mrzIdentityUncertain(parsed: ParsedDocument): boolean {
-  if (parsed.checksumsValid === false) return true;
-  const w = parsed.warnings ?? [];
-  return w.some(
-    (x) =>
-      x === 'mrz_fallback_parse' ||
-      x.includes('uncertain') ||
-      x.includes('checksum') ||
-      x === 'MRZ checksum validation failed'
-  );
+  if (mOk && vOk && m === v) return { value: m!, conflict: false };
+  if (mOk && vOk && m !== v) {
+    return { value: mrzTrusted || mOk ? m! : v!, conflict: true };
+  }
+  if (mrzTrusted && mOk) return { value: m!, conflict: false };
+  if (mOk) return { value: m!, conflict: false };
+  if (vOk) return { value: v!, conflict: false };
+  return { value: null, conflict: false };
 }
 
 /**
- * Pasaport no / doğum / son geçerlilik / cinsiyet / uyruk — isimlerle aynı hassasiyet.
+ * Pasaport no / doğum / son geçerlilik / cinsiyet / uyruk.
  */
 export function applyBestPassportIdentityToParsed(
   parsed: ParsedDocument,
@@ -117,8 +119,9 @@ export function applyBestPassportIdentityToParsed(
 
   const mrz = mrzSource ?? parsed;
   const mrzTrusted = mrz.checksumsValid === true;
-  const uncertain = mrzIdentityUncertain(mrz) || !mrzTrusted;
-  const preferVisual =
+  const uncertain = isMrzChecksumSuspicious(mrz);
+  // Görsel yalnız cinsiyet/uyruk boşken; kimlik no/tarihte MRZ’yi ezmesin.
+  const preferVisualGenderNat =
     uncertain ||
     isGccNationality(parsed.nationalityCode) ||
     isGccNationality(parsed.issuingCountryCode) ||
@@ -126,27 +129,38 @@ export function applyBestPassportIdentityToParsed(
 
   const visual = extractPassportIdentityFromOcr(lines);
 
-  const documentNumber = pickDocumentNumber(
-    mrz.documentNumber ?? parsed.documentNumber,
-    visual.documentNumber,
-    mrzTrusted,
-    preferVisual
-  );
+  // B: raw MRZ check digit ile belge no onar
+  const repaired = repairDocumentNumberFromRawMrz(mrz.rawMrz ?? parsed.rawMrz);
+  let mrzDoc = mrz.documentNumber ?? parsed.documentNumber;
+  let docRepaired = false;
+  if (repaired?.documentNumber) {
+    if (!mrzDoc || !docsAgree(mrzDoc, repaired.documentNumber) || repaired.repaired) {
+      if (repaired.repaired || !mrzDoc) {
+        mrzDoc = repaired.documentNumber;
+        docRepaired = repaired.repaired;
+      } else if (hasPlausibleKbsDocumentNumber(repaired.documentNumber, 'passport')) {
+        // Check geçen MRZ alanı mevcut no ile uyumlu — check’li versiyonu tercih et
+        mrzDoc = repaired.documentNumber;
+      }
+    }
+  }
 
-  let birthDate = pickIsoDate(
+  const docPick = pickDocumentNumber(mrzDoc, visual.documentNumber, mrzTrusted);
+  const birthPick = pickIsoDate(
     mrz.birthDate ?? parsed.birthDate,
     visual.birthDate,
     'birth',
-    mrzTrusted,
-    preferVisual
+    mrzTrusted
   );
-  let expiryDate = pickIsoDate(
+  const expiryPick = pickIsoDate(
     mrz.expiryDate ?? parsed.expiryDate,
     visual.expiryDate,
     'expiry',
-    mrzTrusted,
-    preferVisual
+    mrzTrusted
   );
+
+  let birthDate = birthPick.value;
+  let expiryDate = expiryPick.value;
 
   // Doğum son geçerlilikten sonra olamaz
   if (birthDate && expiryDate && birthDate > expiryDate) {
@@ -156,20 +170,17 @@ export function applyBestPassportIdentityToParsed(
     } else if (visual.birthDate && visual.expiryDate && visual.birthDate <= visual.expiryDate) {
       birthDate = visual.birthDate;
       expiryDate = visual.expiryDate;
-    } else if (preferVisual) {
-      // Çelişkide görsel etiketlileri tercih et; yoksa doğumu tut expiry'yi temizle
-      if (visual.birthDate) birthDate = visual.birthDate;
-      if (visual.expiryDate && (!birthDate || visual.expiryDate >= birthDate)) {
-        expiryDate = visual.expiryDate;
-      } else {
-        expiryDate = null;
-      }
+    } else if (isPlausibleBirthDate(mrz.birthDate) && isPlausibleExpiryDate(mrz.expiryDate)) {
+      birthDate = mrz.birthDate!.slice(0, 10);
+      expiryDate = mrz.expiryDate!.slice(0, 10);
+    } else {
+      expiryDate = null;
     }
   }
 
   const gender =
     (mrzTrusted ? mrz.gender : null) ??
-    (preferVisual ? visual.gender ?? mrz.gender ?? parsed.gender : null) ??
+    (preferVisualGenderNat ? visual.gender ?? mrz.gender ?? parsed.gender : null) ??
     mrz.gender ??
     parsed.gender ??
     visual.gender ??
@@ -188,14 +199,24 @@ export function applyBestPassportIdentityToParsed(
     mrz.issuingCountryCode ??
     nationalityCode;
 
-  return {
+  let next: ParsedDocument = {
     ...parsed,
     documentType: 'passport',
-    documentNumber: documentNumber ?? parsed.documentNumber,
+    documentNumber: docPick.value ?? parsed.documentNumber,
     birthDate,
     expiryDate,
     gender,
     nationalityCode,
     issuingCountryCode,
   };
+
+  if (docRepaired) next = pushParsedWarning(next, MRZ_DOC_REPAIRED_WARNING);
+  if (docPick.conflict || birthPick.conflict || expiryPick.conflict) {
+    next = pushParsedWarning(next, MRZ_IDENTITY_CONFLICT_WARNING);
+  }
+  if (uncertain || docPick.conflict || birthPick.conflict || expiryPick.conflict) {
+    next = withMrzNeedsReviewWarning(next);
+  }
+
+  return next;
 }

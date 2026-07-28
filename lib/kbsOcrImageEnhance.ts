@@ -2,9 +2,9 @@ import { Image } from 'react-native';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { cropImageForKbsOcr, cropMrzBandForKbsOcr } from '@/lib/kbsOcrDocumentFocus';
 
-/** Profesyonel OCR — ML Kit / MRZ için hedef çözünürlük. */
-export const KBS_OCR_PRO_MIN_LONG_EDGE = 2400;
-export const KBS_OCR_PRO_MAX_LONG_EDGE = 3000;
+/** Profesyonel OCR — ML Kit / MRZ için hedef çözünürlük (fotokopi için yüksek). */
+export const KBS_OCR_PRO_MIN_LONG_EDGE = 2800;
+export const KBS_OCR_PRO_MAX_LONG_EDGE = 3600;
 const PRO_JPEG_QUALITY = 0.98;
 
 async function imageSize(uri: string): Promise<{ width: number; height: number; long: number }> {
@@ -16,24 +16,31 @@ async function imageSize(uri: string): Promise<{ width: number; height: number; 
 
 /**
  * Kimlik / pasaport OCR öncesi — küçük fotoğrafları büyüt, dev görselleri sınırla, yüksek kalite JPEG.
+ * `fast`: kamera hızlı yolu — daha düşük çözünürlük, daha az süre.
  */
-export async function prepareProfessionalKbsOcrUri(uri: string): Promise<string> {
+export async function prepareProfessionalKbsOcrUri(
+  uri: string,
+  opts?: { fast?: boolean }
+): Promise<string> {
   try {
     const { width, height, long } = await imageSize(uri);
+    const minEdge = opts?.fast ? 2000 : KBS_OCR_PRO_MIN_LONG_EDGE;
+    const maxEdge = opts?.fast ? 2600 : KBS_OCR_PRO_MAX_LONG_EDGE;
+    const quality = opts?.fast ? 0.92 : PRO_JPEG_QUALITY;
     const actions: { resize: { width?: number; height?: number } }[] = [];
 
-    if (long < KBS_OCR_PRO_MIN_LONG_EDGE) {
-      actions.push(width >= height ? { resize: { width: KBS_OCR_PRO_MIN_LONG_EDGE } } : { resize: { height: KBS_OCR_PRO_MIN_LONG_EDGE } });
-    } else if (long > KBS_OCR_PRO_MAX_LONG_EDGE) {
-      actions.push(width >= height ? { resize: { width: KBS_OCR_PRO_MAX_LONG_EDGE } } : { resize: { height: KBS_OCR_PRO_MAX_LONG_EDGE } });
+    if (long < minEdge) {
+      actions.push(width >= height ? { resize: { width: minEdge } } : { resize: { height: minEdge } });
+    } else if (long > maxEdge) {
+      actions.push(width >= height ? { resize: { width: maxEdge } } : { resize: { height: maxEdge } });
     }
 
     if (!actions.length) {
-      const out = await manipulateAsync(uri, [], { compress: PRO_JPEG_QUALITY, format: SaveFormat.JPEG });
+      const out = await manipulateAsync(uri, [], { compress: quality, format: SaveFormat.JPEG });
       return out.uri;
     }
 
-    const out = await manipulateAsync(uri, actions, { compress: PRO_JPEG_QUALITY, format: SaveFormat.JPEG });
+    const out = await manipulateAsync(uri, actions, { compress: quality, format: SaveFormat.JPEG });
     return out.uri;
   } catch {
     return uri;

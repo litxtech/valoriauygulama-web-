@@ -69,6 +69,45 @@ export async function notifyKbsDocumentCaptured(params: {
   return { count: result.count };
 }
 
+/**
+ * Daha önce gelen misafir — belge no / ad+doğum eşleşince push (sesli KBS kanalı).
+ */
+export async function notifyKbsReturningGuest(params: {
+  organizationId: string;
+  createdByStaffId: string;
+  guestName?: string | null;
+  roomNumber?: string | number | null;
+  previousCapturedAtLabel?: string | null;
+  documentId?: string | null;
+}): Promise<{ count: number }> {
+  const { organizationId, createdByStaffId, guestName, roomNumber, previousCapturedAtLabel, documentId } =
+    params;
+  const staffIds = await fetchKbsCaptureNotifyStaffIds(organizationId);
+  if (staffIds.length === 0) return { count: 0 };
+
+  const who = (guestName ?? '').trim() || 'Misafir';
+  const room = roomNumber != null && String(roomNumber).trim() ? ` · Oda ${roomNumber}` : '';
+  const when = previousCapturedAtLabel ? ` (önceki: ${previousCapturedAtLabel})` : '';
+  const body = `${who} daha önce otele geldi${room}.${when}`;
+
+  const result = await sendNotificationToStaffIds({
+    staffIds,
+    title: '✓ Daha önce geldi',
+    body,
+    createdByStaffId,
+    notificationType: 'kbs_returning_guest',
+    category: 'staff',
+    data: {
+      screen: documentId ? `/staff/kbs/capture/${documentId}` : '/staff/kbs/capture-history',
+      url: documentId ? `/staff/kbs/capture/${documentId}` : '/staff/kbs/capture-history',
+      roomNumber: roomNumber ?? null,
+      guestDocumentId: documentId ?? null,
+      returningGuest: true,
+    },
+  });
+  return { count: result.count };
+}
+
 /** Elle düzeltme: parsed_payload + guests + belge sütunları (KBS bağlamına yazılır). */
 export async function updateKbsCaptureManualFields(
   row: KbsCapturedDocumentRow,

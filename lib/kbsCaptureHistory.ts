@@ -6,7 +6,7 @@ import { isKbsPlaceholderName, mergeKbsOcrIntoExisting } from '@/lib/kbsCaptureO
 import { enrichKbsParsedFromSources, isKbsTcOnlyCapture, listCoreMissingIdFields, withMissingFieldWarnings } from '@/lib/kbsCaptureParsedFields';
 import { MRZ_OCR_ENGINE_VISION_MLKIT } from '@/lib/scanner/mrzOcrEngine';
 import { canStaffViewAllKbsCaptures } from '@/lib/kbsMrzAccess';
-import { findGuestDocumentByIdentity, withReturningGuestWarning, buildReturningGuestMeta } from '@/lib/kbsGuestDocumentIdentity';
+import { findGuestDocumentByIdentity, findPriorGuestVisit, withReturningGuestWarning, buildReturningGuestMeta, isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
 import { inferKbsPersonKind } from '@/lib/kbsInferPersonKind';
 import { resolveKbsDocumentSeries } from '@/lib/kbsDocumentSeries';
 import { withPromiseTimeout } from '@/lib/edgeInvokeTimeout';
@@ -371,6 +371,7 @@ export async function applyKbsCaptureOcrResult(
   }
 
   const existing = (docRow?.parsed_payload ?? {}) as ParsedDocument;
+  const alreadyReturning = isKbsReturningGuest(existing);
   const merged = mergeKbsOcrIntoExisting(existing, parsed);
   const payload = stripOcrFlags(merged);
   const docNo = (payload.documentNumber ?? '').trim().replace(/\s+/g, '').toUpperCase() || null;
@@ -379,32 +380,54 @@ export async function applyKbsCaptureOcrResult(
   const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
 
   let writeDocumentNumber = !!docNo;
-  if (docNo && hotelId) {
-    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
-      excludeDocumentId: docId,
-    });
-    if (conflict && conflict.id !== docId) {
-      const meta = buildReturningGuestMeta(conflict, docNo);
-      const returningForCanonical = withReturningGuestWarning(payload, meta);
-      // Kanonik kaydı doğrudan güncelle (recursion yok)
-      const canonical = await commitKbsCaptureOcrPatch({
-        docId: conflict.id,
-        guestId: conflict.guest_id,
-        hotelId,
-        documentType,
-        payload: returningForCanonical,
-        scanConfidence,
-        ocrEngine,
-        writeDocumentNumber: true,
+  let returningMeta: ReturnType<typeof buildReturningGuestMeta> | null = null;
+  if (hotelId) {
+    if (docNo) {
+      const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
+        excludeDocumentId: docId,
       });
-      if (!canonical.ok) return canonical;
-      writeDocumentNumber = false;
-      Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
+      if (conflict && conflict.id !== docId) {
+        const meta = buildReturningGuestMeta(conflict, docNo);
+        returningMeta = meta;
+        const returningForCanonical = withReturningGuestWarning(payload, meta);
+        // Kanonik kaydı doğrudan güncelle (recursion yok)
+        const canonical = await commitKbsCaptureOcrPatch({
+          docId: conflict.id,
+          guestId: conflict.guest_id,
+          hotelId,
+          documentType,
+          payload: returningForCanonical,
+          scanConfidence,
+          ocrEngine,
+          writeDocumentNumber: true,
+        });
+        if (!canonical.ok) return canonical;
+        writeDocumentNumber = false;
+        Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
+      }
+    }
+    if (!returningMeta) {
+      const prior = await findPriorGuestVisit(
+        hotelId,
+        {
+          documentType,
+          documentNumber: writeDocumentNumber ? docNo : null,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          birthDate: payload.birthDate,
+          personalNumber: payload.personalNumber,
+        },
+        { excludeDocumentId: docId }
+      );
+      if (prior) {
+        returningMeta = buildReturningGuestMeta(prior, docNo ?? prior.document_number);
+        Object.assign(payload, withReturningGuestWarning(payload, returningMeta));
+      }
     }
   }
 
   try {
-    return await commitKbsCaptureOcrPatch({
+    const res = await commitKbsCaptureOcrPatch({
       docId,
       guestId,
       hotelId,
@@ -414,6 +437,17 @@ export async function applyKbsCaptureOcrResult(
       ocrEngine,
       writeDocumentNumber,
     });
+    if (res.ok && returningMeta && !alreadyReturning) {
+      void import('@/lib/kbsReturningGuestAlert').then(({ announceKbsReturningGuestFromSession }) => {
+        announceKbsReturningGuestFromSession({
+          documentId: docId,
+          guestName: returningMeta?.previousGuestName ?? payload.fullName,
+          meta: returningMeta,
+          payload: payload as Record<string, unknown>,
+        });
+      });
+    }
+    return res;
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
   }
@@ -452,31 +486,53 @@ export async function applyKbsCaptureOcrCorrection(
   const documentType = (payload.documentType ?? docRow?.document_type ?? 'id_card') as string;
 
   let writeDocumentNumber = !!docNo;
-  if (docNo && hotelId) {
-    const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
-      excludeDocumentId: docId,
-    });
-    if (conflict && conflict.id !== docId) {
-      const meta = buildReturningGuestMeta(conflict, docNo);
-      const returningForCanonical = withReturningGuestWarning(payload, meta);
-      const canonical = await commitKbsCaptureOcrPatch({
-        docId: conflict.id,
-        guestId: conflict.guest_id,
-        hotelId,
-        documentType,
-        payload: returningForCanonical,
-        scanConfidence,
-        ocrEngine,
-        writeDocumentNumber: true,
+  let returningMeta: ReturnType<typeof buildReturningGuestMeta> | null = null;
+  if (hotelId) {
+    if (docNo) {
+      const conflict = await findGuestDocumentByIdentity(hotelId, documentType, docNo, {
+        excludeDocumentId: docId,
       });
-      if (!canonical.ok) return canonical;
-      writeDocumentNumber = false;
-      Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
+      if (conflict && conflict.id !== docId) {
+        const meta = buildReturningGuestMeta(conflict, docNo);
+        returningMeta = meta;
+        const returningForCanonical = withReturningGuestWarning(payload, meta);
+        const canonical = await commitKbsCaptureOcrPatch({
+          docId: conflict.id,
+          guestId: conflict.guest_id,
+          hotelId,
+          documentType,
+          payload: returningForCanonical,
+          scanConfidence,
+          ocrEngine,
+          writeDocumentNumber: true,
+        });
+        if (!canonical.ok) return canonical;
+        writeDocumentNumber = false;
+        Object.assign(payload, withReturningGuestWarning({ ...payload, documentNumber: null }, meta));
+      }
+    }
+    if (!returningMeta) {
+      const prior = await findPriorGuestVisit(
+        hotelId,
+        {
+          documentType,
+          documentNumber: writeDocumentNumber ? docNo : null,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          birthDate: payload.birthDate,
+          personalNumber: payload.personalNumber,
+        },
+        { excludeDocumentId: docId }
+      );
+      if (prior) {
+        returningMeta = buildReturningGuestMeta(prior, docNo ?? prior.document_number);
+        Object.assign(payload, withReturningGuestWarning(payload, returningMeta));
+      }
     }
   }
 
   try {
-    return await commitKbsCaptureOcrPatch({
+    const res = await commitKbsCaptureOcrPatch({
       docId,
       guestId,
       hotelId,
@@ -486,6 +542,8 @@ export async function applyKbsCaptureOcrCorrection(
       ocrEngine,
       writeDocumentNumber,
     });
+    // Manuel düzeltmede ses/push yok — sadece çekim anında bir kez duyurulur.
+    return res;
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'OCR kayıt zaman aşımı' };
   }
@@ -530,7 +588,7 @@ export async function fetchKbsCapturedDocumentById(
     .schema('ops')
     .from('guest_documents')
     .select(
-      `id, guest_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
+      `id, guest_id, hotel_id, captured_at, created_at, front_image_url, capture_source, parsed_payload, scan_status, ocr_status, ocr_engine, mrz_batch_key, scanned_by_user_id, guest_phone_submitted,
       document_number, nationality_code, issuing_country_code, expiry_date, document_type,
       guest:guest_id(first_name, last_name, birth_date, gender, nationality_code)`
     )
@@ -544,6 +602,7 @@ export async function fetchKbsCapturedDocumentById(
   const row = doc as unknown as {
     id: string;
     guest_id: string;
+    hotel_id?: string | null;
     captured_at: string | null;
     created_at: string;
     front_image_url: string | null;
@@ -597,6 +656,7 @@ export async function fetchKbsCapturedDocumentById(
   return {
     id: row.id,
     guest_id: row.guest_id,
+    hotel_id: row.hotel_id ?? ctx.hotelId,
     captured_at: row.captured_at,
     created_at: row.created_at,
     front_image_url: row.front_image_url,

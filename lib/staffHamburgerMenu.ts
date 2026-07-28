@@ -6,6 +6,7 @@ import {
   canViewBreakfastBriefing,
 } from '@/lib/breakfastMorningBriefing';
 import { canViewPartnerBreakfastBoard } from '@/lib/breakfastPartner';
+import { canManagePartnerLaundry } from '@/lib/breakfastPartnerLaundry';
 import { canStaffUseIdCapture, canStaffViewKbsCaptureHistory } from '@/lib/kbsMrzAccess';
 import { isKbsUiEnabled } from '@/lib/kbsUiEnabled';
 import {
@@ -194,15 +195,26 @@ function pushPartnerBreakfastBoardMenuItem(
   staff: StaffHamburgerStaff,
   isAdmin: boolean
 ) {
-  if (!canViewPartnerBreakfastBoard(staff)) return;
+  if (!canViewPartnerBreakfastBoard(staff) && !canManagePartnerLaundry(staff)) return;
   const section: StaffHamburgerMenuSectionId = isKitchenStaffMember(staff) ? 'kitchen' : isAdmin ? 'admin' : 'hotel';
-  push(section, {
-    id: 'breakfast_partner_board',
-    label: 'Partner kahvaltı panosu',
-    href: '/staff/breakfast-partners',
-    icon: 'business-outline',
-    accent: '#f59e0b',
-  });
+  if (canViewPartnerBreakfastBoard(staff)) {
+    push(section, {
+      id: 'breakfast_partner_board',
+      label: 'Partner kahvaltı panosu',
+      href: '/staff/breakfast-partners',
+      icon: 'business-outline',
+      accent: '#f59e0b',
+    });
+  }
+  if (canManagePartnerLaundry(staff)) {
+    push(section, {
+      id: 'breakfast_partner_laundry',
+      label: 'Partner çamaşır kaydı',
+      href: '/staff/breakfast-partners/laundry',
+      icon: 'shirt-outline',
+      accent: '#3b82f6',
+    });
+  }
 }
 
 /**
@@ -416,13 +428,12 @@ export function buildStaffHamburgerMenuSections(
     accent: ACCENTS.salary_history,
   });
   // Kişisel temizlik ekranı: yalnızca personelin KENDİSİNE atanan işleri gösterir.
-  // Atanan temizlikçilerde yönetici izni olmadığından menüye herkes için eklenir
-  // (atama yoksa boş görünür); yönetici menü düzenleyicisinden gizlenebilir.
+  // Tekleşmiş canlı temizlik merkezi
   push('staff', {
     id: 'cleaning',
     label: t('staffCleaningNavTitle'),
     href: '/staff/cleaning-plan',
-    icon: 'checkbox-outline',
+    icon: 'sparkles-outline',
     accent: ACCENTS.cleaning,
   });
   push('staff', {
@@ -432,15 +443,6 @@ export function buildStaffHamburgerMenuSections(
     icon: 'bed-outline',
     accent: ACCENTS.cleaning,
   });
-  if (canAccessAdminRoute(staff, '/admin/rooms/cleaning-plan')) {
-    push('staff', {
-      id: 'cleaning_plan_admin',
-      label: 'Oda temizlik planı (bildir)',
-      href: '/admin/rooms/cleaning-plan',
-      icon: 'sparkles-outline',
-      accent: ACCENTS.cleaning,
-    });
-  }
   push('staff', {
     id: 'official_warnings',
     label: t('staffOfficialWarningsNavTitle'),
@@ -867,6 +869,15 @@ export function buildStaffHamburgerMenuSections(
         href: '/admin/kitchen-ops',
         icon: 'stats-chart-outline',
         accent: ACCENTS.kitchen_ops,
+      });
+    }
+    if (canAccessAdminRoute(staff, '/admin/staff-perf')) {
+      push('admin', {
+        id: 'staff_perf',
+        label: t('staffPerfSystemTitle'),
+        href: '/admin/staff-perf',
+        icon: 'ribbon-outline',
+        accent: '#0f3d3a',
       });
     }
     if (canAccessAdminRoute(staff, '/admin/audits')) {

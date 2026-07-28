@@ -30,6 +30,7 @@ import {
 import { StaffAttendanceHamburgerShortcuts } from '@/components/header/StaffAttendanceHamburgerShortcuts';
 import { AdminAttendanceHamburgerButton } from '@/components/header/AdminAttendanceHamburgerButton';
 import { StaffHamburgerRecentFlyout } from '@/components/header/StaffHamburgerRecentFlyout';
+import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
 import type {
   StaffHamburgerMenuItem,
   StaffHamburgerMenuLayout,
@@ -68,6 +69,11 @@ type Props = {
   layout?: StaffHamburgerMenuLayout | null;
   menuTheme?: ResolvedStaffHamburgerTheme | null;
   recentItems?: StaffHamburgerMenuItem[];
+  /** Kişisel üste sabitlenen özellikler */
+  pinnedItems?: StaffHamburgerMenuItem[];
+  pinnedIdSet?: string[];
+  onTogglePin?: (itemId: string) => Promise<boolean> | boolean;
+  onMovePin?: (itemId: string, direction: -1 | 1) => Promise<void> | void;
   showAttendanceShortcuts?: boolean;
   showAdminAttendancePanel?: boolean;
   onAdminAttendanceNavigate?: () => void;
@@ -146,19 +152,28 @@ function filterSections(sections: StaffHamburgerMenuSection[], query: string): S
 function HubCard({
   item,
   onPress,
+  onLongPress,
   palette,
   theme,
+  pinned,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
+  onLongPress?: () => void;
   palette: PersonelDesignPalette;
   theme: ResolvedStaffHamburgerTheme;
+  pinned?: boolean;
 }) {
   const accent = resolveMenuItemAccent(item.id, item.accent, theme);
   const body = (
     <>
       <View style={[styles.hubIcon, { backgroundColor: accentTintBg(accent) }]}>
         <Ionicons name={item.icon} size={22} color={accent} />
+        {pinned ? (
+          <View style={styles.pinBadge}>
+            <Ionicons name="pin" size={9} color="#fff" />
+          </View>
+        ) : null}
       </View>
       <Text style={[styles.hubLabel, { color: palette.text }]} numberOfLines={2}>
         {item.label}
@@ -170,6 +185,8 @@ function HubCard({
     return (
       <FastPress
         onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={380}
         style={[styles.hubCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
         rippleColor={`${accent}22`}
         accessibilityRole="button"
@@ -183,6 +200,8 @@ function HubCard({
   return (
     <TouchableOpacity
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={380}
       activeOpacity={0.85}
       style={[styles.hubCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
       accessibilityRole="button"
@@ -250,22 +269,43 @@ function PrimaryActionButton({
 function MenuListRow({
   item,
   onPress,
+  onLongPress,
   isLast,
   palette,
   theme,
   compact,
+  pinned,
+  editMode,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
+  onUnpin,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
+  onLongPress?: () => void;
   isLast: boolean;
   palette: PersonelDesignPalette;
   theme: ResolvedStaffHamburgerTheme;
   compact?: boolean;
+  pinned?: boolean;
+  editMode?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onUnpin?: () => void;
 }) {
   const accent = resolveMenuItemAccent(item.id, item.accent, theme);
   const iconNode = (
     <View style={[styles.listIcon, compact && styles.listIconCompact, { backgroundColor: accentTintBg(accent) }]}>
       <Ionicons name={item.icon} size={compact ? 17 : 19} color={accent} />
+      {pinned && !editMode ? (
+        <View style={styles.pinBadge}>
+          <Ionicons name="pin" size={9} color="#fff" />
+        </View>
+      ) : null}
     </View>
   );
 
@@ -275,22 +315,68 @@ function MenuListRow({
       <Text style={[styles.listLabel, { color: palette.text }]} numberOfLines={2}>
         {item.label}
       </Text>
-      <View
-        style={[
-          styles.listChevron,
-          IS_ANDROID && styles.listChevronAndroid,
-          { backgroundColor: palette.secondaryBtn },
-        ]}
-      >
-        <Ionicons name="chevron-forward" size={16} color={palette.indigo} />
-      </View>
+      {editMode ? (
+        <View style={styles.pinEditControls}>
+          <TouchableOpacity
+            onPress={onMoveUp}
+            disabled={!canMoveUp}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            style={[styles.pinEditBtn, !canMoveUp && styles.pinEditBtnDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Move up"
+          >
+            <Ionicons name="chevron-up" size={18} color={canMoveUp ? palette.text : palette.muted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onMoveDown}
+            disabled={!canMoveDown}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            style={[styles.pinEditBtn, !canMoveDown && styles.pinEditBtnDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Move down"
+          >
+            <Ionicons name="chevron-down" size={18} color={canMoveDown ? palette.text : palette.muted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onUnpin}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            style={[styles.pinEditBtn, styles.pinEditUnpin]}
+            accessibilityRole="button"
+            accessibilityLabel="Unpin"
+          >
+            <Ionicons name="close" size={16} color="#ef4444" />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.listChevron,
+            IS_ANDROID && styles.listChevronAndroid,
+            { backgroundColor: palette.secondaryBtn },
+          ]}
+        >
+          <Ionicons name="chevron-forward" size={16} color={palette.indigo} />
+        </View>
+      )}
     </>
   );
+
+  if (editMode) {
+    return (
+      <View
+        style={[styles.listRow, compact && styles.listRowCompact, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
+      >
+        {rowBody}
+      </View>
+    );
+  }
 
   if (IS_ANDROID) {
     return (
       <FastPress
         onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={380}
         style={[styles.listRow, compact && styles.listRowCompact, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
         rippleColor={`${accent}22`}
         accessibilityRole="button"
@@ -304,6 +390,8 @@ function MenuListRow({
   return (
     <TouchableOpacity
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={380}
       activeOpacity={0.82}
       style={[styles.listRow, compact && styles.listRowCompact, !isLast && [styles.listRowDivider, { borderBottomColor: palette.cardBorder }]]}
       accessibilityRole="button"
@@ -319,19 +407,28 @@ const MenuListRowMemo = memo(MenuListRow);
 function MenuGridTile({
   item,
   onPress,
+  onLongPress,
   palette,
   theme,
+  pinned,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
+  onLongPress?: () => void;
   palette: PersonelDesignPalette;
   theme: ResolvedStaffHamburgerTheme;
+  pinned?: boolean;
 }) {
   const accent = resolveMenuItemAccent(item.id, item.accent, theme);
   const body = (
     <>
       <View style={[styles.gridIcon, { backgroundColor: accentTintBg(accent) }]}>
         <Ionicons name={item.icon} size={22} color={accent} />
+        {pinned ? (
+          <View style={styles.pinBadge}>
+            <Ionicons name="pin" size={9} color="#fff" />
+          </View>
+        ) : null}
       </View>
       <Text style={[styles.gridLabel, { color: palette.text }]} numberOfLines={2}>
         {item.label}
@@ -341,13 +438,29 @@ function MenuGridTile({
   const tileStyle = [styles.gridTile, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }];
   if (IS_ANDROID) {
     return (
-      <FastPress onPress={onPress} style={tileStyle} rippleColor={`${accent}22`} accessibilityRole="button" accessibilityLabel={item.label}>
+      <FastPress
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={380}
+        style={tileStyle}
+        rippleColor={`${accent}22`}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+      >
         {body}
       </FastPress>
     );
   }
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={tileStyle} accessibilityRole="button" accessibilityLabel={item.label}>
+    <TouchableOpacity
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={380}
+      activeOpacity={0.85}
+      style={tileStyle}
+      accessibilityRole="button"
+      accessibilityLabel={item.label}
+    >
       {body}
     </TouchableOpacity>
   );
@@ -356,18 +469,27 @@ function MenuGridTile({
 function MenuPillItem({
   item,
   onPress,
+  onLongPress,
   palette,
   theme,
+  pinned,
 }: {
   item: StaffHamburgerMenuItem;
   onPress: () => void;
+  onLongPress?: () => void;
   palette: PersonelDesignPalette;
   theme: ResolvedStaffHamburgerTheme;
+  pinned?: boolean;
 }) {
   const accent = resolveMenuItemAccent(item.id, item.accent, theme);
-  const pillStyle = [styles.pillItem, { backgroundColor: accentTintBg(accent, '33'), borderColor: `${accent}44` }];
+  const pillStyle = [
+    styles.pillItem,
+    { backgroundColor: accentTintBg(accent, '33'), borderColor: `${accent}44` },
+    pinned && styles.pillItemPinned,
+  ];
   const inner = (
     <>
+      {pinned ? <Ionicons name="pin" size={12} color={accent} /> : null}
       <Ionicons name={item.icon} size={16} color={accent} />
       <Text style={[styles.pillLabel, { color: palette.text }]} numberOfLines={1}>
         {item.label}
@@ -376,13 +498,29 @@ function MenuPillItem({
   );
   if (IS_ANDROID) {
     return (
-      <FastPress onPress={onPress} style={pillStyle} rippleColor={`${accent}22`} accessibilityRole="button" accessibilityLabel={item.label}>
+      <FastPress
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={380}
+        style={pillStyle}
+        rippleColor={`${accent}22`}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+      >
         {inner}
       </FastPress>
     );
   }
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={pillStyle} accessibilityRole="button" accessibilityLabel={item.label}>
+    <TouchableOpacity
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={380}
+      activeOpacity={0.85}
+      style={pillStyle}
+      accessibilityRole="button"
+      accessibilityLabel={item.label}
+    >
       {inner}
     </TouchableOpacity>
   );
@@ -524,6 +662,10 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   layout,
   menuTheme: menuThemeProp,
   recentItems = [],
+  pinnedItems = [],
+  pinnedIdSet,
+  onTogglePin,
+  onMovePin,
   showAttendanceShortcuts = false,
   showAdminAttendancePanel = false,
   onAdminAttendanceNavigate,
@@ -561,19 +703,27 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const [itemsPressEnabled, setItemsPressEnabled] = useState(false);
   /** Kapanış animasyonu bitene kadar mount tut. */
   const [mounted, setMounted] = useState(visible);
+  const [pinsEditMode, setPinsEditMode] = useState(false);
+
+  const pinnedIdLookup = useMemo(() => {
+    if (pinnedIdSet?.length) return new Set(pinnedIdSet);
+    return new Set(pinnedItems.map((i) => i.id));
+  }, [pinnedIdSet, pinnedItems]);
 
   const primary = layout?.primary ?? null;
   const hubs = layout?.hubs ?? [];
   const sections = layout?.sections ?? [];
 
+  const filteredPinned = useMemo(() => filterMenuItems(pinnedItems, searchQuery), [pinnedItems, searchQuery]);
   const filteredHubs = useMemo(() => filterMenuItems(hubs, searchQuery), [hubs, searchQuery]);
   const filteredSections = useMemo(
     () => filterSections(sections, searchQuery),
     [sections, searchQuery]
   );
   const sectionItemCount = useMemo(
-    () => hubs.length + sections.reduce((n, s) => n + (s.items?.length ?? 0), 0),
-    [hubs, sections]
+    () =>
+      pinnedItems.length + hubs.length + sections.reduce((n, s) => n + (s.items?.length ?? 0), 0),
+    [pinnedItems, hubs, sections]
   );
   const showSearch =
     menuTheme.showSearch && sectionItemCount >= (menuTheme.searchMinItems ?? SEARCH_MIN_ITEMS);
@@ -581,6 +731,10 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const useGrid = menuTheme.layoutMode === 'grid' || menuTheme.itemStyle === 'grid';
   const usePill = menuTheme.itemStyle === 'pill';
   const showHubs = menuTheme.showHubCards && filteredHubs.length > 0;
+  const showPinnedSection =
+    onTogglePin != null &&
+    (pinsEditMode ||
+      (searchQuery.trim() ? filteredPinned.length > 0 : pinnedItems.length > 0));
 
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
@@ -593,6 +747,20 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const itemOffsetsRef = useRef<Record<string, number>>({});
   const restoreTargetRef = useRef<{ itemId: string | null; scrollY: number | null } | null>(null);
   const restoreAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!visible) setPinsEditMode(false);
+  }, [visible]);
+
+  const handleTogglePinItem = useCallback(
+    (itemId: string) => {
+      if (!onTogglePin || !itemsPressEnabled) return;
+      if (primary?.id && itemId === primary.id) return;
+      hapticImpactLight();
+      void onTogglePin(itemId);
+    },
+    [onTogglePin, itemsPressEnabled, primary?.id]
+  );
 
   const tryApplyMenuScrollRestore = useCallback(() => {
     if (restoreAppliedRef.current) return true;
@@ -808,10 +976,100 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                 item={item}
                 palette={effectivePalette}
                 theme={menuTheme}
+                pinned={pinnedIdLookup.has(item.id)}
                 onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
               />
             ))}
           </View>
+        ) : null}
+
+        {showPinnedSection ? (
+          <View
+            style={[styles.menuSection, isCompact && styles.menuSectionCompact]}
+            onLayout={(e) => {
+              sectionOffsetsRef.current.__pins = e.nativeEvent.layout.y;
+            }}
+          >
+            <View style={styles.sectionLabelRow}>
+              <View style={[styles.sectionLabelDot, { backgroundColor: '#d97706' }]} />
+              <Ionicons name="pin" size={14} color="#d97706" style={{ marginRight: 5 }} />
+              <Text style={[styles.sectionLabel, { color: '#d97706', flex: 1 }]}>
+                {t('staffMenuPinnedTitle')}
+              </Text>
+              {pinnedItems.length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    hapticSelection();
+                    setPinsEditMode((v) => !v);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={pinsEditMode ? t('staffMenuPinnedDone') : t('staffMenuPinnedEdit')}
+                >
+                  <Text style={[styles.pinEditToggle, { color: effectivePalette.indigo }]}>
+                    {pinsEditMode ? t('staffMenuPinnedDone') : t('staffMenuPinnedEdit')}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <View
+              style={[
+                styles.listCard,
+                IS_ANDROID && styles.listCardAndroid,
+                isCompact && styles.listCardCompact,
+                {
+                  borderTopColor: 'rgba(217,119,6,0.22)',
+                  borderTopWidth: 2,
+                  backgroundColor: effectivePalette.cardBg,
+                  borderColor: effectivePalette.cardBorder,
+                },
+              ]}
+            >
+              {filteredPinned.length === 0 ? (
+                <Text style={[styles.pinEmptyHint, { color: effectivePalette.muted }]}>
+                  {pinsEditMode ? t('staffMenuPinnedEmptyEdit') : t('staffMenuPinnedHint')}
+                </Text>
+              ) : (
+                filteredPinned.map((item, idx, items) => (
+                  <View
+                    key={`pin-${item.id}`}
+                    onLayout={(e) => {
+                      const sectionY = sectionOffsetsRef.current.__pins ?? 0;
+                      itemOffsetsRef.current[item.id] = sectionY + e.nativeEvent.layout.y;
+                    }}
+                  >
+                    <MenuListRowMemo
+                      item={item}
+                      isLast={idx === items.length - 1}
+                      palette={effectivePalette}
+                      theme={menuTheme}
+                      compact={isCompact}
+                      pinned
+                      editMode={pinsEditMode}
+                      canMoveUp={idx > 0}
+                      canMoveDown={idx < items.length - 1}
+                      onMoveUp={() => {
+                        hapticSelection();
+                        void onMovePin?.(item.id, -1);
+                      }}
+                      onMoveDown={() => {
+                        hapticSelection();
+                        void onMovePin?.(item.id, 1);
+                      }}
+                      onUnpin={() => handleTogglePinItem(item.id)}
+                      onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                      onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
+                    />
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
+        ) : onTogglePin && !searchQuery.trim() ? (
+          <Text style={[styles.pinHintLine, styles.pinHintStandalone, { color: effectivePalette.muted }]}>
+            {t('staffMenuPinnedHint')}
+          </Text>
         ) : null}
 
         {showSearch ? (
@@ -909,7 +1167,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                           item={item}
                           palette={effectivePalette}
                           theme={menuTheme}
+                          pinned={pinnedIdLookup.has(item.id)}
                           onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                          onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
                         />
                       </View>
                     ))}
@@ -930,7 +1190,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                           item={item}
                           palette={effectivePalette}
                           theme={menuTheme}
+                          pinned={pinnedIdLookup.has(item.id)}
                           onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                          onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
                         />
                       </View>
                     ))}
@@ -952,7 +1214,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                         palette={effectivePalette}
                         theme={menuTheme}
                         compact={isCompact}
+                        pinned={pinnedIdLookup.has(item.id)}
                         onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
+                        onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
                       />
                     </View>
                   ))
@@ -962,7 +1226,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
           );
         })}
 
-        {searchQuery.trim() && filteredSections.length === 0 && filteredHubs.length === 0 ? (
+        {searchQuery.trim() && filteredSections.length === 0 && filteredHubs.length === 0 && filteredPinned.length === 0 ? (
           <Text style={[styles.emptySearch, { color: effectivePalette.muted }]}>{t('staffMenuSearchEmpty')}</Text>
         ) : null}
 
@@ -1061,7 +1325,13 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
       statusBarTranslucent
       navigationBarTranslucent={IS_ANDROID}
       hardwareAccelerated={IS_ANDROID}
-      onRequestClose={navigatingAway ? undefined : handleClosePress}
+      onRequestClose={() => {
+        if (navigatingAway) {
+          useStaffHamburgerUiStore.getState().finishNavTransition();
+          return;
+        }
+        handleClosePress();
+      }}
     >
       <View style={styles.host} pointerEvents={navigatingAway ? 'none' : 'box-none'}>
         {navigatingAway ? (
@@ -1406,6 +1676,66 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  pinBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#d97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  pinEditToggle: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pinEditControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  pinEditBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(148,163,184,0.12)',
+  },
+  pinEditBtnDisabled: {
+    opacity: 0.35,
+  },
+  pinEditUnpin: {
+    backgroundColor: 'rgba(239,68,68,0.1)',
+    marginLeft: 4,
+  },
+  pinEmptyHint: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  pinHintLine: {
+    fontSize: 11,
+    fontWeight: '500',
+    lineHeight: 15,
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  pinHintStandalone: {
+    marginBottom: 12,
+    marginTop: 0,
+    paddingHorizontal: H_PAD,
+  },
+  pillItemPinned: {
+    borderWidth: 1.5,
   },
   hubLabel: {
     fontSize: 12,
@@ -1526,6 +1856,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   listChevron: {
     width: 28,
@@ -1619,6 +1950,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   gridLabel: {
     fontSize: 12,

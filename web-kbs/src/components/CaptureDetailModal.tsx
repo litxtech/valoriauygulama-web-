@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   familyMembersOf,
+  findDuplicatePhoneHit,
+  indexOfRoommate,
   isRecentlyAddedCapture,
   requestCaptureRead,
+  roommatesOf,
   updateCaptureGuestPhone,
   updateCaptureManualFields,
   type CaptureItem,
+  type DuplicatePhoneHit,
 } from '../lib/captures';
 import {
   buildKbsCopyFields,
@@ -21,6 +25,7 @@ import { ZoomLightbox } from './ZoomLightbox';
 
 type Props = {
   item: CaptureItem;
+  allItems: CaptureItem[];
   familyIndex: Map<string, CaptureItem[]>;
   onClose: () => void;
   onSelect: (item: CaptureItem) => void;
@@ -29,8 +34,11 @@ type Props = {
   onCaptureUpdated?: (item: CaptureItem) => void;
 };
 
+const QUICK_KEYS = new Set(['documentNumber', 'nationalityCode', 'birthDate', 'expiryDate', 'gender']);
+
 export function CaptureDetailModal({
   item,
+  allItems,
   familyIndex,
   onClose,
   onSelect,
@@ -44,14 +52,21 @@ export function CaptureDetailModal({
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
   const status = kbsCaptureCardStatus(parsed, { ocrStatus: item.ocr_status });
   const fields = buildKbsCopyFields(parsed, { showEmpty: true });
+  const quickFields = fields.filter((f) => QUICK_KEYS.has(f.key));
+  const detailFields = fields.filter((f) => !QUICK_KEYS.has(f.key));
   const returningWarn = formatKbsReturningGuestWarning(parsed);
   const [copied, setCopied] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
+  const roommates = useMemo(() => roommatesOf(item, allItems), [item, allItems]);
+  const pageIndex = indexOfRoommate(item.id, roommates);
+  const hasMultiple = roommates.length > 1;
+
   const [phone, setPhone] = useState(item.guest_phone_submitted ?? '');
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
+  const [phoneDup, setPhoneDup] = useState<DuplicatePhoneHit | null>(null);
   const [readBusy, setReadBusy] = useState(false);
   const [readMsg, setReadMsg] = useState<string | null>(null);
 
@@ -72,6 +87,7 @@ export function CaptureDetailModal({
   useEffect(() => {
     setPhone(item.guest_phone_submitted ?? '');
     setPhoneMsg(null);
+    setPhoneDup(null);
     setReadMsg(null);
     setOpsMsg(null);
     setZoom(null);
@@ -87,7 +103,26 @@ export function CaptureDetailModal({
     setDocSeries(item.parsed?.documentSeries ?? '');
   }, [item.id]);
 
-  // OCR sonucu gelince boş/elle dokunulmayan alanları doldur
+  useEffect(() => {
+    const phoneVal = item.guest_phone_submitted?.trim();
+    if (!phoneVal) {
+      setPhoneDup(null);
+      return;
+    }
+    let cancelled = false;
+    void findDuplicatePhoneHit({
+      phone: phoneVal,
+      excludeDocumentId: item.id,
+      hotelId: item.hotel_id,
+      items: allItems,
+    }).then((hit) => {
+      if (!cancelled) setPhoneDup(hit);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, item.guest_phone_submitted, item.hotel_id, allItems]);
+
   useEffect(() => {
     const p = item.parsed;
     if (!p) return;
@@ -121,10 +156,32 @@ export function CaptureDetailModal({
     }
     setPhoneSaving(true);
     setPhoneMsg(null);
+    setPhoneDup(null);
     try {
       await updateCaptureGuestPhone(item.id, next);
       setPhoneMsg('Kaydedildi');
       onPhoneSaved?.(item.id, next);
+      if (next) {
+        const hit = await findDuplicatePhoneHit({
+          phone: next,
+          excludeDocumentId: item.id,
+          hotelId: item.hotel_id,
+          items: allItems,
+        });
+        if (hit) {
+          setPhoneDup(hit);
+          const when = new Date(hit.capturedAt).toLocaleString('tr-TR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          setPhoneMsg(
+            `✓ Daha önce eklendi — ${hit.guestName}${hit.roomNumber ? ` · Oda ${hit.roomNumber}` : ''} · ${when}`
+          );
+        }
+      }
     } catch (e) {
       setPhoneMsg(e instanceof Error ? e.message : 'Kaydedilemedi');
     } finally {
@@ -193,15 +250,37 @@ export function CaptureDetailModal({
   };
 
   const family = familyMembersOf(item, familyIndex);
+  const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR');
+  const images = [item.front_image_url, item.back_image_url].filter(Boolean) as string[];
+
+  const goTo = useCallback(
+    (index: number) => {
+      const target = roommates[index];
+      if (target && target.id !== item.id) {
+        startTransition(() => onSelect(target));
+      }
+    },
+    [item.id, onSelect, roommates]
+  );
+
+  const goPrev = useCallback(() => {
+    if (pageIndex > 0) goTo(pageIndex - 1);
+  }, [goTo, pageIndex]);
+
+  const goNext = useCallback(() => {
+    if (pageIndex < roommates.length - 1) goTo(pageIndex + 1);
+  }, [goTo, pageIndex, roommates.length]);
 
   useEffect(() => {
     if (zoom) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft') goPrev();
+      if (e.key === 'ArrowRight') goNext();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, zoom]);
+  }, [onClose, zoom, goPrev, goNext]);
 
   const copy = async (label: string, value: string) => {
     try {
@@ -228,20 +307,13 @@ export function CaptureDetailModal({
     try {
       const updated = await requestCaptureRead(item);
       onReadRequested?.(updated);
-      setReadMsg('Okuma kuyruğa alındı (cihaz + sunucu). Sonuç gelmezse alanları elle girin.');
+      setReadMsg('Okuma kuyruğa alındı. Sonuç gelmezse alanları elle girin.');
     } catch (e) {
       setReadMsg(e instanceof Error ? e.message : 'Okuma başlatılamadı');
     } finally {
       setReadBusy(false);
     }
   };
-
-  const images = [item.front_image_url, item.back_image_url].filter(Boolean) as string[];
-  const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR');
-
-  const openZoom = useCallback((src: string) => {
-    setZoom(src);
-  }, []);
 
   const selectMember = useCallback(
     (m: CaptureItem) => {
@@ -251,27 +323,43 @@ export function CaptureDetailModal({
   );
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-head">
-          <div>
-            <h2>{name}</h2>
-            <div className="modal-sub">
-              <StatusBadge status={status} />
-              {isRecentlyAddedCapture(item) ? (
-                <span className="chip chip-new" title="Son 1 saat içinde eklendi">
-                  ✓ Yeni
+    <div className="pv-overlay" onClick={onClose}>
+      <div className="pv-modal" onClick={(e) => e.stopPropagation()}>
+        <header className="pv-head">
+          <div className="pv-head-left">
+            {hasMultiple ? (
+              <div className="pv-nav">
+                <button
+                  type="button"
+                  className="pv-nav-btn"
+                  onClick={goPrev}
+                  disabled={pageIndex <= 0}
+                  aria-label="Önceki pasaport"
+                >
+                  ‹
+                </button>
+                <span className="pv-counter">
+                  {pageIndex + 1} / {roommates.length}
                 </span>
-              ) : null}
-              {isKbsReturningGuest(parsed) ? (
-                <span className="chip chip-returning" title="Bu belge daha önce sisteme eklendi">
-                  Daha önce geldi
-                </span>
-              ) : null}
-              {item.room_number ? <span className="chip">Oda {item.room_number}</span> : null}
-              {(item.hotel_name ?? item.captured_by_hotel_name) ? (
-                <span className="chip">🏨 {item.hotel_name ?? item.captured_by_hotel_name}</span>
-              ) : null}
+                <button
+                  type="button"
+                  className="pv-nav-btn"
+                  onClick={goNext}
+                  disabled={pageIndex >= roommates.length - 1}
+                  aria-label="Sonraki pasaport"
+                >
+                  ›
+                </button>
+              </div>
+            ) : null}
+            <div>
+              <h2 className="pv-title">{name}</h2>
+              <div className="pv-sub">
+                <StatusBadge status={status} />
+                {item.room_number ? <span className="chip chip-room">Oda {item.room_number}</span> : null}
+                {isRecentlyAddedCapture(item) ? <span className="chip chip-new">Yeni</span> : null}
+                {isKbsReturningGuest(parsed) ? <span className="chip chip-returning">Daha önce geldi</span> : null}
+              </div>
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Kapat">
@@ -279,32 +367,80 @@ export function CaptureDetailModal({
           </button>
         </header>
 
-        <div className="modal-body">
-          {returningWarn ? (
-            <div className="returning-banner" role="alert">
-              <span aria-hidden>⚠</span>
-              <span>{returningWarn}</span>
+        {returningWarn ? (
+          <div className="returning-banner pv-banner" role="alert">
+            <span aria-hidden>✓</span>
+            <span>{returningWarn}</span>
+          </div>
+        ) : null}
+
+        <div className="pv-body">
+          <div className="pv-image-panel">
+            <div className="pv-image-stage">
+              {images.length ? (
+                images.map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    className="pv-image-btn"
+                    onClick={() => setZoom(src)}
+                    aria-label="Yakınlaştır"
+                  >
+                    <img src={src} alt={name} decoding="async" />
+                  </button>
+                ))
+              ) : (
+                <div className="pv-image-empty">Görsel yok</div>
+              )}
             </div>
-          ) : null}
-          <div className="modal-images">
-            {images.length ? (
-              images.map((src) => (
-                <button
-                  key={src}
-                  type="button"
-                  className="modal-img-btn"
-                  onClick={() => openZoom(src)}
-                  aria-label="Yakınlaştır"
-                >
-                  <img src={src} alt={name} decoding="async" />
-                </button>
-              ))
-            ) : (
-              <div className="card-thumb-empty">Görsel yok</div>
-            )}
+
+            {hasMultiple ? (
+              <div className="pv-thumb-strip">
+                <span className="pv-thumb-label">Oda pasaportları</span>
+                <div className="pv-thumbs">
+                  {roommates.map((m) => {
+                    const mName = kbsDisplayFullName(m.parsed) ?? '?';
+                    const active = m.id === item.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={`pv-thumb${active ? ' active' : ''}`}
+                        onClick={() => selectMember(m)}
+                        title={mName}
+                      >
+                        {m.front_image_url ? (
+                          <img src={m.front_image_url} alt="" loading="lazy" decoding="async" />
+                        ) : (
+                          <span className="pv-thumb-fallback">{mName.charAt(0)}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="pv-swipe-hint">← → ok tuşları veya küçük resimlere tıklayın</p>
+              </div>
+            ) : null}
           </div>
 
-          <div className="modal-fields">
+          <div className="pv-info-panel">
+            {quickFields.length > 0 ? (
+              <div className="pv-quick-grid">
+                {quickFields.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    className="pv-quick-chip"
+                    onClick={() => void copy(f.key, f.value)}
+                    title="Kopyala"
+                  >
+                    <span className="pv-quick-label">{f.label}</span>
+                    <span className="pv-quick-value">{f.value}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
             <div className="phone-block">
               <div className="phone-block-head">
                 <span className="phone-ico" aria-hidden>
@@ -312,10 +448,6 @@ export function CaptureDetailModal({
                 </span>
                 <div>
                   <h3>Müşteri Numarası</h3>
-                  <span className="phone-sub">
-                    {name}
-                    {item.room_number ? ` · Oda ${item.room_number}` : ''}
-                  </span>
                 </div>
               </div>
               <div className="phone-row">
@@ -340,6 +472,27 @@ export function CaptureDetailModal({
                 </button>
               </div>
               {phoneMsg ? <div className="phone-msg">{phoneMsg}</div> : null}
+              {phoneDup ? (
+                <div className="phone-dup-banner" role="alert">
+                  <div>
+                    <strong>✓ Daha önce eklendi</strong>
+                    <p>
+                      {phoneDup.guestName}
+                      {phoneDup.roomNumber ? ` · Oda ${phoneDup.roomNumber}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary phone-compare"
+                    onClick={() => {
+                      const prev = allItems.find((x) => x.id === phoneDup.documentId);
+                      if (prev) onSelect(prev);
+                    }}
+                  >
+                    Önceki kaydı aç
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             <div className="ops-edit-block">
@@ -351,13 +504,9 @@ export function CaptureDetailModal({
                   onClick={() => void requestRead()}
                   disabled={readBusy || opsBusy || !item.front_image_url}
                 >
-                  {readBusy ? 'Okunuyor…' : 'Oku'}
+                  {readBusy ? 'Okunuyor…' : 'Yeniden oku'}
                 </button>
               </div>
-              <p className="muted ops-hint">
-                OCR ile doldurulur. Yanlışsa değiştirin
-                {canNotify ? ', kaydedin veya oda seçip Bildir’e basın' : ' ve kaydedin'}.
-              </p>
               {readMsg ? <div className="read-msg">{readMsg}</div> : null}
               <div className="ops-grid">
                 <label>
@@ -385,7 +534,7 @@ export function CaptureDetailModal({
                   />
                 </label>
                 <label>
-                  Doğum (YYYY-MM-DD)
+                  Doğum
                   <input
                     value={birthDate}
                     onChange={(e) => setDirty('birthDate', e.target.value, setBirthDate)}
@@ -401,7 +550,7 @@ export function CaptureDetailModal({
                   />
                 </label>
                 <label>
-                  Son geçerlilik (YYYY-MM-DD)
+                  Son geçerlilik
                   <input
                     value={expiryDate}
                     onChange={(e) => setDirty('expiryDate', e.target.value, setExpiryDate)}
@@ -417,7 +566,7 @@ export function CaptureDetailModal({
                   />
                 </label>
                 <label>
-                  Cinsiyet (M/F)
+                  Cinsiyet
                   <input
                     value={gender}
                     onChange={(e) => setDirty('gender', e.target.value, setGender)}
@@ -464,28 +613,31 @@ export function CaptureDetailModal({
               {opsMsg ? <div className="ops-msg">{opsMsg}</div> : null}
             </div>
 
-            <div className="fields-head">
-              <h3>Kopyalanabilir alanlar</h3>
-              <div className="fields-actions">
-                <button type="button" className="btn-ghost" onClick={copyAll}>
-                  {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
-                </button>
+            {detailFields.length > 0 ? (
+              <div className="pv-detail-section">
+                <div className="fields-head">
+                  <h3>Tüm alanlar</h3>
+                  <button type="button" className="btn-ghost" onClick={copyAll}>
+                    {copied === '__all__' ? 'Kopyalandı' : 'Tümünü kopyala'}
+                  </button>
+                </div>
+                <div className="pv-field-grid">
+                  {detailFields.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      className="pv-field-card"
+                      onClick={() => void copy(f.key, f.value)}
+                      title="Kopyala"
+                    >
+                      <span className="field-label">{f.label}</span>
+                      <span className="field-value">{f.value}</span>
+                      <span className="field-copy">{copied === f.key ? '✓' : '⧉'}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {fields.length === 0 ? (
-              <p className="muted">Henüz okunabilir alan yok — üstteki Oku ile başlatın veya alanları elle girin.</p>
-            ) : (
-              <ul className="field-list">
-                {fields.map((f) => (
-                  <li key={f.key} onClick={() => void copy(f.key, f.value)} title="Kopyalamak için tıkla">
-                    <span className="field-label">{f.label}</span>
-                    <span className="field-value">{f.value}</span>
-                    <span className="field-copy">{copied === f.key ? '✓' : '⧉'}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            ) : null}
 
             <dl className="field-list secondary">
               <div>
@@ -500,18 +652,6 @@ export function CaptureDetailModal({
                 <dt>Kayıt zamanı</dt>
                 <dd>{capturedAt}</dd>
               </div>
-              <div>
-                <dt>Durum</dt>
-                <dd>{item.scan_status}</dd>
-              </div>
-              {parsed?.rawMrz ? (
-                <div className="mrz-row">
-                  <dt>MRZ</dt>
-                  <dd>
-                    <code>{parsed.rawMrz}</code>
-                  </dd>
-                </div>
-              ) : null}
             </dl>
 
             {family.length > 1 ? (
@@ -534,7 +674,6 @@ export function CaptureDetailModal({
                           <span className="family-noimg">—</span>
                         )}
                         <span className="family-name">{mName}</span>
-                        <span className="family-room">{m.room_number ? `Oda ${m.room_number}` : ''}</span>
                       </li>
                     );
                   })}

@@ -38,6 +38,7 @@ function AdminBreakfastPartnerSettingsForm() {
   const staffId = useAuthStore((s) => s.staff?.id ?? null);
 
   const [defaultPrice, setDefaultPrice] = useState('');
+  const [defaultLaundryPrice, setDefaultLaundryPrice] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [remindEnabled, setRemindEnabled] = useState(true);
   const [remindTime, setRemindTime] = useState('09:30');
@@ -76,6 +77,7 @@ function AdminBreakfastPartnerSettingsForm() {
 
     if (settings) {
       setDefaultPrice(String(settings.default_unit_price || ''));
+      setDefaultLaundryPrice(String(settings.default_laundry_unit_price || ''));
       setLoadedDefaultPrice(settings.default_unit_price);
       setEnabled(settings.feature_enabled);
       setRemindEnabled(settings.remind_enabled);
@@ -111,11 +113,15 @@ function AdminBreakfastPartnerSettingsForm() {
       Alert.alert('Hata', 'Varsayılan birim fiyat girin.');
       return;
     }
+    const laundryPrice = parseFloat(defaultLaundryPrice.replace(',', '.'));
+    const laundryNormalized =
+      Number.isFinite(laundryPrice) && laundryPrice > 0 ? laundryPrice : 0;
     setSaving(true);
     const err = await upsertPartnerSettings(orgId, price, enabled, staffId, {
       remindEnabled,
       remindTime: remindTime.trim() || '09:30',
       paymentNotifyStaffIds: [...paymentNotifyStaff],
+      defaultLaundryUnitPrice: laundryNormalized,
     });
     setSaving(false);
     if (err) {
@@ -197,7 +203,7 @@ function AdminBreakfastPartnerSettingsForm() {
         <ActivityIndicator color={partnerTheme.accent} style={{ marginTop: 24 }} />
       ) : (
         <>
-          <Text style={styles.label}>Varsayılan birim fiyat (₺)</Text>
+          <Text style={styles.label}>Varsayılan kahvaltı birim fiyat (₺/kişi)</Text>
           <TextInput
             style={styles.input}
             value={defaultPrice}
@@ -206,6 +212,17 @@ function AdminBreakfastPartnerSettingsForm() {
             placeholder="150"
             placeholderTextColor={partnerTheme.muted}
           />
+
+          <Text style={styles.label}>Varsayılan çamaşır birim fiyat (₺)</Text>
+          <TextInput
+            style={styles.input}
+            value={defaultLaundryPrice}
+            onChangeText={setDefaultLaundryPrice}
+            keyboardType="decimal-pad"
+            placeholder="25"
+            placeholderTextColor={partnerTheme.muted}
+          />
+          <Text style={styles.hint}>Adet veya Kg başına. Otel özel fiyatı yoksa uygulanır.</Text>
 
           <View style={styles.switchRow}>
             <Text style={styles.switchLabel}>Fiyat değişince partnerlere bildir</Text>

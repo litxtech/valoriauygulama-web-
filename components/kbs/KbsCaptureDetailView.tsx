@@ -19,12 +19,18 @@ import { theme } from '@/constants/theme';
 import type { KbsCapturedDocumentRow } from '@/lib/kbsCaptureHistory';
 import { displayCapturedName, capturedAtTs } from '@/lib/kbsCaptureHistory';
 import { buildKbsCopyFields, enrichKbsParsedFromSources, isKbsOcrInProgress, kbsCaptureCardStatus } from '@/lib/kbsCaptureParsedFields';
-import { formatKbsReturningGuestWarning, isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
+import { formatKbsReturningGuestWarning, getKbsReturningGuestMeta, isKbsReturningGuest } from '@/lib/kbsGuestDocumentIdentity';
+import { useRouter, type Href } from 'expo-router';
 import { isKbsDocInOcrQueue, requeueStuckKbsCaptureOcr } from '@/lib/kbsCaptureOcrQueue';
 import { buildKbsCaptureSingleReportHtml } from '@/lib/kbsCaptureReportHtml';
 import type { ParsedDocument } from '@/lib/scanner/types';
 import { hapticImpactLight } from '@/lib/hapticsSafe';
 import { toInternationalPhoneNumber } from '@/constants/countryPhoneCodes';
+import { KbsGuestNotesPanel } from '@/components/kbs/KbsGuestNotesPanel';
+import {
+  formatKbsDuplicatePhoneWarning,
+  type KbsDuplicatePhoneHit,
+} from '@/lib/kbsDuplicatePhone';
 
 type Props = {
   row: KbsCapturedDocumentRow;
@@ -35,8 +41,16 @@ type Props = {
   correctBusy?: boolean;
   /** Müşteri numarasını kaydeder. Dönüş: başarı + mesaj. */
   onSavePhone?: (phone: string | null) => Promise<{ ok: boolean; message?: string }>;
+  /** Aynı telefon daha önce başka kayıtta varsa. */
+  phoneDuplicate?: KbsDuplicatePhoneHit | null;
+  onComparePhoneDuplicate?: () => void;
   /** Manuel düzeltme + Bildir paneli (opsiyonel). */
   opsActions?: ReactNode;
+  /** Not yazma / öneri paneli için. */
+  notesHotelId?: string | null;
+  notesAuthUserId?: string | null;
+  notesStaffName?: string | null;
+  canWriteNotes?: boolean;
 };
 
 function asParsed(row: KbsCapturedDocumentRow): ParsedDocument | null {
@@ -90,8 +104,15 @@ export function KbsCaptureDetailView({
   onCorrect,
   correctBusy = false,
   onSavePhone,
+  phoneDuplicate = null,
+  onComparePhoneDuplicate,
   opsActions,
+  notesHotelId = null,
+  notesAuthUserId = null,
+  notesStaffName = null,
+  canWriteNotes = true,
 }: Props) {
+  const router = useRouter();
   const [exportBusy, setExportBusy] = useState(false);
   const [ocrQueueTick, setOcrQueueTick] = useState(0);
   const parsed = asParsed(row);
@@ -102,15 +123,36 @@ export function KbsCaptureDetailView({
   const ocrInProgress = flaggedOcr && (inOcrQueue || ocrQueueTick < 2);
   const badge = statusUi(parsed, row.ocr_status, inOcrQueue);
   const returningWarn = formatKbsReturningGuestWarning(parsed);
+  const returningMeta = getKbsReturningGuestMeta(parsed);
 
   const [phone, setPhone] = useState(row.guest_phone_submitted ?? '');
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
+  const [resolvedHotelId, setResolvedHotelId] = useState<string | null>(
+    notesHotelId ?? row.hotel_id ?? null
+  );
 
   useEffect(() => {
     setPhone(row.guest_phone_submitted ?? '');
     setPhoneMsg(null);
   }, [row.id, row.guest_phone_submitted]);
+
+  useEffect(() => {
+    const fromProps = notesHotelId ?? row.hotel_id ?? null;
+    if (fromProps) {
+      setResolvedHotelId(fromProps);
+      return;
+    }
+    let cancelled = false;
+    void import('@/lib/resolveOpsHotelId').then(({ resolveOpsHotelIdForCaller }) =>
+      resolveOpsHotelIdForCaller().then((ctx) => {
+        if (!cancelled && ctx.ok) setResolvedHotelId(ctx.hotelId);
+      })
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [notesHotelId, row.hotel_id, row.id]);
 
   useEffect(() => {
     if (!flaggedOcr || !row.front_image_url) return;
@@ -235,26 +277,46 @@ export function KbsCaptureDetailView({
 
   const showExportActions = fields.length > 0 || (canSeeImage && !!row.front_image_url);
 
+  const quickKeys = new Set(['documentNumber', 'nationalityCode', 'birthDate', 'expiryDate', 'gender']);
+  const quickFields = fields.filter((f) => quickKeys.has(f.key));
+  const detailFields = fields.filter((f) => !quickKeys.has(f.key));
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-      {canSeeImage && row.front_image_url ? (
-        <Pressable onPress={onImagePress} style={styles.heroWrap}>
-          <Image source={{ uri: row.front_image_url }} style={styles.hero} contentFit="contain" />
-          <View style={styles.heroHint}>
-            <Ionicons name="expand-outline" size={16} color="#fff" />
-            <Text style={styles.heroHintText}>Büyüt</Text>
+      <View style={styles.passportHero}>
+        {canSeeImage && row.front_image_url ? (
+          <Pressable onPress={onImagePress} style={styles.heroImageWrap}>
+            <View style={styles.heroPortraitFrame}>
+              <Image source={{ uri: row.front_image_url }} style={styles.heroImage} contentFit="contain" />
+            </View>
+            <View style={styles.heroZoomHint}>
+              <Ionicons name="expand-outline" size={18} color="#fff" />
+              <Text style={styles.heroHintText}>Büyüt</Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={styles.heroPlaceholder}>
+            <Ionicons name="id-card-outline" size={48} color="rgba(255,255,255,0.35)" />
+            <Text style={styles.heroPlaceholderText}>Görsel yok</Text>
           </View>
-        </Pressable>
-      ) : (
-        <View style={styles.heroPlaceholder}>
-          <Ionicons name="id-card-outline" size={40} color={theme.colors.textMuted} />
-        </View>
-      )}
+        )}
 
-      <View style={styles.headRow}>
-        <View style={{ flex: 1 }}>
-          <View style={styles.nameRow}>
-            <Text style={styles.name}>{displayCapturedName(row)}</Text>
+        <View style={styles.heroOverlay}>
+          <View style={styles.heroTopRow}>
+            <View style={styles.roomChip}>
+              <Ionicons name="bed-outline" size={13} color="#5eead4" />
+              <Text style={styles.roomChipText}>Oda {row.room_number ?? '—'}</Text>
+            </View>
+            {badge ? (
+              <View style={[styles.heroBadge, { backgroundColor: badge.bg }]}>
+                <Ionicons name={badge.icon} size={14} color={badge.fg} />
+                <Text style={[styles.heroBadgeText, { color: badge.fg }]}>{badge.label}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.heroNameRow}>
+            <Text style={styles.heroName}>{displayCapturedName(row)}</Text>
             {isNew ? (
               <View style={styles.newBadge}>
                 <Text style={styles.newBadgeText}>Yeni</Text>
@@ -262,30 +324,92 @@ export function KbsCaptureDetailView({
             ) : null}
             {isKbsReturningGuest(parsed) ? (
               <View style={styles.returningBadge}>
+                <Ionicons name="checkmark-circle" size={14} color="#059669" />
                 <Text style={styles.returningBadgeText}>Daha önce geldi</Text>
               </View>
             ) : null}
           </View>
-          <Text style={styles.meta}>Oda {row.room_number ?? '—'}</Text>
-          {row.captured_by_staff_name || row.scanned_by_user_id ? (
-            <Text style={styles.metaStaff}>
-              Yükleyen: {row.captured_by_staff_name?.trim() || 'Personel'}
-            </Text>
+
+          {quickFields.length > 0 ? (
+            <View style={styles.quickChipRow}>
+              {quickFields.map((f) => (
+                <Pressable
+                  key={f.key}
+                  style={styles.quickChip}
+                  onPress={() => void copyValue(f.label, f.value)}
+                >
+                  <Text style={styles.quickChipLabel}>{f.label}</Text>
+                  <Text style={styles.quickChipValue} numberOfLines={1}>
+                    {f.value}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           ) : null}
+        </View>
+      </View>
+
+      <View style={styles.metaCard}>
+        <View style={styles.metaRow}>
+          <Ionicons name="time-outline" size={16} color={theme.colors.textMuted} />
           <Text style={styles.meta}>{new Date(capturedAtTs(row)).toLocaleString('tr-TR')}</Text>
         </View>
-        {badge ? (
-          <View style={[styles.badge, { backgroundColor: badge.bg }]}>
-            <Ionicons name={badge.icon} size={16} color={badge.fg} />
-            <Text style={[styles.badgeText, { color: badge.fg }]}>{badge.label}</Text>
+        {row.captured_by_staff_name || row.scanned_by_user_id ? (
+          <View style={styles.metaRow}>
+            <Ionicons name="person-outline" size={16} color={theme.colors.textMuted} />
+            <Text style={styles.metaStaff}>
+              {row.captured_by_staff_name?.trim() || 'Personel'}
+            </Text>
+          </View>
+        ) : null}
+        {row.hotel_name ? (
+          <View style={styles.metaRow}>
+            <Ionicons name="business-outline" size={16} color={theme.colors.textMuted} />
+            <Text style={styles.meta}>{row.hotel_name}</Text>
           </View>
         ) : null}
       </View>
 
       {returningWarn ? (
-        <View style={styles.returningBanner}>
-          <Ionicons name="alert-circle" size={20} color="#b45309" />
+        <View style={[styles.returningBanner, styles.sectionPad]}>
+          <Ionicons name="checkmark-circle" size={22} color="#059669" />
           <Text style={styles.returningBannerText}>{returningWarn}</Text>
+        </View>
+      ) : null}
+
+      {isKbsReturningGuest(parsed) && returningMeta?.previousDocumentId ? (
+        <Pressable
+          style={[styles.compareBtn, styles.sectionPad]}
+          onPress={() => {
+            const prev = encodeURIComponent(returningMeta.previousDocumentId);
+            router.push(
+              `/staff/kbs/capture/compare?currentId=${encodeURIComponent(row.id)}&previousId=${prev}` as Href
+            );
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Karşılaştır"
+        >
+          <Ionicons name="git-compare-outline" size={20} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.compareBtnTitle}>Karşılaştır</Text>
+            <Text style={styles.compareBtnSub}>Önceki ve güncel pasaportu yan yana aç</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.85)" />
+        </Pressable>
+      ) : null}
+
+      {resolvedHotelId ? (
+        <View style={styles.sectionPad}>
+          <KbsGuestNotesPanel
+          hotelId={resolvedHotelId}
+          guestId={row.guest_id}
+          guestDocumentId={row.id}
+          documentNumber={parsed?.documentNumber ?? null}
+          parsed={parsed}
+          authUserId={notesAuthUserId}
+          staffName={notesStaffName}
+          canWrite={canWriteNotes}
+        />
         </View>
       ) : null}
 
@@ -319,6 +443,23 @@ export function KbsCaptureDetailView({
             </Pressable>
           </View>
           {phoneMsg ? <Text style={styles.phoneMsg}>{phoneMsg}</Text> : null}
+          {phoneDuplicate ? (
+            <View style={styles.phoneDupBanner}>
+              <Ionicons name="warning" size={18} color="#b45309" />
+              <Text style={styles.phoneDupText}>{formatKbsDuplicatePhoneWarning(phoneDuplicate)}</Text>
+            </View>
+          ) : null}
+          {phoneDuplicate && onComparePhoneDuplicate ? (
+            <Pressable
+              style={styles.phoneCompareBtn}
+              onPress={onComparePhoneDuplicate}
+              accessibilityRole="button"
+              accessibilityLabel="Telefon kaydını karşılaştır"
+            >
+              <Ionicons name="git-compare-outline" size={18} color="#fff" />
+              <Text style={styles.phoneCompareBtnText}>Önceki kayıtla karşılaştır</Text>
+            </Pressable>
+          ) : null}
           {savedPhone ? (
             <View style={styles.phoneActionsRow}>
               <Pressable style={[styles.phoneActionBtn, styles.phoneCallBtn]} onPress={() => void callPhone()}>
@@ -338,27 +479,26 @@ export function KbsCaptureDetailView({
 
       {/* opsActions varken düzenlenebilir form asıl kimlik bloğudur. */}
       {!opsActions ? (
-        <>
-          <Text style={styles.sectionTitle}>Kimlik bilgileri</Text>
-          {canSeeImage && row.front_image_url && onCorrect ? (
-            <Pressable
-              style={[styles.correctBtn, correctBusy && styles.correctBtnDisabled]}
-              onPress={onCorrect}
-              disabled={correctBusy || ocrInProgress}
-            >
-              {correctBusy || ocrInProgress ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Ionicons name="scan-outline" size={18} color="#fff" />
-              )}
-              <Text style={styles.correctBtnText}>
-                {correctBusy ? 'Belge taranıyor…' : ocrInProgress ? 'Okunuyor…' : 'Düzelt — yeniden tara'}
-              </Text>
-            </Pressable>
-          ) : null}
-          {fields.length > 0 ? (
-            <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
-          ) : null}
+        <View style={styles.infoSection}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Okunan bilgiler</Text>
+            {canSeeImage && row.front_image_url && onCorrect ? (
+              <Pressable
+                style={[styles.correctBtnCompact, correctBusy && styles.correctBtnDisabled]}
+                onPress={onCorrect}
+                disabled={correctBusy || ocrInProgress}
+              >
+                {correctBusy || ocrInProgress ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="scan-outline" size={16} color="#fff" />
+                )}
+                <Text style={styles.correctBtnCompactText}>
+                  {correctBusy ? 'Taranıyor…' : ocrInProgress ? 'Okunuyor…' : 'Yeniden tara'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
 
           {ocrInProgress ? (
             <View style={styles.ocrProgressBox}>
@@ -369,26 +509,33 @@ export function KbsCaptureDetailView({
 
           {fields.length === 0 && !ocrInProgress ? (
             <View style={styles.emptyBox}>
+              <Ionicons name="document-text-outline" size={32} color={theme.colors.textMuted} />
               <Text style={styles.emptyText}>Belge henüz okunmadı veya okunabilir alan çıkarılamadı.</Text>
             </View>
-          ) : fields.length > 0 ? (
-            <View style={styles.fieldList}>
-              {fields.map((f) => (
-                <Pressable
-                  key={f.key}
-                  style={({ pressed }) => [styles.fieldRow, pressed && styles.fieldRowPressed]}
-                  onPress={() => void copyValue(f.label, f.value)}
-                >
-                  <View style={styles.fieldTextCol}>
+          ) : detailFields.length > 0 ? (
+            <>
+              <Text style={styles.hint}>Alana dokunun — değer panoya kopyalanır.</Text>
+              <View style={styles.fieldGrid}>
+                {detailFields.map((f) => (
+                  <Pressable
+                    key={f.key}
+                    style={({ pressed }) => [styles.fieldCard, pressed && styles.fieldRowPressed]}
+                    onPress={() => void copyValue(f.label, f.value)}
+                  >
                     <Text style={styles.fieldLabel}>{f.label}</Text>
-                    <Text style={styles.fieldValue} selectable>
+                    <Text style={styles.fieldValue} selectable numberOfLines={3}>
                       {f.value}
                     </Text>
-                  </View>
-                  <Ionicons name="copy-outline" size={20} color={theme.colors.primary} />
-                </Pressable>
-              ))}
-            </View>
+                    <Ionicons
+                      name="copy-outline"
+                      size={16}
+                      color={theme.colors.primary}
+                      style={styles.fieldCopyIcon}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+            </>
           ) : null}
 
           {fields.length > 0 ? (
@@ -397,7 +544,7 @@ export function KbsCaptureDetailView({
               <Text style={styles.copyAllText}>Tümünü kopyala</Text>
             </Pressable>
           ) : null}
-        </>
+        </View>
       ) : null}
 
       {showExportActions ? (
@@ -440,19 +587,33 @@ export function KbsCaptureDetailView({
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
-  content: { padding: 16, paddingBottom: 40 },
-  heroWrap: {
-    borderRadius: 14,
-    overflow: 'hidden',
+  content: { paddingBottom: 40 },
+  passportHero: {
     backgroundColor: '#0f172a',
-    marginBottom: 14,
-    minHeight: 240,
+    marginBottom: 12,
   },
-  hero: { width: '100%', height: 260 },
-  heroHint: {
+  heroImageWrap: {
+    minHeight: 300,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  heroPortraitFrame: {
+    width: '72%',
+    maxWidth: 280,
+    aspectRatio: 1 / 1.42,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  heroImage: { width: '100%', height: '100%' },
+  heroZoomHint: {
     position: 'absolute',
-    right: 10,
-    bottom: 10,
+    right: 16,
+    top: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -463,18 +624,71 @@ const styles = StyleSheet.create({
   },
   heroHintText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   heroPlaceholder: {
-    height: 160,
-    borderRadius: 14,
-    backgroundColor: theme.colors.surface,
+    height: 240,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 14,
+    gap: 8,
+  },
+  heroPlaceholderText: { color: 'rgba(255,255,255,0.4)', fontSize: 14, fontWeight: '600' },
+  heroOverlay: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    gap: 10,
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  roomChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(13,148,136,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(94,234,212,0.3)',
+  },
+  roomChipText: { color: '#ccfbf1', fontSize: 12, fontWeight: '800' },
+  heroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  heroBadgeText: { fontSize: 11, fontWeight: '800' },
+  heroNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  heroName: { fontSize: 22, fontWeight: '800', color: '#fff', flexShrink: 1 },
+  quickChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  quickChip: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minWidth: '46%',
+    flexGrow: 1,
+    maxWidth: '48%',
+  },
+  quickChipLabel: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.5)', marginBottom: 2 },
+  quickChipValue: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  metaCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
+    padding: 12,
+    gap: 6,
   },
-  headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  name: { fontSize: 20, fontWeight: '800', color: theme.colors.text },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   newBadge: {
     backgroundColor: '#ccfbf1',
     paddingHorizontal: 8,
@@ -483,48 +697,65 @@ const styles = StyleSheet.create({
   },
   newBadgeText: { fontSize: 11, fontWeight: '800', color: '#0d9488' },
   returningBadge: {
-    backgroundColor: '#ffedd5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
   },
-  returningBadgeText: { fontSize: 11, fontWeight: '800', color: '#c2410c' },
+  returningBadgeText: { fontSize: 11, fontWeight: '800', color: '#059669' },
+  sectionPad: { marginHorizontal: 16, marginBottom: 12 },
   returningBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: '#fff7ed',
+    backgroundColor: '#ecfdf5',
     borderWidth: 1,
-    borderColor: '#fdba74',
+    borderColor: '#6ee7b7',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 12,
   },
   returningBannerText: {
     flex: 1,
     fontSize: 13,
     fontWeight: '700',
-    color: '#9a3412',
+    color: '#047857',
     lineHeight: 18,
   },
-  meta: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
-  metaStaff: { fontSize: 13, color: '#0f766e', marginTop: 2, fontWeight: '700' },
-  badge: {
+  compareBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
+    gap: 12,
+    backgroundColor: '#0f766e',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 12,
   },
-  badgeText: { fontSize: 12, fontWeight: '800' },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text, marginBottom: 4, marginTop: 4 },
+  compareBtnTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  compareBtnSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  meta: { fontSize: 13, color: theme.colors.textSecondary },
+  metaStaff: { fontSize: 13, color: '#0f766e', fontWeight: '700' },
+  infoSection: { paddingHorizontal: 16 },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
   phoneCard: {
     backgroundColor: theme.colors.surface,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
     padding: 14,
+    marginHorizontal: 16,
     marginBottom: 14,
   },
   phoneHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
@@ -553,6 +784,29 @@ const styles = StyleSheet.create({
   phoneSaveBtnDisabled: { opacity: 0.6 },
   phoneSaveText: { color: '#fff', fontWeight: '800', fontSize: 14 },
   phoneMsg: { marginTop: 8, fontSize: 13, fontWeight: '600', color: '#059669' },
+  phoneDupBanner: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 10,
+    padding: 10,
+  },
+  phoneDupText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#92400e', lineHeight: 18 },
+  phoneCompareBtn: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#b45309',
+    borderRadius: 10,
+    paddingVertical: 12,
+  },
+  phoneCompareBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   phoneActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   phoneActionBtn: {
     flex: 1,
@@ -566,19 +820,17 @@ const styles = StyleSheet.create({
   phoneCallBtn: { backgroundColor: theme.colors.primary },
   phoneWaBtn: { backgroundColor: '#25D366' },
   phoneActionText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  correctBtn: {
+  correctBtnCompact: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    gap: 5,
     backgroundColor: '#0f766e',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 10,
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
   },
   correctBtnDisabled: { opacity: 0.72 },
-  correctBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  correctBtnCompactText: { color: '#fff', fontWeight: '800', fontSize: 12 },
   hint: { fontSize: 13, color: theme.colors.textMuted, marginBottom: 10 },
   ocrProgressBox: {
     flexDirection: 'row',
@@ -592,7 +844,7 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.borderLight,
   },
   ocrProgressText: { fontSize: 14, fontWeight: '600', color: theme.colors.textSecondary },
-  exportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  exportRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16, marginHorizontal: 16 },
   exportBusyRow: {
     width: '100%',
     flexDirection: 'row',
@@ -614,22 +866,26 @@ const styles = StyleSheet.create({
   },
   exportBtnDisabled: { opacity: 0.5 },
   exportBtnText: { fontSize: 13, fontWeight: '700', color: theme.colors.primary },
-  fieldList: { gap: 8 },
-  fieldRow: {
+  fieldGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  fieldCard: {
+    width: '48%',
+    flexGrow: 1,
     backgroundColor: theme.colors.surface,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minWidth: '46%',
   },
+  fieldCopyIcon: { position: 'absolute', top: 8, right: 8 },
   fieldRowPressed: { backgroundColor: '#f8fafc' },
-  fieldTextCol: { flex: 1 },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.textMuted, marginBottom: 4 },
-  fieldValue: { fontSize: 16, fontWeight: '600', color: theme.colors.text },
+  fieldLabel: { fontSize: 11, fontWeight: '700', color: theme.colors.textMuted, marginBottom: 4 },
+  fieldValue: { fontSize: 14, fontWeight: '600', color: theme.colors.text, paddingRight: 20 },
   copyAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',

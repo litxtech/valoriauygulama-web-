@@ -18,6 +18,7 @@ import { KBS_OCR_ENGINE_AI_FALLBACK, KBS_OCR_ENGINE_FRONT_VISUAL } from '@/lib/k
 import { sanitizeKbsOcrForApply } from '@/lib/kbsCaptureOcrMerge';
 import { applyBestPassportNamesToParsed } from '@/lib/kbsPassportNameResolve';
 import { applyBestPassportIdentityToParsed } from '@/lib/kbsPassportFieldResolve';
+import { verifyMrzWithVisualOcr } from '@/lib/kbsMrzVisualVerify';
 import { formatKbsNationality, formatKbsTrDate, kbsDisplayFullName } from '@/lib/kbsDisplayFormat';
 import { log } from '@/lib/logger';
 import type { ParsedDocument } from '@/lib/scanner/types';
@@ -204,6 +205,10 @@ export function parseKbsFromDocumentOcr(args: {
   parsed = applyBestPassportNamesToParsed(parsed, frontFiltered);
   // MRZ güvenilirken kimlik alanları MRZ; bozuk/kuşkuluysa etiketli görsel OCR (isimlerle aynı hassasiyet).
   parsed = applyBestPassportIdentityToParsed(parsed, frontFiltered, mrzSource);
+  // Aynı OCR satırlarından görsel doğrulama (ek OCR yok).
+  if (parsed.rawMrz) {
+    parsed = verifyMrzWithVisualOcr(parsed, frontFiltered).parsed;
+  }
 
   if (KBS_OCR_DEBUG) {
     log.info('kbsOcrDebug', {

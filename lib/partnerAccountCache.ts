@@ -6,6 +6,10 @@ import {
   fetchPartnerLifetimeAmountTotal,
   type PartnerPaymentRow,
 } from '@/lib/breakfastPartner';
+import {
+  fetchPartnerLaundryLifetimeTotal,
+  fetchPartnerLaundryMonthStats,
+} from '@/lib/breakfastPartnerLaundry';
 import { sleepMs } from '@/lib/supabaseTransientErrors';
 
 export type PartnerAccountSnapshot = {
@@ -13,6 +17,9 @@ export type PartnerAccountSnapshot = {
   monthAmount: number;
   monthGuests: number;
   totalAmount: number;
+  monthLaundryQty: number;
+  monthLaundryAmount: number;
+  lifetimeLaundryTotal: number;
   payments: PartnerPaymentRow[];
 };
 
@@ -45,10 +52,13 @@ async function fetchAccountSnapshot(hotelId: string): Promise<PartnerAccountSnap
       monthAmount: snap.monthAmountTotal,
       monthGuests: snap.monthGuestTotal,
       totalAmount: snap.lifetimeTotal,
+      monthLaundryQty: snap.monthLaundryQty,
+      monthLaundryAmount: snap.monthLaundryAmount,
+      lifetimeLaundryTotal: snap.lifetimeLaundryTotal,
       payments: snap.payments,
     };
   } catch {
-    const [balance, stats, payRows, lifetimeTotal] = await Promise.all([
+    const [balance, stats, payRows, lifetimeTotal, laundryMonth, laundryLifetime] = await Promise.all([
       fetchPartnerPortalOpenBalance(),
       fetchPartnerMonthStats(hotelId).catch(() => ({
         monthGuestTotal: 0,
@@ -57,12 +67,17 @@ async function fetchAccountSnapshot(hotelId: string): Promise<PartnerAccountSnap
       })),
       fetchPartnerPaymentHistory(40).catch(() => [] as PartnerPaymentRow[]),
       fetchPartnerLifetimeAmountTotal(hotelId).catch(() => 0),
+      fetchPartnerLaundryMonthStats(hotelId).catch(() => ({ monthQty: 0, monthAmount: 0 })),
+      fetchPartnerLaundryLifetimeTotal(hotelId).catch(() => 0),
     ]);
     return {
       openBalance: balance,
       monthAmount: stats.monthAmountTotal,
       monthGuests: stats.monthGuestTotal,
       totalAmount: lifetimeTotal,
+      monthLaundryQty: laundryMonth.monthQty,
+      monthLaundryAmount: laundryMonth.monthAmount,
+      lifetimeLaundryTotal: laundryLifetime,
       payments: payRows,
     };
   }

@@ -7,6 +7,7 @@ import {
 } from '@/lib/kbsCaptureOcr';
 import { hasPlausibleKbsDocumentNumber } from '@/lib/kbsDocumentNumberValidate';
 import { buildKbsCopyFields, listCoreMissingIdFields, listMissingIdFields } from '@/lib/kbsCaptureParsedFields';
+import { isMrzChecksumSuspicious } from '@/lib/kbsMrzSuspicion';
 import { prepareProfessionalKbsOcrUriCached } from '@/lib/kbsOcrSessionCache';
 import { shouldPreferKbsFrontIdParse } from '@/lib/guestScan/idCardOcrParser';
 import { isValidTurkishTc } from '@/lib/kbsTcValidation';
@@ -31,7 +32,8 @@ export function kbsOcrQualityScore(result: KbsOcrResult): number {
   let s = (p.confidence ?? 0) * 45;
   if (p.rawMrz) s += 28;
   if (p.checksumsValid === true) s += 22;
-  if (p.checksumsValid === false) s -= 12;
+  if (p.checksumsValid === false) s -= 18;
+  if (isMrzChecksumSuspicious(p)) s -= 10;
   if (hasPlausibleKbsDocumentNumber(p.documentNumber, p.documentType)) s += 12;
   if (p.firstName && p.lastName) s += 10;
   if (p.birthDate) s += 8;
@@ -46,13 +48,16 @@ export function pickBetterKbsOcrResult(a: KbsOcrResult, b: KbsOcrResult): KbsOcr
   return kbsOcrQualityScore(b) > kbsOcrQualityScore(a) ? b : a;
 }
 
+/** A: Şüpheli MRZ ile erken çıkma — yavaş / Maximum geçişe zorla. */
 function isGoodEnough(result: KbsOcrResult, galleryDeep: boolean): boolean {
   if (galleryDeep) return false;
+  if (isMrzChecksumSuspicious(result.parsed)) return false;
   const missing = listCoreMissingIdFields(result.parsed).length;
-  if (missing === 0) return true;
-  if (shouldApplyKbsOcrResult(result)) return true;
-  if (missing <= 1 && result.parsed.rawMrz) return true;
-  return hasKbsOcrApplyableData(result) && missing <= 1;
+  if (missing === 0 && result.parsed.checksumsValid === true) return true;
+  if (missing === 0 && !result.parsed.rawMrz && shouldApplyKbsOcrResult(result)) return true;
+  if (shouldApplyKbsOcrResult(result) && result.parsed.checksumsValid === true) return true;
+  if (missing <= 1 && result.parsed.rawMrz && result.parsed.checksumsValid === true) return true;
+  return false;
 }
 
 function isTurkishTcDigits(docNumber: string | null | undefined): boolean {
@@ -82,6 +87,34 @@ function pickKbsOcrResultForSide(
   return pickBetterKbsOcrResult(front, mrz);
 }
 
+/** Tek OCR — MRZ band öncelikli; aynı satırlardan ön yüz + MRZ parse (yükleme hızlı yolu). */
+async function parseUploadOcrBatch(
+  prepared: string,
+  opts: { fast: boolean; side: KbsCaptureSide }
+): Promise<KbsOcrResult> {
+  const docOcr = await ocrLinesForKbsDocument(prepared, {
+    fast: opts.fast,
+    imagePrepared: true,
+    mrzFocused: true,
+  });
+  const engine = pickOcrEngine(docOcr.engine);
+  const front = parseKbsFromDocumentOcr({
+    lineSets: docOcr.lineSets,
+    engine,
+    mrzFocused: false,
+  });
+  if (opts.side === 'front' && shouldPreferKbsFrontIdParse(front.parsed)) {
+    return front;
+  }
+  const mrz = parseKbsFromDocumentOcr({
+    lineSets: docOcr.lineSets,
+    engine,
+    mrzFocused: true,
+  });
+  // Pasaport: MRZ öncelikli seçim
+  return pickKbsOcrResultForSide(front, mrz, opts.side === 'front' ? 'mrz_back' : opts.side);
+}
+
 /** Tek OCR taraması — ön yüz + MRZ parse aynı satırlardan (tekrar OCR yok). */
 async function parseFromOcrBatch(
   prepared: string,
@@ -109,6 +142,7 @@ async function parseFromOcrBatch(
   return pickKbsOcrResultForSide(front, mrz, opts.side);
 }
 
+
 /**
  * Hızlı kimlik okuma — tek paralel OCR, ön+MRZ birleşik parse; yetersizse bir yavaş geçiş.
  */
@@ -130,7 +164,10 @@ export async function parseIdCardImageUriProfessional(
     if (isGoodEnough(best, galleryDeep)) return best;
   }
 
-  if (!galleryDeep && hasKbsOcrApplyableData(best)) return best;
+  // A: şüpheli MRZ’de erken çıkma — fallback / Maximum’a bırak
+  if (!galleryDeep && hasKbsOcrApplyableData(best) && !isMrzChecksumSuspicious(best.parsed)) {
+    return best;
+  }
 
   const fallback = await parseIdCardImageUriWithFallback(prepared, {
     captureSide: side,
@@ -142,80 +179,108 @@ export async function parseIdCardImageUriProfessional(
 }
 
 /**
- * Sisteme yüklenen belgeler — hızlı profesyonel okuma; MRZ yoksa hedefi netleştir.
- * Kamera + galeri aynı hızlı yolu kullanır; galeri eksikte maksimum tarama yapar.
+ * Sisteme yüklenen belgeler — MRZ al → aynı görüntüden doğrula (tek hızlı OCR).
+ * Sağlıklıysa erken çık; değilse bir yavaş geçiş, gerekirse Maximum.
  */
 export async function parseIdCardImageUriForUpload(
   uri: string,
   options?: Pick<KbsOcrOptions, 'captureSide' | 'galleryDeep'>
 ): Promise<KbsOcrResult> {
   const side = options?.captureSide ?? 'front';
+  const galleryDeep = options?.galleryDeep === true;
   const prepared = await prepareProfessionalKbsOcrUriCached(uri);
-  const baseOpts: KbsOcrOptions = { captureSide: side, imagePrepared: true, fast: true };
+  const passes: { parsed: ParsedDocument; engine: string }[] = [];
 
-  let best = await parseIdCardImageUriProfessional(prepared, baseOpts);
-  const passes: { parsed: typeof best.parsed; engine: string }[] = [
-    { parsed: best.parsed, engine: best.engine },
-  ];
-  if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
-    return best;
-  }
-  if (hasKbsOcrApplyableData(best) && listCoreMissingIdFields(best.parsed).length <= 1 && best.parsed.rawMrz) {
-    return best;
-  }
+  // 1) Tek hızlı OCR (MRZ band + belge kırpımı paralel) — çift tarama yok
+  let best = await parseUploadOcrBatch(prepared, { fast: true, side });
+  passes.push({ parsed: best.parsed, engine: best.engine });
 
-  // MRZ gelmediyse / çekirdek eksik: yavaş + MRZ odaklı geçiş (tam Maximum değil — hızlı).
-  const needsMrz = !best.parsed.rawMrz || listCoreMissingIdFields(best.parsed).length > 1;
-  if (needsMrz) {
-    const mrzPass = await parseIdCardImageUriProfessional(prepared, {
-      captureSide: 'mrz_back',
-      imagePrepared: true,
-      fast: true,
-    });
-    passes.push({ parsed: mrzPass.parsed, engine: mrzPass.engine });
-    best = pickBetterKbsOcrResult(best, mrzPass);
-    if (shouldApplyKbsOcrResult(best) && listCoreMissingIdFields(best.parsed).length === 0) {
-      return best;
-    }
-  }
+  const { isMrzVisualVerifyReady, verifyMrzWithVisualOcr } = await import('@/lib/kbsMrzVisualVerify');
+  const verifiedFast = verifyMrzWithVisualOcr(best.parsed, best.ocrLines ?? []);
+  best = {
+    ...best,
+    parsed: verifiedFast.parsed,
+    missingFields: listMissingIdFields(verifiedFast.parsed),
+  };
+  passes[0] = { parsed: best.parsed, engine: best.engine };
 
-  const refined = await parseIdCardImageUriProfessional(prepared, {
-    ...baseOpts,
-    fast: false,
-  });
-  passes.push({ parsed: refined.parsed, engine: refined.engine });
-  best = pickBetterKbsOcrResult(best, refined);
-  if (shouldApplyKbsOcrResult(best) || hasKbsOcrApplyableData(best)) {
-    if (listCoreMissingIdFields(best.parsed).length === 0 || options?.galleryDeep !== true) {
-      // Alan bazında birleşim — tek geçişte eksik kalanları tamamla
-      const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
-      const merged = mergeKbsOcrPassResults(passes);
-      return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || best.engine };
-    }
-  }
+  const turkishOk =
+    listCoreMissingIdFields(best.parsed).length === 0 &&
+    !!best.parsed.documentNumber &&
+    (best.parsed.nationalityCode === 'TUR' ||
+      best.parsed.nationalityCode === 'TR' ||
+      best.parsed.nationalityCode === 'TC');
 
-  if (options?.galleryDeep !== true) {
-    // Kamera: eksik çekirdek + MRZ yoksa bir MRZ yavaş geçiş daha, Maximum'a gitme.
-    if (!best.parsed.rawMrz || listCoreMissingIdFields(best.parsed).length > 2) {
-      const mrzSlow = await parseIdCardImageUriProfessional(prepared, {
-        captureSide: 'mrz_back',
-        imagePrepared: true,
-        fast: false,
-      });
-      passes.push({ parsed: mrzSlow.parsed, engine: mrzSlow.engine });
-      best = pickBetterKbsOcrResult(best, mrzSlow);
-    }
+  const mrzReady =
+    listCoreMissingIdFields(best.parsed).length === 0 &&
+    !isMrzChecksumSuspicious(best.parsed) &&
+    isMrzVisualVerifyReady(verifiedFast);
+
+  if (mrzReady || turkishOk) {
     const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
     const merged = mergeKbsOcrPassResults(passes);
-    return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || best.engine };
+    return {
+      parsed: merged.parsed,
+      missingFields: merged.missingFields,
+      engine: merged.engine || best.engine,
+      ocrLines: best.ocrLines,
+    };
   }
 
-  const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
-  const max = await parseIdCardImageUriMaximum(prepared, { captureSide: side });
-  passes.push({ parsed: max.parsed, engine: max.engine });
+  // 2) Tek yavaş OCR — hâlâ aynı MRZ-önce + görsel doğrula modeli
+  const slow = await parseUploadOcrBatch(prepared, { fast: false, side });
+  const verifiedSlow = verifyMrzWithVisualOcr(slow.parsed, slow.ocrLines ?? []);
+  const slowResult: KbsOcrResult = {
+    ...slow,
+    parsed: verifiedSlow.parsed,
+    missingFields: listMissingIdFields(verifiedSlow.parsed),
+  };
+  passes.push({ parsed: slowResult.parsed, engine: slowResult.engine });
+  best = pickBetterKbsOcrResult(best, slowResult);
+
+  if (
+    listCoreMissingIdFields(best.parsed).length === 0 &&
+    best.parsed.rawMrz &&
+    best.parsed.checksumsValid === true &&
+    !isMrzChecksumSuspicious(best.parsed)
+  ) {
+    const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
+    const merged = mergeKbsOcrPassResults(passes);
+    return {
+      parsed: merged.parsed,
+      missingFields: merged.missingFields,
+      engine: merged.engine || best.engine,
+      ocrLines: best.ocrLines,
+    };
+  }
+
+  // 3) Maximum — yalnız galleryDeep veya hâlâ eksik/şüpheli
+  if (
+    galleryDeep ||
+    listCoreMissingIdFields(best.parsed).length > 0 ||
+    best.parsed.checksumsValid !== true
+  ) {
+    if (galleryDeep) {
+      const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
+      const max = await parseIdCardImageUriMaximum(prepared, { captureSide: side });
+      const verifiedMax = verifyMrzWithVisualOcr(max.parsed, max.ocrLines ?? []);
+      passes.push({ parsed: verifiedMax.parsed, engine: max.engine });
+      best = pickBetterKbsOcrResult(best, {
+        ...max,
+        parsed: verifiedMax.parsed,
+        missingFields: listMissingIdFields(verifiedMax.parsed),
+      });
+    }
+  }
+
   const { mergeKbsOcrPassResults } = await import('@/lib/kbsCaptureOcrMerge');
   const merged = mergeKbsOcrPassResults(passes);
-  return { parsed: merged.parsed, missingFields: merged.missingFields, engine: merged.engine || max.engine };
+  return {
+    parsed: merged.parsed,
+    missingFields: merged.missingFields,
+    engine: merged.engine || best.engine,
+    ocrLines: best.ocrLines,
+  };
 }
 
 /** Kayda yazılacak anlamlı OCR verisi var mı (kısmi sonuç dahil; documentType tek başına yetmez). */
@@ -236,11 +301,16 @@ export function shouldApplyKbsOcrResult(result: KbsOcrResult): boolean {
   const score = kbsOcrQualityScore(result);
   const coreMissing = listCoreMissingIdFields(p).length;
   const tcDigits = (p.documentNumber ?? '').replace(/\D/g, '');
+  const suspicious = isMrzChecksumSuspicious(p);
 
   if (isTurkishTcDigits(tcDigits)) return true;
   if (p.rawMrz && p.checksumsValid === true) return true;
-  if (p.rawMrz && p.documentNumber) return score >= WEAK_SCORE - 10;
-  if (p.rawMrz && (p.birthDate || p.expiryDate)) return true;
+  // A: checksum’suz / fallback MRZ — yalnız skor yüksekse kısmi uygula
+  if (p.rawMrz && suspicious) {
+    return coreMissing <= 1 && score >= STRONG_SCORE - 4;
+  }
+  if (p.rawMrz && p.documentNumber) return score >= WEAK_SCORE - 6;
+  if (p.rawMrz && (p.birthDate || p.expiryDate)) return score >= WEAK_SCORE - 4;
   if (p.documentNumber && (p.firstName || p.lastName)) return score >= WEAK_SCORE - 10;
   if (coreMissing <= 1 && score >= STRONG_SCORE - 16) return true;
   if (coreMissing <= 3 && score >= STRONG_SCORE - 10) return true;

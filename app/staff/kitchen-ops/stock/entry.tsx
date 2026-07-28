@@ -136,7 +136,15 @@ export default function KitchenStockEntryScreen() {
       if (productPhotos.length > 1) {
         await addKitchenStockItemImages(itemId, productPhotos.slice(1));
       }
-      Alert.alert('Tamam', 'Stok girişi kaydedildi.', [{ text: 'Tamam', onPress: () => router.back() }]);
+      Alert.alert('Tamam', 'Stok girişi kaydedildi.', [
+        {
+          text: 'Tamam',
+          onPress: () => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/staff/kitchen-ops' as never);
+          },
+        },
+      ]);
     } catch (e) {
       Alert.alert('Hata', (e as Error).message);
     } finally {
@@ -154,7 +162,7 @@ export default function KitchenStockEntryScreen() {
       ) : null}
 
       <Text style={styles.label}>Ürün adı *</Text>
-      <KitchenProductSuggestInput value={name} onChangeText={(t) => { setName(t); setSelectedItem(null); }} onSelect={onSelectItem} autoFocus />
+      <KitchenProductSuggestInput value={name} onChangeText={(t) => { setName(t); setSelectedItem(null); }} onSelect={onSelectItem} />
 
       <Text style={styles.label}>Miktar *</Text>
       <TextInput style={styles.input} value={quantity} onChangeText={setQuantity} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={theme.colors.textMuted} />

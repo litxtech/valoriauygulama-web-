@@ -96,6 +96,8 @@ export type KbsOcrRegionId =
   | 'full'
   | 'document_crop'
   | 'mrz_band'
+  | 'mrz_mid'
+  | 'sheet_center'
   | 'top_half'
   | 'bottom_half'
   | 'center';
@@ -125,6 +127,39 @@ async function cropRect(
   }
 }
 
+/** A4 / fotokopi sayfa mı? (pasaport küçük yama). */
+export function looksLikeSheetAspect(width: number, height: number): boolean {
+  const long = Math.max(width, height);
+  const short = Math.min(width, height);
+  if (short < 1) return false;
+  const ratio = long / short;
+  // A4 ≈ 1.41; telefon foto + kenar boşluğu 1.25–1.7
+  return ratio >= 1.25 && ratio <= 1.75;
+}
+
+/**
+ * A4 fotokopi: pasaport genelde sayfa ortası / üst-orta.
+ * Alt %52 MRZ bandı boş kağıda düşmesin diye orta-alt + merkez zoom.
+ */
+export async function cropMrzMidBandForKbsOcr(uri: string): Promise<string> {
+  const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+  });
+  // Sayfanın %32–%88 yüksekliği (MRZ biyometrik sayfada ortada/altta)
+  const originY = Math.round(height * 0.32);
+  const cropH = Math.round(height * 0.56);
+  return cropRect(uri, Math.round(width * 0.04), originY, width * 0.92, cropH);
+}
+
+/** Fotokopi üzerindeki pasaport yaması — merkez zoom. */
+export async function cropSheetCenterPassportForKbsOcr(uri: string): Promise<string> {
+  const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+    Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+  });
+  // Ortada ~%72×%62 — A4’te pasaport bloğu
+  return cropRect(uri, Math.round(width * 0.14), Math.round(height * 0.12), width * 0.72, height * 0.62);
+}
+
 /** Galeri derin tarama — belgenin üst yarısı. */
 export async function cropTopHalfForKbsOcr(uri: string): Promise<string> {
   const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
@@ -151,16 +186,28 @@ export async function cropCenterForKbsOcr(uri: string): Promise<string> {
   return cropRect(uri, Math.round(width * 0.06), Math.round(height * 0.18), width * 0.88, height * 0.58);
 }
 
-/** Galeri OCR — tüm belge bölgeleri. */
+/** Galeri OCR — tüm belge bölgeleri (+ A4 fotokopi için orta MRZ / merkez zoom). */
 export async function buildGalleryOcrRegions(uri: string): Promise<{ region: KbsOcrRegionId; uri: string }[]> {
-  const [documentCrop, mrzBand, topHalf, bottomHalf, center] = await Promise.all([
+  let sheetLike = false;
+  try {
+    const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+    });
+    sheetLike = looksLikeSheetAspect(width, height);
+  } catch {
+    sheetLike = false;
+  }
+
+  const base = await Promise.all([
     cropImageForKbsOcr(uri),
     cropMrzBandForKbsOcr(uri),
     cropTopHalfForKbsOcr(uri),
     cropBottomHalfForKbsOcr(uri),
     cropCenterForKbsOcr(uri),
   ]);
-  return [
+  const [documentCrop, mrzBand, topHalf, bottomHalf, center] = base;
+
+  const regions: { region: KbsOcrRegionId; uri: string }[] = [
     { region: 'full', uri },
     { region: 'document_crop', uri: documentCrop },
     { region: 'mrz_band', uri: mrzBand },
@@ -168,6 +215,19 @@ export async function buildGalleryOcrRegions(uri: string): Promise<{ region: Kbs
     { region: 'bottom_half', uri: bottomHalf },
     { region: 'center', uri: center },
   ];
+
+  if (sheetLike) {
+    const [mrzMid, sheetCenter] = await Promise.all([
+      cropMrzMidBandForKbsOcr(uri),
+      cropSheetCenterPassportForKbsOcr(uri),
+    ]);
+    regions.push(
+      { region: 'mrz_mid', uri: mrzMid },
+      { region: 'sheet_center', uri: sheetCenter }
+    );
+  }
+
+  return regions;
 }
 
 /** Ön yüz / tam kart — alt MRZ şeridi kesilmesin (pasaport biyometrik sayfa). */

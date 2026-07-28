@@ -1,4 +1,6 @@
 import { isKnownIcao3 } from '@/lib/kbsNationalityMap';
+import { mrzCheckDigitMatches } from '@/lib/scanner/mrzCheckDigit';
+import { repairDocNumberFromTd3Slice } from '@/lib/scanner/mrzDocumentNumberRepair';
 import { mrzSixDigitsToIso } from '@/lib/scanner/mrzDates';
 import { normalizeMrzOcrLine } from '@/lib/scanner/mrzOcrNormalize';
 import { finalizeMrzPersonNames, mrzNamesLookValid } from '@/lib/scanner/mrzPersonNames';
@@ -38,16 +40,51 @@ function findNationalityInLine(line: string): { code: string; index: number } | 
   }
 
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.index - b.index);
+  // TD3'te uyruk genelde index 10 — ona yakın olanı tercih et
+  candidates.sort((a, b) => Math.abs(a.index - 10) - Math.abs(b.index - 10) || a.index - b.index);
   return candidates[0]!;
 }
 
+/**
+ * TD3: [doc 9][check 1][nat 3]…
+ * Eski regex natIndex öncesi 6–9 karakter alıp ilk harfi düşürüyordu (FA5213328 → A5213328).
+ */
 function extractDocNumberBeforeNat(line: string, natIndex: number): string | null {
-  const prefix = line.slice(0, natIndex).replace(/<+$/, '').replace(/<+/g, '');
-  const m = prefix.match(/([A-Z0-9]{6,9})$/i);
-  if (m?.[1]) return m[1].toUpperCase();
-  const loose = prefix.match(/([A-Z][A-Z0-9]{5,8})/i);
-  return loose?.[1]?.toUpperCase() ?? null;
+  const upper = line.toUpperCase();
+
+  // Sabit TD3 konumları (uyruk index 10)
+  if (natIndex === 10) {
+    const field = upper.slice(0, 9);
+    const check = upper[9] ?? '';
+    const repaired = check ? repairDocNumberFromTd3Slice(field, check) : null;
+    if (repaired) return repaired;
+    const doc = field.replace(/<+$/, '');
+    if (doc.length >= 5 && /^[A-Z0-9]+$/.test(doc)) {
+      if (!check || mrzCheckDigitMatches(field, check) || doc.length >= 6) return doc;
+    }
+  }
+
+  // Kaymış satır: uyruk öncesi [alan + check]
+  const candidates: Array<{ doc: string; score: number }> = [];
+  for (const fieldLen of [9, 8, 7, 6]) {
+    const checkIdx = natIndex - 1;
+    const start = checkIdx - fieldLen;
+    if (start < 0 || checkIdx >= upper.length) continue;
+    const field = upper.slice(start, checkIdx);
+    const check = upper[checkIdx] ?? '';
+    const repaired = fieldLen === 9 && check ? repairDocNumberFromTd3Slice(field, check) : null;
+    const doc = repaired ?? field.replace(/<+$/, '');
+    if (doc.length < 5 || !/^[A-Z0-9]+$/.test(doc)) continue;
+    let score = doc.length;
+    if (fieldLen === 9 && mrzCheckDigitMatches(field.padEnd(9, '<'), check)) score += 40;
+    else if (repaired) score += 35;
+    else if (fieldLen === 9) score += 5;
+    candidates.push({ doc, score });
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score || b.doc.length - a.doc.length);
+  return candidates[0]!.doc;
 }
 
 function parseTd3DataFields(line: string): {
@@ -65,7 +102,12 @@ function parseTd3DataFields(line: string): {
     const padded = normalized.padEnd(TD3_LEN, '<').slice(0, TD3_LEN);
     const nat = padded.slice(10, 13);
     if (!RECEPTION_ICAO.has(nat) && !isKnownIcao3(nat)) return null;
-    const docNo = padded.slice(0, 9).replace(/<+$/, '').trim() || null;
+    const field = padded.slice(0, 9);
+    const check = padded[9] ?? '';
+    let docNo = field.replace(/<+$/, '').trim() || null;
+    if (docNo && check && !mrzCheckDigitMatches(field, check) && docNo.length >= 6) {
+      // check uyuşmuyorsa yine alanı kullan (OCR) ama belirsiz bırak
+    }
     const birthRaw = padded.slice(13, 19);
     const sexRaw = padded.slice(20, 21);
     const expiryRaw = padded.slice(21, 27);

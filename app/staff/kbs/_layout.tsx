@@ -18,6 +18,8 @@ function isIdCaptureReadRoute(pathname: string | null | undefined): boolean {
   return (
     p.includes('/kbs/capture-history') ||
     p.includes('/kbs/passport-explore') ||
+    p.includes('/kbs/phonebook') ||
+    p.includes('/kbs/capture/compare') ||
     /\/kbs\/capture\/[^/]+/.test(p)
   );
 }
@@ -92,9 +94,27 @@ export default function KbsLayout() {
         }}
       />
       <Stack.Screen
+        name="phonebook"
+        options={{
+          title: 'Telefon rehberi',
+          headerLeft: () => (
+            <StaffStackBackButton fallback={'/staff/(tabs)' as Href} accessibilityLabel={t('back')} />
+          ),
+        }}
+      />
+      <Stack.Screen
         name="capture/[id]"
         options={{
-          title: 'Kimlik bilgileri',
+          title: 'Pasaport görüntüle',
+          headerLeft: () => (
+            <StaffStackBackButton fallback={'/staff/kbs/capture-history' as Href} accessibilityLabel={t('back')} />
+          ),
+        }}
+      />
+      <Stack.Screen
+        name="capture/compare"
+        options={{
+          title: 'Kimlik karşılaştır',
           headerLeft: () => (
             <StaffStackBackButton fallback={'/staff/kbs/capture-history' as Href} accessibilityLabel={t('back')} />
           ),

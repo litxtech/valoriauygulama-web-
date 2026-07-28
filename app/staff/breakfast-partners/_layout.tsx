@@ -5,6 +5,7 @@ export default function StaffBreakfastPartnersLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="scan" />
+      <Stack.Screen name="laundry" />
     </Stack>
   );
 }

@@ -12,6 +12,8 @@ import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
 import { computeStayAmounts, effectiveNightlyRate } from '@/lib/guestStayFinancials';
 import { moveGuestToRoom, updateGuestStayFinancials } from '@/lib/guestStayRoomOps';
+import { checkoutGuest } from '@/lib/occupancyCheckout';
+import { invalidateOccupancyCache } from '@/lib/occupancyCache';
 
 type Room = {
   id: string;
@@ -277,25 +279,22 @@ export default function RoomDetail() {
         style: 'destructive',
         onPress: async () => {
           setActionLoading(true);
-          const { error } = await supabase
-            .from('guests')
-            .update({ status: 'checked_out', check_out_at: new Date().toISOString(), room_id: null })
-            .eq('id', currentGuest.id);
-          if (error) {
-            Alert.alert('Hata', error.message);
+          const res = await checkoutGuest(
+            supabase,
+            {
+              id: currentGuest.id,
+              full_name: currentGuest.full_name,
+              room_id: id,
+              contract_lang: currentGuest.contract_lang,
+            },
+            staff?.id ?? undefined
+          );
+          if (res.error) {
+            Alert.alert('Hata', res.error.message);
             setActionLoading(false);
             return;
           }
-          await supabase.from('rooms').update({ status: 'available' }).eq('id', id);
-          const done = guestMessageTemplate(GUEST_TYPES.checkout_done, {}, currentGuest.contract_lang);
-          await sendNotification({
-            guestId: currentGuest.id,
-            title: done.title,
-            body: done.body,
-            notificationType: GUEST_TYPES.checkout_done,
-            category: 'guest',
-            createdByStaffId: staff?.id ?? undefined,
-          });
+          invalidateOccupancyCache();
           setCurrentGuest(null);
           setRoom((prev) => (prev ? { ...prev, status: 'available' } : null));
           setActionLoading(false);

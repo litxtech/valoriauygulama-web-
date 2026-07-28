@@ -499,6 +499,7 @@ export function CapturesPage() {
       {selected ? (
         <CaptureDetailModal
           item={selected}
+          allItems={items}
           familyIndex={familyIndex}
           onClose={() => setSelected(null)}
           onSelect={setSelected}

@@ -13,14 +13,11 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
-import {
-  type DepartmentLeaderboardRow,
-} from '@/lib/audit';
+import { type DepartmentLeaderboardRow } from '@/lib/audit';
 import {
   acknowledgePerformanceNotice,
   fetchMonthlyReportData,
   fetchPerformanceDashboard,
-  pillarLabel,
 } from '@/lib/performanceDashboard';
 import { exportAuditMonthlyReportPdf } from '@/lib/auditMonthlyReportPdf';
 import { monthKey } from '@/lib/financeLedger';
@@ -31,12 +28,20 @@ import { performanceTheme } from '@/components/performance';
 import {
   PerformanceHeroCard,
   PerformanceAlertBanner,
-  PerformancePillarCard,
   PerformanceDeptLeaderboard,
   PerformanceNoticeCard,
   PerformanceLinkCard,
   PerformanceSectionTitle,
 } from '@/components/performance/PerformancePremiumUi';
+import { fetchStaffPerfEvents, type StaffPerfEvent } from '@/lib/staffPerfSystem';
+import { getPerfBand } from '@/lib/staffPerfBands';
+import { supabase } from '@/lib/supabase';
+
+type PerfScreenData = {
+  dash: Awaited<ReturnType<typeof fetchPerformanceDashboard>>['data'];
+  events: StaffPerfEvent[];
+  performanceScore: number | null;
+};
 
 export default function PerformanceDashboardScreen() {
   const { t, i18n } = useTranslation();
@@ -47,18 +52,34 @@ export default function PerformanceDashboardScreen() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [ackId, setAckId] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (): Promise<PerfScreenData | null> => {
     if (!staff?.id) return null;
-    const { data, error } = await fetchPerformanceDashboard(staff.id);
+    const [{ data, error }, eventsRes, scoreRes] = await Promise.all([
+      fetchPerformanceDashboard(staff.id),
+      fetchStaffPerfEvents(staff.id, 30),
+      supabase.from('staff').select('performance_score').eq('id', staff.id).maybeSingle(),
+    ]);
     if (error) Alert.alert(t('perfLoadFailed'), error);
-    return data;
+    return {
+      dash: data,
+      events: eventsRes.data,
+      performanceScore:
+        scoreRes.data?.performance_score != null
+          ? Number(scoreRes.data.performance_score)
+          : data?.evaluation_combined ?? null,
+    };
   }, [staff?.id, t]);
 
-  const { data: dash, loading, refreshing, refresh, reload, showContent } = useCachedFocusLoad({
-    cacheKey: staff?.id ? `staff-performance-dash:${staff.id}` : 'staff-performance-dash:none',
+  const { data: pack, loading, refreshing, refresh, reload, showContent } = useCachedFocusLoad({
+    cacheKey: staff?.id ? `staff-performance-dash-v2:${staff.id}` : 'staff-performance-dash-v2:none',
     enabled: !!staff?.id,
     fetchData,
   });
+
+  const dash = pack?.dash ?? null;
+  const events = pack?.events ?? [];
+  const singleScore = pack?.performanceScore ?? dash?.evaluation_combined ?? null;
+  const band = getPerfBand(singleScore ?? 100);
 
   const isAdmin = canAccessAdminShell(staff);
   const orgId = useMemo(() => {
@@ -103,7 +124,11 @@ export default function PerformanceDashboardScreen() {
 
   const departments: DepartmentLeaderboardRow[] = dash?.department_leaderboard?.departments ?? [];
   const threshold = dash?.threshold_score ?? 70;
-  const dateLoc = i18n.language?.startsWith('ar') ? 'ar-SA' : i18n.language?.startsWith('tr') ? 'tr-TR' : 'en-US';
+  const dateLoc = i18n.language?.startsWith('ar')
+    ? 'ar-SA'
+    : i18n.language?.startsWith('tr')
+      ? 'tr-TR'
+      : 'en-US';
   const currentMonthLabel = useMemo(() => {
     const [y, m] = monthKey().split('-').map((x) => parseInt(x, 10));
     if (!y || !m) return monthKey();
@@ -120,9 +145,10 @@ export default function PerformanceDashboardScreen() {
       })
     : null;
 
+  const belowThreshold = (singleScore ?? 100) < threshold;
   const thresholdLabel = t('perfThreshold', {
     score: threshold,
-    status: dash?.below_threshold ? t('perfThresholdBelow') : t('perfThresholdOk'),
+    status: belowThreshold ? t('perfThresholdBelow') : t('perfThresholdOk'),
   });
 
   const linkCards = useMemo(() => {
@@ -143,17 +169,17 @@ export default function PerformanceDashboardScreen() {
         colors: ['#6366F1', '#8B5CF6'],
         onPress: () => router.push('/staff/evaluation'),
       },
-      {
-        key: 'points',
-        icon: 'ribbon-outline',
-        title: 'Alınan puanlarım',
-        subtitle: 'Bölüm ve kaynak bazında puan geçmişi, sıralama',
-        colors: ['#FBBF24', '#F59E0B'],
-        onPress: () => router.push('/staff/points'),
-      },
     ];
     if (isAdmin) {
       cards.push(
+        {
+          key: 'staff_perf',
+          icon: 'ribbon-outline',
+          title: t('staffPerfSystemTitle'),
+          subtitle: t('staffPerfSystemSub'),
+          colors: ['#0f3d3a', '#1a6b64'],
+          onPress: () => router.push('/admin/staff-perf' as Href),
+        },
         {
           key: 'audit',
           icon: 'clipboard-outline',
@@ -191,7 +217,7 @@ export default function PerformanceDashboardScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {!showContent && !dash ? (
+        {!showContent && !dash && loading ? (
           <ActivityIndicator size="large" color={performanceTheme.accent} style={styles.loader} />
         ) : !dash ? (
           <Text style={styles.muted}>{t('perfDashLoadFailed')}</Text>
@@ -200,20 +226,21 @@ export default function PerformanceDashboardScreen() {
             <PerformanceHeroCard
               eyebrow={t('perfCombinedTitle')}
               name={dash.full_name ?? t('staffDefaultName')}
-              score={dash.evaluation_combined}
+              score={singleScore}
               scoreLabel={t('perfOverallScore')}
-              formula={t('perfFormula', {
-                mgmt: dash.weights.management,
-                audit: dash.weights.audit,
-                guest: dash.weights.guest,
-              })}
+              formula={t('perfFormula')}
               updatedLabel={updatedLabel}
               threshold={threshold}
-              belowThreshold={dash.below_threshold}
+              belowThreshold={belowThreshold}
               thresholdLabel={thresholdLabel}
             />
 
-            {dash.below_threshold ? (
+            <View style={[styles.bandCard, { borderColor: band.color, backgroundColor: band.bg }]}>
+              <Text style={[styles.bandTitle, { color: band.color }]}>{t('staffPerfBandLabel')}</Text>
+              <Text style={[styles.bandValue, { color: band.color }]}>{band.labelTr}</Text>
+            </View>
+
+            {belowThreshold ? (
               <PerformanceAlertBanner text={t('perfBelowThresholdAlert', { threshold })} />
             ) : null}
 
@@ -245,33 +272,32 @@ export default function PerformanceDashboardScreen() {
               </View>
             ) : null}
 
-            <PerformanceSectionTitle title={t('perfPillarSection')} icon="layers-outline" />
-            <View style={styles.pillarGrid}>
-              <PerformancePillarCard
-                index={0}
-                title={pillarLabel('management')}
-                score={dash.evaluation_management}
-                weight={dash.weights.management}
-                icon="ribbon-outline"
-                noDataLabel={t('perfNoData')}
-              />
-              <PerformancePillarCard
-                index={1}
-                title={pillarLabel('audit')}
-                score={dash.evaluation_audit}
-                weight={dash.weights.audit}
-                icon="clipboard-outline"
-                noDataLabel={t('perfNoData')}
-              />
-              <PerformancePillarCard
-                index={2}
-                title={pillarLabel('guest')}
-                score={dash.evaluation_guest}
-                weight={dash.weights.guest}
-                icon="star-outline"
-                noDataLabel={t('perfNoData')}
-              />
-            </View>
+            <PerformanceSectionTitle title={t('staffPerfMyEvents')} icon="list-outline" />
+            {events.length === 0 ? (
+              <Text style={styles.muted}>{t('staffAuditEmpty')}</Text>
+            ) : (
+              <View style={styles.eventList}>
+                {events.map((e) => (
+                  <View key={e.id} style={styles.eventRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.eventTitle}>{e.title}</Text>
+                      <Text style={styles.eventMeta}>
+                        {e.report_number} · {new Date(e.conducted_at).toLocaleString(dateLoc)}
+                      </Text>
+                    </View>
+                    <Text
+                      style={{
+                        fontWeight: '800',
+                        color: e.delta_points > 0 ? '#047857' : '#b91c1c',
+                      }}
+                    >
+                      {e.delta_points > 0 ? '+' : ''}
+                      {e.delta_points}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {departments.length > 0 ? (
               <PerformanceDeptLeaderboard
@@ -306,8 +332,29 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: performanceTheme.pageBg },
   content: { padding: 16, paddingTop: 12 },
   loader: { marginTop: 48 },
-  muted: { color: '#64748B', textAlign: 'center', marginTop: 24 },
+  muted: { color: '#64748B', textAlign: 'center', marginTop: 12, marginBottom: 12 },
   section: { marginBottom: 16 },
-  pillarGrid: { gap: 10, marginBottom: 18 },
   linkGrid: { marginBottom: 8 },
+  bandCard: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    marginTop: 4,
+  },
+  bandTitle: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  bandValue: { fontSize: 16, fontWeight: '800', marginTop: 2 },
+  eventList: { gap: 8, marginBottom: 16 },
+  eventRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  eventTitle: { fontWeight: '700', fontSize: 13, color: '#0f172a' },
+  eventMeta: { fontSize: 11, color: '#64748b', marginTop: 2 },
 });

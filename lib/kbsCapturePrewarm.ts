@@ -1,7 +1,8 @@
+import { Platform } from 'react-native';
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { prepareKbsCaptureImageUri, prepareKbsCaptureUploadUri } from '@/lib/kbsCaptureUpload';
 import { uploadPassportPrivateFromUri } from '@/lib/uploadPassportPrivate';
-import { startKbsCaptureOcrPrewarm } from '@/lib/kbsCaptureOcrQueue';
+import { clearKbsCaptureOcrPrewarmAll, startKbsCaptureOcrPrewarm } from '@/lib/kbsCaptureOcrQueue';
 import { resolveOpsHotelIdForCaller } from '@/lib/resolveOpsHotelId';
 
 export type KbsCapturePrewarmReady = {
@@ -15,6 +16,30 @@ type Entry = {
 };
 
 const entries = new Map<string, Entry>();
+
+/** Toplu galeri: upload prewarm paralelliği (OCR ayrı skip edilebilir). */
+const PREWARM_MAX_ACTIVE = Platform.OS === 'android' ? 2 : 3;
+let prewarmActive = 0;
+const prewarmWaiters: Array<() => void> = [];
+
+function acquirePrewarmSlot(): Promise<void> {
+  if (prewarmActive < PREWARM_MAX_ACTIVE) {
+    prewarmActive += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    prewarmWaiters.push(() => {
+      prewarmActive += 1;
+      resolve();
+    });
+  });
+}
+
+function releasePrewarmSlot(): void {
+  prewarmActive = Math.max(0, prewarmActive - 1);
+  const next = prewarmWaiters.shift();
+  if (next) next();
+}
 
 let opsCtxPromise: ReturnType<typeof resolveOpsHotelIdForCaller> | null = null;
 
@@ -56,25 +81,34 @@ function runPrewarm(args: {
   imageUri: string;
   captureSide?: KbsCaptureSide;
   captureSource?: 'camera' | 'gallery';
+  /** true: yalnız upload ısıt — OCR kayıt sonrası kuyrukta (çoklu pasaport OOM önler). */
+  skipOcr?: boolean;
 }): Promise<KbsCapturePrewarmReady> {
   warmKbsCaptureOpsContext();
 
   return (async () => {
-    const preparedUri = await prepareKbsCaptureImageUri(args.imageUri);
-    startKbsCaptureOcrPrewarm(preparedUri, {
-      captureSide: args.captureSide ?? 'front',
-      captureSource: args.captureSource ?? 'camera',
-    });
-    // OCR yerel tam kaliteli dosyadan çalışır; ağa küçültülmüş kopya gider (zayıf internet).
-    const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
-    const upload = await uploadPassportPrivateFromUri({
-      uri: uploadUri,
-      subfolder: 'kbs-documents',
-    });
-    return {
-      preparedUri,
-      upload: { publicUrl: upload.publicUrl },
-    };
+    await acquirePrewarmSlot();
+    try {
+      const preparedUri = await prepareKbsCaptureImageUri(args.imageUri);
+      if (!args.skipOcr) {
+        startKbsCaptureOcrPrewarm(preparedUri, {
+          captureSide: args.captureSide ?? 'front',
+          captureSource: args.captureSource ?? 'camera',
+        });
+      }
+      // OCR yerel tam kaliteli dosyadan çalışır; ağa küçültülmüş kopya gider (zayıf internet).
+      const uploadUri = await prepareKbsCaptureUploadUri(preparedUri);
+      const upload = await uploadPassportPrivateFromUri({
+        uri: uploadUri,
+        subfolder: 'kbs-documents',
+      });
+      return {
+        preparedUri,
+        upload: { publicUrl: upload.publicUrl },
+      };
+    } finally {
+      releasePrewarmSlot();
+    }
   })();
 }
 
@@ -84,6 +118,7 @@ export function startKbsCapturePrewarm(args: {
   imageUri: string;
   captureSide?: KbsCaptureSide;
   captureSource?: 'camera' | 'gallery';
+  skipOcr?: boolean;
 }): void {
   const existing = entries.get(args.itemId);
   if (existing && !existing.cancelled) return;
@@ -151,5 +186,7 @@ export async function awaitAllKbsCapturePrewarm(itemIds: string[]): Promise<Map<
 }
 
 export function clearKbsCapturePrewarmAll(): void {
+  for (const e of entries.values()) e.cancelled = true;
   entries.clear();
+  clearKbsCaptureOcrPrewarmAll();
 }

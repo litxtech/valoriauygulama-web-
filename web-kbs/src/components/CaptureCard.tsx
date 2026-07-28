@@ -21,6 +21,11 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   residence_permit: 'İkamet',
 };
 
+function personInitial(name: string): string {
+  const ch = name.trim().charAt(0);
+  return ch ? ch.toLocaleUpperCase('tr-TR') : '?';
+}
+
 function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
@@ -45,7 +50,7 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
 
   return (
     <button type="button" className={`card${isNew ? ' is-new' : ''}`} onClick={handleOpen}>
-      <div className="card-thumb">
+      <div className="card-thumb card-thumb--avatar">
         {isNew ? (
           <span className="pill-new" title="Son 1 saat içinde eklendi" aria-label="Yeni kayıt">
             ✓
@@ -53,6 +58,7 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
         ) : null}
         {item.front_image_url ? (
           <img
+            className="person-avatar"
             src={item.front_image_url}
             alt=""
             loading="lazy"
@@ -60,7 +66,9 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
             fetchPriority="low"
           />
         ) : (
-          <div className="card-thumb-empty">Görsel yok</div>
+          <div className="person-avatar person-avatar--fallback" aria-hidden>
+            {personInitial(name)}
+          </div>
         )}
         <div className="card-thumb-badges">
           {item.room_number ? <span className="pill pill-room">Oda {item.room_number}</span> : null}
@@ -81,7 +89,7 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
 
         {isKbsReturningGuest(parsed) ? (
           <div className="returning-pill" title="Bu belge daha önce sisteme eklendi">
-            Daha önce geldi
+            ✓ Daha önce geldi
           </div>
         ) : null}
 

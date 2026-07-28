@@ -18,6 +18,7 @@ import {
 } from '@/lib/kbsCaptureParsedFields';
 import type { KbsCaptureSide } from '@/lib/kbsCaptureOcr';
 import { applyKbsCaptureOcrResult, markKbsCaptureOcrState } from '@/lib/kbsCaptureHistory';
+import { isMrzChecksumSuspicious } from '@/lib/kbsMrzSuspicion';
 import { log } from '@/lib/logger';
 import type { KbsOcrResult } from '@/lib/kbsCaptureProfessionalOcr';
 import {
@@ -44,11 +45,19 @@ export type KbsCaptureOcrJob = {
   persistentJobId?: string | null;
 };
 
-const OCR_GAP_MS = Platform.OS === 'android' ? 40 : 0;
+const OCR_GAP_MS = Platform.OS === 'android' ? 20 : 0;
 const OCR_JOB_TIMEOUT_MS = Platform.OS === 'android' ? 90_000 : 75_000;
 const OCR_DOWNLOAD_TIMEOUT_MS = 20_000;
-/** iOS 2; Android 1 — deep OCR bellek baskısını azalt. */
-const OCR_MAX_CONCURRENT = Platform.OS === 'android' ? 1 : 2;
+/** Paralel OCR — varsayılan. */
+const OCR_MAX_CONCURRENT_DEFAULT = Platform.OS === 'android' ? 2 : 3;
+/** Toplu galeri: hâlâ paralel ama daha düşük (fast-first; Maximum seyrek). */
+const OCR_MAX_CONCURRENT_BULK = Platform.OS === 'android' ? 2 : 2;
+let ocrMaxConcurrent = OCR_MAX_CONCURRENT_DEFAULT;
+
+/** Toplu galeri kaydı sırasında OCR paralelliğini sınırla (OOM önleme). */
+export function setKbsOcrBulkMode(enabled: boolean): void {
+  ocrMaxConcurrent = enabled ? OCR_MAX_CONCURRENT_BULK : OCR_MAX_CONCURRENT_DEFAULT;
+}
 
 let jobs: KbsCaptureOcrJob[] = [];
 let activeCount = 0;
@@ -56,6 +65,33 @@ const queuedOrActiveDocIds = new Set<string>();
 /** Çalışan + bekleyen işler — persistentJobId geç bağlansın diye. */
 const trackedJobsByDocId = new Map<string, KbsCaptureOcrJob>();
 const ocrPrewarmByUri = new Map<string, Promise<KbsOcrResult>>();
+/**
+ * Prewarm OCR slot’tan bağımsız ateşleniyordu → çoklu pasaportta
+ * birkaç Maximum OCR üst üste binip Android OOM çökmesi yapıyordu.
+ */
+const OCR_PREWARM_MAX_ACTIVE = 1;
+let ocrPrewarmActive = 0;
+const ocrPrewarmWaiters: Array<() => void> = [];
+
+function acquireOcrPrewarmSlot(): Promise<void> {
+  if (ocrPrewarmActive < OCR_PREWARM_MAX_ACTIVE) {
+    ocrPrewarmActive += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    ocrPrewarmWaiters.push(() => {
+      ocrPrewarmActive += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseOcrPrewarmSlot(): void {
+  ocrPrewarmActive = Math.max(0, ocrPrewarmActive - 1);
+  const next = ocrPrewarmWaiters.shift();
+  if (next) next();
+}
+
 let workerId = `device-${Platform.OS}-${Date.now().toString(36)}`;
 let claimLoopStarted = false;
 /** History’de bir kez okumaya alındı — tekrar tekrar "Okunuyor" döngüsü yok. */
@@ -80,7 +116,7 @@ export function subscribeKbsOcrQueue(listener: () => void): () => void {
   };
 }
 
-/** Çekim sonrası onay beklerken OCR’yi önceden başlat. */
+/** Çekim sonrası onay beklerken OCR’yi önceden başlat (aynı anda en fazla 1). */
 export function startKbsCaptureOcrPrewarm(
   localUri: string,
   opts?: { captureSide?: KbsCaptureSide; captureSource?: 'camera' | 'gallery' }
@@ -89,14 +125,27 @@ export function startKbsCaptureOcrPrewarm(
   if (!key || ocrPrewarmByUri.has(key)) return;
   ocrPrewarmByUri.set(
     key,
-    parseIdCardImageUriForUpload(key, {
-      captureSide: opts?.captureSide ?? 'front',
-      galleryDeep: opts?.captureSource === 'gallery',
-    }).catch((e) => {
-      ocrPrewarmByUri.delete(key);
-      throw e;
-    })
+    (async () => {
+      await acquireOcrPrewarmSlot();
+      try {
+        return await parseIdCardImageUriForUpload(key, {
+          captureSide: opts?.captureSide ?? 'front',
+          // Kamera: hızlı yol; galeri/fotokopi: derin
+          galleryDeep: opts?.captureSource === 'gallery',
+        });
+      } catch (e) {
+        ocrPrewarmByUri.delete(key);
+        throw e;
+      } finally {
+        releaseOcrPrewarmSlot();
+      }
+    })()
   );
+}
+
+/** Toplu eklemede bekleyen prewarm sonuçlarını düşür (bellek). Çalışan OCR slot’ta biter. */
+export function clearKbsCaptureOcrPrewarmAll(): void {
+  ocrPrewarmByUri.clear();
 }
 
 async function consumeKbsCaptureOcrPrewarm(localUri: string): Promise<KbsOcrResult | null> {
@@ -141,6 +190,27 @@ async function downloadImage(url: string, docId: string): Promise<string> {
   return res.uri;
 }
 
+function isHealthyKbsOcrRead(parsed: import('@/lib/scanner/types').ParsedDocument): boolean {
+  if (!isKbsCaptureOcrCoreComplete(parsed)) return false;
+  // MRZ checksum geçerli → güvenilir (görsel doğrulama uyarısı bonus)
+  if (parsed.rawMrz && parsed.checksumsValid === true) return true;
+  // TC kimlik görsel — core tamam ise kabul
+  const tc = (parsed.documentNumber ?? '').replace(/\D/g, '');
+  if (
+    tc.length === 11 &&
+    (parsed.nationalityCode === 'TUR' ||
+      parsed.nationalityCode === 'TR' ||
+      parsed.nationalityCode === 'TC')
+  ) {
+    return true;
+  }
+  // A: MRZ şüpheli (checksum fail / fallback / uncertain) → derin / sunucu
+  if (isMrzChecksumSuspicious(parsed)) return false;
+  // Görsel tamam, MRZ yok — pasaport için yetersiz say (deep dene)
+  if (!parsed.rawMrz && parsed.documentType === 'passport') return false;
+  return true;
+}
+
 async function runDeviceOcr(job: KbsCaptureOcrJob, strategy: KbsOcrStrategy): Promise<KbsOcrResult> {
   let local = job.localUri?.trim() || '';
   if (local) {
@@ -157,28 +227,45 @@ async function runDeviceOcr(job: KbsCaptureOcrJob, strategy: KbsOcrStrategy): Pr
 
   if (strategy === 'device_fast') {
     const prewarmed = await consumeKbsCaptureOcrPrewarm(local);
-    if (prewarmed) return prewarmed;
-    return parseIdCardImageUriForUpload(local, {
+    if (prewarmed && isHealthyKbsOcrRead(prewarmed.parsed)) {
+      return prewarmed;
+    }
+    // Hızlı yol: Maximum’a düşme — eksikte kuyruk device_deep enqueue eder.
+    const fast = await parseIdCardImageUriForUpload(local, {
       captureSide: job.captureSide ?? 'front',
       galleryDeep: false,
     });
+    if (prewarmed) return pickBetterKbsOcrResult(prewarmed, fast);
+    return fast;
   }
 
-  // device_deep: maximum / gallery deep + MRZ
-  const preparedFast = await parseIdCardImageUriProfessional(local, {
-    captureSide: job.captureSide ?? 'front',
-    imagePrepared: false,
-    fast: false,
-  });
-  const mrzPass = await parseIdCardImageUriProfessional(local, {
-    captureSide: 'mrz_back',
-    imagePrepared: true,
-    fast: false,
-  });
-  let best = pickBetterKbsOcrResult(preparedFast, mrzPass);
+  // Derin yol: ön + MRZ paralel; sağlıklı değilse Maximum
+  const { prepareProfessionalKbsOcrUri } = await import('@/lib/kbsOcrImageEnhance');
+  const prepared = await prepareProfessionalKbsOcrUri(local);
+
+  const [frontPass, mrzPass] = await Promise.all([
+    parseIdCardImageUriProfessional(prepared, {
+      captureSide: job.captureSide ?? 'front',
+      imagePrepared: true,
+      fast: false,
+      galleryDeep: false,
+    }),
+    parseIdCardImageUriProfessional(prepared, {
+      captureSide: 'mrz_back',
+      imagePrepared: true,
+      fast: false,
+      galleryDeep: false,
+    }),
+  ]);
+  let best = pickBetterKbsOcrResult(frontPass, mrzPass);
+
+  if (isHealthyKbsOcrRead(best.parsed)) {
+    return best;
+  }
+
   try {
     const { parseIdCardImageUriMaximum } = await import('@/lib/kbsCaptureGalleryDeepOcr');
-    const deep = await parseIdCardImageUriMaximum(local, {
+    const deep = await parseIdCardImageUriMaximum(prepared, {
       captureSide: job.captureSide ?? 'front',
     });
     const merged = mergeKbsOcrPassResults([
@@ -229,7 +316,18 @@ async function persistOcrResult(
   });
 
   if (rpc.ok) {
-    if (rpc.coreReady || rpc.ocrStatus === 'succeeded') return 'succeeded';
+    if (rpc.coreReady || rpc.ocrStatus === 'succeeded') {
+      // A: sağlıksız / şüpheli “tamam” → sonraki strateji (deep → sunucu → manuel)
+      if (!isHealthyKbsOcrRead(ocr.parsed)) {
+        if (strategy === 'device_fast' || strategy === 'device_deep') {
+          await markKbsCaptureOcrState(job.docId, 'partial');
+          return 'partial';
+        }
+        await markKbsCaptureOcrState(job.docId, 'manual_review');
+        return 'manual_review';
+      }
+      return 'succeeded';
+    }
     if (rpc.ocrStatus === 'manual_review') return 'manual_review';
     return 'partial';
   }
@@ -246,7 +344,17 @@ async function persistOcrResult(
     await markKbsCaptureOcrState(job.docId, 'failed');
     return 'failed';
   }
-  if (coreComplete) return 'succeeded';
+  if (coreComplete) {
+    if (!isHealthyKbsOcrRead(ocr.parsed)) {
+      if (strategy === 'device_fast' || strategy === 'device_deep') {
+        await markKbsCaptureOcrState(job.docId, 'partial');
+        return 'partial';
+      }
+      await markKbsCaptureOcrState(job.docId, 'manual_review');
+      return 'manual_review';
+    }
+    return 'succeeded';
+  }
   // Kısmi: pending'e GERİ alma — "Okunuyor"da takılı kalıyordu.
   // Sonraki strateji kuyruğa alınırken partial / manual_review yaz.
   if (strategy === 'device_fast') {
@@ -402,7 +510,7 @@ async function runJob(job: KbsCaptureOcrJob): Promise<void> {
 }
 
 async function drainQueue(): Promise<void> {
-  while (jobs.length > 0 && activeCount < OCR_MAX_CONCURRENT) {
+  while (jobs.length > 0 && activeCount < ocrMaxConcurrent) {
     const job = jobs.shift()!;
     trackedJobsByDocId.set(job.docId, job);
     activeCount += 1;
@@ -414,6 +522,9 @@ async function drainQueue(): Promise<void> {
         } else {
           void drainQueue();
         }
+      } else if (activeCount === 0) {
+        // Toplu mod bitti — tekli çekimlerde varsayılan paralelliğe dön.
+        setKbsOcrBulkMode(false);
       }
     });
   }
@@ -490,38 +601,39 @@ export type KbsUnreadCaptureRow = {
   id: string;
   guest_id: string;
   front_image_url?: string | null;
-  parsed_payload?: unknown;
+  parsed_payload?: Record<string, unknown> | null;
   ocr_status?: string | null;
 };
 
 /**
- * Geçmiş listesindeki boş / eksik / takılı kayıtları bir kez okumaya alır.
- * İkinci turda hâlâ bayat "Okunuyor" ise kesin duruma (manuel / okunamadı) çeker.
+ * Okunmamış / eksik çekimleri bir kez derin OCR’ye alır (trafik sınırlı).
+ * Bayat "Okunuyor" ikinci turda kesin duruma çekilir.
  */
-export function kickUnreadCapturesOcr(rows: KbsUnreadCaptureRow[], limit = 10): number {
+export function kickUnreadCapturesOcr(rows: KbsUnreadCaptureRow[], limit = 8): number {
   let enqueued = 0;
   for (const row of rows) {
     if (enqueued >= limit) break;
     const imageUrl = (row.front_image_url ?? '').trim();
     if (!imageUrl) continue;
-
-    const parsed = enrichKbsParsedFromSources(row.parsed_payload);
-    if (!needsKbsCaptureOcrRead(parsed, { ocrStatus: row.ocr_status })) {
-      continue;
-    }
-
     if (isKbsDocInOcrQueue(row.id)) {
       historyOcrAttemptedDocIds.add(row.id);
       continue;
     }
 
-    // Aynı kayıt: bir kez denendi. Bayat Okunuyor → kesin durum; tekrar kuyruğa alma.
+    const parsed = enrichKbsParsedFromSources(row.parsed_payload);
+    if (isKbsCaptureOcrCoreComplete(parsed) || isKbsOcrManualReview(parsed)) continue;
+
+    const ocrStatus = (row.ocr_status ?? '').trim().toLowerCase();
+    if (ocrStatus === 'succeeded' || ocrStatus === 'manual_review') continue;
+
+    // Aynı kayıt ikinci kez: OCR yok — etiketle
     if (historyOcrAttemptedDocIds.has(row.id)) {
       if (
         isKbsOcrInProgress(parsed) ||
-        row.ocr_status === 'queued' ||
-        row.ocr_status === 'processing' ||
-        row.ocr_status === 'retry_wait'
+        ocrStatus === 'queued' ||
+        ocrStatus === 'processing' ||
+        ocrStatus === 'retry_wait' ||
+        !kbsCaptureHasReadableData(parsed)
       ) {
         void markKbsCaptureOcrState(
           row.id,
@@ -530,6 +642,8 @@ export function kickUnreadCapturesOcr(rows: KbsUnreadCaptureRow[], limit = 10): 
       }
       continue;
     }
+
+    if (!needsKbsCaptureOcrRead(parsed, { ocrStatus: row.ocr_status })) continue;
 
     historyOcrAttemptedDocIds.add(row.id);
     const sideWarn = Array.isArray(parsed?.warnings)
@@ -543,14 +657,14 @@ export function kickUnreadCapturesOcr(rows: KbsUnreadCaptureRow[], limit = 10): 
       imageUrl,
       captureSide,
       captureSource: 'gallery',
-      strategy: 'device_deep',
+      strategy: 'device_fast',
     });
     if (ok) enqueued += 1;
   }
   return enqueued;
 }
 
-/** Kalıcı kuyruktan cihaz işlerini claim et (açılış / history). */
+/** Kalıcı kuyruktan cihaz işlerini claim et — yalnız manuel / çekim sonrası. */
 export async function pollPersistentDeviceOcrJobs(limit = 4): Promise<number> {
   let claimed = 0;
   for (let i = 0; i < limit; i += 1) {
@@ -575,12 +689,13 @@ export async function pollPersistentDeviceOcrJobs(limit = 4): Promise<number> {
   return claimed;
 }
 
-/** Stuck recovery + claim döngüsü — history ekranı / app focus. */
+/** Stuck recovery + claim — manuel tetik; history otomatik çağırmaz. */
 export async function kickKbsOcrRecovery(): Promise<void> {
   await recoverStuckDocumentOcr(40);
   await pollPersistentDeviceOcrJobs(6);
 }
 
+/** Claim döngüsü — varsayılan kapalı (trafik). Manuel retry / kayıt sonrası kuyruk yeter. */
 export function startKbsOcrClaimLoop(): void {
   if (claimLoopStarted) return;
   claimLoopStarted = true;

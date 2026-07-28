@@ -14,7 +14,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useIsFocused, type NavigationProp, type ParamListBase } from '@react-navigation/native';
 import { useNavigation, usePathname, useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +28,7 @@ import { markKbsCapturesJustSaved } from '@/lib/kbsCaptureHistorySeen';
 import { useAuthStore } from '@/stores/authStore';
 import { navigateStaffBack, STAFF_TABS_FALLBACK } from '@/lib/staffStackBack';
 import { KbsZoomImageModal } from '@/components/kbs/KbsZoomImageModal';
+import { KbsPersonAvatar } from '@/components/kbs/KbsPersonAvatar';
 import { useTranslation } from 'react-i18next';
 import { warmKbsCaptureOpsContext } from '@/lib/kbsCapturePrewarm';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
@@ -613,11 +613,13 @@ export default function KbsNfcCaptureScreen() {
               </View>
               {detailIndex != null && queue[detailIndex] ? (
                 <>
-                  <Image
-                    source={{ uri: queue[detailIndex]!.portraitUri }}
-                    style={styles.detailPortrait}
-                    contentFit="cover"
-                  />
+                  <View style={styles.detailPortraitWrap}>
+                    <KbsPersonAvatar
+                      uri={queue[detailIndex]!.portraitUri}
+                      size={88}
+                      sourceKind="portrait"
+                    />
+                  </View>
                   <NfcParsedFieldsPanel parsed={queue[detailIndex]!.parsed} variant="light" />
                 </>
               ) : null}
@@ -788,12 +790,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   detailTitle: { color: '#0f172a', fontSize: 17, fontWeight: '800' },
-  detailPortrait: {
-    width: 88,
-    height: 110,
-    borderRadius: 10,
+  detailPortraitWrap: {
     alignSelf: 'center',
     marginBottom: 12,
-    backgroundColor: '#f1f5f9',
   },
 });

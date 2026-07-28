@@ -28,6 +28,7 @@ export type BreakfastPartnerHotel = {
   iban: string | null;
   logo_url: string | null;
   unit_price: number | null;
+  laundry_unit_price: number | null;
   status: BreakfastPartnerHotelStatus;
   self_registered: boolean;
   notes: string | null;
@@ -35,7 +36,7 @@ export type BreakfastPartnerHotel = {
 };
 
 const PARTNER_HOTEL_SELECT =
-  'id, organization_id, counterparty_id, name, contact_name, phone, email, city, address, tax_id, tax_office, iban, logo_url, unit_price, status, self_registered, notes, created_at';
+  'id, organization_id, counterparty_id, name, contact_name, phone, email, city, address, tax_id, tax_office, iban, logo_url, unit_price, laundry_unit_price, status, self_registered, notes, created_at';
 
 function mapPartnerHotelRow(row: Record<string, unknown>): BreakfastPartnerHotel {
   return {
@@ -46,6 +47,7 @@ function mapPartnerHotelRow(row: Record<string, unknown>): BreakfastPartnerHotel
     logo_url: (row.logo_url as string | null) ?? null,
     self_registered: row.self_registered === true,
     unit_price: row.unit_price != null ? Number(row.unit_price) : null,
+    laundry_unit_price: row.laundry_unit_price != null ? Number(row.laundry_unit_price) : null,
   };
 }
 
@@ -92,6 +94,7 @@ export function partnerEntryPayLabel(row: Pick<PartnerDailyEntryLedgerRow, 'gues
 export type BreakfastPartnerSettings = {
   organization_id: string;
   default_unit_price: number;
+  default_laundry_unit_price: number;
   feature_enabled: boolean;
   remind_enabled: boolean;
   remind_time: string;
@@ -411,7 +414,9 @@ export function resolvePartnerEffectiveUnitPriceSync(
 export async function fetchPartnerSettings(organizationId: string): Promise<BreakfastPartnerSettings | null> {
   const { data, error } = await supabase
     .from('breakfast_partner_settings')
-    .select('organization_id, default_unit_price, feature_enabled, remind_enabled, remind_time, payment_notify_staff_ids')
+    .select(
+      'organization_id, default_unit_price, default_laundry_unit_price, feature_enabled, remind_enabled, remind_time, payment_notify_staff_ids'
+    )
     .eq('organization_id', organizationId)
     .maybeSingle();
 
@@ -420,6 +425,7 @@ export async function fetchPartnerSettings(organizationId: string): Promise<Brea
   return {
     organization_id: data.organization_id,
     default_unit_price: Number(data.default_unit_price) || 0,
+    default_laundry_unit_price: Number((data as { default_laundry_unit_price?: number }).default_laundry_unit_price) || 0,
     feature_enabled: data.feature_enabled !== false,
     remind_enabled: data.remind_enabled !== false,
     remind_time: String(data.remind_time ?? '09:30').slice(0, 5),
@@ -432,7 +438,12 @@ export async function upsertPartnerSettings(
   defaultUnitPrice: number,
   featureEnabled: boolean,
   staffId: string | null,
-  opts?: { remindEnabled?: boolean; remindTime?: string; paymentNotifyStaffIds?: string[] }
+  opts?: {
+    remindEnabled?: boolean;
+    remindTime?: string;
+    paymentNotifyStaffIds?: string[];
+    defaultLaundryUnitPrice?: number;
+  }
 ): Promise<string | null> {
   const remindTime = opts?.remindTime?.trim() || '09:30';
   const payload: Record<string, unknown> = {
@@ -446,6 +457,9 @@ export async function upsertPartnerSettings(
   };
   if (opts?.paymentNotifyStaffIds != null) {
     payload.payment_notify_staff_ids = [...new Set(opts.paymentNotifyStaffIds.filter(Boolean))];
+  }
+  if (opts?.defaultLaundryUnitPrice != null) {
+    payload.default_laundry_unit_price = Math.max(0, opts.defaultLaundryUnitPrice);
   }
   const { error } = await supabase.from('breakfast_partner_settings').upsert(payload, { onConflict: 'organization_id' });
   return error?.message ?? null;
@@ -755,6 +769,9 @@ export async function fetchPartnerPortalAccountSnapshot(paymentLimit = 40): Prom
   monthGuestTotal: number;
   monthAmountTotal: number;
   lifetimeTotal: number;
+  monthLaundryQty: number;
+  monthLaundryAmount: number;
+  lifetimeLaundryTotal: number;
   payments: PartnerPaymentRow[];
 }> {
   let lastError: string | null = null;
@@ -770,6 +787,10 @@ export async function fetchPartnerPortalAccountSnapshot(paymentLimit = 40): Prom
         monthGuestTotal: Number(payload.monthGuestTotal ?? payload.month_guest_total) || 0,
         monthAmountTotal: Number(payload.monthAmountTotal ?? payload.month_amount_total) || 0,
         lifetimeTotal: Number(payload.lifetimeTotal ?? payload.lifetime_total) || 0,
+        monthLaundryQty: Number(payload.monthLaundryQty ?? payload.month_laundry_qty) || 0,
+        monthLaundryAmount: Number(payload.monthLaundryAmount ?? payload.month_laundry_amount) || 0,
+        lifetimeLaundryTotal:
+          Number(payload.lifetimeLaundryTotal ?? payload.lifetime_laundry_total) || 0,
         payments: mapPartnerPaymentRows(payload.payments),
       };
     }

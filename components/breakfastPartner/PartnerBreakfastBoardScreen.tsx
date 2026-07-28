@@ -30,6 +30,7 @@ import {
   formatBreakfastPassTime,
   type BreakfastGuestPassRedeemedRow,
 } from '@/lib/breakfastGuestPass';
+import { canManagePartnerLaundry } from '@/lib/breakfastPartnerLaundry';
 import { partnerTheme } from '@/lib/breakfastPartnerTheme';
 import { PartnerDateSelector } from '@/components/breakfastPartner/PartnerUi';
 
@@ -49,7 +50,8 @@ export function PartnerBreakfastBoardScreen() {
   const staff = useAuthStore((s) => s.staff);
   const canView = canViewPartnerBreakfastBoard(staff);
   const canScan = canRedeemBreakfastGuestPass(staff);
-  const canAccess = canView || canScan;
+  const canLaundry = canManagePartnerLaundry(staff);
+  const canAccess = canView || canScan || canLaundry;
 
   const [boardDate, setBoardDate] = useState(() => resolvePartnerKitchenBoardDate());
   const [redeemedPasses, setRedeemedPasses] = useState<BreakfastGuestPassRedeemedRow[]>([]);
@@ -122,6 +124,16 @@ export function PartnerBreakfastBoardScreen() {
           <TouchableOpacity onPress={() => refresh()} style={styles.iconBtn}>
             <Ionicons name="refresh" size={20} color={partnerTheme.accent} />
           </TouchableOpacity>
+          {canLaundry ? (
+            <TouchableOpacity
+              onPress={() => router.push('/staff/breakfast-partners/laundry')}
+              style={styles.scanBtn}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="shirt-outline" size={18} color="#0f172a" />
+              <Text style={styles.scanBtnText}>Çamaşır</Text>
+            </TouchableOpacity>
+          ) : null}
           {canScan ? (
             <TouchableOpacity
               onPress={() => router.push('/staff/breakfast-partners/scan')}

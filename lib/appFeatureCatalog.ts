@@ -68,7 +68,7 @@ export const APP_FEATURE_CATALOG: AppFeatureCatalogEntry[] = [
   { id: 'breakfast_staff', labelTr: 'Kahvaltı teyidi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'breakfast_staff' },
   { id: 'breakfast_briefing', labelTr: 'Sabah kahvaltı sayısı', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'breakfast_briefing' },
   { id: 'salary_history', labelTr: 'Maaş geçmişim', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'salary_history' },
-  { id: 'cleaning', labelTr: 'Yarın temizlik planı', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'cleaning' },
+  { id: 'cleaning', labelTr: 'Temizlik', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'cleaning' },
   {
     id: 'security_recordings',
     labelTr: 'Önemli kamera kayıtları',
@@ -153,6 +153,7 @@ export const APP_FEATURE_CATALOG: AppFeatureCatalogEntry[] = [
   { id: 'accounting', labelTr: 'Muhasebe merkezi', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'accounting' },
   { id: 'admin_tab', labelTr: 'Yönetim (hamburger)', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'admin_tab' },
   { id: 'admin_notes', labelTr: 'Not Al (yönetici)', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'admin_notes' },
+  { id: 'staff_perf', labelTr: 'Personel Denetim & Performans', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'staff_perf' },
   { id: 'audits', labelTr: 'Denetim panosu', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'audits' },
   { id: 'staff_month_best', labelTr: 'Ayın en iyi personeli', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'staff_month_best' },
   { id: 'transfer_a', labelTr: 'Transfer & tur (yönetim)', audience: 'staff', defaultEnabled: true, defaultPlacements: ['hamburger'], hamburgerMenuId: 'transfer_a' },

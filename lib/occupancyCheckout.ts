@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendNotification } from '@/lib/notificationService';
 import { GUEST_TYPES, guestMessageTemplate } from '@/lib/notifications';
+import { markRoomHousekeepingDirty } from '@/lib/roomHousekeeping';
 
 export type CheckoutGuestRow = {
   id: string;
@@ -9,7 +10,7 @@ export type CheckoutGuestRow = {
   contract_lang?: string | null;
 };
 
-/** Tek misafir check-out — oda müsait, bildirim gider. */
+/** Tek misafir check-out — oda müsait, temizlik kirli, bildirim gider. */
 export async function checkoutGuest(
   client: SupabaseClient,
   guest: CheckoutGuestRow,
@@ -23,8 +24,25 @@ export async function checkoutGuest(
   if (error) return { error: new Error(error.message) };
 
   if (rid) {
-    const { error: roomErr } = await client.from('rooms').update({ status: 'available' }).eq('id', rid);
+    const { data: roomRow, error: roomErr } = await client
+      .from('rooms')
+      .update({ status: 'available' })
+      .eq('id', rid)
+      .select('id, organization_id')
+      .maybeSingle();
     if (roomErr) return { error: new Error(roomErr.message) };
+
+    if (roomRow?.organization_id) {
+      try {
+        await markRoomHousekeepingDirty({
+          organizationId: roomRow.organization_id,
+          roomId: rid,
+          client,
+        });
+      } catch (hkErr) {
+        return { error: hkErr instanceof Error ? hkErr : new Error(String(hkErr)) };
+      }
+    }
   }
 
   const msg = guestMessageTemplate(GUEST_TYPES.checkout_done, {}, guest.contract_lang);
