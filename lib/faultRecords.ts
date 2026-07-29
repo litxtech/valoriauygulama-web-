@@ -190,29 +190,57 @@ export async function deleteFaultRecord(id: string) {
   return await supabase.from('fault_records').delete().eq('id', id);
 }
 
-/** Arıza kaydı oluşturulunca organizasyondaki tüm personele (oluşturan hariç) in-app + push bildirim gönderir. */
-export async function notifyFaultRecordCreated(args: {
+const FAULT_STATUS_PUSH: Record<
+  FaultRecordStatus,
+  { notificationType: string; emoji: string; headline: string }
+> = {
+  pending: {
+    notificationType: 'fault_record_pending',
+    emoji: '⏳',
+    headline: 'Arıza beklemede',
+  },
+  unresolved: {
+    notificationType: 'fault_record_unresolved',
+    emoji: '❌',
+    headline: 'Arıza giderilemedi',
+  },
+  resolved: {
+    notificationType: 'fault_record_resolved',
+    emoji: '✅',
+    headline: 'Arıza giderildi',
+  },
+};
+
+type FaultNotifyRecord = {
+  id: string;
+  record_no?: string | null;
+  room_number?: string | null;
+  location_label?: string | null;
+  category: FaultRecordCategory;
+  fault_description: string;
+  status: FaultRecordStatus;
+  resolved_by_name?: string | null;
+};
+
+async function notifyFaultRecordStatusPush(args: {
   organizationId: string;
-  createdByStaffId: string;
-  record: {
-    id: string;
-    record_no?: string | null;
-    room_number?: string | null;
-    location_label?: string | null;
-    category: FaultRecordCategory;
-    fault_description: string;
-    status: FaultRecordStatus;
-    resolved_by_name?: string | null;
-  };
+  actorStaffId: string;
+  record: FaultNotifyRecord;
+  /** true = yeni kayıt; false = durum butonu güncellemesi */
+  isCreate?: boolean;
 }) {
+  const meta = FAULT_STATUS_PUSH[args.record.status] ?? FAULT_STATUS_PUSH.pending;
   const roomPart = args.record.room_number
     ? `Oda ${args.record.room_number}`
     : args.record.location_label || 'Konum belirtilmedi';
   const statusLabel = faultStatusMeta(args.record.status).label;
-  const title = `🔧 Arıza kaydı · ${roomPart}`;
+  const title = `${meta.emoji} ${meta.headline} · ${roomPart}`;
   const summary = args.record.fault_description.trim().slice(0, 140);
-  const solverPart = args.record.resolved_by_name?.trim() ? ` · Gideren: ${args.record.resolved_by_name.trim()}` : '';
-  const body = `${faultCategoryLabel(args.record.category)} · ${statusLabel}${solverPart}\n${summary}`;
+  const solverPart = args.record.resolved_by_name?.trim()
+    ? ` · Gideren: ${args.record.resolved_by_name.trim()}`
+    : '';
+  const createPrefix = args.isCreate ? 'Yeni kayıt · ' : 'Durum güncellendi · ';
+  const body = `${createPrefix}${faultCategoryLabel(args.record.category)} · ${statusLabel}${solverPart}\n${summary}`;
   const href = `/staff/fault-records/${args.record.id}`;
 
   return await sendBulkToStaff({
@@ -220,15 +248,44 @@ export async function notifyFaultRecordCreated(args: {
     organizationId: args.organizationId,
     title,
     body,
-    createdByStaffId: args.createdByStaffId,
-    notificationType: 'fault_record_created',
+    createdByStaffId: args.actorStaffId,
+    notificationType: meta.notificationType,
     category: 'staff',
     data: {
       screen: href,
       url: href,
       faultRecordId: args.record.id,
       recordNo: args.record.record_no ?? null,
+      status: args.record.status,
     },
-    excludeStaffIds: [args.createdByStaffId],
+    excludeStaffIds: [args.actorStaffId],
+  });
+}
+
+/** Arıza kaydı oluşturulunca (seçilen duruma göre ayrı tip) personele push gönderir. */
+export async function notifyFaultRecordCreated(args: {
+  organizationId: string;
+  createdByStaffId: string;
+  record: FaultNotifyRecord;
+}) {
+  return await notifyFaultRecordStatusPush({
+    organizationId: args.organizationId,
+    actorStaffId: args.createdByStaffId,
+    record: args.record,
+    isCreate: true,
+  });
+}
+
+/** Beklemede / Giderilemedi / Giderildi butonuna basılınca ayrı tip push gönderir. */
+export async function notifyFaultRecordStatusChanged(args: {
+  organizationId: string;
+  actorStaffId: string;
+  record: FaultNotifyRecord;
+}) {
+  return await notifyFaultRecordStatusPush({
+    organizationId: args.organizationId,
+    actorStaffId: args.actorStaffId,
+    record: args.record,
+    isCreate: false,
   });
 }

@@ -357,7 +357,7 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     titleTr: 'Temizlik',
     descriptionTr: 'Canlı temizlik: oda eklendi, öncelik ve temizlendi bildirimleri.',
     audiences: ['staff', 'admin'],
-    notificationTypeHints: ['staff_room_cleaning', 'room_cleaning'],
+    notificationTypeHints: ['staff_room_cleaning', 'room_cleaning', 'staff_ops_morning_digest'],
     defaultIosPushSound: 'room_cleaning.wav',
     defaultAndroidPushSound: 'room_cleaning.wav',
     defaultAndroidChannelId: 'valoria_cleaning_v1',
@@ -447,6 +447,10 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
       'tech_asset_status',
       'tech_maintenance_log',
       'hotel_facility_status',
+      'fault_record_created',
+      'fault_record_pending',
+      'fault_record_unresolved',
+      'fault_record_resolved',
     ],
     defaultIosPushSound: 'default',
     defaultAndroidPushSound: 'default',
@@ -530,6 +534,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
   {
     test: (t) =>
       t.startsWith('tech_') ||
+      t.startsWith('fault_record') ||
       t === 'hotel_facility_status',
     key: 'technical_asset',
   },
@@ -584,7 +589,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
   { test: (t) => t === 'report_status', key: 'report_status' },
   { test: (t) => t.includes('staff_shift') || t.includes('pending_leave'), key: 'shift_leave' },
   { test: (t) => t.includes('staff_permission'), key: 'permission_update' },
-  { test: (t) => t.includes('staff_room_cleaning') || t.includes('room_cleaning'), key: 'room_cleaning' },
+  { test: (t) => t.includes('staff_room_cleaning') || t.includes('room_cleaning') || t.includes('ops_morning_digest'), key: 'room_cleaning' },
   { test: (t) => t === 'managed_contract', key: 'managed_contract' },
   { test: (t) => t === 'group_added', key: 'group_added' },
 ];

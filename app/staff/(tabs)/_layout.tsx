@@ -1,18 +1,16 @@
 /* @refresh reset */
-import { useEffect, useLayoutEffect, useState, useRef, useCallback, type ReactNode } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, Platform } from 'react-native';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { View, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
-import { Tabs, useRouter, usePathname, type Href } from 'expo-router';
+import { Tabs, useRouter, type Href } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { FloatingIslandTabBar } from '@/components/FloatingIslandTabBar';
+import { StaffCustomizableTabBar } from '@/components/staff/StaffCustomizableTabBar';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
-import { theme } from '@/constants/theme';
 import { pds } from '@/constants/personelDesignSystem';
-import { appTabBar, getAppTabBarColors } from '@/constants/tabBarTheme';
+import { getAppTabBarColors } from '@/constants/tabBarTheme';
 import { getFloatingTabBarInnerHeight, getFloatingTabBarBarHeight } from '@/constants/floatingTabBarMetrics';
-import { StaffIdCaptureCenterTabIcon } from '@/components/AppTabBarCenterIdCaptureButton';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -26,45 +24,18 @@ import {
   feedHeaderSideMinWidth,
 } from '@/components/header/StaffFeedHeaderControls';
 import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
-import { useStaffTabHrefs } from '@/hooks/useStaffTabHrefs';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
 import { supabase } from '@/lib/supabase';
-import { CachedImage } from '@/components/CachedImage';
 import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from '@/lib/staffAdminTabNavigation';
 import { hapticSelection } from '@/lib/hapticsSafe';
-import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
 import {
   scheduleStaffMessagingUnreadRefresh,
   subscribeMessagingUnreadLive,
 } from '@/lib/messagingUnreadSync';
 
-const TAB_ICON_SIZE = 24;
-const PROFILE_TAB_AVATAR_SIZE = 26;
-
 const IG_HEADER_FG = pds.text;
-
-function TabBarScaledIcon({ focused, children }: { focused: boolean; children: ReactNode }) {
-  if (Platform.OS === 'android') return <>{children}</>;
-  return <View style={{ transform: [{ scale: focused ? 1.1 : 1 }] }}>{children}</View>;
-}
-
-function StaffProfileTabIcon({ color: _c, focused }: { color: string; focused: boolean }) {
-  const { isNight } = usePremiumTheme();
-  const tabBarColors = getAppTabBarColors(isNight);
-  const staff = useAuthStore((s) => s.staff);
-  const c = focused ? tabBarColors.fallbackActive : tabBarColors.inactive;
-  const avatarUri = staff?.profile_image ?? null;
-  if (avatarUri) {
-    return (
-      <View style={[styles.tabAvatarWrap, { borderColor: focused ? c : theme.colors.borderLight }]}>
-        <CachedImage uri={avatarUri} style={styles.tabAvatar} contentFit="cover" />
-      </View>
-    );
-  }
-  return <Ionicons name={focused ? 'person' : 'person-outline'} size={TAB_ICON_SIZE} color={c} />;
-}
 
 /** Profil: şeffaf header, kapak görünsün; sadece geri; ana sekmeye */
 function StaffProfileBackToHome() {
@@ -147,7 +118,6 @@ function StaffMainTabsLayout() {
   const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
   const staff = useAuthStore((s) => s.staff);
   const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
-  const tabHrefs = useStaffTabHrefs();
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
   const loadBoardList = useStaffBoardStore((s) => s.loadList);
   const unreadMessagesCount = useStaffUnreadMessagesStore((s) => s.unreadCount);
@@ -160,7 +130,6 @@ function StaffMainTabsLayout() {
   const router = useRouter();
   const [fabVisible, setFabVisible] = useState(false);
   const canCreateFeed = canStaffCreateFeed(staff);
-  const canIdCapture = canStaffUseIdCapture(staff);
   const showHeaderFabMenu = canCreateFeed;
   const badgeRefreshInFlightRef = useRef(false);
   const badgeRefreshLastAtRef = useRef(0);
@@ -356,15 +325,23 @@ function StaffMainTabsLayout() {
 
   const renderTabBar = useCallback(
     (props: BottomTabBarProps) => (
-      <FloatingIslandTabBar
+      <StaffCustomizableTabBar
         {...props}
         surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.shellBackground}
-        borderColor={tabBarColors.border}
-        hidden={false}
-        floatOverContent
+        unreadMessagesCount={unreadMessagesCount}
+        newTasksTabCount={newTasksTabCount}
+        adminWarningCount={staff?.role === 'admin' ? adminWarningCount : 0}
       />
     ),
-    [isNight, premiumColors.pageBg, tabBarColors.shellBackground, tabBarColors.border]
+    [
+      isNight,
+      premiumColors.pageBg,
+      tabBarColors.shellBackground,
+      unreadMessagesCount,
+      newTasksTabCount,
+      staff?.role,
+      adminWarningCount,
+    ]
   );
 
   const staffTabScreenListeners = useCallback(
@@ -455,7 +432,7 @@ function StaffMainTabsLayout() {
         name="index"
         options={{
           lazy: false,
-          href: tabHrefs.index,
+          href: undefined,
           title: '',
           headerTitle: () => <StaffBoardHeaderEye />,
           headerTitleAlign: 'center',
@@ -465,39 +442,14 @@ function StaffMainTabsLayout() {
             alignItems: 'center',
             justifyContent: 'center',
           },
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('staffTab'),
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'people' : 'people-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
         }}
       />
       <Tabs.Screen
         name="tasks"
         options={{
-          href: tabHrefs.tasks,
+          href: null,
           title: t('tasks'),
           headerTitle: t('tasks'),
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('tasks'),
-          tabBarBadge:
-            newTasksTabCount > 0 ? (newTasksTabCount > 99 ? '99+' : newTasksTabCount) : undefined,
-          tabBarBadgeStyle: { backgroundColor: theme.colors.error },
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'checkbox' : 'checkbox-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
         }}
       />
       <Tabs.Screen
@@ -511,42 +463,17 @@ function StaffMainTabsLayout() {
       <Tabs.Screen
         name="id-capture"
         options={{
-          href: canIdCapture ? undefined : null,
+          href: null,
           title: t('staffKitchenIdCapture'),
           headerShown: false,
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('staffTabIdCapture'),
-          tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 4 },
-          tabBarIcon: ({ focused }) => <StaffIdCaptureCenterTabIcon focused={focused} />,
-        }}
-        listeners={{
-          tabPress: (e) => {
-            e.preventDefault();
-            router.push('/staff/kbs/capture-id' as Href);
-            hapticSelection();
-          },
         }}
       />
       <Tabs.Screen
         name="messages"
         options={{
-          href: tabHrefs.messages,
+          href: null,
           title: t('messages'),
           headerTitle: t('teamChat'),
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('messages'),
-          tabBarBadge:
-            unreadMessagesCount > 0 ? (unreadMessagesCount > 99 ? '99+' : unreadMessagesCount) : undefined,
-          tabBarBadgeStyle: { backgroundColor: theme.colors.error },
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
         }}
       />
       <Tabs.Screen
@@ -554,18 +481,7 @@ function StaffMainTabsLayout() {
         options={{
           title: t('screenEmergency'),
           headerTitle: t('screenEmergency'),
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('screenEmergency'),
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'warning' : 'warning-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
-          href: staff?.role === 'admin' ? null : tabHrefs.emergency,
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -612,30 +528,16 @@ function StaffMainTabsLayout() {
           title: t('adminTab'),
           headerShown: false,
           sceneStyle: { backgroundColor: '#f8fafc' },
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
-          tabBarLabel: t('adminTab'),
-          tabBarBadge: staff?.role === 'admin' && adminWarningCount > 0 ? (adminWarningCount > 99 ? '99+' : adminWarningCount) : undefined,
-          tabBarBadgeStyle: { backgroundColor: theme.colors.error },
-          tabBarIcon: ({ focused }) => (
-            <TabBarScaledIcon focused={focused}>
-              <Ionicons
-                name={focused ? 'shield' : 'shield-outline'}
-                size={TAB_ICON_SIZE}
-                color={focused ? tabBarColors.fallbackActive : tabBarColors.inactive}
-              />
-            </TabBarScaledIcon>
-          ),
-          href: staff?.role === 'admin' ? tabHrefs.admin : null,
+          href: null,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          href: tabHrefs.profile,
+          href: null,
           title: t('myProfile'),
           headerTitle: '',
           headerShown: true,
-          tabBarActiveTintColor: tabBarColors.fallbackActive,
           headerTransparent: true,
           headerBackground: () => <View style={StyleSheet.absoluteFillObject} />,
           headerStyle: {
@@ -649,8 +551,6 @@ function StaffMainTabsLayout() {
           headerLeft: () => <StaffProfileBackToHome />,
           headerRight: () => null,
           headerTintColor: '#ffffff',
-          tabBarShowLabel: false,
-          tabBarIcon: ({ color, focused }) => <StaffProfileTabIcon color={color} focused={focused} />,
         }}
       />
     </Tabs>
@@ -680,17 +580,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  tabAvatarWrap: {
-    width: PROFILE_TAB_AVATAR_SIZE,
-    height: PROFILE_TAB_AVATAR_SIZE,
-    borderRadius: PROFILE_TAB_AVATAR_SIZE / 2,
-    borderWidth: 2,
-    overflow: 'hidden',
-  },
-  tabAvatar: {
-    width: '100%',
-    height: '100%',
   },
   headerIconBtn: {
     minWidth: HEADER_CTRL,

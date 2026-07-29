@@ -652,6 +652,12 @@ export default function StaffProfileScreen() {
       label: t('modernProfileQuickCard'),
       onPress: () => router.push('/staff/profile/edit' as never),
     },
+    {
+      id: 'tab-customize',
+      icon: 'apps-outline',
+      label: t('staffTabCustomizeTitle'),
+      onPress: () => router.push('/staff/customize-tabs' as never),
+    },
   ];
 
   const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 32;

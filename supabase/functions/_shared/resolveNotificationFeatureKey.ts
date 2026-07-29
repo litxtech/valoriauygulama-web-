@@ -24,7 +24,10 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
     test: (t) => t === "payment_received" || t === "payment_failed" || t === "admin_payment_received",
     key: "payment",
   },
-  { test: (t) => t.startsWith("tech_") || t === "hotel_facility_status", key: "technical_asset" },
+  {
+    test: (t) => t.startsWith("tech_") || t.startsWith("fault_record") || t === "hotel_facility_status",
+    key: "technical_asset",
+  },
   { test: (t) => t.startsWith("department_rule"), key: "department_rule" },
   {
     test: (t) =>
@@ -56,7 +59,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
   { test: (t) => t === "report_status", key: "report_status" },
   { test: (t) => t.includes("staff_shift") || t.includes("pending_leave"), key: "shift_leave" },
   { test: (t) => t.includes("staff_permission"), key: "permission_update" },
-  { test: (t) => t.includes("staff_room_cleaning") || t.includes("room_cleaning"), key: "room_cleaning" },
+  { test: (t) => t.includes("staff_room_cleaning") || t.includes("room_cleaning") || t.includes("ops_morning_digest"), key: "room_cleaning" },
   { test: (t) => t === "managed_contract", key: "managed_contract" },
   { test: (t) => t === "group_added", key: "group_added" },
 ];

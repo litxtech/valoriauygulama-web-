@@ -1,4 +1,4 @@
-import { hasStaffAppPermission, canViewSecurityBlacklist, type StaffPermissionSlice } from '@/lib/staffPermissions';
+import { hasStaffAppPermission, canViewSecurityBlacklist, canAccessOccupancyOps, type StaffPermissionSlice } from '@/lib/staffPermissions';
 import { canAccessFnbHub } from '@/lib/fnbHub';
 import { canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
@@ -7,6 +7,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/rooms': 'doluluk_operasyon',
   '/admin/rooms/cleaning-plan': 'yarin_oda_temizlik_listesi',
   '/admin/rooms/new': 'doluluk_operasyon',
+  '/admin/booking': 'doluluk_operasyon',
   '/admin/checkin': 'doluluk_operasyon',
   '/admin/housekeeping': 'housekeeping_yonetim',
   '/admin/tasks': 'gorev_ata',
@@ -44,6 +45,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/tips': 'bahsis_yonetimi',
   '/admin/payments': 'stripe_odemeler',
   '/admin/accounting': 'muhasebe_merkezi',
+  '/admin/accounting/pos-receipts': 'muhasebe_merkezi',
   '/admin/expenses': 'harcama_yonetimi',
   '/admin/carbon': 'karbon_yonetimi',
   '/admin/meal-menu': 'yemek_listesi_olustur',
@@ -134,6 +136,9 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
       hasStaffAppPermission(staff, 'doluluk_operasyon') ||
       hasStaffAppPermission(staff, 'yarin_oda_temizlik_listesi')
     );
+  }
+  if (href === '/staff/checkout-board') {
+    return canAccessOccupancyOps(staff);
   }
 
   const key = adminRoutePermissionKey(href);

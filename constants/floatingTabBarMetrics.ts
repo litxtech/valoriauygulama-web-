@@ -23,12 +23,15 @@ export function getFloatingTabBarBarHeight(): number {
 }
 
 /** Adanın altındaki boşluk = güvenli alan + yüzen boşluk */
-export function getFloatingTabBarBottomGap(insets: Pick<EdgeInsets, 'bottom'>): number {
-  const safe = Platform.OS === 'android' ? getEffectiveBottomInset(insets) : insets.bottom;
+export function getFloatingTabBarBottomGap(insets?: Pick<EdgeInsets, 'bottom'> | null): number {
+  const safe =
+    Platform.OS === 'android'
+      ? getEffectiveBottomInset(insets ?? { bottom: 0 })
+      : insets?.bottom ?? 0;
   return safe + FLOAT_BOTTOM_GAP;
 }
 
 /** İçeriğin tab bar arkasında kalmaması için rezerve edilen toplam yükseklik */
-export function getFloatingTabBarTotalHeight(insets: Pick<EdgeInsets, 'bottom'>): number {
+export function getFloatingTabBarTotalHeight(insets?: Pick<EdgeInsets, 'bottom'> | null): number {
   return getFloatingTabBarBarHeight() + getFloatingTabBarBottomGap(insets);
 }

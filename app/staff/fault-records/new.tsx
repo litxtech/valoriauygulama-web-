@@ -79,7 +79,7 @@ export default function FaultRecordNew() {
   const [materialsUsed, setMaterialsUsed] = useState('');
   const [resultNote, setResultNote] = useState('');
   const [resolvedByName, setResolvedByName] = useState(staff?.full_name ?? '');
-  const [status, setStatus] = useState<FaultRecordStatus>('resolved');
+  const [status, setStatus] = useState<FaultRecordStatus>('pending');
   const [media, setMedia] = useState<PendingMedia[]>([]);
   const [pickingMedia, setPickingMedia] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -234,7 +234,7 @@ export default function FaultRecordNew() {
           </View>
           <Text style={styles.heroTitle}>Arıza kaydı oluştur</Text>
           <Text style={styles.heroHint}>
-            Giderdiğiniz arızayı; hangi oda, ne arızası, ne yaptığınız, kullandığınız malzeme ve sonucu ile kaydedin.
+            Oda ve arızayı yazın. Kaydettiğinizde diğer personele anlık bildirim gider. İsterseniz yapılan işi ve sonucu da ekleyebilirsiniz.
           </Text>
         </View>
 

@@ -120,6 +120,7 @@ const SECTIONS: Section[] = [
     icon: 'business-outline',
     items: [
       { href: '/admin/rooms', icon: 'bed-outline', label: 'Oda yönetimi' },
+      { href: '/admin/booking', icon: 'calendar-outline', label: 'Online rezervasyon' },
       { href: '/admin/housekeeping', icon: 'sparkles-outline', label: 'Temizlik' },
       { href: '/admin/rooms/new', icon: 'add-circle-outline', label: 'Yeni oda' },
       { href: '/admin/checkin', icon: 'calendar-outline', label: 'Check-in / Check-out' },
@@ -163,6 +164,9 @@ const SECTIONS: Section[] = [
       { href: '/admin/fnb-hub', icon: 'grid-outline', label: 'F&B Merkezi (mutfak · satış · menü)' },
       { href: '/admin/payments', icon: 'card-outline', label: 'Tahsilat Merkezi (QR · sepet · bahşiş)' },
       { href: '/admin/accounting', icon: 'calculator-outline', label: 'Muhasebe (gelir / gider)', badge: 0 },
+      { href: '/admin/accounting/pos-receipts', icon: 'receipt-outline', label: 'POS fiş listesi' },
+      { href: '/admin/accounting/pos-receipts/batch', icon: 'images-outline', label: 'Çoklu fiş yükle' },
+      { href: '/admin/accounting/pos-receipts/new', icon: 'scan-outline', label: 'Tek POS fişi ekle' },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
       { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
       { href: '/admin/trade-partners', icon: 'storefront-outline', label: 'Partner Ticaret' },

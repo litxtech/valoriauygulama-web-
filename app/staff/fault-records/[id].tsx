@@ -8,6 +8,7 @@ import {
   getFaultRecord,
   setFaultRecordStatus,
   deleteFaultRecord,
+  notifyFaultRecordStatusChanged,
   faultCategoryIcon,
   faultCategoryLabel,
   faultStatusMeta,
@@ -77,7 +78,7 @@ export default function FaultRecordDetail() {
   const canManage = isAdmin || (!!record && record.created_by_staff_id === staff?.id);
 
   const changeStatus = async (status: FaultRecordStatus) => {
-    if (!record || busy) return;
+    if (!record || busy || record.status === status) return;
     setBusy(true);
     const { error } = await setFaultRecordStatus(record.id, status);
     setBusy(false);
@@ -85,7 +86,29 @@ export default function FaultRecordDetail() {
       Alert.alert('Hata', error.message ?? 'Güncellenemedi');
       return;
     }
-    setRecord((r) => (r ? { ...r, status, resolved_at: status === 'resolved' ? new Date().toISOString() : null } : r));
+    const next = {
+      ...record,
+      status,
+      resolved_at: status === 'resolved' ? new Date().toISOString() : null,
+    };
+    setRecord(next);
+
+    if (staff?.organization_id && staff?.id) {
+      void notifyFaultRecordStatusChanged({
+        organizationId: staff.organization_id,
+        actorStaffId: staff.id,
+        record: {
+          id: next.id,
+          record_no: next.record_no,
+          room_number: next.room_number,
+          location_label: next.location_label,
+          category: next.category,
+          fault_description: next.fault_description,
+          status: next.status,
+          resolved_by_name: next.resolved_by_name,
+        },
+      }).catch(() => {});
+    }
   };
 
   const confirmDelete = () => {

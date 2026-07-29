@@ -8,6 +8,8 @@ export const PUBLIC_PAYMENT_PATH = 'payment';
 export const PUBLIC_PAYMENT_QR_PATH = 'payment/qr';
 /** Çekilen kimlikler web paneli — valoria.tr/kbs */
 export const PUBLIC_KBS_PATH = 'kbs';
+/** Online rezervasyon — valoria.tr/booking */
+export const PUBLIC_BOOKING_PATH = 'booking';
 /** Partner otel misafir kahvaltı QR — valoria.tr/breakfast-pass?token=… */
 export const PUBLIC_BREAKFAST_PASS_PATH = 'breakfast-pass';
 /** QR şikayet hattı — valoria.tr/sikayet (uygulama indirmeden) */

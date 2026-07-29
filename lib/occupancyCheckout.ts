@@ -10,7 +10,8 @@ export type CheckoutGuestRow = {
   contract_lang?: string | null;
 };
 
-/** Tek misafir check-out — oda müsait, temizlik kirli, bildirim gider. */
+/** Tek misafir check-out — oda müsait, temizlik kirli, bildirim gider.
+ * `planned_check_out_at` korunur (çıkış panosu geçmişi için). */
 export async function checkoutGuest(
   client: SupabaseClient,
   guest: CheckoutGuestRow,
@@ -19,7 +20,12 @@ export async function checkoutGuest(
   const rid = guest.room_id;
   const { error } = await client
     .from('guests')
-    .update({ status: 'checked_out', check_out_at: new Date().toISOString(), room_id: null })
+    .update({
+      status: 'checked_out',
+      check_out_at: new Date().toISOString(),
+      room_id: null,
+      // planned_check_out_at: dokunma — planlanan çıkış tarihi saklanır
+    })
     .eq('id', guest.id);
   if (error) return { error: new Error(error.message) };
 

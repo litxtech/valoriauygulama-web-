@@ -11,6 +11,7 @@ import {
   PUBLIC_COMPLAINT_PATH,
   PUBLIC_STAFF_PROFILE_PATH,
   PUBLIC_TECH_ASSET_INFO_PATH,
+  PUBLIC_BOOKING_PATH,
 } from '@/constants/publicWebPaths';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
@@ -22,6 +23,7 @@ export type PublicWebRoute =
   | { kind: 'sikayet' }
   | { kind: 'profil'; staffId: string }
   | { kind: 'bilgi'; token: string }
+  | { kind: 'booking' }
   | null;
 
 /** Path eşleştirme: menü/menu, sözleşme/sozlesme/guest/sign-one, maliye */
@@ -107,6 +109,10 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
     return null;
   }
 
+  if (head === foldTrPathSegment(PUBLIC_BOOKING_PATH) || head === 'booking' || head === 'rezervasyon') {
+    return { kind: 'booking' };
+  }
+
   return null;
 }
 
@@ -166,6 +172,11 @@ export function applyPublicWebRoute(
     return true;
   }
 
+  if (route.kind === 'booking') {
+    router.replace('/booking');
+    return true;
+  }
+
   return false;
 }
 
@@ -179,6 +190,7 @@ export function isPublicWebPath(pathname: string, search?: string): boolean {
   if (p === '/sikayet' || p.startsWith('/sikayet/')) return true;
   if (p === '/profil' || p.startsWith('/profil/')) return true;
   if (p === '/bilgi' || p.startsWith('/bilgi/')) return true;
+  if (p === '/booking' || p.startsWith('/booking/') || p === '/rezervasyon') return true;
   if (isPaymentPublicPath(p)) return true;
   if (search?.includes('token=') && p === '/guest') return true;
   return resolvePublicWebRoute(pathname, search) != null;

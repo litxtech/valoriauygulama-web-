@@ -317,7 +317,7 @@ export async function sendBulkToStaff(params: {
   const title = (titleParam && titleParam.trim()) || 'Toplu Duyuru';
   const resolvedNotificationType = (notificationType && notificationType.trim()) || 'bulk_staff';
 
-  let query = supabase.from('staff').select('id').eq('is_active', true);
+  let query = supabase.from('staff').select('id').eq('is_active', true).is('deleted_at', null);
   if (organizationId) query = query.eq('organization_id', organizationId);
 
   const roleMap: Record<BulkStaffTarget, string[] | null> = {

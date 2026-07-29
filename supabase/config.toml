@@ -89,6 +89,10 @@ verify_jwt = false
 [functions.translate-text]
 verify_jwt = false
 
+# POS fiş tarih AI kontrolü: Bearer ile fonksiyon içinde getUser
+[functions.pos-receipt-date-check]
+verify_jwt = false
+
 # DeepSeek sözleşme taslağı: Bearer ile fonksiyon içinde getUser + yetki doğrulaması
 [functions.generate-managed-contract]
 verify_jwt = false

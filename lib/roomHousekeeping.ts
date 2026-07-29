@@ -3,6 +3,21 @@ import { supabase } from '@/lib/supabase';
 
 export type HousekeepingStatus = 'dirty' | 'cleaning' | 'clean';
 
+/** Çıkış panosundan gelen ekstra temizlik talebi — çıkış değildir */
+export const EXTRA_CLEANING_NOTE_MARKER = 'EKSTRA TEMİZLİK';
+
+export function isExtraCleaningRequest(note: string | null | undefined): boolean {
+  const n = (note ?? '').trim().toUpperCase();
+  return n.startsWith(EXTRA_CLEANING_NOTE_MARKER) || n.includes(EXTRA_CLEANING_NOTE_MARKER);
+}
+
+export function buildExtraCleaningNote(extra?: string | null): string {
+  const extraTrim = (extra ?? '').trim();
+  if (!extraTrim) return `${EXTRA_CLEANING_NOTE_MARKER} · çıkış değil, temizlik istiyor`;
+  if (extraTrim.toUpperCase().includes(EXTRA_CLEANING_NOTE_MARKER)) return extraTrim;
+  return `${EXTRA_CLEANING_NOTE_MARKER} · ${extraTrim}`;
+}
+
 export type RoomHousekeepingJobRow = {
   id: string;
   organization_id: string;
@@ -425,23 +440,43 @@ export async function markRoomHousekeepingDirty(params: {
 }): Promise<void> {
   const client = params.client ?? supabase;
   const targetDate = params.targetDate ?? todayIsoInIstanbul();
+  if (!isPublicRoomId(params.roomId)) {
+    throw new Error('Geçersiz oda kimliği');
+  }
 
-  const { error } = await client.from('room_housekeeping_jobs').upsert(
-    {
-      organization_id: params.organizationId,
-      room_id: params.roomId,
-      target_date: targetDate,
-      status: 'dirty',
-      note: params.note?.trim() || null,
-      is_priority: Boolean(params.isPriority),
-      scheduled_by_staff_id: params.scheduledByStaffId ?? null,
-      started_at: null,
-      started_by_staff_id: null,
-      completed_at: null,
-      completed_by_staff_id: null,
-    },
-    { onConflict: 'organization_id,room_id,target_date' }
-  );
+  const patch = {
+    status: 'dirty' as const,
+    note: params.note?.trim() || null,
+    is_priority: Boolean(params.isPriority),
+    scheduled_by_staff_id: params.scheduledByStaffId ?? null,
+    started_at: null,
+    started_by_staff_id: null,
+    completed_at: null,
+    completed_by_staff_id: null,
+  };
+
+  const { data: existing, error: findErr } = await client
+    .from('room_housekeeping_jobs')
+    .select('id')
+    .eq('organization_id', params.organizationId)
+    .eq('room_id', params.roomId)
+    .eq('target_date', targetDate)
+    .maybeSingle();
+  if (findErr) throw friendlyHkError(findErr);
+
+  if (existing?.id) {
+    const { error } = await client.from('room_housekeeping_jobs').update(patch).eq('id', existing.id);
+    if (error) throw friendlyHkError(error);
+    return;
+  }
+
+  const { error } = await client.from('room_housekeeping_jobs').insert({
+    organization_id: params.organizationId,
+    room_id: params.roomId,
+    location_label: null,
+    target_date: targetDate,
+    ...patch,
+  });
   if (error) throw friendlyHkError(error);
 }
 
@@ -453,15 +488,26 @@ export async function scheduleRoomsForCleaning(params: {
   note?: string | null;
   isPriority?: boolean;
 }): Promise<{ count: number }> {
-  const publicIds = params.roomIds.filter(isPublicRoomId);
+  const publicIds = [...new Set(params.roomIds.filter(isPublicRoomId))];
   if (publicIds.length === 0) return { count: 0 };
   const note = params.note?.trim() || null;
   const isPriority = Boolean(params.isPriority);
 
-  const rows = publicIds.map((roomId) => ({
-    organization_id: params.organizationId,
-    room_id: roomId,
-    target_date: params.targetDate,
+  // Partial unique index (room_id IS NOT NULL) — PostgREST onConflict çıkarımı güvenilir değil.
+  const { data: existing, error: findErr } = await supabase
+    .from('room_housekeeping_jobs')
+    .select('id, room_id')
+    .eq('organization_id', params.organizationId)
+    .eq('target_date', params.targetDate)
+    .in('room_id', publicIds);
+  if (findErr) throw friendlyHkError(findErr);
+
+  const existingByRoom = new Map<string, string>();
+  for (const row of existing ?? []) {
+    if (row.room_id && row.id) existingByRoom.set(row.room_id as string, row.id as string);
+  }
+
+  const patch = {
     status: 'dirty' as const,
     note,
     is_priority: isPriority,
@@ -470,13 +516,34 @@ export async function scheduleRoomsForCleaning(params: {
     started_by_staff_id: null,
     completed_at: null,
     completed_by_staff_id: null,
-  }));
+  };
 
-  const { error } = await supabase
-    .from('room_housekeeping_jobs')
-    .upsert(rows, { onConflict: 'organization_id,room_id,target_date' });
-  if (error) throw friendlyHkError(error);
-  return { count: rows.length };
+  const toUpdate = publicIds.filter((id) => existingByRoom.has(id));
+  const toInsert = publicIds.filter((id) => !existingByRoom.has(id));
+
+  if (toUpdate.length > 0) {
+    const { error: upErr } = await supabase
+      .from('room_housekeeping_jobs')
+      .update(patch)
+      .eq('organization_id', params.organizationId)
+      .eq('target_date', params.targetDate)
+      .in('room_id', toUpdate);
+    if (upErr) throw friendlyHkError(upErr);
+  }
+
+  if (toInsert.length > 0) {
+    const rows = toInsert.map((roomId) => ({
+      organization_id: params.organizationId,
+      room_id: roomId,
+      location_label: null,
+      target_date: params.targetDate,
+      ...patch,
+    }));
+    const { error: insErr } = await supabase.from('room_housekeeping_jobs').insert(rows);
+    if (insErr) throw friendlyHkError(insErr);
+  }
+
+  return { count: publicIds.length };
 }
 
 async function upsertLabelOnlyJob(params: {
@@ -591,6 +658,9 @@ export async function scheduleSelectableRoomsForCleaning(params: {
       isPriority: params.isPriority,
     });
     count += 1;
+  }
+  if (count === 0) {
+    throw new Error('Seçilen odalar Temizlik Planı’na yazılamadı. Oda listesini yenileyip tekrar deneyin.');
   }
   return { count };
 }

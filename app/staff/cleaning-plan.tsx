@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CachedImage } from '@/components/CachedImage';
@@ -37,6 +37,7 @@ import {
   formatHkDateTime,
   housekeepingStatusLabel,
   HOUSEKEEPING_STATUS_COLORS,
+  isExtraCleaningRequest,
   isSafeHkImageUrl,
   markRoomHousekeepingJobDone,
   removeHousekeepingJob,
@@ -100,7 +101,19 @@ export default function StaffHousekeepingHubScreen() {
     hasStaffAppPermission(staff, 'yarin_oda_temizlik_listesi');
   const isAdmin = staff?.role === 'admin';
 
-  const [targetDate, setTargetDate] = useState(today);
+  const params = useLocalSearchParams<{ date?: string }>();
+  const initialDate = useMemo(() => {
+    const raw = typeof params.date === 'string' ? params.date.trim() : '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : today;
+  }, [params.date, today]);
+  const [targetDate, setTargetDate] = useState(initialDate);
+
+  useEffect(() => {
+    if (initialDate !== targetDate) setTargetDate(initialDate);
+    // Only react to inbound deep-link date changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDate]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -861,14 +874,16 @@ export default function StaffHousekeepingHubScreen() {
                     ? job.started_at
                     : null;
               const safePhotos = job.photo_urls.filter(isSafeHkImageUrl);
+              const isExtraCleanReq = isExtraCleaningRequest(job.note);
 
               return (
                 <View
                   key={job.id}
                   style={[
                     styles.tile,
-                    { width: tileW, borderColor: colors.border },
+                    { width: tileW, borderColor: isExtraCleanReq ? '#14b8a6' : colors.border },
                     !job.room_id && styles.tileExtra,
+                    isExtraCleanReq && styles.tileExtraCleanReq,
                   ]}
                 >
                   <Pressable
@@ -906,6 +921,12 @@ export default function StaffHousekeepingHubScreen() {
                       <View style={styles.extraBadge}>
                         <Ionicons name="location" size={10} color="#fff" />
                         <Text style={styles.extraBadgeText}>{t('hkActionExtra')}</Text>
+                      </View>
+                    ) : null}
+                    {isExtraCleanReq ? (
+                      <View style={[styles.extraCleanReqBadge, !job.room_id && { top: 34 }]}>
+                        <Ionicons name="sparkles" size={10} color="#fff" />
+                        <Text style={styles.extraCleanReqBadgeText}>TEMİZLİK · ÇIKIŞ DEĞİL</Text>
                       </View>
                     ) : null}
                     {job.is_priority ? (
@@ -1774,6 +1795,7 @@ const styles = StyleSheet.create({
   tileExtra: {
     borderColor: '#fdba74',
     borderWidth: 1.5,
+    borderStyle: 'dashed',
   },
   coverWrap: { height: 96, backgroundColor: '#e2e8f0', position: 'relative' },
   coverImg: { width: '100%', height: '100%' },
@@ -1787,6 +1809,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statusPillText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  tileExtraCleanReq: {
+    borderWidth: 2,
+    backgroundColor: '#f0fdfa',
+  },
   extraBadge: {
     position: 'absolute',
     top: 8,
@@ -1800,6 +1826,20 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   extraBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
+  extraCleanReqBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#0f766e',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    maxWidth: '78%',
+  },
+  extraCleanReqBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.2 },
   priorityBadge: {
     position: 'absolute',
     top: 8,

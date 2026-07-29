@@ -114,6 +114,11 @@ function resolveByNotificationType(
     case 'staff_room_cleaning_plan_note_saved':
     case 'staff_room_cleaning_plan':
       return '/staff/cleaning-plan';
+    case 'staff_ops_morning_digest': {
+      const checkout = Number(data.checkoutPending ?? data.checkout_pending ?? 0);
+      if (Number.isFinite(checkout) && checkout > 0) return '/staff/checkout-board';
+      return '/staff/cleaning-plan';
+    }
     case 'staff_board_announcement':
     case 'admin_announcement': {
       const boardId = pickStr(data, 'boardAnnouncementId', 'announcementId');
@@ -201,6 +206,16 @@ function resolveByNotificationType(
         return { pathname: '/partner/camera-requests/[id]', params: { id: requestId } } as Href;
       }
       return '/partner/camera-requests';
+    }
+    case 'fault_record_created':
+    case 'fault_record_pending':
+    case 'fault_record_unresolved':
+    case 'fault_record_resolved': {
+      const faultRecordId = pickStr(data, 'faultRecordId', 'fault_record_id');
+      if (faultRecordId) {
+        return { pathname: '/staff/fault-records/[id]', params: { id: faultRecordId } } as Href;
+      }
+      return '/staff/fault-records';
     }
     case 'tech_fault_report':
       return isStaff ? '/staff/technical-assets/faults' : '/admin/technical-assets/faults';
@@ -359,6 +374,17 @@ export function resolveNotificationHref(
 
   if (url === '/staff/kbs/ready' || url === '/staff/kbs/capture-history') {
     return '/staff/kbs/capture-history';
+  }
+
+  if (
+    notificationType === 'staff_ops_morning_digest' ||
+    url === '/staff/checkout-board'
+  ) {
+    const checkout = Number(data.checkoutPending ?? data.checkout_pending ?? 0);
+    if (url === '/staff/checkout-board' || (Number.isFinite(checkout) && checkout > 0)) {
+      return '/staff/checkout-board';
+    }
+    return '/staff/cleaning-plan';
   }
 
   if (

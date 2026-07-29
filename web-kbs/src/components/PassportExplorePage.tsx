@@ -367,9 +367,9 @@ export function PassportExplorePage() {
         ) : loading ? (
           <div className="grid grid-skeleton" aria-busy aria-label="Yükleniyor">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="card card-skeleton">
-                <div className="card-thumb skeleton-block" />
-                <div className="card-body">
+              <div key={i} className="cap-card cap-card-skeleton">
+                <div className="cap-thumb skeleton-block" />
+                <div className="cap-body">
                   <div className="skeleton-line w70" />
                   <div className="skeleton-line w40" />
                   <div className="skeleton-line w55" />

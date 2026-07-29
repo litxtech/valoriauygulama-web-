@@ -181,8 +181,9 @@ export default function StaffLayout() {
   if (loading || !staffCheckComplete || !staff) {
     return (
       <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="payments" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="customize-tabs" options={{ headerShown: false }} />
+      <Stack.Screen name="payments" options={{ headerShown: false }} />
       </Stack>
     );
   }
@@ -263,6 +264,7 @@ export default function StaffLayout() {
           headerBackTitleVisible: false,
         }}
       />
+      <Stack.Screen name="customize-tabs" options={{ headerShown: false }} />
       <Stack.Screen name="stock" options={{ headerShown: false }} />
       <Stack.Screen name="kitchen-ops" options={{ headerShown: false }} />
       <Stack.Screen name="demirbaslar" options={{ headerShown: false }} />
@@ -446,6 +448,7 @@ export default function StaffLayout() {
       <Stack.Screen name="breakfast-partners" options={{ headerShown: false }} />
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="checkout-board" options={{ title: 'Çıkış Odaları', headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-room/[roomId]" options={{ title: t('hkDetailTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="housekeeping-board" options={{ title: t('staffHkBoardNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />

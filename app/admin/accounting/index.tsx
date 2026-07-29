@@ -19,6 +19,12 @@ import { fmtMoneyTry, debtOrgPerspectiveLine, monthKey, monthLabelTr } from '@/l
 import { DEBT_STATUS_LABELS, type DebtStatus } from '@/lib/finance';
 import { fetchAccountingHubSummary } from '@/lib/accountingSummary';
 import { organizationKindLabel } from '@/lib/organizationKinds';
+import {
+  summarizePosReceiptVenues,
+  type PosVenueAccountSummary,
+} from '@/lib/posReceiptInvoice/api';
+import { formatTry } from '@/lib/posReceiptInvoice/totals';
+import { POS_VENUE_LABELS, type PosVenueScope } from '@/lib/posReceiptInvoice/types';
 
 type Summary = {
   incomeMonth: number;
@@ -108,6 +114,10 @@ export default function AccountingHub() {
     movementCountMonth: 0,
   });
   const [recentDebts, setRecentDebts] = useState<DebtSnap[]>([]);
+  const [posAccounts, setPosAccounts] = useState<{
+    hotel: PosVenueAccountSummary;
+    restaurant: PosVenueAccountSummary;
+  } | null>(null);
 
   const orgFilter = useMemo(() => {
     if (me?.app_permissions?.super_admin === true || me?.role === 'admin') {
@@ -123,6 +133,13 @@ export default function AccountingHub() {
 
   const ym = monthKey();
 
+  const emptyPos = (): PosVenueAccountSummary => ({
+    pendingCount: 0,
+    invoicedCount: 0,
+    pendingReceiptTotal: 0,
+    pendingMatrahTotal: 0,
+  });
+
   const load = useCallback(async () => {
     if (!orgFilter || orgFilter === 'all') {
       setSummary({
@@ -134,6 +151,7 @@ export default function AccountingHub() {
         movementCountMonth: 0,
       });
       setRecentDebts([]);
+      setPosAccounts(null);
       setSummaryLoading(false);
       return;
     }
@@ -143,7 +161,7 @@ export default function AccountingHub() {
     const nextMonth = new Date(parseInt(ym.slice(0, 4), 10), parseInt(ym.slice(5, 7), 10), 1);
     const monthEnd = nextMonth.toISOString().slice(0, 10);
 
-    const [hub, debtRes] = await Promise.all([
+    const [hub, debtRes, posRes] = await Promise.all([
       fetchAccountingHubSummary(orgFilter, monthStart, monthEnd),
       supabase
         .from('staff_debt_entries')
@@ -163,6 +181,7 @@ export default function AccountingHub() {
         .in('status', ['open', 'partial'])
         .order('updated_at', { ascending: false })
         .limit(8),
+      summarizePosReceiptVenues(orgFilter),
     ]);
 
     setSummary({
@@ -174,6 +193,10 @@ export default function AccountingHub() {
       movementCountMonth: hub.movementCount,
     });
     setRecentDebts(((debtRes.data ?? []) as unknown as DebtSnap[]) ?? []);
+    setPosAccounts({
+      hotel: posRes.hotel ?? emptyPos(),
+      restaurant: posRes.restaurant ?? emptyPos(),
+    });
     setSummaryLoading(false);
   }, [orgFilter, ym]);
 
@@ -348,6 +371,59 @@ export default function AccountingHub() {
               <Ionicons name="chevron-forward" size={22} color={adminTheme.colors.textMuted} />
             </TouchableOpacity>
 
+            <Text style={styles.sectionLabel}>POS fiş hesapları (ayrı)</Text>
+            <Text style={styles.posHint}>
+              Otel ve mutfak fişleri ayrı defterdir — toplamlar ve listeler karışmaz.
+            </Text>
+            <View style={styles.posAccountRow}>
+              {(['hotel', 'restaurant'] as PosVenueScope[]).map((v) => {
+                const acc = posAccounts?.[v] ?? emptyPos();
+                const isHotel = v === 'hotel';
+                return (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.posAccountCard, isHotel ? styles.posHotel : styles.posKitchen]}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/admin/accounting/pos-receipts',
+                        params: { venue: v },
+                      })
+                    }
+                    activeOpacity={0.88}
+                  >
+                    <View style={styles.posAccountHead}>
+                      <Ionicons
+                        name={isHotel ? 'business-outline' : 'restaurant-outline'}
+                        size={18}
+                        color="#fff"
+                      />
+                      <Text style={styles.posAccountTitle}>{POS_VENUE_LABELS[v]}</Text>
+                    </View>
+                    <Text style={[styles.posAccountPending, isHotel && { color: '#99f6e4' }]}>
+                      {acc.pendingCount} bekleyen · {acc.invoicedCount} kesildi
+                    </Text>
+                    <Text style={styles.posAccountAmt}>{formatTry(acc.pendingReceiptTotal)} ₺</Text>
+                    <Text style={[styles.posAccountMat, isHotel && { color: '#5eead4' }]}>
+                      Matrah {formatTry(acc.pendingMatrahTotal)} ₺
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.posUploadBtn}
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        router.push({
+                          pathname: '/admin/accounting/pos-receipts/batch',
+                          params: { venue: v, autostart: 'camera' },
+                        });
+                      }}
+                    >
+                      <Ionicons name="camera-outline" size={14} color="#042f2e" />
+                      <Text style={styles.posUploadText}>Bu hesaba fiş çek</Text>
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             <Text style={styles.sectionLabel}>Hızlı işlem</Text>
             <View style={styles.quickGrid}>
               {QUICK.map((q) => (
@@ -452,6 +528,39 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
+  posHint: {
+    fontSize: 12,
+    color: adminTheme.colors.textMuted,
+    marginTop: -4,
+    marginBottom: 10,
+    lineHeight: 17,
+  },
+  posAccountRow: { flexDirection: 'row', gap: 10 },
+  posAccountCard: {
+    flex: 1,
+    borderRadius: 16,
+    padding: 14,
+    gap: 4,
+  },
+  posHotel: { backgroundColor: '#042f2e' },
+  posKitchen: { backgroundColor: '#7c2d12' },
+  posAccountHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  posAccountTitle: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  posAccountPending: { color: '#fdba74', fontSize: 11, fontWeight: '600' },
+  posAccountAmt: { color: '#fff', fontSize: 18, fontWeight: '800', marginTop: 4 },
+  posAccountMat: { color: '#fecaca', fontSize: 11, fontWeight: '600' },
+  posUploadBtn: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fde68a',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  posUploadText: { color: '#042f2e', fontWeight: '800', fontSize: 11 },
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryCard: { flex: 1, padding: 14 },
   summaryIncome: { borderLeftWidth: 3, borderLeftColor: '#16a34a' },

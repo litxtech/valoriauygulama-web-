@@ -673,6 +673,22 @@ export function OccupancyOpsHubScreen() {
 
         {tab === 'today' && snapshot && (
           <View>
+            <TouchableOpacity
+              style={styles.checkoutBoardCta}
+              onPress={() => router.push('/staff/checkout-board' as never)}
+              activeOpacity={0.88}
+            >
+              <View style={styles.checkoutBoardCtaIcon}>
+                <Ionicons name="exit-outline" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.checkoutBoardCtaTitle}>Çıkış Odaları panosu</Text>
+                <Text style={styles.checkoutBoardCtaSub}>
+                  Yarın çıkacak odaları planla · sabah listeden çıkış yap
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fdba74" />
+            </TouchableOpacity>
             <Text style={styles.sectionTitle}>Bugün giriş yapanlar</Text>
             {filterGuests(snapshot.todayCheckIns).length === 0 ? (
               <Text style={styles.emptyHint}>Bugün giriş yok.</Text>
@@ -819,6 +835,25 @@ const styles = StyleSheet.create({
   tabBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
   sectionHint: { fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 18 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1e293b', marginBottom: 8 },
+  checkoutBoardCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+  },
+  checkoutBoardCtaIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#c2410c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkoutBoardCtaTitle: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  checkoutBoardCtaSub: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2 },
   emptyHint: { fontSize: 14, color: '#94a3b8', textAlign: 'center', paddingVertical: 24 },
   roomCard: {
     backgroundColor: '#fff',

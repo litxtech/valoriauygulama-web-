@@ -48,6 +48,7 @@ export const MANDATORY_NOTIFICATION_TYPES = new Set([
   'admin_announcement',
   'admin_panel_alert',
   'staff_personnel_warning',
+  'staff_attendance_action',
 ]);
 
 export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
@@ -96,6 +97,10 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   entry('room_cleaning', 'staffNotifRoomCleaningTitle', 'staffNotifRoomCleaningHint', {
     soundFeatureKey: 'room_cleaning',
     matchPrefix: ['staff_room_cleaning'],
+  }),
+  entry('ops_morning_digest', 'staffNotifOpsMorningTitle', 'staffNotifOpsMorningHint', {
+    soundFeatureKey: 'room_cleaning',
+    matchExact: ['staff_ops_morning_digest'],
   }),
   entry('complaint', 'staffNotifComplaintTitle', 'staffNotifComplaintHint', {
     soundFeatureKey: 'complaint',
@@ -235,7 +240,16 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('technical_asset', 'staffNotifTechnicalAssetTitle', 'staffNotifTechnicalAssetHint', {
     soundFeatureKey: 'technical_asset',
-    matchExact: ['tech_fault_report', 'tech_asset_status', 'tech_maintenance_log', 'hotel_facility_status'],
+    matchExact: [
+      'tech_fault_report',
+      'tech_asset_status',
+      'tech_maintenance_log',
+      'hotel_facility_status',
+      'fault_record_created',
+      'fault_record_pending',
+      'fault_record_unresolved',
+      'fault_record_resolved',
+    ],
   }),
 ];
 

@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next';
 import { getDepartmentLabel } from '@/lib/departmentLabels';
+import { log } from '@/lib/logger';
 import { sendBulkToStaff } from '@/lib/notificationService';
 import type { StaffProfile } from '@/stores/authStore';
 
@@ -29,7 +30,7 @@ const ACTION_KEYS: Record<StaffAttendanceNotifyEvent, string> = {
   manual_request: 'staffAttNotifyManual',
 };
 
-export function buildStaffAttendanceAdminNotification(
+export function buildStaffAttendanceNotification(
   staff: StaffAttendanceNotifySlice,
   event: StaffAttendanceNotifyEvent,
   t: TFunction,
@@ -59,7 +60,13 @@ export function buildStaffAttendanceAdminNotification(
   return { title, body };
 }
 
-/** Giriş / çıkış / gecikme bildirimini organizasyondaki tüm personele gönderir (işlemi yapan hariç). */
+/** @deprecated Use buildStaffAttendanceNotification */
+export const buildStaffAttendanceAdminNotification = buildStaffAttendanceNotification;
+
+/**
+ * İşe başladım / mesaim bitti (ve gecikme/manuel) — organizasyondaki tüm aktif personele
+ * in-app + push (işlemi yapan hariç). Tercih ile kapatılamaz.
+ */
 export async function notifyAllStaffForAttendanceAction(
   staff: StaffAttendanceNotifySlice,
   event: StaffAttendanceNotifyEvent,
@@ -67,12 +74,21 @@ export async function notifyAllStaffForAttendanceAction(
   note?: string
 ): Promise<{ count?: number; error?: string }> {
   const actorId = staff?.id;
-  if (!actorId) return { error: 'staff id missing' };
+  if (!actorId) {
+    log.warn('staffAttendanceNotifications', 'notify skipped: staff id missing', { event });
+    return { error: 'staff id missing' };
+  }
 
-  const { title, body } = buildStaffAttendanceAdminNotification(staff, event, t, note);
+  const { title, body } = buildStaffAttendanceNotification(staff, event, t, note);
   const organizationId = staff?.organization_id || staff?.organization?.id || null;
+  if (!organizationId) {
+    log.warn('staffAttendanceNotifications', 'notify without organizationId — all active staff', {
+      event,
+      actorId,
+    });
+  }
 
-  return sendBulkToStaff({
+  const result = await sendBulkToStaff({
     target: 'all_staff',
     organizationId,
     title,
@@ -88,4 +104,14 @@ export async function notifyAllStaffForAttendanceAction(
       event,
     },
   });
+
+  if (result.error) {
+    log.warn('staffAttendanceNotifications', 'notify failed', { event, error: result.error });
+  } else {
+    log.info('staffAttendanceNotifications', 'notify sent to all staff', {
+      event,
+      count: result.count,
+    });
+  }
+  return result;
 }

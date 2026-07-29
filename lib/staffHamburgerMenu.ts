@@ -87,6 +87,7 @@ const ACCENTS: Record<string, string> = {
   announcement_compose: '#7c3aed',
   messages: '#2563eb',
   cleaning: '#0f766e',
+  checkout_board: '#c2410c',
   guests: '#0ea5e9',
   transfer: '#0f766e',
   dining: '#b45309',
@@ -336,6 +337,13 @@ export function buildStaffHamburgerMenuSections(
   }
 
   // —— Gezinti (ana sayfalar) ——
+  push('nav', {
+    id: 'tab_customize',
+    label: t('staffTabCustomizeTitle'),
+    href: '/staff/customize-tabs',
+    icon: 'apps-outline',
+    accent: '#6366f1',
+  });
   push('nav', {
     id: 'emergency',
     label: t('screenEmergencyButton'),
@@ -660,6 +668,13 @@ export function buildStaffHamburgerMenuSections(
       icon: 'stats-chart-outline',
       accent: ACCENTS.guests,
     });
+    push('hotel', {
+      id: 'checkout_board',
+      label: 'Çıkış Odaları',
+      href: '/staff/checkout-board',
+      icon: 'exit-outline',
+      accent: ACCENTS.checkout_board,
+    });
   }
   if (!isAdmin) {
     push('hotel', {
@@ -831,6 +846,20 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.accounting,
     });
     push('ops', {
+      id: 'pos_receipt_invoice',
+      label: t('profileUiPosReceiptInvoice'),
+      href: '/admin/accounting/pos-receipts/new',
+      icon: 'receipt-outline',
+      accent: ACCENTS.accounting,
+    });
+    push('ops', {
+      id: 'pos_receipt_list',
+      label: t('profileUiPosReceiptList'),
+      href: '/admin/accounting/pos-receipts',
+      icon: 'list-outline',
+      accent: ACCENTS.accounting,
+    });
+    push('ops', {
       id: 'accounting',
       label: t('profileUiAccountingHub'),
       href: '/admin/accounting',
@@ -853,6 +882,15 @@ export function buildStaffHamburgerMenuSections(
   }
   if (showAdminHub) {
     push('admin', { id: 'admin_tab', label: t('adminTab'), href: '/staff/admin', icon: 'shield-checkmark-outline', accent: ACCENTS.admin });
+    if (canAccessAdminRoute(staff, '/admin/booking')) {
+      push('admin', {
+        id: 'online_booking',
+        label: t('profileUiOnlineBooking') || 'Online rezervasyon',
+        href: '/admin/booking',
+        icon: 'calendar-outline',
+        accent: '#0f766e',
+      });
+    }
     if (canAccessKitchenOps(staff) && !hasFnbHub && !isKitchenStaff) {
       push('admin', {
         id: 'kitchen_ops',

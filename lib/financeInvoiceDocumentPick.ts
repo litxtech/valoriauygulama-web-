@@ -48,7 +48,9 @@ export async function pickInvoiceFromCamera(): Promise<PickedInvoiceDocument | n
   if (!ok) return null;
   const r = await ImagePicker.launchCameraAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    quality: 0.85,
+    quality: 0.82,
+    exif: false,
+    allowsEditing: false,
   });
   if (r.canceled || !r.assets[0]?.uri) return null;
   const asset = r.assets[0];

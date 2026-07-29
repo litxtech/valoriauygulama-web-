@@ -441,6 +441,9 @@ export default function GuestSignOneScreen() {
         room_id: activeRoomId,
         check_in_at: formFieldsConfig.check_in_date ? parseDDMMYYYY(checkInDate) || null : null,
         check_out_at: formFieldsConfig.check_out_date ? parseDDMMYYYY(checkOutDate) || null : null,
+        planned_check_out_at: formFieldsConfig.check_out_date
+          ? parseDDMMYYYY(checkOutDate) || null
+          : null,
         room_type: formFieldsConfig.room_type ? roomType : null,
         adults: formFieldsConfig.adults ? adults ?? 1 : 0,
         children: formFieldsConfig.children ? children ?? 0 : 0,

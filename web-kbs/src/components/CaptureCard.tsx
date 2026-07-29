@@ -26,6 +26,23 @@ function personInitial(name: string): string {
   return ch ? ch.toLocaleUpperCase('tr-TR') : '?';
 }
 
+function formatCapturedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const time = d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Bugün ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Dün ${time}`;
+  return d.toLocaleString('tr-TR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: Props) {
   const parsed = item.parsed;
   const name = kbsDisplayFullName(parsed) ?? 'İsim okunamadı';
@@ -36,29 +53,24 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
   const docNo = fields.find((f) => f.key === 'documentNumber')?.value;
   const nationality = fields.find((f) => f.key === 'nationalityCode')?.value;
   const docType = parsed?.documentType ? DOC_TYPE_LABEL[parsed.documentType] : null;
-  const capturedAt = new Date(item.captured_at ?? item.created_at).toLocaleString('tr-TR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const hotel = item.hotel_name ?? item.captured_by_hotel_name ?? null;
+  const staff = item.captured_by_staff_name?.trim() || null;
+  const capturedLabel = formatCapturedAt(item.captured_at ?? item.created_at);
+  const returning = isKbsReturningGuest(parsed);
 
   const handleOpen = useCallback(() => {
     onOpen(item);
   }, [onOpen, item]);
 
   return (
-    <button type="button" className={`card${isNew ? ' is-new' : ''}`} onClick={handleOpen}>
-      <div className="card-thumb card-thumb--avatar">
-        {isNew ? (
-          <span className="pill-new" title="Son 1 saat içinde eklendi" aria-label="Yeni kayıt">
-            ✓
-          </span>
-        ) : null}
+    <button
+      type="button"
+      className={`cap-card${isNew ? ' is-new' : ''}${status.tone === 'warn' ? ' is-warn' : ''}${status.tone === 'progress' ? ' is-busy' : ''}`}
+      onClick={handleOpen}
+    >
+      <div className="cap-thumb">
         {item.front_image_url ? (
           <img
-            className="person-avatar"
             src={item.front_image_url}
             alt=""
             loading="lazy"
@@ -66,60 +78,63 @@ function CaptureCardInner({ item, onOpen, familyCount = 0, freshnessTick = 0 }: 
             fetchPriority="low"
           />
         ) : (
-          <div className="person-avatar person-avatar--fallback" aria-hidden>
+          <div className="cap-thumb-fallback" aria-hidden>
             {personInitial(name)}
           </div>
         )}
-        <div className="card-thumb-badges">
-          {item.room_number ? <span className="pill pill-room">Oda {item.room_number}</span> : null}
-          {docType ? <span className="pill pill-doc">{docType}</span> : null}
-        </div>
-        {familyCount > 1 ? (
-          <span className="pill pill-family" title="Aynı grupta çekilen kişi sayısı">
-            👪 {familyCount}
-          </span>
-        ) : null}
       </div>
 
-      <div className="card-body">
-        <div className="card-head">
-          <h3 title={name}>{name}</h3>
-          <StatusBadge status={status} />
-        </div>
-
-        {isKbsReturningGuest(parsed) ? (
-          <div className="returning-pill" title="Bu belge daha önce sisteme eklendi">
-            ✓ Daha önce geldi
+      <div className="cap-body">
+        <div className="cap-top">
+          <div className="cap-title-block">
+            <h3 title={name}>{name}</h3>
+            <div className="cap-primary-meta">
+              <span className={`cap-room${item.room_number ? '' : ' empty'}`}>
+                {item.room_number ? `Oda ${item.room_number}` : 'Oda yok'}
+              </span>
+              {docType ? <span className="cap-sep">·</span> : null}
+              {docType ? <span className="cap-doc-type">{docType}</span> : null}
+              {familyCount > 1 ? (
+                <>
+                  <span className="cap-sep">·</span>
+                  <span className="cap-family">{familyCount} kişi</span>
+                </>
+              ) : null}
+            </div>
           </div>
-        ) : null}
-
-        <div className="card-tags">
-          {nationality ? <span className="tag">{nationality}</span> : null}
-          {docNo ? <span className="tag tag-mono">{docNo}</span> : null}
+          <div className="cap-status-col">
+            <StatusBadge status={status} />
+            {isNew ? <span className="cap-new">Yeni</span> : null}
+          </div>
         </div>
 
-        <div className={`card-phone ${item.guest_phone_submitted ? 'has' : 'empty'}`}>
-          <span className="ico" aria-hidden>
-            📞
-          </span>
-          {item.guest_phone_submitted ? item.guest_phone_submitted : 'Numara ekle'}
+        {(docNo || nationality || returning) && (
+          <div className="cap-id-row">
+            {docNo ? <span className="cap-doc-no">{docNo}</span> : null}
+            {nationality ? <span className="cap-nat">{nationality}</span> : null}
+            {returning ? <span className="cap-returning">Tekrar konuk</span> : null}
+          </div>
+        )}
+
+        <div className={`cap-phone${item.guest_phone_submitted ? ' has' : ' empty'}`}>
+          {item.guest_phone_submitted ? item.guest_phone_submitted : 'Telefon eklenmedi'}
         </div>
 
-        <div className="card-foot">
-          <span className="card-hotel" title={item.hotel_name ?? item.captured_by_hotel_name ?? ''}>
-            <span className="ico" aria-hidden>
-              🏨
-            </span>
-            {item.hotel_name ?? item.captured_by_hotel_name ?? 'Otel —'}
+        <div className="cap-foot">
+          <span className="cap-meta" title={hotel ?? undefined}>
+            {hotel ?? 'Otel —'}
           </span>
-          <span className="card-staff" title={item.captured_by_staff_name ?? ''}>
-            <span className="ico" aria-hidden>
-              👤
-            </span>
-            {item.captured_by_staff_name ?? '—'}
+          <span className="cap-dot" aria-hidden>
+            ·
           </span>
+          <span className="cap-meta" title={staff ?? undefined}>
+            {staff ?? 'Personel —'}
+          </span>
+          <span className="cap-dot" aria-hidden>
+            ·
+          </span>
+          <span className="cap-time">{capturedLabel}</span>
         </div>
-        <div className="card-time">{capturedAt}</div>
       </div>
     </button>
   );

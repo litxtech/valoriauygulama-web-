@@ -28,3 +28,7 @@ export function publicContractHref(): Href {
 export function publicMaliyeHref(): Href {
   return { pathname: '/maliye', params: { token: FIXED_MALIYE_QR_TOKEN } } as Href;
 }
+
+export function publicBookingHref(): Href {
+  return '/booking' as Href;
+}

@@ -1111,6 +1111,7 @@ return new Response(html, { status: 200, headers: HTML_HEADERS });
         room_id: roomId,
         check_in_at: checkInIso ? `${checkInIso}T12:00:00.000Z` : null,
         check_out_at: checkOutIso ? `${checkOutIso}T12:00:00.000Z` : null,
+        planned_check_out_at: checkOutIso ? `${checkOutIso}T12:00:00.000Z` : null,
         room_type: (formData.room_type ?? "").trim() || null,
         adults: Math.max(0, parseInt(formData.adults ?? "1", 10) || 1),
         children: Math.max(0, parseInt(formData.children ?? "0", 10) || 0),

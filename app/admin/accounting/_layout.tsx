@@ -51,6 +51,10 @@ export default function AccountingLayout() {
       <Stack.Screen name="categories/index" options={{ title: 'Kategoriler' }} />
       <Stack.Screen name="activity/index" options={{ title: 'Son işlemler' }} />
       <Stack.Screen name="bank-import/index" options={{ title: 'Banka ekstresi içe aktar' }} />
+      <Stack.Screen name="pos-receipts/index" options={{ title: 'POS fişleri' }} />
+      <Stack.Screen name="pos-receipts/batch" options={{ title: 'Çoklu fiş yükle' }} />
+      <Stack.Screen name="pos-receipts/new" options={{ title: 'Yeni POS fişi' }} />
+      <Stack.Screen name="pos-receipts/[id]" options={{ title: 'Fiş / fatura taslağı' }} />
     </Stack>
   );
 }

@@ -14,6 +14,13 @@ export const lobbyTheme = {
 
 export const lobbyPortalCards = [
   {
+    id: 'booking',
+    pill: 'REZERVASYON',
+    icon: 'calendar-outline' as const,
+    colors: ['#0f172a', '#134e4a', '#0f766e'] as const,
+    glow: 'rgba(45, 212, 191, 0.45)',
+  },
+  {
     id: 'guest',
     pill: 'MİSAFİR',
     icon: 'bed-outline' as const,

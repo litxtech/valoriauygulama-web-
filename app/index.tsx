@@ -51,6 +51,8 @@ import { LobbyHero } from '@/components/lobby/LobbyHero';
 import { LobbyGlassCard } from '@/components/lobby/LobbyGlassCard';
 import { LobbyPortalGrid } from '@/components/lobby/LobbyPortalGrid';
 
+const BOOKING_HREF = '/booking' as const;
+
 const GEOFENCE_CHECKIN_PROMPT_KEY = '@valoria/geofence_checkin_prompt_shown';
 const GEOFENCE_LOCATION_PERMISSION_PROMPT_KEY = '@valoria/geofence_location_permission_prompt_shown';
 const CHECKIN_PROMPT_CARD_DISMISSED_KEY = '@valoria/checkin_prompt_card_dismissed';
@@ -681,6 +683,29 @@ export default function HomeScreen() {
               </Pressable>
             </View>
 
+            <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('homePortalBooking')}</Text>
+            <TouchableOpacity
+              style={styles.portalTileFull}
+              onPress={() => safeRouterPush(router, BOOKING_HREF)}
+              activeOpacity={0.88}
+            >
+              <LinearGradient
+                colors={['#0f172a', '#1e293b', '#0f766e']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.portalTileFullGradient}
+              >
+                <View style={styles.portalIconCircleDark}>
+                  <Ionicons name="calendar" size={26} color="#5eead4" />
+                </View>
+                <View style={styles.portalTileFullText}>
+                  <Text style={styles.portalTileFullTitle}>{t('homePortalBookingTitle')}</Text>
+                  <Text style={styles.portalTileFullHint}>{t('homePortalBookingHint')}</Text>
+                </View>
+                <Ionicons name="arrow-forward" size={20} color="rgba(255,255,255,0.85)" />
+              </LinearGradient>
+            </TouchableOpacity>
+
             <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('signIn')}</Text>
             <TouchableOpacity
               style={styles.webSignInBtn}
@@ -933,6 +958,12 @@ export default function HomeScreen() {
               <LobbyPortalGrid
                 items={[
                   {
+                    id: 'booking',
+                    title: t('homePortalBookingTitle'),
+                    hint: t('homePortalBookingHint'),
+                    onPress: () => router.push(BOOKING_HREF),
+                  },
+                  {
                     id: 'guest',
                     title: t('guestCheckIn') || 'Misafir check-in',
                     hint: t('guestCheckInHint') || 'QR veya link ile sözleşme onayı',
@@ -1172,6 +1203,42 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   portalPanelLabelSpaced: { marginTop: 18 },
+  portalTileFull: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    minHeight: 88,
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
+  },
+  portalTileFullGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    minHeight: 88,
+  },
+  portalIconCircleDark: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: 'rgba(94, 234, 212, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(94, 234, 212, 0.28)',
+  },
+  portalTileFullText: { flex: 1, gap: 4 },
+  portalTileFullTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  portalTileFullHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.72)',
+    lineHeight: 18,
+  },
   portalRow: { flexDirection: 'row', gap: 10 },
   portalTile: {
     flex: 1,

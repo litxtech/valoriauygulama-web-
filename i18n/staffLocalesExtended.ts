@@ -43,7 +43,7 @@ export const staffLocalesExtended = {
     staffAttCheckIn: 'Giriş',
     staffAttCheckOut: 'Çıkış',
     staffAttStartWork: 'İşe Başladım',
-    staffAttEndWork: 'İşim Bitti',
+    staffAttEndWork: 'Mesaim Bitti',
     staffAttRunningLate: 'Geç kalıyorum',
     staffAttRunningLateNotice: 'Geç kalıyorum bildirimi',
     staffAttManualRequest: 'Manuel giriş talebi',

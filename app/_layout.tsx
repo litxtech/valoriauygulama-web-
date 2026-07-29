@@ -870,6 +870,7 @@ function RootLayoutInner() {
         <Stack.Screen name="partner" options={{ headerShown: false }} />
         <Stack.Screen name="trade-partner" options={{ headerShown: false }} />
         <Stack.Screen name="join" options={{ headerShown: true, title: t('staffApplication') }} />
+        <Stack.Screen name="booking" options={{ headerShown: false }} />
         <Stack.Screen name="go-to-notifications" options={{ headerShown: false }} />
       </Stack>
       <ValoriaMessagePushToast />

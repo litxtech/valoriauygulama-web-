@@ -15,7 +15,7 @@ const STAFF_TAB_ROUTES = [
 
 export type StaffTabRouteName = (typeof STAFF_TAB_ROUTES)[number];
 
-/** Tek store aboneliği — sekme href’leri (8× useStaffTabHref yerine). undefined = görünür, null = gizli. */
+/** Tek store aboneliği — sekme href’leri. undefined = görünür, null = gizli. */
 export function useStaffTabHrefs(): Record<StaffTabRouteName, null | undefined> {
   const config = useOrganizationUiFeaturesStore((s) => s.config);
   return useMemo(() => {
