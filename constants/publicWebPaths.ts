@@ -8,8 +8,12 @@ export const PUBLIC_PAYMENT_PATH = 'payment';
 export const PUBLIC_PAYMENT_QR_PATH = 'payment/qr';
 /** Çekilen kimlikler web paneli — valoria.tr/kbs */
 export const PUBLIC_KBS_PATH = 'kbs';
-/** Online rezervasyon — valoria.tr/booking */
+/** Online rezervasyon — uygulama rotası valoria.tr/booking */
 export const PUBLIC_BOOKING_PATH = 'booking';
+/** Misafire paylaşılan kısa yol — valoria.tr/rez */
+export const PUBLIC_BOOKING_SHORT_PATH = 'rez';
+/** Uzun Türkçe alias — valoria.tr/rezervasyon */
+export const PUBLIC_BOOKING_ALIAS_TR = 'rezervasyon';
 /** Partner otel misafir kahvaltı QR — valoria.tr/breakfast-pass?token=… */
 export const PUBLIC_BREAKFAST_PASS_PATH = 'breakfast-pass';
 /** QR şikayet hattı — valoria.tr/sikayet (uygulama indirmeden) */
@@ -18,6 +22,8 @@ export const PUBLIC_COMPLAINT_PATH = 'sikayet';
 export const PUBLIC_STAFF_PROFILE_PATH = 'profil';
 /** Ürün / ekipman bilgi QR — valoria.tr/bilgi/{publicToken} */
 export const PUBLIC_TECH_ASSET_INFO_PATH = 'bilgi';
+/** QR otomatik sayfa — valoria.tr/sayfa/{publicToken} */
+export const PUBLIC_QR_PAGE_PATH = 'sayfa';
 /** Eski Türkçe yol — Vercel yönlendirmesi ile desteklenir */
 export const LEGACY_PAYMENT_PATH = 'odeme';
 export const LEGACY_PAYMENT_QR_PATH = 'odeme/qr';

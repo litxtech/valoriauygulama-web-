@@ -129,6 +129,12 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
   if (href.startsWith('/admin/breakfast-partners')) return staff.role === 'admin';
   if (href.startsWith('/admin/camera-requests')) return staff.role === 'admin';
   if (href.startsWith('/admin/trade-partners')) return staff.role === 'admin';
+  if (href.startsWith('/admin/lobby-cover')) {
+    return staff.role === 'admin' || staff.role === 'manager';
+  }
+  if (href.startsWith('/admin/qr-pages') || href.startsWith('/admin/qr-designs')) {
+    return staff.role === 'admin' || staff.role === 'manager';
+  }
   if (href.startsWith('/staff/blacklist')) return canViewSecurityBlacklist(staff);
   if (href === '/staff/housekeeping-board' || href === '/staff/cleaning-plan') {
     return (

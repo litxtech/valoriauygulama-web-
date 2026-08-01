@@ -11,7 +11,10 @@ import {
   PUBLIC_COMPLAINT_PATH,
   PUBLIC_STAFF_PROFILE_PATH,
   PUBLIC_TECH_ASSET_INFO_PATH,
+  PUBLIC_QR_PAGE_PATH,
   PUBLIC_BOOKING_PATH,
+  PUBLIC_BOOKING_SHORT_PATH,
+  PUBLIC_BOOKING_ALIAS_TR,
 } from '@/constants/publicWebPaths';
 import { isPaymentPublicPath } from '@/lib/paymentPortalUrl';
 
@@ -23,6 +26,7 @@ export type PublicWebRoute =
   | { kind: 'sikayet' }
   | { kind: 'profil'; staffId: string }
   | { kind: 'bilgi'; token: string }
+  | { kind: 'sayfa'; token: string }
   | { kind: 'booking' }
   | null;
 
@@ -109,7 +113,20 @@ export function resolvePublicWebRoute(pathname: string, search?: string): Public
     return null;
   }
 
-  if (head === foldTrPathSegment(PUBLIC_BOOKING_PATH) || head === 'booking' || head === 'rezervasyon') {
+  if (head === foldTrPathSegment(PUBLIC_QR_PAGE_PATH) || head === 'sayfa') {
+    const pageToken = parts[1]?.trim();
+    if (pageToken) return { kind: 'sayfa', token: decodeURIComponent(pageToken) };
+    return null;
+  }
+
+  if (
+    head === foldTrPathSegment(PUBLIC_BOOKING_PATH) ||
+    head === foldTrPathSegment(PUBLIC_BOOKING_SHORT_PATH) ||
+    head === foldTrPathSegment(PUBLIC_BOOKING_ALIAS_TR) ||
+    head === 'booking' ||
+    head === 'rez' ||
+    head === 'rezervasyon'
+  ) {
     return { kind: 'booking' };
   }
 
@@ -172,6 +189,11 @@ export function applyPublicWebRoute(
     return true;
   }
 
+  if (route.kind === 'sayfa') {
+    router.replace({ pathname: '/sayfa/[token]', params: { token: route.token } });
+    return true;
+  }
+
   if (route.kind === 'booking') {
     router.replace('/booking');
     return true;
@@ -190,7 +212,17 @@ export function isPublicWebPath(pathname: string, search?: string): boolean {
   if (p === '/sikayet' || p.startsWith('/sikayet/')) return true;
   if (p === '/profil' || p.startsWith('/profil/')) return true;
   if (p === '/bilgi' || p.startsWith('/bilgi/')) return true;
-  if (p === '/booking' || p.startsWith('/booking/') || p === '/rezervasyon') return true;
+  if (p === '/sayfa' || p.startsWith('/sayfa/')) return true;
+  if (
+    p === '/booking' ||
+    p.startsWith('/booking/') ||
+    p === '/rez' ||
+    p.startsWith('/rez/') ||
+    p === '/rezervasyon' ||
+    p.startsWith('/rezervasyon/')
+  ) {
+    return true;
+  }
   if (isPaymentPublicPath(p)) return true;
   if (search?.includes('token=') && p === '/guest') return true;
   return resolvePublicWebRoute(pathname, search) != null;
@@ -213,5 +245,15 @@ export function parsePublicTechAssetTokenFromLocation(
 ): string {
   const route = resolvePublicWebRoute(pathname ?? '', search ?? '');
   if (route?.kind !== 'bilgi') return '';
+  return route.token.trim();
+}
+
+/** Vercel statik export: /sayfa/[token] paramını adres çubuğundan oku. */
+export function parsePublicQrPageTokenFromLocation(
+  pathname?: string | null,
+  search?: string | null
+): string {
+  const route = resolvePublicWebRoute(pathname ?? '', search ?? '');
+  if (route?.kind !== 'sayfa') return '';
   return route.token.trim();
 }

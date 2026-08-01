@@ -30,6 +30,7 @@ const ALLOWED_BUCKETS = new Set([
   "passport-private",
   "passport-thumbs",
   "security-blacklist",
+  "qr-page-media",
 ]);
 
 function json(obj: Record<string, unknown>, status: number) {

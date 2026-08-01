@@ -9,6 +9,8 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { QrHubSection } from '@/components/admin/QrHubSection';
 import {
@@ -57,6 +59,7 @@ function defaultMaliyeBase(publicOrigin?: string | null): string {
 }
 
 export default function QrHubPage() {
+  const router = useRouter();
   const { organizations, loadOrganizations } = useAdminOrgStore();
   const [loading, setLoading] = useState(true);
 
@@ -178,6 +181,23 @@ export default function QrHubPage() {
       <Text style={styles.pageSub}>
         Canlı site: valoria.tr — personel yemek ekleyince menü push olmadan anlık güncellenir (Supabase Realtime).
       </Text>
+
+      <TouchableOpacity
+        style={styles.pagesBanner}
+        onPress={() => router.push('/admin/qr-pages')}
+        activeOpacity={0.88}
+      >
+        <View style={styles.pagesBannerIcon}>
+          <Ionicons name="document-text-outline" size={22} color="#0f766e" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.pagesBannerTitle}>Özel QR sayfalar</Text>
+          <Text style={styles.pagesBannerSub}>
+            Metin, resim, video ekleyin — her QR için otomatik web sayfası.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#64748b" />
+      </TouchableOpacity>
 
       <View style={styles.siteCard}>
         <Text style={styles.siteCardTitle}>Canlı site adresi</Text>
@@ -335,6 +355,27 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   pageTitle: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   pageSub: { fontSize: 14, color: '#64748b', lineHeight: 20, marginTop: 6, marginBottom: 16 },
+  pagesBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#6ee7b7',
+  },
+  pagesBannerIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pagesBannerTitle: { fontSize: 15, fontWeight: '800', color: '#065f46' },
+  pagesBannerSub: { fontSize: 12, color: '#047857', marginTop: 2, lineHeight: 17 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, marginTop: 4 },
   input: {
     borderWidth: 1,

@@ -78,6 +78,22 @@
       "destination": "/sikayet/index.html"
     },
     {
+      "source": "/rez/",
+      "destination": "/"
+    },
+    {
+      "source": "/rez",
+      "destination": "/"
+    },
+    {
+      "source": "/rezervasyon/",
+      "destination": "/"
+    },
+    {
+      "source": "/rezervasyon",
+      "destination": "/"
+    },
+    {
       "source": "/:path*",
       "destination": "/"
     }
@@ -102,7 +118,16 @@
       ]
     },
     {
-      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass|sikayet|bilgi).*)",
+      "source": "/sayfa/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/((?!_expo|assets|maliye|favicon|breakfast-pass|sikayet|bilgi|sayfa).*)",
       "headers": [
         {
           "key": "Cache-Control",

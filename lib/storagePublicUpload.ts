@@ -32,6 +32,7 @@ const BUCKETS_PREFER_DIRECT_UPLOAD = new Set([
   'expense-receipts',
   'breakfast-partner-camera',
   'security-camera-recordings',
+  'qr-page-media',
 ]);
 
 /** `feed-media` bucket `file_size_limit` (155_feed_media_bucket_file_size_limit.sql) ile aynı */

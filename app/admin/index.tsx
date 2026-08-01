@@ -205,6 +205,7 @@ const SECTIONS: Section[] = [
     icon: 'settings-outline',
     items: [
       { href: '/admin/profile', icon: 'person-circle-outline', label: 'Profilim (hesap düzenle)' },
+      { href: '/admin/lobby-cover', icon: 'image-outline', label: 'Lobi kapak medyası (resim / video)' },
       { href: '/admin/app-links', icon: 'link-outline', label: 'Uygulamalar & Web Siteleri' },
       { href: '/admin/settings/printer', icon: 'print-outline', label: 'Yazici ayarlari' },
       { href: '/admin/documents', icon: 'folder-open-outline', label: 'Doküman Yönetimi' },
@@ -221,6 +222,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/department-rules', icon: 'book-outline', label: 'Bölüm Kuralları' },
       { href: '/admin/organizations', icon: 'business-outline', label: 'İşletme yönetimi' },
       { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR Merkezi' },
+      { href: '/admin/qr-pages', icon: 'document-text-outline', label: 'QR Sayfalar' },
     ],
   },
 ];

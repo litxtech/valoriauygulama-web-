@@ -421,9 +421,10 @@ export default function AdminLayout() {
       <Stack.Screen name="expenses/by-category" options={{ title: t('adminExpensesByCategory'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="expenses/by-staff" options={{ title: t('adminExpensesByStaff'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="carbon" options={{ headerShown: false }} />
-      <Stack.Screen name="salary/index" options={{ title: t('adminSalaryManagement'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="salary/all" options={{ title: t('adminSalaryAllPayments'), headerRight: renderHeaderRight }} />
-      <Stack.Screen name="salary/pay" options={{ title: 'Maaş öde', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="salary/index" options={{ headerShown: false }} />
+      <Stack.Screen name="salary/all" options={{ headerShown: false }} />
+      <Stack.Screen name="salary/quick" options={{ headerShown: false }} />
+      <Stack.Screen name="salary/pay" options={{ headerShown: false }} />
       <Stack.Screen name="salary/new" options={{ title: t('adminSalaryNewPayment'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/history/[id]" options={{ title: t('adminSalaryHistory'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="salary/edit/[paymentId]" options={{ title: t('adminSalaryEdit'), headerRight: renderHeaderRight }} />
@@ -473,6 +474,8 @@ export default function AdminLayout() {
       <Stack.Screen name="staff/pending" options={{ title: t('adminStaffPending'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="staff/approve/[id]" options={{ title: t('adminStaffApprove'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="qr-designs/index" options={{ title: t('adminQrDesigns'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="qr-pages/index" options={{ title: 'QR Sayfalar', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="qr-pages/[id]" options={{ title: 'QR Sayfa Düzenle', headerRight: renderHeaderRight }} />
       <Stack.Screen name="feed/index" options={{ title: t('adminFeedPosts'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="cameras/index" options={{ title: t('adminCameraManagement'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="cameras/new" options={{ title: t('adminCameraNew'), headerRight: renderHeaderRight }} />
@@ -486,6 +489,7 @@ export default function AdminLayout() {
       <Stack.Screen name="technical-assets/faults/index" options={{ title: 'Arıza bildirimleri', headerRight: renderHeaderRight }} />
       <Stack.Screen name="profile" options={{ title: t('myProfile'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="app-links" options={{ title: t('adminAppsAndWebsites'), headerRight: renderHeaderRight }} />
+      <Stack.Screen name="lobby-cover" options={{ title: 'Lobi kapak medyası', headerRight: renderHeaderRight }} />
       <Stack.Screen name="settings/printer" options={{ title: t('adminPrinterSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="map" options={{ title: 'Harita', headerShown: false }} />
       <Stack.Screen name="accounting" options={{ headerShown: false }} />
