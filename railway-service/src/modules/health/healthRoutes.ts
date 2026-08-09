@@ -6,7 +6,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
     return {
       ok: true,
       service: 'valoria-kbs-gateway',
-      build: '2026-08-09-egress-board',
+      build: '2026-08-09-github-auto',
       ts: new Date().toISOString()
     };
   });
