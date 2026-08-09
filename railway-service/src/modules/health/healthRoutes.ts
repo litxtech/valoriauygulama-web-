@@ -3,7 +3,12 @@ import { detectEgressIpv4 } from '../../shared/utils/egressIp.js';
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   app.get('/health', async () => {
-    return { ok: true, service: 'valoria-kbs-gateway', ts: new Date().toISOString() };
+    return {
+      ok: true,
+      service: 'valoria-kbs-gateway',
+      build: '2026-08-09-egress-board',
+      ts: new Date().toISOString()
+    };
   });
 
   /** Jandarma Yetkisiz IP için: Railway çıkış IPv4 (kbs-core ile aynı proje NAT). */
