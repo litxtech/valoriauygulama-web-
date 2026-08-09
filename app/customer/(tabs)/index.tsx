@@ -25,12 +25,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Video, Audio, ResizeMode } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import type { ComponentProps } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useScrollToTopStore } from '@/stores/scrollToTopStore';
 import { theme } from '@/constants/theme';
-import { pds, feedXMediaWidth } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { formatRelative } from '@/lib/date';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
@@ -45,7 +44,6 @@ import { formatDistanceToNow } from 'date-fns';
 import i18n from '@/i18n';
 import { dateFnsLocaleForApp } from '@/lib/dateFnsLocale';
 import { feedSharedText, getFeedReportReasons } from '@/lib/feedSharedI18n';
-import { complaintsLocaleTag } from '@/lib/complaintsI18n';
 import { KeyboardAvoidingView } from 'react-native';
 import { blockUserForGuest, getHiddenUsersForGuest } from '@/lib/userBlocks';
 import { useTranslation } from 'react-i18next';
@@ -57,11 +55,11 @@ import { FeedPostMediaGrid, feedPostMediaGridHeight } from '@/components/FeedPos
 import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
+import { FeedZoomableMedia } from '@/components/FeedZoomableMedia';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CustomerFeedPostCard } from '@/components/customer/CustomerFeedPostCard';
-import { CustomerFeedSectionHeader } from '@/components/customer/CustomerFeedSectionHeader';
+import { FeedComposePromptRow } from '@/components/feed/FeedComposePromptRow';
 import { GuestFeedDashboardStrip } from '@/components/customer/GuestFeedDashboardStrip';
-import { GuestStaffContactsCard } from '@/components/customer/GuestStaffContactsCard';
 import { StaffFeedStoryAvatarCard } from '@/components/premium/StaffFeedStoryAvatarCard';
 import { resolveStaffPresenceStatus } from '@/lib/workStatusAura';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
@@ -75,8 +73,6 @@ import {
 import { openStaffProfileWithVisit } from '@/lib/staffProfileVisits';
 import { formatDateTime } from '@/lib/date';
 import { resolveMentionedStaffIdsFromText } from '@/lib/staffMentions';
-import { complaintsText } from '@/lib/complaintsI18n';
-import { guestServiceText } from '@/lib/guestServiceRequestsI18n';
 import { searchStaffMentionCandidates, type StaffMentionCandidate } from '@/lib/staffMentions';
 import { loadActiveStaffStories, markStoryAsViewedForGuest, type StaffStoryGroup } from '@/lib/staffStories';
 import { MentionableText } from '@/components/MentionableText';
@@ -166,29 +162,10 @@ const WORK_STATUS_COLOR: Record<string, string> = {
   leave: '#9ca3af',
 };
 
-type IoniconName = ComponentProps<typeof Ionicons>['name'];
-
 const CUSTOMER_HOME_CACHE_KEY = 'customer_home_cache_v1';
 const CUSTOMER_HOME_STAFF_LIMIT = 24;
 const CUSTOMER_FEED_PAGE_SIZE = Platform.OS === 'android' ? 8 : 12;
 const CUSTOMER_IMAGE_PREFETCH_CAP = Platform.OS === 'android' ? 16 : 24;
-
-const GLYPH = Ionicons.glyphMap as Record<string, number>;
-
-function getFacilityIonIcon(icon: string | null, facilityName: string): IoniconName {
-  const key = icon?.trim().toLowerCase().replace(/^ionicons?:/, '').replace(/_/g, '-') ?? '';
-  if (key && key in GLYPH) return key as IoniconName;
-  const n = facilityName.toLowerCase();
-  if (n.includes('havuz') || n.includes('pool')) return 'water-outline';
-  if (n.includes('spa') || n.includes('wellness')) return 'leaf-outline';
-  if (n.includes('fitness') || n.includes('spor') || n.includes('gym')) return 'barbell-outline';
-  if (n.includes('wifi')) return 'wifi-outline';
-  if (n.includes('restoran') || n.includes('yemek') || n.includes('restaurant') || n.includes('dining')) return 'restaurant-outline';
-  if (n.includes('kahvaltı') || n.includes('breakfast')) return 'cafe-outline';
-  if (n.includes('otopark') || n.includes('park') || n.includes('parking')) return 'car-outline';
-  if (n.includes('çocuk') || n.includes('kid') || n.includes('child')) return 'happy-outline';
-  return 'sparkles-outline';
-}
 
 function getDisplayName(): string {
   const { user } = useAuthStore.getState();
@@ -213,7 +190,6 @@ export default function CustomerHome() {
   const { t, i18n } = useTranslation();
   const reportReasons = useMemo(() => getFeedReportReasons(), [i18n.language]);
   const dateLocale = useMemo(() => dateFnsLocaleForApp(), [i18n.language]);
-  const locTag = useMemo(() => complaintsLocaleTag(), [i18n.language]);
   const timeAgoFn = useCallback(
     (date: string | null | undefined) => {
       if (!date) return '';
@@ -1163,49 +1139,56 @@ export default function CustomerHome() {
     [myGuestId, repostingPostId, t, load]
   );
 
-  const handleDeleteOwnPost = useCallback(async (post: FeedPost) => {
-    const guestRow = await getOrCreateGuestForCurrentSession();
-    if (!guestRow?.guest_id || post.guest_id !== guestRow.guest_id) return;
-    Alert.alert(t('deletePostTitle'), t('deletePostMessage'), [
-      { text: t('cancel'), style: 'cancel' },
-      {
-        text: t('delete'),
-        style: 'destructive',
-        onPress: async () => {
-          setMenuPostId(null);
-          setDeletingPostId(post.id);
-          const { error } = await supabase.from('feed_posts').delete().eq('id', post.id);
-          setDeletingPostId(null);
-          if (error) {
-            Alert.alert(t('error'), error.message || t('postDeleteFailed'));
-            return;
-          }
-          await removeFeedMediaObjectsForPostUrls([post.media_url, post.thumbnail_url]);
-          setFeedPosts((prev) => prev.filter((p) => p.id !== post.id));
-          setLikeCounts((prev) => {
-            const n = { ...prev };
-            delete n[post.id];
-            return n;
-          });
-          setCommentCounts((prev) => {
-            const n = { ...prev };
-            delete n[post.id];
-            return n;
-          });
-          setMyLikes((prev) => {
-            const n = new Set(prev);
-            n.delete(post.id);
-            return n;
-          });
-          setCommentsByPost((prev) => {
-            const n = { ...prev };
-            delete n[post.id];
-            return n;
-          });
-          if (commentsSheetPostId === post.id) setCommentsSheetPostId(null);
+  const handleDeleteOwnPost = useCallback((post: FeedPost) => {
+    setMenuPostId(null);
+    requestAnimationFrame(() => {
+      Alert.alert(t('deletePostTitle'), t('deletePostMessage'), [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: t('delete'),
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const guestRow = await getOrCreateGuestForCurrentSession();
+              if (!guestRow?.guest_id || post.guest_id !== guestRow.guest_id) {
+                Alert.alert(t('error'), t('postDeleteFailed'));
+                return;
+              }
+              setDeletingPostId(post.id);
+              const { error } = await supabase.from('feed_posts').delete().eq('id', post.id);
+              setDeletingPostId(null);
+              if (error) {
+                Alert.alert(t('error'), error.message || t('postDeleteFailed'));
+                return;
+              }
+              await removeFeedMediaObjectsForPostUrls([post.media_url, post.thumbnail_url]);
+              setFeedPosts((prev) => prev.filter((p) => p.id !== post.id));
+              setLikeCounts((prev) => {
+                const n = { ...prev };
+                delete n[post.id];
+                return n;
+              });
+              setCommentCounts((prev) => {
+                const n = { ...prev };
+                delete n[post.id];
+                return n;
+              });
+              setMyLikes((prev) => {
+                const n = new Set(prev);
+                n.delete(post.id);
+                return n;
+              });
+              setCommentsByPost((prev) => {
+                const n = { ...prev };
+                delete n[post.id];
+                return n;
+              });
+              if (commentsSheetPostId === post.id) setCommentsSheetPostId(null);
+            })();
+          },
         },
-      },
-    ]);
+      ]);
+    });
   }, [commentsSheetPostId, t]);
 
   const handleBlockUser = useCallback(async (post: FeedPost) => {
@@ -1306,7 +1289,7 @@ export default function CustomerHome() {
 
   const renderFeedPost = useCallback(
     ({ item: post }: ListRenderItemInfo<FeedPost>) => {
-      const feedCardWidth = feedXMediaWidth(SCREEN_WIDTH, 12);
+      const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH, pds.outerPadding);
       const staffInfo = parseFeedStaffEmbed(post.staff);
       const guestInfo = parseFeedGuestEmbed(post.guest);
       const isGuestPost = !staffInfo && !!(guestInfo || post.guest_id);
@@ -1354,9 +1337,9 @@ export default function CustomerHome() {
             : [];
       const imageUri = postMediaItems.length > 0 ? postMediaItems[0].thumbnail_url || postMediaItems[0].media_url : null;
       const hasMedia = !!imageUri;
-      const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, postMediaItems.length);
+      const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, postMediaItems);
       const mediaEl = hasMedia ? (
-        <View style={[styles.postImageWrap, { height: feedMediaHeight, borderRadius: 16 }]}>
+        <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
           <FeedPostMediaGrid
             items={postMediaItems.map((m) => ({
               id: m.id,
@@ -1401,7 +1384,7 @@ export default function CustomerHome() {
       return (
         <View style={styles.feedListItem}>
           <CustomerFeedPostCard
-            horizontalInset={12}
+            horizontalInset={pds.outerPadding}
             socialHeader
             postTag={post.post_tag ?? null}
             authorName={authorName}
@@ -1452,10 +1435,6 @@ export default function CustomerHome() {
             onRepost={myGuestId ? () => handleRepost(post, authorName) : undefined}
             reposting={repostingPostId === post.id}
             onMenu={() => {
-              if (user && myGuestId && post.guest_id === myGuestId) {
-                handleDeleteOwnPost(post);
-                return;
-              }
               setMenuPostId(menuPostId === post.id ? null : post.id);
             }}
           />
@@ -1481,7 +1460,6 @@ export default function CustomerHome() {
       t,
       toggleLike,
       handleRepost,
-      handleDeleteOwnPost,
       openStoryAt,
     ]
   );
@@ -1543,20 +1521,45 @@ export default function CustomerHome() {
       estimatedItemSize={FEED_FLASH_LIST_PROPS.estimatedItemSize}
       drawDistance={FEED_FLASH_LIST_PROPS.drawDistance}
       removeClippedSubviews={FEED_FLASH_LIST_PROPS.removeClippedSubviews}
-      showsVerticalScrollIndicator={false}
+      decelerationRate={FEED_FLASH_LIST_PROPS.decelerationRate}
+      scrollEventThrottle={FEED_FLASH_LIST_PROPS.scrollEventThrottle}
+      showsVerticalScrollIndicator={FEED_FLASH_LIST_PROPS.showsVerticalScrollIndicator}
+      bounces={FEED_FLASH_LIST_PROPS.bounces}
+      alwaysBounceVertical={FEED_FLASH_LIST_PROPS.alwaysBounceVertical}
+      overScrollMode={FEED_FLASH_LIST_PROPS.overScrollMode}
+      nestedScrollEnabled={FEED_FLASH_LIST_PROPS.nestedScrollEnabled}
+      keyboardDismissMode={FEED_FLASH_LIST_PROPS.keyboardDismissMode}
       scrollEnabled={!commentsSheetPostId}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
       }
       ListHeaderComponent={
       <>
-      <GuestFeedDashboardStrip
-        refreshKey={refreshing ? Date.now() : 0}
-        onCreatePost={() => router.push('/customer/feed/new')}
+      <GuestFeedDashboardStrip />
+      <FeedComposePromptRow
+        avatarUrl={
+          (typeof user?.user_metadata?.avatar_url === 'string' && user.user_metadata.avatar_url) ||
+          (typeof user?.user_metadata?.picture === 'string' && user.user_metadata.picture) ||
+          null
+        }
+        displayName={getDisplayName()}
+        placeholder={t('feedWhatsHappening')}
+        onPress={() => router.push('/customer/feed/new')}
       />
 
       {activeStaff.length > 0 ? (
-        <View style={styles.staffAvatarsSection}>
+        <LinearGradient
+          colors={
+            (palette.gradientStoryRail ?? ['#ECFDF5', '#FFF7ED', '#F0FDFA']) as [
+              string,
+              string,
+              ...string[],
+            ]
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.staffAvatarsSection}
+        >
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -1566,136 +1569,11 @@ export default function CustomerHome() {
           >
             {activeStaff.map((s) => renderGuestStaffAvatarCard(s))}
           </ScrollView>
-        </View>
+        </LinearGradient>
       ) : null}
 
-      {myRoom ? (
-        <View style={styles.headerPad}>
-          <Text style={[styles.sectionTitle, styles.sectionTitleAfterHero]}>{feedSharedText('guestHomeMyRoom')}</Text>
-          <View style={styles.roomCard}>
-            <View style={styles.roomCardAccent} />
-            <View style={styles.roomCardInner}>
-              <View style={styles.roomCardHeader}>
-                <View style={styles.roomNumberBadge}>
-                  <Ionicons name="bed-outline" size={20} color={theme.colors.primary} />
-                  <Text style={styles.roomTitle}>{feedSharedText('guestHomeRoomNumber', { room: myRoom.room_number })}</Text>
-                </View>
-                {myRoom.view_type ? (
-                  <View style={styles.roomViewChip}>
-                    <Text style={styles.roomViewChipText}>{myRoom.view_type}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.roomDatesRow}>
-                {myRoom.check_in_at && (
-                  <View style={styles.roomDateItem}>
-                    <Ionicons name="log-in-outline" size={14} color={theme.colors.textSecondary} />
-                    <Text style={styles.roomMeta}>{new Date(myRoom.check_in_at).toLocaleDateString(locTag)} · 14:00</Text>
-                  </View>
-                )}
-                {myRoom.check_out_at && (
-                  <View style={styles.roomDateItem}>
-                    <Ionicons name="log-out-outline" size={14} color={theme.colors.textSecondary} />
-                    <Text style={styles.roomMeta}>{new Date(myRoom.check_out_at).toLocaleDateString(locTag)} · 11:00</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.roomActions}>
-                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/hotel-info')} activeOpacity={0.8}>
-                  <Ionicons name="information-circle-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{guestServiceText('hotelInfoTitle')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/key')} activeOpacity={0.8}>
-                  <Ionicons name="key-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{t('digitalKey')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/room-service/')} activeOpacity={0.8}>
-                  <Ionicons name="restaurant-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{t('screenRoomService')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.roomBtn} onPress={() => router.push('/customer/hotel-menu')} activeOpacity={0.8}>
-                  <Ionicons name="cafe-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{t('screenHotelKitchenMenu')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.roomBtn}
-                  onPress={() => router.push('/customer/facility-journal')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="clipboard-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{t('customerFacilityJournalTitle')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.roomBtn}
-                  onPress={() => router.push('/customer/service-requests/new?type=room_cleaning')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="sparkles-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{feedSharedText('guestRequestCleaning')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.roomBtn}
-                  onPress={() => router.push('/customer/service-requests/new?type=lost_item')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="search-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{guestServiceText('homeLostItem')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.roomBtn}
-                  onPress={() => router.push('/customer/service-requests')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="clipboard-outline" size={18} color={theme.colors.primary} />
-                  <Text style={styles.roomBtnText}>{guestServiceText('listTitle')}</Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity
-                style={styles.complaintBtn}
-                onPress={() => router.push('/customer/complaints/new')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="flag-outline" size={18} color="#fff" />
-                <Text style={styles.complaintBtnText}>{complaintsText('homeComplaintCta')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      ) : null}
-
-      {facilities.length > 0 ? (
-        <View style={styles.headerPad}>
-          <Text style={styles.sectionLabel}>{feedSharedText('guestHomeFacilities')}</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.facilitiesRow}
-            style={styles.storyScroll}
-          >
-            {facilities.map((f, idx) => (
-              <View key={`${f.name}-${idx}`} style={styles.facilityChip}>
-                <View style={styles.facilityIconCircle}>
-                  <Ionicons name={getFacilityIonIcon(f.icon, f.name)} size={22} color={theme.colors.primaryDark} />
-                </View>
-                <Text style={styles.facilityChipName} numberOfLines={2}>
-                  {f.name}
-                </Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      ) : null}
-
-      <View style={styles.headerPad}>
-        <GuestStaffContactsCard refreshKey={refreshing ? Date.now() : 0} />
-
-        <CustomerFeedSectionHeader
-          postCount={feedPosts.length}
-          onCreatePost={() => router.push('/customer/feed/new')}
-        />
-      </View>
       {loading && feedPosts.length === 0 ? (
-        <View style={{ gap: 14 }}>
+        <View style={{ gap: 14, paddingHorizontal: 16, marginTop: 12 }}>
           {[1, 2].map((i) => (
             <SkeletonCard key={`feed-sk-${i}`} />
           ))}
@@ -1728,8 +1606,24 @@ export default function CustomerHome() {
     />
 
       <Modal visible={!!menuPostId} transparent animationType="fade" onRequestClose={() => setMenuPostId(null)}>
-        <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
+        <View style={styles.menuModalOverlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setMenuPostId(null)} />
           <View style={styles.menuModalBox}>
+            {menuPost && myGuestId && menuPost.guest_id === myGuestId ? (
+              <TouchableOpacity
+                style={styles.menuModalItem}
+                onPress={() => handleDeleteOwnPost(menuPost)}
+                activeOpacity={0.7}
+                disabled={deletingPostId === menuPost.id}
+              >
+                {deletingPostId === menuPost.id ? (
+                  <ActivityIndicator size="small" color={theme.colors.error} />
+                ) : (
+                  <Ionicons name="trash-outline" size={22} color={theme.colors.error} />
+                )}
+                <Text style={[styles.menuModalItemText, { color: theme.colors.error }]}>{t('delete')}</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={styles.menuModalItem}
               onPress={() => menuPost && handleBlockUser(menuPost)}
@@ -1747,7 +1641,7 @@ export default function CustomerHome() {
               <Text style={styles.menuModalItemText}>{feedSharedText('reportVerb')}</Text>
             </TouchableOpacity>
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {/* Yorum kartı */}
@@ -2116,7 +2010,7 @@ export default function CustomerHome() {
         </Pressable>
       </Modal>
 
-      {/* Gönderi medyası tam ekran (resim / video) — personel ile aynı */}
+      {/* Gönderi medyası tam ekran — pinch zoom */}
       <Modal
         visible={!!fullscreenPostMedia}
         transparent
@@ -2127,22 +2021,22 @@ export default function CustomerHome() {
         <View style={styles.fullscreenOverlay}>
           {fullscreenPostMedia ? (
             <>
-              {fullscreenPostMedia.mediaType === 'video' ? (
-                <FeedFullscreenVideoPlayer
-                  ref={fullscreenVideoRef}
-                  uri={fullscreenPostMedia.uri}
-                  posterUri={fullscreenPostMedia.posterUri}
-                  onReady={() => setFullscreenVideoReady(true)}
-                />
-              ) : (
-                <Pressable style={styles.fullscreenImageWrap} onPress={() => setFullscreenPostMedia(null)}>
+              <FeedZoomableMedia onDismiss={() => setFullscreenPostMedia(null)}>
+                {fullscreenPostMedia.mediaType === 'video' ? (
+                  <FeedFullscreenVideoPlayer
+                    ref={fullscreenVideoRef}
+                    uri={fullscreenPostMedia.uri}
+                    posterUri={fullscreenPostMedia.posterUri}
+                    onReady={() => setFullscreenVideoReady(true)}
+                  />
+                ) : (
                   <CachedImage
                     uri={fullscreenPostMedia.uri}
                     style={[styles.fullscreenImage, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
                     contentFit="contain"
                   />
-                </Pressable>
-              )}
+                )}
+              </FeedZoomableMedia>
               <TouchableOpacity
                 style={[styles.fullscreenCloseBtn, { top: insets.top + 8 }]}
                 onPress={() => setFullscreenPostMedia(null)}
@@ -2163,11 +2057,13 @@ const styles = StyleSheet.create({
   content: { paddingTop: 4, paddingBottom: theme.spacing.xxl + 24 },
   headerPad: { paddingHorizontal: HORIZONTAL_GUTTER },
   staffAvatarsSection: {
-    backgroundColor: pds.pageBg,
-    paddingTop: 4,
-    paddingBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: pds.cardBorder,
+    marginHorizontal: 14,
+    marginBottom: 8,
+    borderRadius: 20,
+    paddingTop: 10,
+    paddingBottom: 12,
+    overflow: 'hidden',
+    borderBottomWidth: 0,
   },
   staffAvatarsScroll: {},
   staffAvatarsScrollContent: { paddingLeft: 12, paddingRight: 16, alignItems: 'center' },
@@ -2727,7 +2623,7 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
     borderRadius: 16,
-    backgroundColor: theme.colors.borderLight,
+    backgroundColor: 'transparent',
   },
   postImage: {
     width: '100%',

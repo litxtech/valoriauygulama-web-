@@ -188,6 +188,13 @@ export default function CustomerProfileSettings() {
                 subtitle={t('customerProfileEditButton')}
                 onPress={() => router.push('/customer/profile/edit')}
               />
+              <ProfileMenuRow
+                grouped
+                icon="calendar-outline"
+                title={t('bookingMyBookings')}
+                subtitle={t('bookingOpenPdf')}
+                onPress={() => router.push('/customer/bookings')}
+              />
             </ProfileMenuGroup>
             <TouchableOpacity
               style={[styles.primaryMenuCard, contractOpening && styles.primaryMenuCardDisabled]}

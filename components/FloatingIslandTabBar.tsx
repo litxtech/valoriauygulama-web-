@@ -8,43 +8,35 @@ import { GlassTabBarShell } from '@/components/premium/GlassTabBarShell';
 import { PartnerGlassTabBarShell } from '@/components/breakfastPartner/PartnerGlassTabBarShell';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { getAppTabBarColors } from '@/constants/tabBarTheme';
-import { FLOAT_SIDE_INSET, FLOAT_BOTTOM_GAP } from '@/constants/floatingTabBarMetrics';
+import {
+  FLOAT_SIDE_INSET,
+  FLOAT_BOTTOM_GAP,
+  PARTNER_FLOAT_SIDE_INSET,
+  PARTNER_FLOAT_BOTTOM_GAP,
+} from '@/constants/floatingTabBarMetrics';
 
-const ISLAND_RADIUS = 26;
+const DOCK_RADIUS = 0;
+const PARTNER_ISLAND_RADIUS = 26;
 
 export type FloatingIslandTabBarProps = BottomTabBarProps & {
   surfaceColor?: string;
   borderColor?: string;
   hidden?: boolean;
-  /** Partner portal — koyu cam + her platformda yüzen ada */
+  /** Partner portal — koyu cam + yüzen ada */
   variant?: 'default' | 'partner';
   /** Tab slotu dışında, barın tam ortasında yüzen aksiyon (ör. kimlik çekim FAB). */
   centerAction?: ReactNode;
   /**
    * true: ada absolute yüzer, arka plan şeffaf → içerik (feed) barın arkasından akar.
    * Bu modda her sekme ekranı kendi alt boşluğunu eklemeli (getFloatingTabBarTotalHeight).
-   * false (varsayılan): ada flex akışında yer kaplar, dolu yüzey (geriye dönük uyumlu).
+   * false (varsayılan): ada flex akışında yer kaplar.
    */
   floatOverContent?: boolean;
 };
 
-function TabBarGlassShell({
-  variant,
-  borderRadius,
-  children,
-}: {
-  variant: 'default' | 'partner';
-  borderRadius: number;
-  children: ReactNode;
-}) {
-  if (variant === 'partner') {
-    return <PartnerGlassTabBarShell borderRadius={borderRadius}>{children}</PartnerGlassTabBarShell>;
-  }
-  return <GlassTabBarShell borderRadius={borderRadius}>{children}</GlassTabBarShell>;
-}
-
 /**
- * Tüm platformlarda yüzen ada: alt/sol/sağ kenardan boşluklu, şeffaf buzlu cam.
+ * Default: Instagram kenardan-kenara buzlu cam (blur tüm şeritte).
+ * Partner: yüzen ada.
  */
 export function FloatingIslandTabBar({
   surfaceColor,
@@ -58,8 +50,7 @@ export function FloatingIslandTabBar({
 }: FloatingIslandTabBarProps) {
   const { isNight } = usePremiumTheme();
   const tabBar = getAppTabBarColors(isNight);
-  // floatOverContent: feed arkadan görünsün diye şeffaf. Aksi halde eski dolu yüzey.
-  const resolvedSurface = floatOverContent ? 'transparent' : surfaceColor ?? tabBar.shellBackground;
+  const isPartner = variant === 'partner';
 
   const translateY = useRef(new Animated.Value(0)).current;
 
@@ -74,18 +65,14 @@ export function FloatingIslandTabBar({
 
   const safeInsets = useSafeAreaInsets();
   const rawBottom = navInsets?.bottom ?? safeInsets.bottom;
-  const resolvedInsets = {
-    top: navInsets?.top ?? safeInsets.top,
-    right: navInsets?.right ?? safeInsets.right,
-    bottom: Platform.OS === 'android' ? getEffectiveBottomInset({ bottom: rawBottom }) : rawBottom,
-    left: navInsets?.left ?? safeInsets.left,
-  };
+  const bottomInset =
+    Platform.OS === 'android' ? getEffectiveBottomInset({ bottom: rawBottom }) : rawBottom;
   const onTabBarHeightChange = useContext(BottomTabBarHeightCallbackContext);
+  const sideInset = isPartner ? PARTNER_FLOAT_SIDE_INSET : FLOAT_SIDE_INSET;
+  const bottomGap = isPartner ? PARTNER_FLOAT_BOTTOM_GAP : FLOAT_BOTTOM_GAP;
+  const radius = isPartner ? PARTNER_ISLAND_RADIUS : DOCK_RADIUS;
+  const bottomPad = bottomInset + bottomGap;
 
-  // floatOverContent: ada absolute yüzer, flex akışında yer kaplamaz → sahne tam
-  // yükseklik alır, feed barın arkasından akar. Ekranlar kendi alt boşluğunu eklediği
-  // için react-navigation'a 0 rapor ederek çift boşluğu önlüyoruz.
-  // Aksi halde (eski mod) gerçek yükseklik raporlanır ve bar flex'te yer kaplar.
   const handleShellLayout = useCallback(
     (e: LayoutChangeEvent) => {
       onTabBarHeightChange?.(floatOverContent ? 0 : e.nativeEvent.layout.height);
@@ -100,6 +87,32 @@ export function FloatingIslandTabBar({
     />
   );
 
+  // Partner: eski yüzen ada (blur ada içinde)
+  if (isPartner) {
+    return (
+      <Animated.View
+        onLayout={handleShellLayout}
+        style={[
+          styles.iosShell,
+          floatOverContent ? styles.iosShellFloating : null,
+          {
+            backgroundColor: surfaceColor ?? tabBar.shellBackground,
+            paddingBottom: bottomPad,
+            paddingHorizontal: sideInset,
+            transform: [{ translateY }],
+          },
+        ]}
+        pointerEvents="box-none"
+      >
+        <View style={[styles.shadowHost, styles.shadowHostPartner]} pointerEvents="box-none">
+          <PartnerGlassTabBarShell borderRadius={radius}>{tabBarNode}</PartnerGlassTabBarShell>
+          {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
+        </View>
+      </Animated.View>
+    );
+  }
+
+  // Instagram: buz cam tüm alt şeridi (butonlar + home indicator) kaplar
   return (
     <Animated.View
       onLayout={handleShellLayout}
@@ -107,27 +120,17 @@ export function FloatingIslandTabBar({
         styles.iosShell,
         floatOverContent ? styles.iosShellFloating : null,
         {
-          backgroundColor: resolvedSurface,
-          paddingBottom: resolvedInsets.bottom + FLOAT_BOTTOM_GAP,
-          paddingHorizontal: FLOAT_SIDE_INSET,
+          backgroundColor: 'transparent',
+          paddingHorizontal: sideInset,
           transform: [{ translateY }],
         },
       ]}
       pointerEvents="box-none"
     >
-      <View
-        style={[
-          styles.shadowHost,
-          variant === 'partner' && styles.shadowHostPartner,
-          isNight && variant === 'default' && styles.shadowHostNight,
-        ]}
-        pointerEvents="box-none"
-      >
-        <TabBarGlassShell variant={variant} borderRadius={ISLAND_RADIUS}>
-          {tabBarNode}
-        </TabBarGlassShell>
-        {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
-      </View>
+      <GlassTabBarShell borderRadius={radius} style={styles.glassFill}>
+        <View style={{ paddingBottom: bottomPad }}>{tabBarNode}</View>
+      </GlassTabBarShell>
+      {centerAction ? <View style={styles.centerActionSlot}>{centerAction}</View> : null}
     </Animated.View>
   );
 }
@@ -142,8 +145,11 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
+  glassFill: {
+    width: '100%',
+  },
   shadowHost: {
-    borderRadius: ISLAND_RADIUS,
+    borderRadius: PARTNER_ISLAND_RADIUS,
     overflow: 'visible',
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 4 },
@@ -165,9 +171,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 30,
     pointerEvents: 'box-none',
-  },
-  shadowHostNight: {
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
   },
 });

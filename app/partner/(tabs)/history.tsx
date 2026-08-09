@@ -45,7 +45,7 @@ type HistoryTab = 'breakfast' | 'laundry';
 
 export default function PartnerHistoryScreen() {
   const insets = useSafeAreaInsets();
-  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
+  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 24;
   const partner = usePartnerAuthStore((s) => s.partner)!;
   const [tab, setTab] = useState<HistoryTab>('breakfast');
   const [entries, setEntries] = useState<PartnerDailyEntryLedgerRow[]>([]);

@@ -2,36 +2,44 @@ import { Platform } from 'react-native';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
 
-/** Yüzen ada — sol/sağ kenardan boşluk (tüm platformlar) */
-export const FLOAT_SIDE_INSET = 16;
-/** Yüzen ada — güvenli alanın üstüne eklenen alt boşluk (ada havada dursun) */
-export const FLOAT_BOTTOM_GAP = 12;
+/** Yüzen cam ada — yan boşluk */
+export const FLOAT_SIDE_INSET = 12;
+/** Ada home indicator üstünde hafif boşluk */
+export const FLOAT_BOTTOM_GAP = 8;
+/** Partner portal — yüzen ada kenar boşluğu */
+export const PARTNER_FLOAT_SIDE_INSET = 16;
+export const PARTNER_FLOAT_BOTTOM_GAP = 12;
 
-/** Android: ikon + etiket satırı (safe area BottomTabBar içinde) */
-export const ANDROID_TAB_BAR_CONTENT_HEIGHT = 56;
+/** Kompakt tab satırı (FAB overhang yok) */
+export const VALORIA_TAB_BAR_CONTENT_HEIGHT = 54;
+export const VALORIA_TAB_BAR_RADIUS = 24;
+export const VALORIA_TAB_FAB_OVERHANG = 0;
 
-/** iOS yüzen ada: daha kompakt iç satır */
-export const IOS_TAB_BAR_CONTENT_HEIGHT = 50;
+export const ANDROID_TAB_BAR_CONTENT_HEIGHT = VALORIA_TAB_BAR_CONTENT_HEIGHT;
+export const IOS_TAB_BAR_CONTENT_HEIGHT = VALORIA_TAB_BAR_CONTENT_HEIGHT;
 
 export function getFloatingTabBarInnerHeight(): number {
-  return Platform.OS === 'android' ? ANDROID_TAB_BAR_CONTENT_HEIGHT : IOS_TAB_BAR_CONTENT_HEIGHT;
+  return VALORIA_TAB_BAR_CONTENT_HEIGHT;
 }
 
-/** Görünür yüzen ada yüksekliği (güvenli alan HARİÇ) — tabBarStyle.height için */
 export function getFloatingTabBarBarHeight(): number {
-  return getFloatingTabBarInnerHeight() + 14;
+  return getFloatingTabBarInnerHeight() + VALORIA_TAB_FAB_OVERHANG;
 }
 
-/** Adanın altındaki boşluk = güvenli alan + yüzen boşluk */
-export function getFloatingTabBarBottomGap(insets?: Pick<EdgeInsets, 'bottom'> | null): number {
+export function getFloatingTabBarBottomGap(
+  insets?: Pick<EdgeInsets, 'bottom'> | null,
+  opts?: { partner?: boolean }
+): number {
   const safe =
     Platform.OS === 'android'
       ? getEffectiveBottomInset(insets ?? { bottom: 0 })
       : insets?.bottom ?? 0;
-  return safe + FLOAT_BOTTOM_GAP;
+  return safe + (opts?.partner ? PARTNER_FLOAT_BOTTOM_GAP : FLOAT_BOTTOM_GAP);
 }
 
-/** İçeriğin tab bar arkasında kalmaması için rezerve edilen toplam yükseklik */
-export function getFloatingTabBarTotalHeight(insets?: Pick<EdgeInsets, 'bottom'> | null): number {
-  return getFloatingTabBarBarHeight() + getFloatingTabBarBottomGap(insets);
+export function getFloatingTabBarTotalHeight(
+  insets?: Pick<EdgeInsets, 'bottom'> | null,
+  opts?: { partner?: boolean }
+): number {
+  return getFloatingTabBarBarHeight() + getFloatingTabBarBottomGap(insets, opts);
 }

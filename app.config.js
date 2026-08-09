@@ -4,13 +4,13 @@ const devClientScheme = 'exp+valoria-hotel';
 
 /**
  * Mağaza sürümleri — görünen sürüm adı (APP_VERSION) burada; bundle no EAS remote.
- * ANDROID_VERSION_CODE / IOS_BUILD_NUMBER: ilk remote değer (300). Sonraki production
- * build’lerde eas.json autoIncrement ile EAS sunucusunda otomatik artar — Play çakışması olmaz.
- * Önceki: 3.3.2 · Yeni: 3.3.3 (çıkış panosu, ekstra temizlik, çekilen kimlikler UI).
+ * ANDROID_VERSION_CODE / IOS_BUILD_NUMBER: local fallback; production’da eas.json
+ * autoIncrement ile EAS remote (Android 309→310+, iOS 312→313+) otomatik artar.
+ * Önceki: 3.3.4 · Yeni: 3.3.5 (feed/lobby, rezervasyon, maaş, muhasebe, bildirim sesleri).
  */
-const APP_VERSION = '3.3.3';
-const ANDROID_VERSION_CODE = 308;
-const IOS_BUILD_NUMBER = '307';
+const APP_VERSION = '3.3.5';
+const ANDROID_VERSION_CODE = 310;
+const IOS_BUILD_NUMBER = '313';
 
 /** EAS Build: preview/production → Apple production APNs; development client → sandbox */
 const easProfile = process.env.EAS_BUILD_PROFILE;
@@ -182,6 +182,7 @@ const baseConfig = {
           './assets/sounds/kbs_scan.wav',
           './assets/sounds/message_pop.wav',
           './assets/sounds/room_cleaning.wav',
+          './assets/sounds/room_payment.wav',
         ],
       },
     ],

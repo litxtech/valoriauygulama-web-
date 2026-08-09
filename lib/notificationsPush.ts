@@ -77,6 +77,7 @@ const FEATURE_SOUND_CHANNELS: { id: string; name: string; sound: string; descrip
   { id: 'valoria_kbs_v1', name: 'Kimlik / pasaport (KBS)', sound: 'kbs_scan.wav', description: 'KBS belge ve kimlik bildirimleri' },
   { id: 'valoria_messages_v2', name: 'Valoria Mesajlar', sound: 'message_pop.wav', description: 'Sohbet mesajları — gönderen ve içerik' },
   { id: 'valoria_cleaning_v1', name: 'Temizlik', sound: 'room_cleaning.wav', description: 'Oda temizlik eklendi / temizlendi bildirimleri' },
+  { id: 'valoria_room_payment_v1', name: 'Oda ödemeleri', sound: 'room_payment.wav', description: 'Oda tahsilatı alınacak / alındı bildirimleri' },
 ];
 
 function isChatMessageNotificationType(notificationType: string): boolean {

@@ -1,7 +1,7 @@
 /**
  * Karbon raporu: HTML → PDF (expo-print) ve CSV dışa aktarma.
  */
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
@@ -217,7 +217,7 @@ export function buildCarbonReportHtml(params: {
 }
 
 export async function shareCarbonPdf(html: string, fileBaseName: string): Promise<void> {
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const { uri } = await printToLocalPdfFile({ html, base64: false });
   const canShare = await Sharing.isAvailableAsync();
   if (canShare) {
     await Sharing.shareAsync(uri, {

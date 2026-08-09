@@ -3,6 +3,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { escapeHtmlMealMenu, formatTrFullDayLabelFromYmd } from '@/lib/mealMenuDate';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
+import { printHtmlToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import type { MealFields } from '@/lib/mealMenuUi';
 
 function dayHasMealContent(fields: MealFields): boolean {
@@ -196,13 +197,12 @@ export async function generateMealMenuPdfFile(input: MealMenuPdfInput): Promise<
     throw new Error('Bu ay için yazdırılacak yemek kaydı bulunmuyor.');
   }
   const html = buildMealMenuPdfHtml(input);
-  const { uri } = await Print.printToFileAsync({
-    html,
+  return printHtmlToLocalPdfFile(html, {
     width: 595,
     height: 842,
     margins: { top: 28, bottom: 32, left: 32, right: 32 },
+    filePrefix: 'yemek-listesi',
   });
-  return uri;
 }
 
 export async function sendMealMenuPdfToPrinterEmail(input: MealMenuPdfInput, pdfUri: string): Promise<void> {

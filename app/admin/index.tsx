@@ -125,14 +125,10 @@ const SECTIONS: Section[] = [
       { href: '/admin/rooms/new', icon: 'add-circle-outline', label: 'Yeni oda' },
       { href: '/admin/checkin', icon: 'calendar-outline', label: 'Check-in / Check-out' },
       { href: '/admin/tasks', icon: 'clipboard-outline', label: 'Personel görevleri' },
-      { href: '/admin/points', icon: 'star-outline', label: 'Puan yönetimi' },
       { href: '/admin/attendance', icon: 'time-outline', label: 'Personel mesai takibi' },
       { href: '/admin/guests', icon: 'people-outline', label: 'Misafirler' },
-      { href: '/admin/guest-welcome-card', icon: 'hand-left-outline', label: 'Misafir karşılama kartı' },
       { href: '/admin/report', icon: 'stats-chart-outline', label: 'Günlük doluluk raporu' },
       { href: '/admin/report/breakfast-briefing', icon: 'cafe-outline', label: 'Sabah kahvaltı sayısı' },
-      { href: '/admin/sales', icon: 'cash-outline', label: 'Satış & Komisyon' },
-      { href: '/admin/hmb-reports', icon: 'document-attach-outline', label: 'HMB Raporu (Maliye)' },
     ],
   },
   {
@@ -141,18 +137,11 @@ const SECTIONS: Section[] = [
     icon: 'chatbubble-ellipses-outline',
     items: [
       { href: '/admin/feed', icon: 'images-outline', label: 'Gönderiler' },
-      { href: '/admin/hotel-pulse', icon: 'pulse-outline', label: 'Misafir otel nabzı' },
       { href: '/admin/local-area-guide', icon: 'map-outline', label: 'Gezilecek yerler (bölge rehberi)' },
-      { href: '/admin/map', icon: 'map-outline', label: 'Harita (canlı takip)' },
-      { href: '/admin/smart-ops', icon: 'pulse-outline', label: 'Operasyon & bildirim merkezi' },
       { href: '/admin/announcements/compose', icon: 'megaphone-outline', label: 'Zengin duyuru oluştur' },
-      { href: '/admin/engagement', icon: 'analytics-outline', label: 'Duyuru & görev takibi' },
       { href: '/admin/staff-emergency', icon: 'megaphone-outline', label: 'Personel toplanma alarmi' },
-      { href: '/admin/emergency-locations', icon: 'warning-outline', label: 'Acil lokasyonlari yonet' },
-      { href: '/admin/reports', icon: 'flag-outline', label: 'Şikayetler (paylaşım bildirimleri)', badge: 0 },
       { href: '/admin/complaints', icon: 'chatbox-ellipses-outline', label: 'Misafir Şikayet/Oneri', badge: 0 },
       { href: '/admin/qr-complaints', icon: 'qr-code-outline', label: 'QR Şikayet Hattı', badge: 0 },
-      { href: '/admin/staff-complaints', icon: 'alert-circle-outline', label: 'Personel Şikayet Notları' },
     ],
   },
   {
@@ -164,13 +153,7 @@ const SECTIONS: Section[] = [
       { href: '/admin/fnb-hub', icon: 'grid-outline', label: 'F&B Merkezi (mutfak · satış · menü)' },
       { href: '/admin/payments', icon: 'card-outline', label: 'Tahsilat Merkezi (QR · sepet · bahşiş)' },
       { href: '/admin/accounting', icon: 'calculator-outline', label: 'Muhasebe (gelir / gider)', badge: 0 },
-      { href: '/admin/accounting/pos-receipts', icon: 'receipt-outline', label: 'POS fiş listesi' },
-      { href: '/admin/accounting/pos-receipts/batch', icon: 'images-outline', label: 'Çoklu fiş yükle' },
-      { href: '/admin/accounting/pos-receipts/new', icon: 'scan-outline', label: 'Tek POS fişi ekle' },
       { href: '/admin/expenses', icon: 'wallet-outline', label: 'Personel harcamaları', badge: 0 },
-      { href: '/admin/carbon', icon: 'leaf-outline', label: 'Karbon girdileri' },
-      { href: '/admin/trade-partners', icon: 'storefront-outline', label: 'Partner Ticaret' },
-      { href: '/admin/transfer-tour', icon: 'car-sport-outline', label: 'Transfer & Tur' },
       { href: '/admin/salary', icon: 'cash-outline', label: 'Maaş yönetimi' },
       { href: '/admin/finance-checks', icon: 'document-text-outline', label: 'Çek takibi' },
       { href: '/admin/debts', icon: 'swap-horizontal-outline', label: 'Borç / alacak' },
@@ -178,23 +161,19 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Kahvaltı partnerleri',
-    subtitle: 'Partner otelleri, teyit ve kamera kayıt talepleri',
+    subtitle: 'Partner otelleri ve teyit',
     icon: 'restaurant-outline',
     items: [
       { href: '/admin/breakfast-partners', icon: 'business-outline', label: 'Kahvaltı partner otelleri' },
       { href: '/admin/breakfast-confirm', icon: 'cafe-outline', label: 'Kahvaltı teyit kayıtları' },
-      { href: '/admin/camera-requests', icon: 'videocam-outline', label: 'Kahvaltı kamera kayıt talepleri' },
     ],
   },
   {
     title: 'Erişim & Güvenlik',
     icon: 'shield-checkmark-outline',
     items: [
-      { href: '/admin/access', icon: 'key-outline', label: 'Geçiş kontrolü' },
-      { href: '/admin/cameras', icon: 'videocam-outline', label: 'Kamera yönetimi' },
-      { href: '/admin/technical-assets', icon: 'layers-outline', label: 'Akıllı Tesis Envanteri' },
       { href: '/admin/permissions', icon: 'shield-checkmark-outline', label: 'İzinler' },
-      { href: '/admin/ui-features', icon: 'options-outline', label: 'Uygulama görünümü (özellikler & menü)' },
+      { href: '/admin/ui-features', icon: 'options-outline', label: 'Uygulama görünümü (özellikler, menü & sekmeler)' },
       { href: '/admin/kbs-settings', icon: 'scan-outline', label: 'KBS Ayarları (Admin)' },
       { href: '/admin/kbs-permissions', icon: 'shield-outline', label: 'KBS Yetkileri (OPS)' },
     ],
@@ -205,24 +184,17 @@ const SECTIONS: Section[] = [
     icon: 'settings-outline',
     items: [
       { href: '/admin/profile', icon: 'person-circle-outline', label: 'Profilim (hesap düzenle)' },
-      { href: '/admin/lobby-cover', icon: 'image-outline', label: 'Lobi kapak medyası (resim / video)' },
-      { href: '/admin/app-links', icon: 'link-outline', label: 'Uygulamalar & Web Siteleri' },
-      { href: '/admin/settings/printer', icon: 'print-outline', label: 'Yazici ayarlari' },
       { href: '/admin/documents', icon: 'folder-open-outline', label: 'Doküman Yönetimi' },
       { href: '/admin/maliye', icon: 'shield-outline', label: 'Maliye Evrak Merkezi' },
       { href: '/admin/incident-reports', icon: 'document-text-outline', label: 'Tutanaklar' },
       { href: '/admin/missing-items', icon: 'alert-circle-outline', label: 'Eksik Var' },
       { href: '/admin/lost-found', icon: 'briefcase-outline', label: 'Kayıp eşya (buluntu)' },
-      { href: '/admin/facility-journal', icon: 'clipboard-outline', label: 'Otel eşyaları kullanımı' },
       { href: '/admin/notes', icon: 'create-outline', label: 'Not Al' },
       { href: '/admin/staff-perf', icon: 'ribbon-outline', label: 'Personel Denetim & Performans' },
-      { href: '/admin/audits', icon: 'clipboard-outline', label: 'Denetim panosu' },
-      { href: '/admin/performance', icon: 'trophy-outline', label: 'Ayın en iyi personeli' },
       { href: '/admin/contracts', icon: 'document-outline', label: 'Sözleşmeler (misafir & iş ortağı)' },
       { href: '/admin/department-rules', icon: 'book-outline', label: 'Bölüm Kuralları' },
       { href: '/admin/organizations', icon: 'business-outline', label: 'İşletme yönetimi' },
       { href: '/admin/qr-designs', icon: 'qr-code-outline', label: 'QR Merkezi' },
-      { href: '/admin/qr-pages', icon: 'document-text-outline', label: 'QR Sayfalar' },
     ],
   },
 ];
@@ -782,15 +754,6 @@ export default function AdminDashboard() {
                   <Ionicons name="id-card-outline" size={20} color="#fff" />
                 </TouchableOpacity>
               ) : null}
-              <TouchableOpacity
-                onPress={() => router.push('/admin/map')}
-                style={styles.heroNavBtn}
-                activeOpacity={0.8}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Harita"
-              >
-                <Ionicons name="map-outline" size={20} color="#fff" />
-              </TouchableOpacity>
             </View>
           </View>
           <View style={styles.heroTopRow}>

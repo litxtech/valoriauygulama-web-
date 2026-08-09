@@ -240,7 +240,6 @@ export default function StaffLayout() {
     <>
       <PersonnelWarningGate staffId={staff.id} subjectDisplayName={staff.full_name} />
       <StaffLiveLocationBootstrap />
-      <StaffHamburgerNavigationHost />
       <Stack
         screenOptions={({ navigation: nav }) => ({
           headerShown: true,
@@ -449,6 +448,7 @@ export default function StaffLayout() {
       <Stack.Screen name="attendance/index" options={{ title: t('staffAttendanceNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-plan" options={{ title: t('staffCleaningNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="checkout-board" options={{ title: 'Çıkış Odaları', headerBackTitle: t('back') }} />
+      <Stack.Screen name="payment-board" options={{ title: 'Oda Ödemeleri', headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-room/[roomId]" options={{ title: t('hkDetailTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="housekeeping-board" options={{ title: t('staffHkBoardNavTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="cleaning-history" options={{ title: t('staffCleaningHistoryTitle'), headerBackTitle: t('back') }} />
@@ -463,6 +463,8 @@ export default function StaffLayout() {
       <Stack.Screen name="board" options={{ title: t('staffBoardTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="announcement-action" options={{ headerShown: false }} />
     </Stack>
+      {/* Stack üstünde olsun — kenar kaydırma dokunuş alsın */}
+      <StaffHamburgerNavigationHost />
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { hasStaffAppPermission, canViewSecurityBlacklist, canAccessOccupancyOps, type StaffPermissionSlice } from '@/lib/staffPermissions';
+import { hasStaffAppPermission, canViewSecurityBlacklist, canAccessOccupancyOps, canAccessRoomPaymentBoard, type StaffPermissionSlice } from '@/lib/staffPermissions';
 import { canAccessFnbHub } from '@/lib/fnbHub';
 import { canAccessKitchenReceptionAccounting } from '@/lib/staffPermissions';
 
@@ -145,6 +145,9 @@ export function canAccessAdminRoute(staff: StaffPermissionSlice, href: string): 
   }
   if (href === '/staff/checkout-board') {
     return canAccessOccupancyOps(staff);
+  }
+  if (href === '/staff/payment-board') {
+    return canAccessRoomPaymentBoard(staff);
   }
 
   const key = adminRoutePermissionKey(href);

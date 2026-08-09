@@ -1,14 +1,15 @@
-import { Modal, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { Modal, StyleSheet, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CachedImage } from '@/components/CachedImage';
+import { FeedZoomableMedia } from '@/components/FeedZoomableMedia';
 
 type Props = {
   uri: string | null;
   onClose: () => void;
 };
 
-/** Sohbet resmi tam ekran — boşluğa, resme veya ✕ / geri ile kapanır. */
+/** Sohbet resmi tam ekran — pinch zoom + ✕ / tek dokunuş ile kapanır. */
 export function ChatFullscreenImageModal({ uri, onClose }: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -21,20 +22,16 @@ export function ChatFullscreenImageModal({ uri, onClose }: Props) {
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <Pressable
-        style={styles.overlay}
-        onPress={onClose}
-        accessibilityRole="imagebutton"
-        accessibilityLabel="Kapat"
-      >
+      <View style={styles.overlay}>
         {uri ? (
-          <CachedImage
-            key={uri}
-            uri={uri}
-            style={{ width, height }}
-            contentFit="contain"
-            pointerEvents="none"
-          />
+          <FeedZoomableMedia onDismiss={onClose} style={styles.zoom}>
+            <CachedImage
+              key={uri}
+              uri={uri}
+              style={{ width, height }}
+              contentFit="contain"
+            />
+          </FeedZoomableMedia>
         ) : null}
         <Pressable
           style={[styles.closeBtn, { top: insets.top + 8, right: Math.max(insets.right, 16) }]}
@@ -45,7 +42,7 @@ export function ChatFullscreenImageModal({ uri, onClose }: Props) {
         >
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
@@ -57,6 +54,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  zoom: { ...StyleSheet.absoluteFillObject },
   closeBtn: {
     position: 'absolute',
     width: 44,

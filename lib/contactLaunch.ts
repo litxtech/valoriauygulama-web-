@@ -20,14 +20,21 @@ export function mailtoUrl(email: string): string {
   return `mailto:${email.trim()}`;
 }
 
-export async function openWhatsApp(phone: string): Promise<void> {
-  const url = whatsappUrlFromPhone(phone);
-  if (!url) {
+export async function openWhatsApp(phone: string, message?: string): Promise<void> {
+  const base = whatsappUrlFromPhone(phone);
+  if (!base) {
     Alert.alert('WhatsApp', 'Geçerli bir telefon numarası bulunamadı.');
     return;
   }
+  const url = message?.trim()
+    ? `${base}?text=${encodeURIComponent(message.trim())}`
+    : base;
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
   const ok = await Linking.canOpenURL(url).catch(() => false);
-  if (!ok && Platform.OS !== 'web') {
+  if (!ok) {
     Alert.alert('WhatsApp', 'Bu cihazda WhatsApp açılamadı.');
     return;
   }

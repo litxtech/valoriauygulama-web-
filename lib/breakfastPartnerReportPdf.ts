@@ -1,5 +1,6 @@
 import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
@@ -563,7 +564,7 @@ function reportFileName(data: PartnerActivityReportData): string {
 
 async function createReportPdf(data: PartnerActivityReportData): Promise<{ uri: string; html: string; fileName: string }> {
   const html = buildBreakfastPartnerReportHtml(data);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   if (!file?.uri) throw new Error('PDF oluşturulamadı');
   return { uri: file.uri, html, fileName: reportFileName(data) };
 }

@@ -1,25 +1,34 @@
 import type { InvoiceLineItem, ParsedSupplierInvoice } from '@/lib/financeInvoiceOcr/types';
 
+/** Başlık satırları — tek başına “fiyat/tutar” kelimesi (yanında rakam yoksa) */
 const SKIP_LINE =
-  /^(tarih|date|açıklama|aciklama|ürün|urun|mal\s*hizmet|miktar|birim|fiyat|tutar|kdv|matrah|iskonto|ara\s*toplam|belge|irsaliye|vergi|tc|vkn|tel|fax|web|www|iban|hesap|sayfa|page|adet|no\b|sıra|sira|#)/i;
+  /^(tarih|date|açıklama|aciklama|ürün|urun|mal\s*hizmet|miktar|birim|kdv|matrah|iskonto|ara\s*toplam|belge|irsaliye|vergi|tc|vkn|tel|fax|web|www|iban|hesap|sayfa|page|no\b|sıra|sira|#)\s*$/i;
 
 const TOTAL_LINE =
-  /(?:genel\s*)?toplam|toplam\s*tutar|ödenecek|odenecek|net\s*tutar|kdv\s*dahil|genel\s*toplam|yekün|yekun|invoice\s*total|amount\s*due/i;
+  /(?:genel\s*)?toplam|toplam\s*tutar|ödenecek|odenecek|net\s*tutar|kdv\s*dahil|genel\s*toplam|yekün|yekun|invoice\s*total|amount\s*due|bor[cç]\s*(?:tutarı|tutari|toplam)?|ödeme\s*tutarı|odeme\s*tutari|genel\s*fiyat/i;
 
 const TAX_LINE = /^kdv\b|^toplam\s*kdv|^matrah/i;
 
 const META_NO = /fatura\s*(?:no|numarası|numarasi|#)?\s*[:\s]*([A-Z0-9][A-Z0-9\-\/\.]{2,})/i;
 const META_DATE =
-  /(?:fatura\s*)?tarih\s*[:\s]*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})/i;
+  /(?:fatura\s*)?tarih\s*[:\s]*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})|(?:^|\s)(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})(?:\s|$)/i;
 const META_VKN = /(?:v\.?k\.?n|vergi\s*(?:no|kimlik)|tax\s*(?:id|no))\s*[:\s]*(\d{10,11})/i;
 const META_BUYER = /(?:alıcı|alici|müşteri|musteri|sayın|sayin)\s*[:\s]*(.{3,60})/i;
 const COMPANY_HINT = /(?:a\.?\s*ş\.?|ltd|limited|san\.|tic\.|inş\.|ins\.|ticaret|market|yapı|malzeme|tedarik)/i;
 
+/** Satır sonu tutar — TL şart değil (el yazısı not) */
 const AMOUNT_AT_END =
-  /(.+?)\s+(-?\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|-?\d+(?:,\d{2})?)\s*(?:TL|TRY|₺)?\s*$/i;
+  /(.+?)\s+(-?\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*(?:TL|TRY|₺|t[l1|])?\s*$/i;
 
 const QTY_UNIT_PRICE =
   /^(.+?)\s+(\d+(?:[.,]\d+)?)\s+(\S+)\s+([\d.,]+)\s+([\d.,]+)\s*(?:TL|TRY|₺)?\s*$/i;
+
+/** "Çimento 2.500" / "Boyama : 850" / "fiyat 1200" */
+const LOOSE_NAME_AMOUNT =
+  /^(.{2,80}?)\s*[:\-–]?\s*(-?\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?|-?\d{2,7}(?:[.,]\d{1,2})?)\s*(?:TL|TRY|₺)?\s*$/i;
+
+const MONEY_TOKEN =
+  /(-?\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*(?:TL|TRY|₺)?/gi;
 
 let lineIdSeq = 0;
 function nextLineId(): string {
@@ -27,22 +36,43 @@ function nextLineId(): string {
   return `line-${lineIdSeq}`;
 }
 
+/** OCR el yazısı / silik rakam düzeltmesi */
+function sanitizeMoneyRaw(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[Oo]/g, '0')
+    .replace(/[Il|]/g, '1');
+}
+
 export function parseTrMoney(raw: string | null | undefined): number | null {
   if (!raw?.trim()) return null;
-  let s = raw.trim().replace(/\s/g, '').replace(/[^\d,.-]/g, '');
+  let s = sanitizeMoneyRaw(raw).replace(/\s/g, '').replace(/[^\d,.-]/g, '');
   if (!s || s === '-' || s === '.') return null;
   const neg = s.startsWith('-');
   s = s.replace(/^-/, '');
+
   if (s.includes(',') && s.includes('.')) {
+    // 1.250,50 veya 1,250.50
     if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
     else s = s.replace(/,/g, '');
   } else if (s.includes(',')) {
+    // 1.250,5 veya 1250,50 veya 1,25
     s = s.replace(/\./g, '').replace(',', '.');
   } else if ((s.match(/\./g) ?? []).length > 1) {
+    // 1.250.000
+    s = s.replace(/\./g, '');
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    // TR binlik: 1.250 / 12.500 / 1.250.000 (tek veya çok nokta zaten üstte)
+    s = s.replace(/\./g, '');
+  } else if (/^\d+\.\d{3}$/.test(s)) {
+    // 1.250 tek nokta + tam 3 hane → binlik (ondalık değil)
     s = s.replace(/\./g, '');
   }
+  // aksi: 12.5 / 12.50 → ondalık nokta kalır
+
   const n = parseFloat(s);
   if (!Number.isFinite(n) || n <= 0) return null;
+  if (n < 0.01) return null;
   const val = Math.round(n * 100) / 100;
   return neg ? -val : val;
 }
@@ -74,7 +104,8 @@ function extractMeta(lines: string[]): {
 } {
   const joined = lines.join('\n');
   const invoiceNo = joined.match(META_NO)?.[1]?.trim() ?? null;
-  const dateRaw = joined.match(META_DATE)?.[1] ?? null;
+  const dateMatch = joined.match(META_DATE);
+  const dateRaw = dateMatch?.[1] ?? dateMatch?.[2] ?? null;
   const invoiceDate = parseTrDate(dateRaw);
   const supplierTaxId = joined.match(META_VKN)?.[1]?.trim() ?? null;
   const buyerName = joined.match(META_BUYER)?.[1]?.trim().replace(/\s+/g, ' ') ?? null;
@@ -83,7 +114,8 @@ function extractMeta(lines: string[]): {
   for (const line of lines.slice(0, 14)) {
     if (line.length < 4 || line.length > 90) continue;
     if (/^\d/.test(line)) continue;
-    if (/fatura|tel|fax|v\.?d\.?|v\.?k\.?n|iban|www\.|e-posta|email/i.test(line)) continue;
+    if (/fatura|tel|fax|v\.?d\.?|v\.?k\.?n|iban|www\.|e-posta|email|bor[cç]|fiyat|toplam/i.test(line))
+      continue;
     if (COMPANY_HINT.test(line) || (!supplierName && line.length >= 6)) {
       supplierName = line;
       if (COMPANY_HINT.test(line)) break;
@@ -93,9 +125,19 @@ function extractMeta(lines: string[]): {
   return { invoiceNo, invoiceDate, supplierName, supplierTaxId, buyerName };
 }
 
+function amountsOnLine(line: string): number[] {
+  return [...line.matchAll(MONEY_TOKEN)]
+    .map((m) => parseTrMoney(m[1]))
+    .filter((n): n is number => n != null && n >= 1);
+}
+
+function looksLikeYearOrCode(n: number): boolean {
+  return (n >= 1900 && n <= 2100) || (Number.isInteger(n) && n < 10);
+}
+
 function parseLineItemFromRow(line: string): InvoiceLineItem | null {
   if (SKIP_LINE.test(line) || TAX_LINE.test(line) || TOTAL_LINE.test(line)) return null;
-  if (line.length < 4) return null;
+  if (line.length < 3) return null;
 
   const qtyMatch = line.match(QTY_UNIT_PRICE);
   if (qtyMatch) {
@@ -113,13 +155,19 @@ function parseLineItemFromRow(line: string): InvoiceLineItem | null {
     };
   }
 
-  const endMatch = line.match(AMOUNT_AT_END);
+  const endMatch = line.match(AMOUNT_AT_END) ?? line.match(LOOSE_NAME_AMOUNT);
   if (!endMatch) return null;
   const total = parseTrMoney(endMatch[2]);
-  if (!total || total < 0.01) return null;
-  const name = endMatch[1].trim();
-  if (name.length < 2 || SKIP_LINE.test(name)) return null;
+  if (!total || total < 1 || looksLikeYearOrCode(total)) return null;
+  let name = endMatch[1].trim().replace(/[:\-–]+$/, '').trim();
+  // "fiyat 850" → isim: Fiyat kalemi
+  if (/^(fiyat|tutar|adet|miktar|ücret|ucret)$/i.test(name)) {
+    name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  }
+  if (name.length < 1 || SKIP_LINE.test(name)) return null;
   if (/^[\d.,\s]+$/.test(name)) return null;
+  // Saf toplam satırı kalem olmasın
+  if (TOTAL_LINE.test(name) && name.length < 24) return null;
 
   return {
     id: nextLineId(),
@@ -129,6 +177,40 @@ function parseLineItemFromRow(line: string): InvoiceLineItem | null {
     unitPrice: null,
     total,
   };
+}
+
+/** Satır kalemi çıkmayan notlarda: her satırdan açıklama + tutar çıkar */
+function extractLooseNoteItems(lines: string[]): InvoiceLineItem[] {
+  const items: InvoiceLineItem[] = [];
+  for (const line of lines) {
+    if (SKIP_LINE.test(line) || TAX_LINE.test(line)) continue;
+    if (TOTAL_LINE.test(line)) continue;
+    const parsed = parseLineItemFromRow(line);
+    if (parsed) {
+      items.push(parsed);
+      continue;
+    }
+    const amts = amountsOnLine(line).filter((n) => !looksLikeYearOrCode(n));
+    if (!amts.length) continue;
+    const total = amts[amts.length - 1];
+    if (total < 1) continue;
+    const name = line
+      .replace(/(-?\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)\s*(?:TL|TRY|₺)?/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[:\-–]+$/, '')
+      .trim();
+    if (name.length < 2) continue;
+    if (/^(tl|try|₺)$/i.test(name)) continue;
+    items.push({
+      id: nextLineId(),
+      name,
+      quantity: null,
+      unit: null,
+      unitPrice: null,
+      total,
+    });
+  }
+  return items;
 }
 
 function extractTotals(lines: string[]): {
@@ -143,30 +225,35 @@ function extractTotals(lines: string[]): {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (TOTAL_LINE.test(line) && grandTotal == null) {
-      const amounts = [...line.matchAll(/([\d.,]+)\s*(?:TL|TRY|₺)?/gi)]
-        .map((m) => parseTrMoney(m[1]))
-        .filter((n): n is number => n != null);
+      const amounts = amountsOnLine(line);
       if (amounts.length) grandTotal = amounts[amounts.length - 1];
     }
     if (/ara\s*toplam/i.test(line) && subtotal == null) {
-      const amounts = [...line.matchAll(/([\d.,]+)/g)]
-        .map((m) => parseTrMoney(m[1]))
-        .filter((n): n is number => n != null);
+      const amounts = amountsOnLine(line);
       if (amounts.length) subtotal = amounts[amounts.length - 1];
     }
     if (TAX_LINE.test(line) && taxAmount == null) {
-      const amounts = [...line.matchAll(/([\d.,]+)/g)]
-        .map((m) => parseTrMoney(m[1]))
-        .filter((n): n is number => n != null);
+      const amounts = amountsOnLine(line);
       if (amounts.length) taxAmount = amounts[amounts.length - 1];
     }
   }
 
+  // TL etiketli tutarlar
   if (grandTotal == null) {
-    const amounts = lines
-      .flatMap((l) => [...l.matchAll(/([\d.,]+)\s*(?:TL|TRY|₺)/gi)].map((m) => parseTrMoney(m[1])))
-      .filter((n): n is number => n != null);
-    if (amounts.length) grandTotal = amounts.reduce((a, b) => (b > a ? b : a), 0);
+    const withTl = lines
+      .flatMap((l) =>
+        [...l.matchAll(/([\d.,\s]+)\s*(?:TL|TRY|₺)/gi)].map((m) => parseTrMoney(m[1]))
+      )
+      .filter((n): n is number => n != null && n >= 1 && !looksLikeYearOrCode(n));
+    if (withTl.length) grandTotal = withTl.reduce((a, b) => (b > a ? b : a), 0);
+  }
+
+  // Hiç etiket yoksa (el yazısı not): en büyük makul tutar
+  if (grandTotal == null) {
+    const all = lines
+      .flatMap(amountsOnLine)
+      .filter((n) => n >= 10 && n <= 50_000_000 && !looksLikeYearOrCode(n));
+    if (all.length) grandTotal = all.reduce((a, b) => (b > a ? b : a), 0);
   }
 
   return { grandTotal, subtotal, taxAmount };
@@ -212,17 +299,31 @@ export function parseInvoiceFromText(
   }
 
   const meta = extractMeta(lines);
-  const lineItems = dedupeLineItems(
+  let lineItems = dedupeLineItems(
     lines.map(parseLineItemFromRow).filter((x): x is InvoiceLineItem => x != null)
   );
+
+  // Formal fatura kalemi yoksa not kağıdı / el yazısı gevşek ayrıştırma
+  if (lineItems.length === 0) {
+    lineItems = dedupeLineItems(extractLooseNoteItems(lines));
+  }
 
   const totals = extractTotals(lines);
   let grandTotal = totals.grandTotal;
 
-  if (lineItems.length >= 2) {
+  if (lineItems.length >= 1) {
     const sumLines = Math.round(lineItems.reduce((s, l) => s + l.total, 0) * 100) / 100;
-    if (!grandTotal || Math.abs(grandTotal - sumLines) / Math.max(grandTotal, sumLines) > 0.08) {
-      if (sumLines > 0) grandTotal = sumLines;
+    if (!grandTotal) {
+      grandTotal = sumLines;
+    } else if (
+      lineItems.length >= 2 &&
+      Math.abs(grandTotal - sumLines) / Math.max(grandTotal, sumLines) > 0.12
+    ) {
+      // Toplam satırı ile kalem toplamı uyuşmuyorsa kalem toplamını tercih et
+      // (el yazısında "toplam" yanlış okunabilir)
+      if (sumLines > grandTotal * 0.5) grandTotal = sumLines;
+    } else if (lineItems.length === 1 && sumLines > grandTotal) {
+      grandTotal = sumLines;
     }
   }
 
@@ -231,6 +332,19 @@ export function parseInvoiceFromText(
   }
   if (!grandTotal) {
     warnings.push('Genel toplam otomatik bulunamadı.');
+  } else if (lineItems.length === 0) {
+    // Tek tutarlı not — kullanıcı düzenleyebilsin diye sentetik kalem
+    lineItems = [
+      {
+        id: nextLineId(),
+        name: 'Belge tutarı',
+        quantity: null,
+        unit: null,
+        unitPrice: null,
+        total: grandTotal,
+      },
+    ];
+    warnings.push('Tek tutar okundu; kalem adını düzenleyebilirsiniz.');
   }
 
   let confidence: ParsedSupplierInvoice['confidence'] = 'low';

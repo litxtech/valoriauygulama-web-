@@ -1,7 +1,7 @@
-import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { lobbyPortalCards } from '@/constants/lobbyTheme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { lobbyPortalCards, lobbyTheme } from '@/constants/lobbyTheme';
 
 export type LobbyPortalItem = {
   id: (typeof lobbyPortalCards)[number]['id'];
@@ -14,39 +14,51 @@ type LobbyPortalGridProps = {
   items: LobbyPortalItem[];
 };
 
+/** Rezervasyon öne çıkan CTA; diğerleri renkli satır */
 export function LobbyPortalGrid({ items }: LobbyPortalGridProps) {
-  const { width } = useWindowDimensions();
-  const twoCol = width >= 380;
+  const booking = items.find((i) => i.id === 'booking');
+  const rest = items.filter((i) => i.id !== 'booking');
 
   return (
-    <View style={[styles.grid, twoCol && styles.gridTwoCol]}>
-      {items.map((item) => {
+    <View style={styles.list}>
+      {booking ? (
+        <TouchableOpacity style={styles.featured} onPress={booking.onPress} activeOpacity={0.88}>
+          <LinearGradient
+            colors={['#14b8a6', '#06b6d4', '#0ea5e9']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.featuredGradient}
+          >
+            <View style={styles.featuredIcon}>
+              <Ionicons name="calendar" size={22} color="#0f766e" />
+            </View>
+            <View style={styles.text}>
+              <Text style={styles.featuredTitle}>{booking.title}</Text>
+              <Text style={styles.featuredHint} numberOfLines={2}>
+                {booking.hint}
+              </Text>
+            </View>
+            <View style={styles.featuredArrow}>
+              <Ionicons name="arrow-forward" size={16} color="#fff" />
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      ) : null}
+
+      {rest.map((item) => {
         const meta = lobbyPortalCards.find((c) => c.id === item.id)!;
         return (
-          <TouchableOpacity
-            key={item.id}
-            style={[styles.tile, twoCol && styles.tileHalf]}
-            onPress={item.onPress}
-            activeOpacity={0.9}
-          >
-            <LinearGradient colors={[...meta.colors]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.tileGradient}>
-              <View style={[styles.glowOrb, { backgroundColor: meta.glow }]} />
-              <View style={styles.tileTop}>
-                <View style={styles.iconWrap}>
-                  <Ionicons name={meta.icon} size={22} color="#fff" />
-                </View>
-                <View style={styles.arrow}>
-                  <Ionicons name="arrow-forward" size={16} color="#fff" />
-                </View>
-              </View>
-              <Text style={styles.pill}>{meta.pill}</Text>
-              <Text style={styles.title} numberOfLines={2}>
-                {item.title}
-              </Text>
-              <Text style={styles.hint} numberOfLines={2}>
+          <TouchableOpacity key={item.id} style={styles.row} onPress={item.onPress} activeOpacity={0.75}>
+            <LinearGradient colors={[...meta.colors]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.icon}>
+              <Ionicons name={meta.icon} size={18} color="#fff" />
+            </LinearGradient>
+            <View style={styles.text}>
+              <Text style={styles.title}>{item.title}</Text>
+              <Text style={styles.hint} numberOfLines={1}>
                 {item.hint}
               </Text>
-            </LinearGradient>
+            </View>
+            <Ionicons name="arrow-forward" size={16} color={meta.iconColor} />
           </TouchableOpacity>
         );
       })}
@@ -55,82 +67,77 @@ export function LobbyPortalGrid({ items }: LobbyPortalGridProps) {
 }
 
 const styles = StyleSheet.create({
-  grid: { gap: 12 },
-  gridTwoCol: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  list: {
+    gap: 6,
   },
-  tile: {
-    borderRadius: 20,
+  featured: {
+    borderRadius: 18,
     overflow: 'hidden',
-    minHeight: 148,
-    shadowColor: '#000',
+    marginBottom: 12,
+    shadowColor: '#06b6d4',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOpacity: 0.32,
+    shadowRadius: 14,
+    elevation: 6,
   },
-  tileHalf: {
-    width: '48.5%',
-    flexGrow: 1,
-  },
-  tileGradient: {
-    flex: 1,
-    padding: 16,
-    minHeight: 148,
-    justifyContent: 'flex-end',
-  },
-  glowOrb: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    top: -40,
-    right: -30,
-    opacity: 0.55,
-  },
-  tileTop: {
+  featuredGradient: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 'auto',
-    paddingBottom: 12,
-  },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.22)',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    gap: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
   },
-  arrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+  featuredIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255,255,255,0.95)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pill: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: 'rgba(255,255,255,0.88)',
-    letterSpacing: 1.2,
-    marginBottom: 4,
-  },
-  title: {
+  featuredTitle: {
     fontSize: 16,
     fontWeight: '800',
     color: '#fff',
-    lineHeight: 20,
-    marginBottom: 4,
+  },
+  featuredHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.92)',
+    marginTop: 2,
+  },
+  featuredArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: lobbyTheme.line,
+  },
+  icon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  text: { flex: 1, gap: 2 },
+  title: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: lobbyTheme.ink,
   },
   hint: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.82)',
-    lineHeight: 16,
+    color: lobbyTheme.inkSoft,
   },
 });

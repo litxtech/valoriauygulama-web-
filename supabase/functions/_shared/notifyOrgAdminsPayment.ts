@@ -90,6 +90,15 @@ export function buildAdminPaymentNotificationBody(
     if (desc) body += ` · ${desc}`;
     if (creatorStaffName) body += ` · QR: ${creatorStaffName}`;
     body += " · Sabit QR noktası";
+  } else if (ref === "online_booking") {
+    const guest = metaString(row.metadata, "guest_name") || guestName;
+    const checkIn = metaString(row.metadata, "check_in");
+    const checkOut = metaString(row.metadata, "check_out");
+    const roomLabel = metaString(row.metadata, "room_label");
+    body = "Oda rezervasyonu onaylandı (ödendi)";
+    if (roomLabel) body += ` · ${roomLabel}`;
+    if (checkIn && checkOut) body += ` · ${checkIn} → ${checkOut}`;
+    if (guest) body += ` · ${guest}`;
   } else {
     if (guestName) body += ` · Misafir: ${guestName}`;
     if (staffName) body += ` · Personel: ${staffName}`;
@@ -126,10 +135,12 @@ export async function notifyOrgAdminsPayment(
   const notificationType = isTip ? "admin_tip_payment" : "admin_payment_received";
   const featureKey = isTip ? "staff_tip" : "payment";
   const amountStr = amountLabel(opts.amount, opts.currency);
+  const body = opts.paymentTitle.trim() || "Ödeme tamamlandı";
   const title = isQrStand
     ? `QR ödeme alındı · ${amountStr}`
-    : `Ödeme alındı · ${laneTitleTr(lane)} · ${amountStr}`;
-  const body = opts.paymentTitle.trim() || "Ödeme tamamlandı";
+    : body.includes("Oda rezervasyonu onaylandı")
+      ? `Rezervasyon onaylandı · ${amountStr}`
+      : `Ödeme alındı · ${laneTitleTr(lane)} · ${amountStr}`;
 
   const pushData = {
     url: isQrStand

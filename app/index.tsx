@@ -50,6 +50,7 @@ import { LobbyAnimatedBackground } from '@/components/lobby/LobbyAnimatedBackgro
 import { LobbyHero } from '@/components/lobby/LobbyHero';
 import { LobbyGlassCard } from '@/components/lobby/LobbyGlassCard';
 import { LobbyPortalGrid } from '@/components/lobby/LobbyPortalGrid';
+import { lobbyTheme } from '@/constants/lobbyTheme';
 
 const BOOKING_HREF = '/booking' as const;
 
@@ -91,18 +92,6 @@ function OfflineWelcome({ onRetry }: { onRetry: () => void }) {
 /** Oturum yüklenirken — yalnızca arka plan; yükleme göstergesi _layout nokta animasyonunda. */
 function BootScreen() {
   return <View style={styles.bootLoaderRoot} />;
-}
-
-/**
- * Açılış (oturum kontrolü) sırasında lobi arka planını gösterir; düz koyu ekranda
- * "çok bekletme" hissi olmadan, splash animasyonundan lobiye akıcı geçiş sağlar.
- */
-function LobbyBootScreen() {
-  return (
-    <View style={styles.wrapper}>
-      <LobbyAnimatedBackground />
-    </View>
-  );
 }
 
 /** Giriş sonrası panele yönlendir — personel ise partner bekleme. */
@@ -313,12 +302,24 @@ export default function HomeScreen() {
         return;
       }
     }
-    const path = staff
-      ? '/staff'
-      : partner
-        ? resolvePartnerEntryPath(partner, partnerSurface)
-        : '/customer';
-    const nextParam = staff ? 'staff' : partner ? 'partner' : 'customer';
+
+    // Personel: lobiye hiç düşmeden doğrudan feed'e; sözleşme yoksa ardından policies.
+    if (staff) {
+      let cancelled = false;
+      safeRouterReplace(router, '/staff');
+      hasPolicyConsent(user?.id ?? null)
+        .then((accepted) => {
+          if (cancelled || accepted) return;
+          safeRouterReplace(router, { pathname: '/policies', params: { next: 'staff' } });
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const path = partner ? resolvePartnerEntryPath(partner, partnerSurface) : '/customer';
+    const nextParam = partner ? 'partner' : 'customer';
     let cancelled = false;
     hasPolicyConsent(user?.id ?? null).then((accepted) => {
       if (cancelled) return;
@@ -517,40 +518,37 @@ export default function HomeScreen() {
   const cardWidth = width - 24;
   const paddingH = 12;
 
-  if (loading && !user) {
-    return <LobbyBootScreen />;
+  // Oturum / personel çözülürken veya panele yönlendirilirken lobi gösterme —
+  // personel açılışında "lobi → feed" flash'ını önler.
+  if (loading || user || staff) {
+    if (user && staffCheckUnavailable && !staffCheckComplete) {
+      return (
+        <View style={styles.wrapper}>
+          <LobbyAnimatedBackground />
+          <View style={[styles.bootLoaderRoot, { paddingTop: insets.top + 48 }]}>
+            <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
+            <Text style={[styles.lobbyTaglineWhite, { marginTop: 16, textAlign: 'center', paddingHorizontal: 24 }]}>
+              Sunucuya şu an ulaşılamıyor. Birkaç dakika sonra tekrar deneyin.
+            </Text>
+            <TouchableOpacity
+              style={[styles.retryButton, { marginTop: 28 }]}
+              onPress={() => void retryStaffCheck()}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.retryButtonText}>{t('retry')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={{ marginTop: 16 }} onPress={() => void signOut()} activeOpacity={0.85}>
+              <Text style={styles.lobbyTaglineWhite}>{t('signOut') ?? 'Çıkış yap'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+    return <BootScreen />;
   }
 
   if (isOffline) {
     return <OfflineWelcome onRetry={() => NetInfo.fetch().then((s) => setIsOffline(!s.isConnected))} />;
-  }
-
-  if (user && staffCheckUnavailable && !staffCheckComplete) {
-    return (
-      <View style={styles.wrapper}>
-        <LobbyAnimatedBackground />
-        <View style={[styles.bootLoaderRoot, { paddingTop: insets.top + 48 }]}>
-          <Text style={styles.lobbyBrandWhite}>{t('valoria')}</Text>
-          <Text style={[styles.lobbyTaglineWhite, { marginTop: 16, textAlign: 'center', paddingHorizontal: 24 }]}>
-            Sunucuya şu an ulaşılamıyor. Birkaç dakika sonra tekrar deneyin.
-          </Text>
-          <TouchableOpacity
-            style={[styles.retryButton, { marginTop: 28 }]}
-            onPress={() => void retryStaffCheck()}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.retryButtonText}>{t('retry')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={{ marginTop: 16 }} onPress={() => void signOut()} activeOpacity={0.85}>
-            <Text style={styles.lobbyTaglineWhite}>{t('signOut') ?? 'Çıkış yap'}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  if (user || staff) {
-    return Platform.OS === 'web' ? <LobbyBootScreen /> : <BootScreen />;
   }
 
   return (
@@ -569,7 +567,7 @@ export default function HomeScreen() {
           brand={t('valoria')}
           tagline={t('tagline')}
           location="Uzungöl, Türkiye"
-          paddingTop={insets.top * 0.35}
+          paddingTop={8}
         />
 
         {/* Web (valoria.tr): yalnızca halka açık menü / sözleşme / maliye — Play incelemesi native uygulamada */}
@@ -685,24 +683,26 @@ export default function HomeScreen() {
 
             <Text style={[styles.portalPanelLabel, styles.portalPanelLabelSpaced]}>{t('homePortalBooking')}</Text>
             <TouchableOpacity
-              style={styles.portalTileFull}
+              style={styles.portalBookingBtn}
               onPress={() => safeRouterPush(router, BOOKING_HREF)}
               activeOpacity={0.88}
             >
               <LinearGradient
-                colors={['#0f172a', '#1e293b', '#0f766e']}
+                colors={[lobbyTheme.accent, lobbyTheme.water, lobbyTheme.sky]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={styles.portalTileFullGradient}
+                style={styles.portalBookingBtnGradient}
               >
-                <View style={styles.portalIconCircleDark}>
-                  <Ionicons name="calendar" size={26} color="#5eead4" />
+                <View style={styles.portalBookingIcon}>
+                  <Ionicons name="calendar" size={26} color="#0f766e" />
                 </View>
                 <View style={styles.portalTileFullText}>
-                  <Text style={styles.portalTileFullTitle}>{t('homePortalBookingTitle')}</Text>
-                  <Text style={styles.portalTileFullHint}>{t('homePortalBookingHint')}</Text>
+                  <Text style={styles.portalBookingTitle}>{t('homePortalBookingTitle')}</Text>
+                  <Text style={styles.portalBookingHint}>{t('homePortalBookingHint')}</Text>
                 </View>
-                <Ionicons name="arrow-forward" size={20} color="rgba(255,255,255,0.85)" />
+                <View style={styles.portalBookingArrow}>
+                  <Ionicons name="arrow-forward" size={18} color="#fff" />
+                </View>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -713,7 +713,7 @@ export default function HomeScreen() {
               activeOpacity={0.88}
             >
               <LinearGradient
-                colors={['#0d9488', '#0891b2', '#0ea5e9']}
+                colors={[lobbyTheme.accentDeep, lobbyTheme.accent, lobbyTheme.sky]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.webSignInBtnGradient}
@@ -731,18 +731,17 @@ export default function HomeScreen() {
 
         {Platform.OS !== 'web' && (
           <>
-        {/* Check-in prompt kartı — bir kere sorulur, sonra gösterilmez */}
         {showCheckinPromptCard === true && (
           <View style={[styles.checkinPromptCard, { marginHorizontal: paddingH, width: cardWidth }]}>
             <LinearGradient
-              colors={['#0d9488', '#0891b2']}
+              colors={[lobbyTheme.lake, lobbyTheme.accent, lobbyTheme.sky]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.checkinPromptAccent}
             />
             <View style={styles.checkinPromptInner}>
               <View style={styles.checkinPromptIconWrap}>
-                <Ionicons name="navigate-circle" size={28} color="#0d9488" />
+                <Ionicons name="navigate-circle" size={28} color={lobbyTheme.accent} />
               </View>
               <Text style={styles.checkinPromptTitle}>{t('nearbyCheckinTitle')}</Text>
               <Text style={styles.checkinPromptMessage}>{t('checkinPromptCardMessage') || t('nearbyCheckinMessage')}</Text>
@@ -760,7 +759,7 @@ export default function HomeScreen() {
                   activeOpacity={0.82}
                 >
                   <LinearGradient
-                    colors={['#14b8a6', '#0d9488']}
+                    colors={[lobbyTheme.accent, lobbyTheme.accentDeep]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.checkinPromptBtnGradient}
@@ -774,7 +773,7 @@ export default function HomeScreen() {
         )}
 
         <KeyboardAvoidingView
-          style={[styles.cardsContainer, { width: cardWidth, marginHorizontal: paddingH }]}
+          style={[styles.cardsContainer, { width }]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
@@ -794,19 +793,11 @@ export default function HomeScreen() {
           <LobbyGlassCard>
             <View style={styles.lobbyCardInner}>
               <View style={styles.lobbySection}>
-                <View style={styles.lobbySectionHeader}>
-                  <LinearGradient
-                    colors={['#14b8a6', '#0ea5e9']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 0, y: 1 }}
-                    style={styles.lobbySectionHeaderBar}
-                  />
-                  <Text style={styles.lobbySectionTitle}>{t('signIn')}</Text>
-                </View>
+                <Text style={styles.lobbySectionTitle}>{t('signIn')}</Text>
                 {Platform.OS !== 'web' && notifStatus === 'undetermined' && (
                   <View style={styles.permissionCard}>
                     <View style={styles.permissionCardHeader}>
-                      <Ionicons name="notifications" size={18} color="#0d9488" />
+                      <Ionicons name="notifications" size={18} color={lobbyTheme.accent} />
                       <Text style={styles.permissionCardTitle}>Bildirim izni</Text>
                     </View>
                     <Text style={styles.permissionCardText}>
@@ -868,7 +859,7 @@ export default function HomeScreen() {
                   activeOpacity={0.88}
                 >
                   <LinearGradient
-                    colors={['#14b8a6', '#0d9488', '#0891b2']}
+                    colors={[lobbyTheme.accentDeep, lobbyTheme.accent, lobbyTheme.sky]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.cardBtnGradient}
@@ -885,11 +876,11 @@ export default function HomeScreen() {
                 </TouchableOpacity>
                 <View style={styles.authLinksRow}>
                   <TouchableOpacity onPress={() => router.push('/auth/register')} style={styles.authLinkWrap}>
-                    <Ionicons name="person-add-outline" size={15} color="#0d9488" />
+                    <Ionicons name="person-add-outline" size={15} color={lobbyTheme.accentDeep} />
                     <Text style={styles.cardLinkText}>{t('signUp')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => router.push('/auth/reset')} style={styles.authLinkWrap}>
-                    <Ionicons name="key-outline" size={15} color="#0d9488" />
+                    <Ionicons name="key-outline" size={15} color={lobbyTheme.accentDeep} />
                     <Text style={styles.cardLinkText}>{t('forgotPassword')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -939,11 +930,11 @@ export default function HomeScreen() {
                   activeOpacity={0.82}
                 >
                   {guestLoginLoading ? (
-                    <ActivityIndicator size="small" color="#0d9488" />
+                    <ActivityIndicator size="small" color={lobbyTheme.accent} />
                   ) : (
                     <>
                       <View style={styles.guestLoginBtnRow}>
-                        <Ionicons name="sparkles-outline" size={18} color="#0d9488" />
+                        <Ionicons name="sparkles-outline" size={18} color={lobbyTheme.accent} />
                         <Text style={styles.guestLoginBtnText}>{t('guestAccountLogin')}</Text>
                       </View>
                       <Text style={styles.guestLoginBtnHint}>{t('guestAccountLoginHint')}</Text>
@@ -987,6 +978,16 @@ export default function HomeScreen() {
                     hint: 'İşlem onayı · cari hesap · itiraz',
                     onPress: () => router.push('/trade-partner/login'),
                   },
+                  ...(Platform.OS === 'web'
+                    ? [
+                        {
+                          id: 'muhasebe',
+                          title: t('muhasebeWebLobbyTitle'),
+                          hint: t('muhasebeWebLobbyHint'),
+                          onPress: () => router.push('/muhasebe/login'),
+                        },
+                      ]
+                    : []),
                 ]}
               />
 
@@ -999,7 +1000,7 @@ export default function HomeScreen() {
                     onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'privacy' } })}
                     activeOpacity={0.85}
                   >
-                    <Ionicons name="shield-outline" size={14} color="#64748b" />
+                    <Ionicons name="shield-outline" size={14} color={lobbyTheme.accentDeep} />
                     <Text style={styles.lobbyFooterBtnText}>{t('privacy')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -1007,7 +1008,7 @@ export default function HomeScreen() {
                     onPress={() => router.push({ pathname: '/legal/[type]', params: { type: 'terms' } })}
                     activeOpacity={0.85}
                   >
-                    <Ionicons name="document-text-outline" size={14} color="#64748b" />
+                    <Ionicons name="document-text-outline" size={14} color={lobbyTheme.accentDeep} />
                     <Text style={styles.lobbyFooterBtnText}>{t('terms')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -1015,7 +1016,7 @@ export default function HomeScreen() {
                     onPress={() => router.push('/guest/language')}
                     activeOpacity={0.85}
                   >
-                    <Ionicons name="language-outline" size={14} color="#64748b" />
+                    <Ionicons name="language-outline" size={14} color={lobbyTheme.accentDeep} />
                     <Text style={styles.lobbyFooterBtnText}>{t('language')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -1035,7 +1036,7 @@ export default function HomeScreen() {
             activeOpacity={0.85}
           >
             <LinearGradient
-              colors={['#14b8a6', '#0d9488']}
+              colors={[lobbyTheme.accentDeep, lobbyTheme.accent, lobbyTheme.sky]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.scrollTopBtnGradient}
@@ -1053,7 +1054,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   wrapper: {
     flex: 1,
-    backgroundColor: '#050a14',
+    backgroundColor: lobbyTheme.bg,
   },
   /** Oturum + sözleşme yönlendirmesi beklerken; layout splash (#1a365d) ile hizalı */
   bootLoaderRoot: {
@@ -1067,7 +1068,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   scrollContent: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     paddingHorizontal: 0,
     backgroundColor: 'transparent',
   },
@@ -1089,8 +1090,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cardsContainer: {
-    marginTop: -48,
-    marginBottom: 24,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  lobbyFloor: {
+    marginTop: 8,
+    marginBottom: 4,
+    zIndex: 2,
+  },
+  lobbySectionHeaderBarSolid: {
+    width: 4,
+    height: 28,
+    backgroundColor: '#14201c',
   },
   bgSparkleField: {
     ...StyleSheet.absoluteFillObject,
@@ -1131,14 +1142,12 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
   },
   lobbyBrandWhite: {
-    fontSize: 38,
-    fontWeight: '900',
-    color: '#ffffff',
-    letterSpacing: Platform.OS === 'android' ? 0.5 : -1.2,
+    fontSize: 44,
+    fontWeight: '300',
+    color: '#eef3ef',
+    letterSpacing: Platform.OS === 'android' ? 0 : 2,
     paddingHorizontal: 8,
-    textShadowColor: 'rgba(20, 184, 166, 0.35)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 12,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'Georgia' }),
   },
   lobbyTaglineRow: {
     flexDirection: 'row',
@@ -1151,12 +1160,12 @@ const styles = StyleSheet.create({
     width: 28,
     height: 2,
     borderRadius: 1,
-    backgroundColor: 'rgba(20, 184, 166, 0.65)',
+    backgroundColor: 'rgba(196, 165, 116, 0.65)',
   },
   lobbyTaglineWhite: {
     fontSize: 15,
-    color: 'rgba(255,255,255,0.82)',
-    fontWeight: '600',
+    color: 'rgba(238,243,239,0.7)',
+    fontWeight: '500',
     textAlign: 'center',
     flexShrink: 1,
   },
@@ -1179,30 +1188,81 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   portalPanel: {
-    backgroundColor: 'rgba(255,255,255,0.97)',
-    borderRadius: 24,
+    backgroundColor: lobbyTheme.paper,
+    borderRadius: 22,
     padding: 18,
-    marginTop: -20,
+    marginTop: -8,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.4)',
-    shadowColor: '#000',
+    borderColor: 'rgba(20, 184, 166, 0.2)',
+    shadowColor: '#0d9488',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 22,
-    elevation: 8,
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 5,
     ...(Platform.OS === 'web' ? { position: 'relative' as const, zIndex: 4 } : null),
   },
   portalPanelLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
-    color: '#475569',
-    letterSpacing: 1,
+    color: lobbyTheme.accentDeep,
+    letterSpacing: 1.4,
     textTransform: 'uppercase',
     marginBottom: 14,
-    textAlign: 'center',
+    textAlign: 'left',
   },
   portalPanelLabelSpaced: { marginTop: 18 },
+  portalBookingBtn: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    minHeight: 92,
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    elevation: 6,
+    ...(Platform.OS === 'web' ? ({ cursor: 'pointer' } as const) : {}),
+  },
+  portalBookingBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    minHeight: 92,
+  },
+  portalBookingIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  portalBookingTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  portalBookingHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.92)',
+    lineHeight: 18,
+  },
+  portalBookingArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   portalTileFull: {
     borderRadius: 18,
     overflow: 'hidden',
@@ -1317,7 +1377,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(13, 148, 136, 0.12)',
+    backgroundColor: 'rgba(20, 184, 166, 0.16)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -1403,9 +1463,9 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   permissionCard: {
-    backgroundColor: 'rgba(13, 148, 136, 0.06)',
+    backgroundColor: 'rgba(20, 184, 166, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(13, 148, 136, 0.18)',
+    borderColor: 'rgba(20, 184, 166, 0.28)',
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
@@ -1434,7 +1494,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   permissionBtn: {
-    backgroundColor: '#0d9488',
+    backgroundColor: lobbyTheme.accentDeep,
     borderRadius: 10,
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -1449,7 +1509,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   permissionLinkBtnText: {
-    color: '#0d9488',
+    color: lobbyTheme.accentDeep,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1465,23 +1525,23 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   lobbySectionTitle: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: '#0f172a',
-    letterSpacing: -0.6,
-    marginBottom: 0,
+    fontSize: 26,
+    fontWeight: '700',
+    color: lobbyTheme.ink,
+    letterSpacing: -0.5,
+    marginBottom: 20,
   },
   lobbyDivider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: 'rgba(20, 184, 166, 0.18)',
     marginVertical: 26,
   },
   lobbySectionLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#94a3b8',
-    marginBottom: 14,
-    letterSpacing: 0.8,
+    color: lobbyTheme.amber,
+    marginBottom: 8,
+    letterSpacing: 1.4,
     textTransform: 'uppercase',
   },
   lobbyOrRow: {
@@ -1493,7 +1553,7 @@ const styles = StyleSheet.create({
   lobbyOrLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: 'rgba(20,36,28,0.1)',
   },
   lobbyOrText: {
     fontSize: 13,
@@ -1573,14 +1633,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 999,
-    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    backgroundColor: 'rgba(20, 184, 166, 0.08)',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: 'rgba(20, 184, 166, 0.2)',
   },
   lobbyFooterBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#64748b',
+    color: lobbyTheme.inkSoft,
   },
   inputWrap: {
     position: 'relative',
@@ -1594,15 +1654,15 @@ const styles = StyleSheet.create({
   },
   input: {
     width: '100%',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: 'rgba(240, 253, 250, 0.9)',
     borderRadius: 16,
     paddingVertical: 17,
     paddingLeft: 48,
     paddingRight: 20,
-    color: '#0f172a',
+    color: lobbyTheme.ink,
     fontSize: 16,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: 'rgba(20, 184, 166, 0.22)',
     marginBottom: 0,
   },
   authLinksRow: {
@@ -1620,9 +1680,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 999,
-    backgroundColor: 'rgba(13, 148, 136, 0.08)',
+    backgroundColor: 'rgba(20, 184, 166, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(13, 148, 136, 0.2)',
+    borderColor: 'rgba(20, 184, 166, 0.28)',
   },
   cardEmoji: {
     fontSize: 32,
@@ -1708,16 +1768,16 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
     borderRadius: 14,
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#0d9488',
+    backgroundColor: 'rgba(20, 184, 166, 0.08)',
+    borderWidth: 1.5,
+    borderColor: lobbyTheme.accent,
     borderStyle: 'dashed',
     alignItems: 'center',
   },
   guestLoginBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0d9488',
+    color: lobbyTheme.accentDeep,
   },
   guestLoginBtnHint: {
     fontSize: 12,
@@ -1726,11 +1786,11 @@ const styles = StyleSheet.create({
   },
   cardBtnApple: {
     marginTop: 0,
-    backgroundColor: '#0d9488',
+    backgroundColor: '#0b1210',
   },
   cardBtnGoogle: {
     marginTop: 0,
-    backgroundColor: '#0d9488',
+    backgroundColor: '#0b1210',
   },
   cardBtnDisabled: {
     opacity: 0.65,
@@ -1751,7 +1811,7 @@ const styles = StyleSheet.create({
   },
   cardLinkText: {
     fontSize: 14,
-    color: '#0d9488',
+    color: lobbyTheme.accentDeep,
     fontWeight: '700',
   },
   scrollTopWrap: {

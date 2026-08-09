@@ -57,7 +57,7 @@ export default function HotelInfoScreen() {
       <View style={styles.section}>
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>{t('guestHotelLocation')}</Text>
-          <TouchableOpacity onPress={() => router.push('/customer/surroundings')}>
+          <TouchableOpacity onPress={() => router.push('/customer/local-area-guide')}>
             <Text style={styles.linkText}>{t('guestHotelSurroundingsLink')}</Text>
           </TouchableOpacity>
         </View>

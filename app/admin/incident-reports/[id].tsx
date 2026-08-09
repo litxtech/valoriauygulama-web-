@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase';
 import { uriToArrayBuffer } from '@/lib/uploadMedia';
 import * as Linking from 'expo-linking';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { useAuthStore } from '@/stores/authStore';
 import { IncidentStaffPicker } from '@/components/incident/IncidentStaffPicker';
@@ -144,7 +145,7 @@ body { font-family: Arial, sans-serif; color: #0f172a; font-size: 11px; }
     setGeneratingPdf(true);
     try {
       const html = buildIncidentHtml(report);
-      const { uri } = await Print.printToFileAsync({
+      const { uri } = await printToLocalPdfFile({
         html,
         width: 595,
         height: 842,
@@ -236,7 +237,7 @@ body { font-family: Arial, sans-serif; color: #0f172a; font-size: 11px; }
     try {
       let localUri = ensured.localUri;
       if (!localUri) {
-        const generated = await Print.printToFileAsync({
+        const generated = await printToLocalPdfFile({
           html: buildIncidentHtml(report),
           width: 595,
           height: 842,

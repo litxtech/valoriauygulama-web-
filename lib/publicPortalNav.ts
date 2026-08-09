@@ -32,3 +32,8 @@ export function publicMaliyeHref(): Href {
 export function publicBookingHref(): Href {
   return '/booking' as Href;
 }
+
+/** Misafire / Instagram / WhatsApp için kısa paylaşım adresi */
+export function publicBookingSharePath(): string {
+  return '/rez';
+}

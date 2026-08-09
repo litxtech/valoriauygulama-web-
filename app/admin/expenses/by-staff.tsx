@@ -10,7 +10,7 @@ import {
   Share,
   Platform,
 } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -123,7 +123,7 @@ export default function ExpensesByStaffScreen() {
     }
     html += '</body></html>';
     try {
-      const { uri } = await Print.printToFileAsync({ html });
+      const { uri } = await printToLocalPdfFile({ html });
       if (mode === 'mail') {
         await sendPdfToPrinterEmail({
           pdfUri: uri,

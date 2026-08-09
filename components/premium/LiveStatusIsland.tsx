@@ -5,9 +5,6 @@ import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import type { HotelLiveMetrics } from '@/hooks/useHotelLiveMetrics';
 import { pds } from '@/constants/personelDesignSystem';
 import { useRouter } from 'expo-router';
-import { useAuthStore } from '@/stores/authStore';
-import { occupancyHubPathForStaff } from '@/lib/occupancyOpsPaths';
-import { canAccessOccupancyOps } from '@/lib/staffPermissions';
 
 type Props = { metrics: HotelLiveMetrics };
 
@@ -44,32 +41,13 @@ function MetricPill({
   );
 }
 
-/** Dynamic Island tarzı canlı üst şerit — aktif personel, doluluk, görev */
+/** Dynamic Island tarzı canlı üst şerit — görev, hava */
 export function LiveStatusIsland({ metrics }: Props) {
   const router = useRouter();
-  const staff = useAuthStore((s) => s.staff);
-  const canOcc = canAccessOccupancyOps(staff);
-  const hubPath = occupancyHubPathForStaff(staff);
   const { isNight, toggleNight, colors } = usePremiumTheme();
   const stat = isNight && 'stat' in colors ? colors.stat : null;
 
   const pills = [
-    {
-      key: 'active',
-      icon: 'people' as const,
-      label: metrics.loading ? 'Aktif …' : `${metrics.activeStaff} aktif`,
-      color: stat?.active.text ?? pds.online,
-      bg: stat?.active.bg,
-      textColor: stat?.active.text,
-    },
-    {
-      key: 'occ',
-      icon: 'bed' as const,
-      label: metrics.loading ? 'Doluluk …' : `Doluluk %${metrics.occupancyPercent}`,
-      color: stat ? colors.subtext : pds.indigo,
-      bg: isNight ? 'rgba(255,255,255,0.04)' : undefined,
-      textColor: isNight ? colors.text : undefined,
-    },
     {
       key: 'tasks',
       icon: 'clipboard' as const,
@@ -92,12 +70,7 @@ export function LiveStatusIsland({ metrics }: Props) {
     <GlassSurface style={styles.wrap} borderRadius={16} intensity={56} blur={false}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
         {pills.map((p) => {
-          const onPress =
-            p.key === 'occ' && canOcc
-              ? () => router.push(hubPath as never)
-              : p.key === 'tasks'
-                ? () => router.navigate('/staff/tasks' as never)
-                : undefined;
+          const onPress = p.key === 'tasks' ? () => router.navigate('/staff/tasks' as never) : undefined;
 
           if (!onPress) {
             return (
@@ -119,7 +92,7 @@ export function LiveStatusIsland({ metrics }: Props) {
               hitSlop={8}
               style={styles.pillPressable}
               accessibilityRole="button"
-              accessibilityLabel={p.key === 'tasks' ? 'Görevlerim' : 'Doluluk merkezini aç'}
+              accessibilityLabel="Görevlerim"
             >
               <MetricPill
                 icon={p.icon}

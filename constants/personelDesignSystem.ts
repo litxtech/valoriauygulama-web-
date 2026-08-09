@@ -1,99 +1,107 @@
 /**
- * Personel / feed “premium” görünüm — misafir ve personel aynı kart ve tab sözlüğünü paylaşır.
+ * Personel / misafir feed — canlı Valoria paleti (göl, gün batımı amber, soft paper).
+ * Mor–indigo klişesinden uzak; hareket ve sıcak kontrast.
  */
 export const pds = {
-  pageBg: '#F9FAFB',
+  pageBg: '#FFFFFF',
   cardBg: '#FFFFFF',
-  text: '#111827',
-  subtext: '#6B7280',
-  /** Pasif / ikincil etiket (tarih, rol kısaltması) */
-  muted: '#6B7280',
-  blue: '#3B82F6',
-  indigo: '#6366F1',
-  purple: '#8B5CF6',
-  pink: '#EC4899',
+  text: '#0A1A18',
+  subtext: '#4A635E',
+  muted: '#6B857F',
+  blue: '#0EA5E9',
+  indigo: '#0F766E',
+  purple: '#0D9488',
+  pink: '#E11D48',
   orange: '#F59E0B',
   online: '#22C55E',
-  borderLight: '#EEEEEE',
-  /** Header / tab: cam hissi (blur ile birleşir) */
-  barGlass: 'rgba(255,255,255,0.88)',
-  barGlassStrong: 'rgba(255,255,255,0.94)',
-  /** Sol +, önemli CTA (turuncu–pembe) */
-  gradientCta: ['#FF8A00', '#FF3CAC'] as [string, string],
-  /** Story halka — görülmemiş */
-  gradientStoryRing: ['#FF8A00', '#FF3CAC'] as [string, string],
-  /** Story halka — görülmüş */
-  storySeen: '#d1d5db',
-  /** “Detayları Gör” + orta FAB */
-  gradientPremium: ['#667eea', '#f093fb'] as [string, string],
-  /** Ana buton gradyanı */
-  gradientPrimary: ['#667eea', '#f093fb'] as [string, string],
-  /** İkincil buton — gündüzde arka plansız */
+  borderLight: '#E8EEEC',
+  barGlass: 'rgba(255,255,255,0.92)',
+  barGlassStrong: 'rgba(255,255,255,0.97)',
+  /** Compose / CTA — amber → teal */
+  gradientCta: ['#F59E0B', '#0D9488'] as [string, string],
+  /** Story unseen — dönen halka renkleri */
+  gradientStoryRing: ['#F59E0B', '#FB7185', '#0D9488', '#38BDF8', '#F59E0B'] as string[],
+  storySeen: '#B8CBC6',
+  gradientPremium: ['#0F766E', '#14B8A6'] as [string, string],
+  gradientPrimary: ['#0F766E', '#2DD4BF'] as [string, string],
+  /** Story şeridi arka plan */
+  gradientStoryRail: ['#FFFFFF', '#FFFFFF', '#FFFFFF'] as [string, string, string],
+  /** Canlı üst şerit */
+  gradientLiveStrip: ['#0F766E', '#0D9488', '#F59E0B'] as [string, string, string],
   secondaryBtn: 'transparent',
   shadowCard: {
-    shadowColor: '#000',
+    shadowColor: '#0B3D36',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.06,
-    shadowRadius: 25,
+    shadowOpacity: 0.1,
+    shadowRadius: 22,
     elevation: 4,
   },
-  cardBorder: '#E5E7EB',
+  cardBorder: 'rgba(15, 118, 110, 0.12)',
   cardInnerGlow: 'transparent',
-  commentPreviewBg: '#F9FAFB',
+  commentPreviewBg: '#FFFFFF',
   commentPreviewBorder: '#E5E7EB',
-  divider: '#F3F4F6',
-  /** Feed içeriğinin opak header sonrası üst nefes payı (px) */
-  staffFeedBelowHeaderGap: 12,
+  divider: 'rgba(15, 118, 110, 0.1)',
+  accent: '#0F766E',
+  accentSoft: 'rgba(15, 118, 110, 0.12)',
+  gold: '#D97706',
+  coral: '#FB7185',
+  staffFeedBelowHeaderGap: 8,
   headerHeight: 60,
-  outerPadding: 16,
+  outerPadding: 14,
   cardGap: 12,
-  cardPadding: 12,
-  cardRadius: 20,
-  mediaRadius: 16,
+  cardPadding: 14,
+  cardRadius: 24,
+  mediaRadius: 18,
   actionBtnRadius: 999,
 } as const;
 
-/** Karanlık mod — #666/#777/#888 kullanılmaz; minimum alt metin #A7B0C0 */
+/** Karanlık mod — derin orman + amber kıvılcım */
 export const pdsNight = {
-  pageBg: '#0F1117',
-  cardBg: '#171923',
-  text: '#FFFFFF',
-  subtext: '#A7B0C0',
-  muted: '#7A8499',
-  blue: '#3B82F6',
-  indigo: '#7C5CFF',
-  purple: '#7C5CFF',
-  pink: '#B86EFF',
-  orange: '#FACC15',
-  online: '#22C55E',
-  borderLight: '#232734',
-  barGlass: 'rgba(23,25,35,0.88)',
-  barGlassStrong: 'rgba(23,25,35,0.94)',
-  gradientCta: ['#7C5CFF', '#B86EFF'] as [string, string],
-  gradientStoryRing: ['#7C5CFF', '#FF8A00'] as [string, string],
-  storySeen: '#555555',
-  gradientPremium: ['#7C5CFF', '#B86EFF'] as [string, string],
-  gradientPrimary: ['#7C5CFF', '#B86EFF'] as [string, string],
-  secondaryBtn: '#232734',
+  pageBg: '#061210',
+  cardBg: '#0C1A18',
+  text: '#F0FDFA',
+  subtext: '#9DB5AF',
+  muted: '#6F8781',
+  blue: '#38BDF8',
+  indigo: '#2DD4BF',
+  purple: '#14B8A6',
+  pink: '#FB7185',
+  orange: '#FBBF24',
+  online: '#4ADE80',
+  borderLight: '#1A2E2A',
+  barGlass: 'rgba(12,26,24,0.92)',
+  barGlassStrong: 'rgba(12,26,24,0.97)',
+  gradientCta: ['#FBBF24', '#14B8A6'] as [string, string],
+  gradientStoryRing: ['#FBBF24', '#FB7185', '#2DD4BF', '#38BDF8', '#FBBF24'] as string[],
+  storySeen: '#3D524D',
+  gradientPremium: ['#0D9488', '#2DD4BF'] as [string, string],
+  gradientPrimary: ['#0D9488', '#2DD4BF'] as [string, string],
+  gradientStoryRail: ['#0A1F1C', '#1A1510', '#0A1F1C'] as [string, string, string],
+  gradientLiveStrip: ['#0D9488', '#14B8A6', '#FBBF24'] as [string, string, string],
+  secondaryBtn: '#1A2E2A',
   shadowCard: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    elevation: 7,
   },
-  cardBorder: 'rgba(255,255,255,0.06)',
-  cardInnerGlow: 'rgba(255,255,255,0.03)',
-  commentPreviewBg: 'rgba(255,255,255,0.04)',
-  commentPreviewBorder: 'rgba(255,255,255,0.06)',
-  divider: 'rgba(255,255,255,0.06)',
-  staffFeedBelowHeaderGap: 12,
+  cardBorder: 'rgba(45, 212, 191, 0.14)',
+  cardInnerGlow: 'rgba(255,255,255,0.04)',
+  commentPreviewBg: 'rgba(255,255,255,0.05)',
+  commentPreviewBorder: 'rgba(255,255,255,0.08)',
+  divider: 'rgba(255,255,255,0.08)',
+  accent: '#2DD4BF',
+  accentSoft: 'rgba(45, 212, 191, 0.16)',
+  gold: '#FBBF24',
+  coral: '#FB7185',
+  staffFeedBelowHeaderGap: 8,
   headerHeight: 60,
-  outerPadding: 16,
+  outerPadding: 14,
   cardGap: 12,
-  cardPadding: 12,
-  cardRadius: 20,
-  mediaRadius: 16,
+  cardPadding: 14,
+  cardRadius: 24,
+  mediaRadius: 18,
   actionBtnRadius: 999,
 } as const;
 
@@ -103,26 +111,42 @@ export function getPersonelDesign(isNight: boolean): PersonelDesignPalette {
   return (isNight ? pdsNight : pds) as PersonelDesignPalette;
 }
 
-/** Feed gönderi medyası: 4:5 (yükseklik = genişlik × oran) */
+/** Feed tek fotoğraf: 4:5 */
 export const FEED_POST_MEDIA_HEIGHT_RATIO = 1.25;
 
-/** Video önizleme: 4:5 (fotoğraflarla aynı yükseklik; 16:9 çok küçük kalıyordu) */
-export const FEED_VIDEO_MEDIA_HEIGHT_RATIO = FEED_POST_MEDIA_HEIGHT_RATIO;
+/** Video önizleme: 16:9 */
+export const FEED_VIDEO_MEDIA_HEIGHT_RATIO = 9 / 16;
 
 export function feedPostCardWidth(screenWidth: number, sideInsetPerEdge = pds.outerPadding) {
   return screenWidth - sideInsetPerEdge * 2;
 }
 
 /**
- * X (Twitter) tarzı feed kartında medya, avatar sütununun sağında (içerik sütununda) yer alır.
- * Bu yüzden medya genişliği = ekran − dış boşluk − kart yatay padding − avatar − boşluk.
- * Kart ile aynı sabitler: padding 16, avatar 44, avatar-içerik boşluğu 12.
+ * Premium kart: medya kartın tam içerik genişliğinde (avatar sütunu yok).
+ * Yatay inset = kart margin; padding = kart iç padding.
+ */
+export function feedPostMediaContentWidth(
+  screenWidth: number,
+  sideInsetPerEdge = pds.outerPadding,
+  cardPadding = pds.cardPadding
+) {
+  return feedPostCardWidth(screenWidth, sideInsetPerEdge) - cardPadding * 2;
+}
+
+export function feedMediaHeight(
+  contentWidth: number,
+  ratio = FEED_POST_MEDIA_HEIGHT_RATIO,
+  maxHeight = 520
+) {
+  return Math.min(Math.round(contentWidth * ratio), maxHeight);
+}
+
+/**
+ * Kart tam genişliği — medya kenardan kenara (avatar sütunu düşülmez).
+ * Eski X layout için `feedPostMediaContentWidth` kullan.
  */
 export function feedXMediaWidth(screenWidth: number, horizontalInset = 12) {
-  const CARD_PADDING_H = 16;
-  const AVATAR = 44;
-  const AVATAR_GAP = 12;
-  return screenWidth - horizontalInset * 2 - CARD_PADDING_H * 2 - AVATAR - AVATAR_GAP;
+  return feedPostCardWidth(screenWidth, horizontalInset);
 }
 
 export function feedPostMediaHeight(cardWidth: number) {
@@ -133,7 +157,7 @@ export function feedPostVideoMediaHeight(cardWidth: number) {
   return Math.round(cardWidth * FEED_VIDEO_MEDIA_HEIGHT_RATIO);
 }
 
-/** Videolu gönderi: büyük 4:5 önizleme; yalnızca fotoğraf: aynı oran. */
+/** Videolu gönderi: büyük önizleme; yalnızca fotoğraf: aynı oran. */
 export function feedPostMediaHeightForItems(
   cardWidth: number,
   items: { media_type: 'image' | 'video' }[]

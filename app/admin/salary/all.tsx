@@ -14,17 +14,24 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import * as Print from 'expo-print';
+import { LinearGradient } from 'expo-linear-gradient';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { adminTheme } from '@/constants/adminTheme';
-import { AdminCard, AdminOrganizationPicker } from '@/components/admin';
+import { AdminOrganizationPicker } from '@/components/admin';
 import { formatDateShort } from '@/lib/date';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
+import { AdminStackBackButton } from '@/lib/adminStackBack';
+import { counterpartyInitials, resolveCounterpartyTypeMeta } from '@/lib/financeCounterpartyUi';
+
+const HERO_GRAD = ['#0f172a', '#1e3a5f'] as const;
 
 const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
@@ -71,6 +78,8 @@ function getDefaultDates(): { start: string; end: string } {
 }
 
 export default function AdminSalaryAllScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { staff: me } = useAuthStore();
   const { selectedOrganizationId } = useAdminOrgStore();
   const canUseAllOrganizations = me?.app_permissions?.super_admin === true || me?.role === 'admin';
@@ -78,11 +87,13 @@ export default function AdminSalaryAllScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [search, setSearch] = useState('');
   const [dateStart, setDateStart] = useState(getDefaultDates().start);
   const [dateEnd, setDateEnd] = useState(getDefaultDates().end);
   const [detailPayment, setDetailPayment] = useState<PaymentRow | null>(null);
   const [pdfExportingStaffId, setPdfExportingStaffId] = useState<string | null>(null);
   const [mailSendingKey, setMailSendingKey] = useState<string | null>(null);
+  const staffMeta = resolveCounterpartyTypeMeta('staff');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -209,7 +220,7 @@ ${list
 <div class="footer">VALORİA HOTEL · Bu rapor otomatik oluşturulmuştur.</div>
 </div>
 </body></html>`;
-        const { uri } = await Print.printToFileAsync({ html });
+        const { uri } = await printToLocalPdfFile({ html });
         if (mode === 'mail') {
           await sendPdfToPrinterEmail({
             pdfUri: uri,
@@ -291,7 +302,7 @@ ${sorted
 </div>
 </body></html>`;
     try {
-      const { uri } = await Print.printToFileAsync({ html });
+      const { uri } = await printToLocalPdfFile({ html });
       if (mode === 'mail') {
         await sendPdfToPrinterEmail({
           pdfUri: uri,
@@ -329,19 +340,69 @@ ${sorted
     }
   }, [payments, dateStart, dateEnd]);
 
+  const visiblePayments = payments.filter((p) => {
+    const q = search.trim().toLocaleLowerCase('tr-TR');
+    if (!q) return true;
+    const name = (p.staff?.full_name ?? '').toLocaleLowerCase('tr-TR');
+    const dept = (p.staff?.department ?? '').toLocaleLowerCase('tr-TR');
+    return name.includes(q) || dept.includes(q);
+  });
+  const visibleTotal = visiblePayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const visibleApproved = visiblePayments
+    .filter((p) => p.status === 'approved')
+    .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
   return (
     <View style={styles.container}>
+      <LinearGradient colors={[...HERO_GRAD]} style={[styles.heroBar, { paddingTop: insets.top + 8 }]}>
+        <AdminStackBackButton tintColor="#fff" fallback="/admin/salary" />
+        <View style={styles.heroTitleWrap}>
+          <Text style={styles.heroTitle} numberOfLines={1}>
+            Tüm maaş ödemeleri
+          </Text>
+          <Text style={styles.heroSub} numberOfLines={1}>
+            Filtrele · dışa aktar · detay
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.heroIconBtn}
+          onPress={() => router.push('/admin/salary/pay')}
+          accessibilityLabel="Maaş öde"
+        >
+          <Ionicons name="wallet-outline" size={22} color="#fff" />
+        </TouchableOpacity>
+      </LinearGradient>
+
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.searchCard}>
+          <Ionicons name="search" size={18} color={adminTheme.colors.accent} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Personel ara…"
+            placeholderTextColor={adminTheme.colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            returnKeyType="search"
+          />
+          {search.length > 0 ? (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
         <AdminOrganizationPicker
           canUseAll={canUseAllOrganizations}
           ownOrganizationId={me?.organization_id}
         />
-        <AdminCard>
-          <Text style={styles.sectionTitle}>Tarih Aralığı (Ödeme Tarihi)</Text>
+
+        <View style={styles.filterCard}>
+          <Text style={styles.sectionTitle}>Tarih aralığı</Text>
           <View style={styles.dateRow}>
             <View style={styles.dateInputWrap}>
               <Text style={styles.dateLabel}>Başlangıç</Text>
@@ -365,54 +426,62 @@ ${sorted
             </View>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Durum Filtresi</Text>
-          <View style={styles.statusRow}>
+          <Text style={[styles.sectionTitle, { marginTop: 14 }]}>Durum</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+            keyboardShouldPersistTaps="handled"
+          >
             {STATUS_OPTIONS.map((opt) => {
               const active = statusFilter === opt.value;
               return (
                 <TouchableOpacity
                   key={opt.value}
-                  style={[styles.statusChip, active && styles.statusChipActive]}
+                  style={[styles.filterChip, active && styles.filterChipOn]}
                   onPress={() => setStatusFilter(opt.value)}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{opt.label}</Text>
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextOn]}>
+                    {opt.label}
+                  </Text>
                 </TouchableOpacity>
               );
             })}
-          </View>
+          </ScrollView>
 
           <TouchableOpacity style={styles.applyBtn} onPress={load} activeOpacity={0.8}>
-            <Ionicons name="search" size={20} color="#fff" />
+            <Ionicons name="search" size={18} color="#fff" />
             <Text style={styles.applyBtnText}>Filtrele</Text>
           </TouchableOpacity>
-        </AdminCard>
+        </View>
 
-        <AdminCard>
-          <Text style={styles.summaryLiveLabel}>Güncel tutar (bu filtredeki tüm ödemeler)</Text>
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryCol}>
-              <Text style={styles.summaryLabel}>Kayıt</Text>
-              <Text style={styles.summaryValue}>{payments.length}</Text>
-            </View>
-            <View style={styles.summaryCol}>
-              <Text style={styles.summaryLabel}>Toplam</Text>
-              <Text style={[styles.summaryValue, styles.summaryTotal]}>{fmtMoney(totalAmount)}</Text>
-            </View>
-            <View style={styles.summaryCol}>
-              <Text style={styles.summaryLabel}>Onaylı</Text>
-              <Text style={[styles.summaryValue, { color: adminTheme.colors.success }]}>{fmtMoney(approvedTotal)}</Text>
-            </View>
+        <View style={styles.statsRow}>
+          <View style={styles.statPill}>
+            <Text style={styles.statPillNum}>{visiblePayments.length}</Text>
+            <Text style={styles.statPillLbl}>Kayıt</Text>
           </View>
-        </AdminCard>
+          <View style={[styles.statPill, styles.statPillExpense]}>
+            <Text style={[styles.statPillNum, styles.statPillNumExpense]} numberOfLines={1}>
+              {fmtMoney(visibleTotal)}
+            </Text>
+            <Text style={styles.statPillLbl}>Toplam</Text>
+          </View>
+          <View style={[styles.statPill, styles.statPillPaid]}>
+            <Text style={[styles.statPillNum, styles.statPillNumPaid]} numberOfLines={1}>
+              {fmtMoney(visibleApproved)}
+            </Text>
+            <Text style={styles.statPillLbl}>Onaylı</Text>
+          </View>
+        </View>
 
         <View style={styles.exportRow}>
           <TouchableOpacity style={styles.exportBtn} onPress={exportCsv} activeOpacity={0.8}>
-            <Ionicons name="download-outline" size={20} color={adminTheme.colors.accent} />
+            <Ionicons name="download-outline" size={18} color={adminTheme.colors.accent} />
             <Text style={styles.exportBtnText}>CSV</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.exportBtn} onPress={exportPdf} activeOpacity={0.8}>
-            <Ionicons name="document-text-outline" size={20} color={adminTheme.colors.accent} />
+          <TouchableOpacity style={styles.exportBtn} onPress={() => void exportPdf()} activeOpacity={0.8}>
+            <Ionicons name="document-text-outline" size={18} color={adminTheme.colors.accent} />
             <Text style={styles.exportBtnText}>PDF</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -428,62 +497,88 @@ ${sorted
             {mailSendingKey === 'all' ? (
               <ActivityIndicator size="small" color={adminTheme.colors.accent} />
             ) : (
-              <Ionicons name="mail-outline" size={20} color={adminTheme.colors.accent} />
+              <Ionicons name="mail-outline" size={18} color={adminTheme.colors.accent} />
             )}
-            <Text style={styles.exportBtnText}>Yazıcı Mail</Text>
+            <Text style={styles.exportBtnText}>Mail</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.listTitle}>Tüm Ödemeler ({payments.length})</Text>
+        <Text style={styles.listTitle}>Ödemeler ({visiblePayments.length})</Text>
 
         {loading ? (
           <ActivityIndicator size="large" color={adminTheme.colors.accent} style={styles.loader} />
-        ) : payments.length === 0 ? (
-          <View style={styles.empty}>
-            <Ionicons name="cash-outline" size={48} color={adminTheme.colors.textMuted} />
-            <Text style={styles.emptyText}>Bu aralıkta ödeme bulunamadı.</Text>
+        ) : visiblePayments.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="cash-outline" size={36} color={adminTheme.colors.accent} />
+            </View>
+            <Text style={styles.emptyTitle}>Ödeme bulunamadı</Text>
+            <Text style={styles.emptySub}>Bu aralıkta kayıt yok veya arama sonucu boş.</Text>
           </View>
         ) : (
-          <View style={styles.table}>
-            <View style={[styles.tableRow, styles.tableHeader]}>
-              <Text style={[styles.tableCell, styles.thDate]}>Tarih</Text>
-              <Text style={[styles.tableCell, styles.thTime]}>Saat</Text>
-              <Text style={[styles.tableCell, styles.thName]}>Personel</Text>
-              <Text style={[styles.tableCell, styles.thPeriod]}>Dönem</Text>
-              <Text style={[styles.tableCell, styles.thAmount]}>Tutar</Text>
-              <Text style={[styles.tableCell, styles.thStatus]}>Durum</Text>
-              <Text style={[styles.tableCell, styles.thPdf]}>PDF</Text>
-            </View>
-            {payments.map((p) => (
-              <TouchableOpacity
-                key={p.id}
-                style={styles.tableRow}
-                onPress={() => setDetailPayment(p)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.tableCell, styles.thDate]}>{formatDateShort(p.payment_date)}</Text>
-                <Text style={[styles.tableCell, styles.thTime]}>{formatTimeOnly(p.payment_time)}</Text>
-                <Text style={[styles.tableCell, styles.thName]} numberOfLines={1}>
-                  {p.staff?.full_name ?? '—'} {p.staff?.department ? `(${p.staff.department})` : ''}
-                </Text>
-                <Text style={[styles.tableCell, styles.thPeriod]}>{periodLabel(p)}</Text>
-                <Text style={[styles.tableCell, styles.thAmount]}>{fmtMoney(Number(p.amount))}</Text>
-                <View style={[styles.tableCell, styles.thStatus]}>
-                  <Ionicons name={statusIcon(p.status) as any} size={18} color={statusColor(p.status)} />
-                </View>
+          <View style={styles.cardList}>
+            {visiblePayments.map((p) => {
+              const name = p.staff?.full_name ?? '—';
+              return (
                 <TouchableOpacity
-                  style={[styles.tableCell, styles.thPdf]}
-                  onPress={(ev) => { ev.stopPropagation(); exportSingleSalaryPdf(p); }}
-                  disabled={pdfExportingStaffId === p.staff_id || mailSendingKey === `staff:${p.staff_id}`}
+                  key={p.id}
+                  style={styles.payCard}
+                  onPress={() => setDetailPayment(p)}
+                  activeOpacity={0.88}
                 >
-                  {pdfExportingStaffId === p.staff_id ? (
-                    <ActivityIndicator size="small" color={adminTheme.colors.accent} />
-                  ) : (
-                    <Ionicons name="document-text-outline" size={18} color={adminTheme.colors.accent} />
-                  )}
+                  <View style={[styles.avatar, { backgroundColor: staffMeta.bg }]}>
+                    <Text style={[styles.avatarText, { color: staffMeta.color }]}>
+                      {counterpartyInitials(name)}
+                    </Text>
+                  </View>
+                  <View style={styles.payBody}>
+                    <Text style={styles.payName} numberOfLines={1}>
+                      {name}
+                    </Text>
+                    <View style={styles.typeRow}>
+                      <Ionicons name={staffMeta.icon} size={12} color={staffMeta.color} />
+                      <Text style={[styles.payDept, { color: staffMeta.color }]}>
+                        {p.staff?.department?.trim() || staffMeta.label}
+                      </Text>
+                    </View>
+                    <Text style={styles.payMeta}>
+                      {formatDateShort(p.payment_date)} · {formatTimeOnly(p.payment_time)} ·{' '}
+                      {periodLabel(p)}
+                    </Text>
+                    <View style={styles.statusInline}>
+                      <Ionicons
+                        name={statusIcon(p.status) as any}
+                        size={14}
+                        color={statusColor(p.status)}
+                      />
+                      <Text style={[styles.statusInlineText, { color: statusColor(p.status) }]}>
+                        {statusLabel(p.status)}
+                      </Text>
+                    </View>
+                    <Text style={styles.payAmount}>{fmtMoney(Number(p.amount))}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.pdfBtn}
+                    onPress={(ev) => {
+                      ev?.stopPropagation?.();
+                      void exportSingleSalaryPdf(p);
+                    }}
+                    disabled={
+                      pdfExportingStaffId === p.staff_id ||
+                      mailSendingKey === `staff:${p.staff_id}`
+                    }
+                    hitSlop={8}
+                  >
+                    {pdfExportingStaffId === p.staff_id ? (
+                      <ActivityIndicator size="small" color="#b91c1c" />
+                    ) : (
+                      <Ionicons name="document-text-outline" size={18} color="#b91c1c" />
+                    )}
+                  </TouchableOpacity>
+                  <Ionicons name="chevron-forward" size={20} color={adminTheme.colors.textMuted} />
                 </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -503,11 +598,19 @@ ${sorted
                   <View style={styles.detailBody}>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Ödeme tarihi</Text>
-                      <Text style={styles.detailValue}>{formatDateShort(detailPayment.payment_date)} {formatTimeOnly(detailPayment.payment_time)}</Text>
+                      <Text style={styles.detailValue}>
+                        {formatDateShort(detailPayment.payment_date)}{' '}
+                        {formatTimeOnly(detailPayment.payment_time)}
+                      </Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Personel</Text>
-                      <Text style={styles.detailValue}>{detailPayment.staff?.full_name ?? '—'} {detailPayment.staff?.department ? `(${detailPayment.staff.department})` : ''}</Text>
+                      <Text style={styles.detailValue}>
+                        {detailPayment.staff?.full_name ?? '—'}
+                        {detailPayment.staff?.department
+                          ? ` (${detailPayment.staff.department})`
+                          : ''}
+                      </Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Dönem</Text>
@@ -515,11 +618,15 @@ ${sorted
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Tutar</Text>
-                      <Text style={[styles.detailValue, styles.detailAmount]}>{fmtMoney(Number(detailPayment.amount))}</Text>
+                      <Text style={[styles.detailValue, styles.detailAmount]}>
+                        {fmtMoney(Number(detailPayment.amount))}
+                      </Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Ödeme tipi</Text>
-                      <Text style={styles.detailValue}>{paymentTypeLabel(detailPayment.payment_type)}</Text>
+                      <Text style={styles.detailValue}>
+                        {paymentTypeLabel(detailPayment.payment_type)}
+                      </Text>
                     </View>
                     {detailPayment.bank_or_reference ? (
                       <View style={styles.detailRow}>
@@ -530,20 +637,29 @@ ${sorted
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Durum</Text>
                       <View style={styles.detailStatusWrap}>
-                        <Ionicons name={statusIcon(detailPayment.status) as any} size={18} color={statusColor(detailPayment.status)} />
+                        <Ionicons
+                          name={statusIcon(detailPayment.status) as any}
+                          size={18}
+                          color={statusColor(detailPayment.status)}
+                        />
                         <Text style={styles.detailValue}>{statusLabel(detailPayment.status)}</Text>
                       </View>
                     </View>
                     {detailPayment.description ? (
                       <View style={[styles.detailRow, styles.detailRowBlock]}>
                         <Text style={styles.detailLabel}>Açıklama</Text>
-                        <Text style={[styles.detailValue, styles.detailDesc]}>{detailPayment.description}</Text>
+                        <Text style={[styles.detailValue, styles.detailDesc]}>
+                          {detailPayment.description}
+                        </Text>
                       </View>
                     ) : null}
                     <TouchableOpacity
                       style={styles.detailPdfBtn}
-                      onPress={() => exportSingleSalaryPdf(detailPayment)}
-                      disabled={pdfExportingStaffId === detailPayment.staff_id || mailSendingKey === `staff:${detailPayment.staff_id}`}
+                      onPress={() => void exportSingleSalaryPdf(detailPayment)}
+                      disabled={
+                        pdfExportingStaffId === detailPayment.staff_id ||
+                        mailSendingKey === `staff:${detailPayment.staff_id}`
+                      }
                     >
                       {pdfExportingStaffId === detailPayment.staff_id ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -555,8 +671,11 @@ ${sorted
                       )}
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.detailPdfBtn, { marginTop: 10, backgroundColor: adminTheme.colors.surfaceTertiary }]}
-                      onPress={() => exportSingleSalaryPdf(detailPayment, 'mail')}
+                      style={[
+                        styles.detailPdfBtn,
+                        { marginTop: 10, backgroundColor: adminTheme.colors.surfaceTertiary },
+                      ]}
+                      onPress={() => void exportSingleSalaryPdf(detailPayment, 'mail')}
                       disabled={mailSendingKey === `staff:${detailPayment.staff_id}`}
                     >
                       {mailSendingKey === `staff:${detailPayment.staff_id}` ? (
@@ -564,7 +683,9 @@ ${sorted
                       ) : (
                         <>
                           <Ionicons name="mail-outline" size={20} color={adminTheme.colors.accent} />
-                          <Text style={[styles.detailPdfBtnText, { color: adminTheme.colors.accent }]}>Tek Belgeyi Mail Gönder</Text>
+                          <Text style={[styles.detailPdfBtnText, { color: adminTheme.colors.accent }]}>
+                            Tek Belgeyi Mail Gönder
+                          </Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -581,115 +702,242 @@ ${sorted
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  heroBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingBottom: 10,
+  },
+  heroIconBtn: { padding: 8 },
+  heroTitleWrap: { flex: 1, marginHorizontal: 4 },
+  heroTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
+  heroSub: { fontSize: 11, color: 'rgba(255,255,255,0.72)', marginTop: 2 },
   scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 32 },
-  sectionTitle: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.text },
+  searchCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    ...adminTheme.shadow.sm,
+  },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 10, color: adminTheme.colors.text },
+  filterCard: {
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: adminTheme.colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   dateRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
   dateInputWrap: { flex: 1 },
   dateLabel: { fontSize: 12, color: adminTheme.colors.textMuted, marginBottom: 4 },
   dateInput: {
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 12,
     fontSize: 14,
-    backgroundColor: adminTheme.colors.surface,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
     color: adminTheme.colors.text,
   },
-  statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  statusChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: adminTheme.colors.surfaceTertiary,
+  chipRow: { gap: 8, paddingVertical: 8 },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  statusChipActive: {
-    backgroundColor: adminTheme.colors.primary,
-    borderColor: adminTheme.colors.primary,
-  },
-  statusChipText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
-  statusChipTextActive: { color: adminTheme.colors.surface },
+  filterChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  filterChipText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted },
+  filterChipTextOn: { color: '#fff' },
   applyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: adminTheme.colors.primary,
+    backgroundColor: '#0f172a',
     paddingVertical: 12,
-    borderRadius: 8,
-    marginTop: 16,
+    borderRadius: 12,
+    marginTop: 4,
   },
-  applyBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  summaryLiveLabel: { fontSize: 12, color: adminTheme.colors.textMuted, marginBottom: 10, fontWeight: '600' },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 },
-  summaryCol: { flex: 1, minWidth: 70 },
-  summaryLabel: { fontSize: 11, color: adminTheme.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-  summaryValue: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text, marginTop: 2 },
-  summaryTotal: { fontSize: 17, color: adminTheme.colors.primary },
-  exportRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
+  applyBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  statPill: {
+    flex: 1,
+    backgroundColor: adminTheme.colors.surface,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  statPillExpense: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  statPillPaid: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  statPillNum: { fontSize: 12, fontWeight: '800', color: adminTheme.colors.text },
+  statPillNumExpense: { color: '#dc2626' },
+  statPillNumPaid: { color: '#16a34a' },
+  statPillLbl: { fontSize: 10, color: adminTheme.colors.textMuted, fontWeight: '600', marginTop: 2 },
+  exportRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   exportBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     paddingVertical: 12,
     backgroundColor: adminTheme.colors.surface,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  exportBtnText: { fontSize: 14, fontWeight: '600', color: adminTheme.colors.accent },
-  listTitle: { fontSize: 16, fontWeight: '700', color: adminTheme.colors.text, marginTop: 20, marginBottom: 12 },
+  exportBtnText: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.accent },
+  listTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: adminTheme.colors.textMuted,
+    marginTop: 8,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
   loader: { marginVertical: 24 },
-  empty: { alignItems: 'center', paddingVertical: 40 },
-  emptyText: { fontSize: 14, color: adminTheme.colors.textMuted, marginTop: 12 },
-  table: {
+  emptyCard: {
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 24,
     backgroundColor: adminTheme.colors.surface,
-    borderRadius: 8,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    overflow: 'hidden',
   },
-  tableRow: {
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#fff7ed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '800', color: adminTheme.colors.text },
+  emptySub: {
+    fontSize: 13,
+    color: adminTheme.colors.textMuted,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  cardList: { gap: 0 },
+  payCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: adminTheme.colors.borderLight,
-  },
-  tableHeader: { backgroundColor: adminTheme.colors.surfaceTertiary },
-  tableCell: { fontSize: 12 },
-  thDate: { width: 80 },
-  thTime: { width: 45 },
-  thName: { flex: 1, maxWidth: 100 },
-  thPeriod: { width: 85 },
-  thAmount: { width: 80, fontWeight: '600' },
-  thStatus: { width: 32 },
-  thPdf: { width: 40 },
-  detailPdfBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 20, paddingVertical: 14, backgroundColor: adminTheme.colors.accent, borderRadius: 10 },
-  detailPdfBtnText: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  detailCard: {
-    width: '96%',
-    maxWidth: 480,
+    gap: 10,
     backgroundColor: adminTheme.colors.surface,
-    borderRadius: 16,
-    padding: 24,
-    maxHeight: '90%',
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { fontSize: 14, fontWeight: '800' },
+  payBody: { flex: 1, minWidth: 0 },
+  payName: { fontSize: 15, fontWeight: '700', color: adminTheme.colors.text },
+  typeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 },
+  payDept: { fontSize: 12, fontWeight: '600' },
+  payMeta: { fontSize: 12, color: adminTheme.colors.textSecondary, marginTop: 4 },
+  statusInline: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  statusInlineText: { fontSize: 12, fontWeight: '700' },
+  payAmount: { fontSize: 13, fontWeight: '800', color: '#dc2626', marginTop: 4 },
+  pdfBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  detailPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 20,
+    paddingVertical: 14,
+    backgroundColor: '#dc2626',
+    borderRadius: 12,
+  },
+  detailPdfBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'flex-end',
+  },
+  detailCard: {
+    width: '100%',
+    backgroundColor: adminTheme.colors.surface,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 20,
+    maxHeight: '88%',
   },
   detailScroll: { maxHeight: '100%' },
-  detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottomWidth: 2, borderBottomColor: adminTheme.colors.borderLight },
-  detailTitle: { fontSize: 22, fontWeight: '800', color: adminTheme.colors.text },
-  detailBody: { gap: 16 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 },
+  detailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: adminTheme.colors.border,
+  },
+  detailTitle: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
+  detailBody: { gap: 14, paddingBottom: 24 },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
   detailRowBlock: { flexDirection: 'column', alignItems: 'stretch' },
-  detailLabel: { fontSize: 14, color: adminTheme.colors.textMuted, fontWeight: '600', minWidth: 90 },
+  detailLabel: {
+    fontSize: 13,
+    color: adminTheme.colors.textMuted,
+    fontWeight: '600',
+    minWidth: 90,
+  },
   detailDesc: { textAlign: 'left', marginTop: 4 },
-  detailValue: { fontSize: 16, color: adminTheme.colors.text, flex: 1, textAlign: 'right' },
-  detailAmount: { fontSize: 20, fontWeight: '800', color: adminTheme.colors.primary },
-  detailStatusWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end' },
+  detailValue: { fontSize: 15, color: adminTheme.colors.text, flex: 1, textAlign: 'right' },
+  detailAmount: { fontSize: 18, fontWeight: '800', color: '#dc2626' },
+  detailStatusWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
 });

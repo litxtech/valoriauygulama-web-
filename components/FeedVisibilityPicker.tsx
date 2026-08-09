@@ -1,22 +1,51 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import type { FeedPostVisibility } from '@/lib/feedVisibility';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 
 type Option = {
   value: FeedPostVisibility;
   labelKey: string;
   hintKey: string;
+  icon: keyof typeof Ionicons.glyphMap;
 };
 
 const STAFF_OPTIONS: Option[] = [
-  { value: 'all_staff', labelKey: 'feedVisibilityAllStaff', hintKey: 'feedVisibilityAllStaffHint' },
-  { value: 'my_team', labelKey: 'feedVisibilityMyTeam', hintKey: 'feedVisibilityMyTeamHint' },
-  { value: 'customers', labelKey: 'feedVisibilityCustomers', hintKey: 'feedVisibilityCustomersHint' },
+  {
+    value: 'all_staff',
+    labelKey: 'feedVisibilityAllStaff',
+    hintKey: 'feedVisibilityAllStaffHint',
+    icon: 'people-outline',
+  },
+  {
+    value: 'my_team',
+    labelKey: 'feedVisibilityMyTeam',
+    hintKey: 'feedVisibilityMyTeamHint',
+    icon: 'git-branch-outline',
+  },
+  {
+    value: 'customers',
+    labelKey: 'feedVisibilityCustomers',
+    hintKey: 'feedVisibilityCustomersHint',
+    icon: 'sunny-outline',
+  },
 ];
 
 const GUEST_OPTIONS: Option[] = [
-  { value: 'customers', labelKey: 'feedVisibilityGuestEveryone', hintKey: 'feedVisibilityGuestEveryoneHint' },
-  { value: 'guests_only', labelKey: 'feedVisibilityGuestsOnly', hintKey: 'feedVisibilityGuestsOnlyHint' },
+  {
+    value: 'customers',
+    labelKey: 'feedVisibilityGuestEveryone',
+    hintKey: 'feedVisibilityGuestEveryoneHint',
+    icon: 'globe-outline',
+  },
+  {
+    value: 'guests_only',
+    labelKey: 'feedVisibilityGuestsOnly',
+    hintKey: 'feedVisibilityGuestsOnlyHint',
+    icon: 'lock-closed-outline',
+  },
 ];
 
 type Props = {
@@ -32,57 +61,113 @@ export function FeedVisibilityPicker({
   value,
   onChange,
   disabled = false,
-  accentColor = '#b8860b',
+  accentColor,
 }: Props) {
   const { t } = useTranslation();
+  const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
+  const accent = accentColor ?? palette.accent;
   const options = audience === 'staff' ? STAFF_OPTIONS : GUEST_OPTIONS;
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>{t('feedVisibilityLabel')}</Text>
-      {options.map((opt) => {
-        const active = value === opt.value;
-        return (
-          <TouchableOpacity
-            key={opt.value}
-            style={[
-              styles.row,
-              active && { borderColor: accentColor, backgroundColor: accentColor + '0c' },
-              disabled && styles.rowDisabled,
-            ]}
-            onPress={() => onChange(opt.value)}
-            disabled={disabled}
-            activeOpacity={0.85}
-          >
-            <View style={styles.rowText}>
-              <Text style={[styles.rowLabel, active && { color: accentColor }]}>{t(opt.labelKey)}</Text>
-              <Text style={styles.rowHint}>{t(opt.hintKey)}</Text>
-            </View>
-            {active ? <Text style={[styles.check, { color: accentColor }]}>✓</Text> : null}
-          </TouchableOpacity>
-        );
-      })}
+      <Text style={[styles.label, { color: palette.text }]}>{t('feedVisibilityLabel')}</Text>
+      <View style={styles.list}>
+        {options.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              onPress={() => onChange(opt.value)}
+              disabled={disabled}
+              style={({ pressed }) => [
+                styles.row,
+                {
+                  backgroundColor: active
+                    ? isNight
+                      ? 'rgba(45,212,191,0.12)'
+                      : accent + '12'
+                    : isNight
+                      ? 'rgba(255,255,255,0.04)'
+                      : '#FFFFFF',
+                  borderColor: active ? accent : palette.borderLight,
+                  opacity: disabled ? 0.55 : pressed ? 0.94 : 1,
+                },
+              ]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active, disabled }}
+            >
+              <View
+                style={[
+                  styles.iconWrap,
+                  {
+                    backgroundColor: active ? accent : isNight ? 'rgba(255,255,255,0.08)' : palette.accentSoft,
+                  },
+                ]}
+              >
+                <Ionicons name={opt.icon} size={18} color={active ? '#fff' : accent} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={[styles.rowLabel, { color: active ? accent : palette.text }]}>
+                  {t(opt.labelKey)}
+                </Text>
+                <Text style={[styles.rowHint, { color: palette.muted }]}>{t(opt.hintKey)}</Text>
+              </View>
+              <View
+                style={[
+                  styles.radio,
+                  {
+                    borderColor: active ? accent : palette.borderLight,
+                    backgroundColor: active ? accent : 'transparent',
+                  },
+                ]}
+              >
+                {active ? <Ionicons name="checkmark" size={12} color="#fff" /> : null}
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginBottom: 8 },
-  label: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 10 },
+  wrap: { marginBottom: 4 },
+  label: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+    opacity: 0.85,
+  },
+  list: { gap: 8 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1.5,
   },
-  rowDisabled: { opacity: 0.6 },
-  rowText: { flex: 1, paddingRight: 8 },
-  rowLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  rowHint: { fontSize: 12, color: '#6b7280', marginTop: 3, lineHeight: 16 },
-  check: { fontWeight: '700', fontSize: 18 },
+  iconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowText: { flex: 1, minWidth: 0 },
+  rowLabel: { fontSize: 15, fontWeight: '700' },
+  rowHint: { fontSize: 12, fontWeight: '500', marginTop: 2, lineHeight: 16 },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

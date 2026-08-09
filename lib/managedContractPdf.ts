@@ -1,5 +1,6 @@
 import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
 import { contractTypeLabel } from '@/lib/managedContracts/constants';
@@ -198,7 +199,7 @@ export async function exportManagedContractPdf(
   action: 'share' | 'print' | 'printer',
 ): Promise<void> {
   const html = buildManagedContractPdfHtml(detail);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   const fileName = `${detail.contract.contract_number.replace(/[^a-zA-Z0-9-]/g, '_')}.pdf`;
 
   if (action === 'printer') {

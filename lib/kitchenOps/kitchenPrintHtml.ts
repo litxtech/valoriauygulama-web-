@@ -3,6 +3,7 @@
  */
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 
 export const KITCHEN_PRINT_HOTEL = 'Valoria Hotel';
@@ -153,7 +154,7 @@ export function openKitchenPrintWindow(html: string): void {
 }
 
 export async function kitchenHtmlToPdfUri(html: string, landscape = false): Promise<string> {
-  const { uri } = await Print.printToFileAsync({
+  const { uri } = await printToLocalPdfFile({
     html,
     width: landscape ? 842 : 595,
     height: landscape ? 595 : 842,

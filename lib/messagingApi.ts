@@ -1201,7 +1201,8 @@ export function subscribeToTypingPresence(
 
 export async function guestListConversations(appToken: string): Promise<ConversationWithMeta[]> {
   const { data, error } = await supabase.rpc('messaging_list_conversations_guest', { p_app_token: appToken });
-  if (error || !data?.length) return [];
+  if (error) return [];
+  if (!Array.isArray(data)) return [];
   return data as ConversationWithMeta[];
 }
 

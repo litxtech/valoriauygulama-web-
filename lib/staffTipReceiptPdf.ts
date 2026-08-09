@@ -1,5 +1,5 @@
 import { Alert, Platform, Share, TurboModuleRegistry } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import type { StaffTipRow } from '@/lib/staffTips';
@@ -420,7 +420,7 @@ export function buildStaffTipReceiptHtml(input: StaffTipReceiptInput): string {
 
 async function createStaffTipReceiptPdfFile(input: StaffTipReceiptInput): Promise<{ uri: string; fileName: string }> {
   const html = buildStaffTipReceiptHtml(input);
-  const file = await Print.printToFileAsync({
+  const file = await printToLocalPdfFile({
     html,
     width: 595,
     height: 842,

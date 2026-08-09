@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -42,7 +42,8 @@ import { sumInvoiceLineItems } from '@/lib/financeInvoiceOcr/parseInvoiceText';
 import type { InvoiceLineItem } from '@/lib/financeInvoiceOcr/types';
 import { supabase } from '@/lib/supabase';
 
-const SHEET_HEIGHT = Math.round(Dimensions.get('window').height * 0.96);
+const WIN_H = Dimensions.get('window').height;
+const SHEET_HEIGHT = Math.round(WIN_H * 0.92);
 
 type Person = {
   id: string;
@@ -73,7 +74,10 @@ export function CounterpartyInvoiceScanSheet({
   onSaved,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('pick');
+  /** Kamera/galeri dönüşünde Modal layout’unu yenile */
+  const [layoutTick, setLayoutTick] = useState(0);
   const [sourceUris, setSourceUris] = useState<string[]>([]);
   const [sourceKind, setSourceKind] = useState<string>('—');
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -134,6 +138,7 @@ export function CounterpartyInvoiceScanSheet({
     setRawText('');
     setSyncCariName(false);
     setSaving(false);
+    setLayoutTick(0);
   }, []);
 
   useEffect(() => {
@@ -182,6 +187,9 @@ export function CounterpartyInvoiceScanSheet({
         setSyncCariName(false);
       }
       setStep('review');
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ y: 0, animated: false });
+      });
     } catch (e) {
       Alert.alert('Okuma hatası', (e as Error)?.message ?? 'Belge okunamadı.');
       setStep('pick');
@@ -190,7 +198,13 @@ export function CounterpartyInvoiceScanSheet({
 
   const pickSource = () => {
     chooseInvoiceDocumentSource((docs) => {
-      if (docs.length) void runScan(docs);
+      if (!docs.length) return;
+      // iOS: ImagePicker Modal’ı kapatınca sheet alta yapışabiliyor — kısa gecikme + layout yenile
+      const delay = Platform.OS === 'ios' ? 320 : Platform.OS === 'android' ? 120 : 0;
+      setTimeout(() => {
+        setLayoutTick((n) => n + 1);
+        void runScan(docs);
+      }, delay);
     });
   };
 
@@ -286,10 +300,17 @@ export function CounterpartyInvoiceScanSheet({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-        <Pressable style={styles.overlay} onPress={onClose}>
-          <Pressable
-            style={[styles.sheet, { maxHeight: SHEET_HEIGHT, paddingBottom: Math.max(insets.bottom, 12) }]}
-            onPress={(e) => e.stopPropagation()}
+        <View style={styles.overlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+          <View
+            key={`sheet-${layoutTick}`}
+            style={[
+              styles.sheet,
+              {
+                height: SHEET_HEIGHT,
+                paddingBottom: Math.max(insets.bottom, 12),
+              },
+            ]}
           >
             <View style={styles.handle} />
             <View style={styles.head}>
@@ -304,307 +325,316 @@ export function CounterpartyInvoiceScanSheet({
               </TouchableOpacity>
             </View>
 
-            {step === 'pick' ? (
-              <View style={styles.pickBody}>
-                <View style={styles.pickHero}>
-                  <Ionicons name="scan-outline" size={44} color="#7c3aed" />
-                  <Text style={styles.pickTitle}>Herhangi bir belgeden oku</Text>
-                  <Text style={styles.pickHint}>
-                    Galeriden fotoğraf (birden fazla sayfa), kamera, PDF veya e-Fatura. Okuma sonrası tüm alanları
-                    düzenleyebilirsiniz.
+            <View style={styles.bodySlot}>
+              {step === 'pick' ? (
+                <View style={styles.pickBody}>
+                  <View style={styles.pickHero}>
+                    <Ionicons name="scan-outline" size={44} color="#7c3aed" />
+                    <Text style={styles.pickTitle}>Herhangi bir belgeden oku</Text>
+                    <Text style={styles.pickHint}>
+                      Galeriden fotoğraf (birden fazla sayfa), kamera, PDF veya e-Fatura. Okuma sonrası tüm alanları
+                      düzenleyebilirsiniz.
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={styles.pickBtn} onPress={pickSource} activeOpacity={0.88}>
+                    <Ionicons name="folder-open-outline" size={22} color="#fff" />
+                    <Text style={styles.pickBtnText}>Belge seç</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.pickFormats}>
+                    JPG · PNG · HEIC · PDF · XML · çoklu sayfa
                   </Text>
                 </View>
-                <TouchableOpacity style={styles.pickBtn} onPress={pickSource} activeOpacity={0.88}>
-                  <Ionicons name="folder-open-outline" size={22} color="#fff" />
-                  <Text style={styles.pickBtnText}>Belge seç</Text>
-                </TouchableOpacity>
-                <Text style={styles.pickFormats}>
-                  JPG · PNG · HEIC · PDF · XML · çoklu sayfa
-                </Text>
-              </View>
-            ) : null}
+              ) : null}
 
-            {step === 'scanning' ? (
-              <View style={styles.scanBody}>
-                <ActivityIndicator size="large" color={adminTheme.colors.accent} />
-                <Text style={styles.scanText}>Belge okunuyor…</Text>
-                <Text style={styles.scanSub}>Fotoğraf OCR · PDF metin · XML</Text>
-              </View>
-            ) : null}
+              {step === 'scanning' ? (
+                <View style={styles.scanBody}>
+                  <ActivityIndicator size="large" color={adminTheme.colors.accent} />
+                  <Text style={styles.scanText}>Belge okunuyor…</Text>
+                  <Text style={styles.scanSub}>Fotoğraf OCR · PDF metin · XML</Text>
+                </View>
+              ) : null}
 
-            {step === 'review' ? (
-              <KeyboardAvoidingView
-                style={{ flex: 1, minHeight: 240 }}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              >
-                <ScrollView style={styles.reviewScroll} keyboardShouldPersistTaps="handled">
-                  <View style={styles.previewSection}>
-                    <View style={styles.previewHead}>
-                      <Text style={styles.sectionTitle}>Belge önizleme</Text>
-                      <View style={styles.kindBadge}>
-                        <Text style={styles.kindBadgeText}>{sourceKind}</Text>
-                      </View>
-                    </View>
-                    {previewUri && isImageContractUrl(previewUri) ? (
-                      <TouchableOpacity onPress={() => setLightboxOpen(true)} activeOpacity={0.9}>
-                        <CachedImage uri={previewUri} style={styles.previewImg} contentFit="contain" />
-                        <Text style={styles.previewTap}>Büyütmek için dokunun</Text>
-                      </TouchableOpacity>
-                    ) : previewUri ? (
-                      <View style={styles.pdfBadge}>
-                        <Ionicons name="document-outline" size={28} color="#7c3aed" />
-                        <Text style={styles.pdfBadgeText}>PDF / dosya eklendi</Text>
-                      </View>
-                    ) : null}
-                    {sourceUris.length > 1 ? (
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbRow}>
-                        {sourceUris.map((uri, i) => (
-                          <TouchableOpacity
-                            key={uri}
-                            style={[styles.thumb, previewIndex === i && styles.thumbOn]}
-                            onPress={() => setPreviewIndex(i)}
-                          >
-                            {isImageContractUrl(uri) ? (
-                              <CachedImage uri={uri} style={styles.thumbImg} contentFit="cover" />
-                            ) : (
-                              <View style={styles.thumbPdf}>
-                                <Ionicons name="document" size={16} color="#7c3aed" />
-                              </View>
-                            )}
-                            <Text style={styles.thumbLbl}>Sayfa {i + 1}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    ) : null}
-                    <TouchableOpacity style={styles.changeDocBtn} onPress={pickSource}>
-                      <Ionicons name="refresh-outline" size={16} color="#7c3aed" />
-                      <Text style={styles.changeDocText}>Belgeyi değiştir</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.metaCard}>
-                    <Text style={styles.sectionTitle}>Kim adına?</Text>
-                    {organizationName ? (
-                      <View style={styles.infoRow}>
-                        <Ionicons name="business-outline" size={16} color={adminTheme.colors.textMuted} />
-                        <Text style={styles.infoLbl}>İşletme</Text>
-                        <Text style={styles.infoVal}>{organizationName}</Text>
-                      </View>
-                    ) : null}
-                    <TouchableOpacity style={styles.cpPickRow} onPress={() => setCpPickerOpen(true)}>
-                      <Ionicons name="person-circle-outline" size={20} color="#7c3aed" />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cpPickLbl}>Cari (borç kime açılacak)</Text>
-                        <TextInput
-                          style={styles.cpNameInput}
-                          value={counterpartyName}
-                          onChangeText={setCounterpartyName}
-                          placeholder="Kişi / firma adı"
-                        />
-                      </View>
-                      <Ionicons name="chevron-forward" size={18} color={adminTheme.colors.textMuted} />
-                    </TouchableOpacity>
-                    {createdByStaffName ? (
-                      <View style={styles.infoRow}>
-                        <Ionicons name="person-outline" size={16} color={adminTheme.colors.textMuted} />
-                        <Text style={styles.infoLbl}>Kaydı açan</Text>
-                        <Text style={styles.infoVal}>{createdByStaffName}</Text>
-                      </View>
-                    ) : null}
-                    {supplierCompany.trim() && supplierCompany.trim() !== counterpartyName.trim() ? (
-                      <View style={styles.syncRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.syncTitle}>Cari adını faturadaki firma ile güncelle</Text>
-                          <Text style={styles.syncSub} numberOfLines={1}>
-                            {supplierCompany.trim()}
-                          </Text>
+              {step === 'review' ? (
+                <KeyboardAvoidingView
+                  style={styles.reviewRoot}
+                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+                >
+                  <ScrollView
+                    ref={scrollRef}
+                    style={styles.reviewScroll}
+                    contentContainerStyle={styles.reviewScrollContent}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={styles.previewSection}>
+                      <View style={styles.previewHead}>
+                        <Text style={styles.sectionTitle}>Belge önizleme</Text>
+                        <View style={styles.kindBadge}>
+                          <Text style={styles.kindBadgeText}>{sourceKind}</Text>
                         </View>
-                        <Switch
-                          value={syncCariName}
-                          onValueChange={setSyncCariName}
-                          trackColor={{ false: '#cbd5e1', true: '#c4b5fd' }}
-                          thumbColor={syncCariName ? '#7c3aed' : '#f8fafc'}
-                        />
                       </View>
-                    ) : null}
-                  </View>
-
-                  <View style={styles.metaCard}>
-                    <View style={styles.confRow}>
-                      <Text style={styles.sectionTitle}>Fatura bilgileri</Text>
-                      <View
-                        style={[
-                          styles.confPill,
-                          confidence === 'high' && styles.confHigh,
-                          confidence === 'medium' && styles.confMed,
-                          confidence === 'low' && styles.confLow,
-                        ]}
-                      >
-                        <Text style={styles.confPillText}>{confidenceLabel}</Text>
-                      </View>
-                    </View>
-                    {warnings.length > 0 ? (
-                      <View style={styles.warnBox}>
-                        {warnings.map((w, i) => (
-                          <Text key={i} style={styles.warnText}>
-                            • {w}
-                          </Text>
-                        ))}
-                      </View>
-                    ) : null}
-                    <Text style={styles.label}>Tedarikçi / firma (belgeden)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={supplierCompany}
-                      onChangeText={setSupplierCompany}
-                      placeholder="Malzemeci, şirket unvanı"
-                    />
-                    <Text style={styles.label}>Fatura no</Text>
-                    <TextInput style={styles.input} value={invoiceNo} onChangeText={setInvoiceNo} placeholder="ABC123" />
-                    <Text style={styles.label}>Alıcı / müşteri (belgede)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={buyerName}
-                      onChangeText={setBuyerName}
-                      placeholder="Otel / şirket adınız"
-                    />
-                    <Text style={styles.label}>VKN / vergi no</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={supplierTaxId}
-                      onChangeText={setSupplierTaxId}
-                      keyboardType="number-pad"
-                      placeholder="10 veya 11 hane"
-                    />
-                    <Text style={styles.label}>Borç başlığı *</Text>
-                    <TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="Kayıt adı" />
-                    <Text style={styles.label}>Fatura tarihi</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={startedOn}
-                      onChangeText={setStartedOn}
-                      placeholder="YYYY-MM-DD"
-                    />
-                    <Text style={styles.label}>Toplam tutar (TL) *</Text>
-                    <View style={styles.totalRow}>
-                      <TextInput
-                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                        value={targetAmount}
-                        onChangeText={setTargetAmount}
-                        keyboardType="decimal-pad"
-                        placeholder="0,00"
-                      />
-                      {lineItems.length > 0 ? (
-                        <TouchableOpacity style={styles.sumBtn} onPress={recalcTotalFromLines}>
-                          <Text style={styles.sumBtnText}>Kalemlerden</Text>
+                      {previewUri && isImageContractUrl(previewUri) ? (
+                        <TouchableOpacity onPress={() => setLightboxOpen(true)} activeOpacity={0.9}>
+                          <CachedImage uri={previewUri} style={styles.previewImg} contentFit="contain" />
+                          <Text style={styles.previewTap}>Büyütmek için dokunun</Text>
                         </TouchableOpacity>
+                      ) : previewUri ? (
+                        <View style={styles.pdfBadge}>
+                          <Ionicons name="document-outline" size={28} color="#7c3aed" />
+                          <Text style={styles.pdfBadgeText}>PDF / dosya eklendi</Text>
+                        </View>
+                      ) : null}
+                      {sourceUris.length > 1 ? (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.thumbRow}>
+                          {sourceUris.map((uri, i) => (
+                            <TouchableOpacity
+                              key={uri}
+                              style={[styles.thumb, previewIndex === i && styles.thumbOn]}
+                              onPress={() => setPreviewIndex(i)}
+                            >
+                              {isImageContractUrl(uri) ? (
+                                <CachedImage uri={uri} style={styles.thumbImg} contentFit="cover" />
+                              ) : (
+                                <View style={styles.thumbPdf}>
+                                  <Ionicons name="document" size={16} color="#7c3aed" />
+                                </View>
+                              )}
+                              <Text style={styles.thumbLbl}>Sayfa {i + 1}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      ) : null}
+                      <TouchableOpacity style={styles.changeDocBtn} onPress={pickSource}>
+                        <Ionicons name="refresh-outline" size={16} color="#7c3aed" />
+                        <Text style={styles.changeDocText}>Belgeyi değiştir</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.metaCard}>
+                      <Text style={styles.sectionTitle}>Kim adına?</Text>
+                      {organizationName ? (
+                        <View style={styles.infoRow}>
+                          <Ionicons name="business-outline" size={16} color={adminTheme.colors.textMuted} />
+                          <Text style={styles.infoLbl}>İşletme</Text>
+                          <Text style={styles.infoVal}>{organizationName}</Text>
+                        </View>
+                      ) : null}
+                      <TouchableOpacity style={styles.cpPickRow} onPress={() => setCpPickerOpen(true)}>
+                        <Ionicons name="person-circle-outline" size={20} color="#7c3aed" />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cpPickLbl}>Cari (borç kime açılacak)</Text>
+                          <TextInput
+                            style={styles.cpNameInput}
+                            value={counterpartyName}
+                            onChangeText={setCounterpartyName}
+                            placeholder="Kişi / firma adı"
+                          />
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={adminTheme.colors.textMuted} />
+                      </TouchableOpacity>
+                      {createdByStaffName ? (
+                        <View style={styles.infoRow}>
+                          <Ionicons name="person-outline" size={16} color={adminTheme.colors.textMuted} />
+                          <Text style={styles.infoLbl}>Kaydı açan</Text>
+                          <Text style={styles.infoVal}>{createdByStaffName}</Text>
+                        </View>
+                      ) : null}
+                      {supplierCompany.trim() && supplierCompany.trim() !== counterpartyName.trim() ? (
+                        <View style={styles.syncRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.syncTitle}>Cari adını faturadaki firma ile güncelle</Text>
+                            <Text style={styles.syncSub} numberOfLines={1}>
+                              {supplierCompany.trim()}
+                            </Text>
+                          </View>
+                          <Switch
+                            value={syncCariName}
+                            onValueChange={setSyncCariName}
+                            trackColor={{ false: '#cbd5e1', true: '#c4b5fd' }}
+                            thumbColor={syncCariName ? '#7c3aed' : '#f8fafc'}
+                          />
+                        </View>
                       ) : null}
                     </View>
-                  </View>
 
-                  <View style={styles.metaCard}>
-                    <View style={styles.linesHead}>
-                      <Text style={styles.sectionTitle}>Malzeme kalemleri ({lineItems.length})</Text>
-                      <TouchableOpacity onPress={addBlankLine}>
-                        <Text style={styles.linesAdd}>+ Kalem</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {lineItems.length === 0 ? (
-                      <Text style={styles.linesEmpty}>Kalem yok — ekleyin veya belgeyi tekrar seçin.</Text>
-                    ) : (
-                      lineItems.map((line) => (
-                        <View key={line.id} style={styles.lineCard}>
-                          <TextInput
-                            style={styles.lineName}
-                            value={line.name}
-                            onChangeText={(t) => updateLine(line.id, { name: t })}
-                            placeholder="Malzeme adı"
-                          />
-                          <View style={styles.lineMetaRow}>
-                            <TextInput
-                              style={styles.lineQty}
-                              value={line.quantity != null ? String(line.quantity) : ''}
-                              onChangeText={(t) =>
-                                updateLine(line.id, { quantity: t ? parseFloat(t.replace(',', '.')) : null })
-                              }
-                              placeholder="Adet"
-                              keyboardType="decimal-pad"
-                            />
-                            <TextInput
-                              style={styles.lineUnit}
-                              value={line.unit ?? ''}
-                              onChangeText={(t) => updateLine(line.id, { unit: t || null })}
-                              placeholder="Birim"
-                            />
-                            <TextInput
-                              style={styles.lineTotal}
-                              value={line.total ? String(line.total) : ''}
-                              onChangeText={(t) =>
-                                updateLine(line.id, { total: parseFloat(t.replace(',', '.')) || 0 })
-                              }
-                              placeholder="Tutar"
-                              keyboardType="decimal-pad"
-                            />
-                            <TouchableOpacity onPress={() => removeLine(line.id)} hitSlop={8}>
-                              <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                            </TouchableOpacity>
-                          </View>
+                    <View style={styles.metaCard}>
+                      <View style={styles.confRow}>
+                        <Text style={styles.sectionTitle}>Fatura bilgileri</Text>
+                        <View
+                          style={[
+                            styles.confPill,
+                            confidence === 'high' && styles.confHigh,
+                            confidence === 'medium' && styles.confMed,
+                            confidence === 'low' && styles.confLow,
+                          ]}
+                        >
+                          <Text style={styles.confPillText}>{confidenceLabel}</Text>
                         </View>
-                      ))
-                    )}
-                    {lineItems.length > 0 ? (
-                      <Text style={styles.linesSum}>
-                        Kalem toplamı:{' '}
-                        {fmtMoneyTry(sumInvoiceLineItems(lineItems.filter((l) => l.total > 0)))}
-                      </Text>
-                    ) : null}
-                  </View>
-
-                  <View style={styles.metaCard}>
-                    <Text style={styles.label}>Not</Text>
-                    <TextInput
-                      style={[styles.input, styles.area]}
-                      value={notes}
-                      onChangeText={setNotes}
-                      multiline
-                      placeholder="Ek açıklama"
-                    />
-                    <TouchableOpacity style={styles.rebuildNotesBtn} onPress={rebuildNotes}>
-                      <Text style={styles.rebuildNotesText}>Notu fatura bilgilerinden yenile</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.rawToggle} onPress={() => setRawTextOpen((v) => !v)}>
-                      <Ionicons
-                        name={rawTextOpen ? 'chevron-up' : 'chevron-down'}
-                        size={16}
-                        color={adminTheme.colors.textMuted}
+                      </View>
+                      {warnings.length > 0 ? (
+                        <View style={styles.warnBox}>
+                          {warnings.map((w, i) => (
+                            <Text key={i} style={styles.warnText}>
+                              • {w}
+                            </Text>
+                          ))}
+                        </View>
+                      ) : null}
+                      <Text style={styles.label}>Tedarikçi / firma (belgeden)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={supplierCompany}
+                        onChangeText={setSupplierCompany}
+                        placeholder="Malzemeci, şirket unvanı"
                       />
-                      <Text style={styles.rawToggleText}>Okunan ham metin</Text>
-                    </TouchableOpacity>
-                    {rawTextOpen ? (
-                      <Text style={styles.rawText} selectable>
-                        {rawText.slice(0, 4000) || '—'}
-                      </Text>
-                    ) : null}
-                  </View>
-                </ScrollView>
+                      <Text style={styles.label}>Fatura no</Text>
+                      <TextInput style={styles.input} value={invoiceNo} onChangeText={setInvoiceNo} placeholder="ABC123" />
+                      <Text style={styles.label}>Alıcı / müşteri (belgede)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={buyerName}
+                        onChangeText={setBuyerName}
+                        placeholder="Otel / şirket adınız"
+                      />
+                      <Text style={styles.label}>VKN / vergi no</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={supplierTaxId}
+                        onChangeText={setSupplierTaxId}
+                        keyboardType="number-pad"
+                        placeholder="10 veya 11 hane"
+                      />
+                      <Text style={styles.label}>Borç başlığı *</Text>
+                      <TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="Kayıt adı" />
+                      <Text style={styles.label}>Fatura tarihi</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={startedOn}
+                        onChangeText={setStartedOn}
+                        placeholder="YYYY-MM-DD"
+                      />
+                      <Text style={styles.label}>Toplam tutar (TL) *</Text>
+                      <View style={styles.totalRow}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                          value={targetAmount}
+                          onChangeText={setTargetAmount}
+                          keyboardType="decimal-pad"
+                          placeholder="0,00"
+                        />
+                        {lineItems.length > 0 ? (
+                          <TouchableOpacity style={styles.sumBtn} onPress={recalcTotalFromLines}>
+                            <Text style={styles.sumBtnText}>Kalemlerden</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
 
-                <TouchableOpacity style={styles.saveBtn} onPress={() => void save()} disabled={saving}>
-                  {saving ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                      <Text style={styles.saveBtnText}>
-                        {kindLabels.debtOpen} ·{' '}
-                        {targetAmount ? fmtMoneyTry(parseFloat(targetAmount.replace(',', '.')) || 0) : '—'}
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </KeyboardAvoidingView>
-            ) : null}
-          </Pressable>
-        </Pressable>
+                    <View style={styles.metaCard}>
+                      <View style={styles.linesHead}>
+                        <Text style={styles.sectionTitle}>Malzeme kalemleri ({lineItems.length})</Text>
+                        <TouchableOpacity onPress={addBlankLine}>
+                          <Text style={styles.linesAdd}>+ Kalem</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {lineItems.length === 0 ? (
+                        <Text style={styles.linesEmpty}>Kalem yok — ekleyin veya belgeyi tekrar seçin.</Text>
+                      ) : (
+                        lineItems.map((line) => (
+                          <View key={line.id} style={styles.lineCard}>
+                            <TextInput
+                              style={styles.lineName}
+                              value={line.name}
+                              onChangeText={(t) => updateLine(line.id, { name: t })}
+                              placeholder="Malzeme adı"
+                            />
+                            <View style={styles.lineMetaRow}>
+                              <TextInput
+                                style={styles.lineQty}
+                                value={line.quantity != null ? String(line.quantity) : ''}
+                                onChangeText={(t) =>
+                                  updateLine(line.id, { quantity: t ? parseFloat(t.replace(',', '.')) : null })
+                                }
+                                placeholder="Adet"
+                                keyboardType="decimal-pad"
+                              />
+                              <TextInput
+                                style={styles.lineUnit}
+                                value={line.unit ?? ''}
+                                onChangeText={(t) => updateLine(line.id, { unit: t || null })}
+                                placeholder="Birim"
+                              />
+                              <TextInput
+                                style={styles.lineTotal}
+                                value={line.total ? String(line.total) : ''}
+                                onChangeText={(t) =>
+                                  updateLine(line.id, { total: parseFloat(t.replace(',', '.')) || 0 })
+                                }
+                                placeholder="Tutar"
+                                keyboardType="decimal-pad"
+                              />
+                              <TouchableOpacity onPress={() => removeLine(line.id)} hitSlop={8}>
+                                <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        ))
+                      )}
+                      {lineItems.length > 0 ? (
+                        <Text style={styles.linesSum}>
+                          Kalem toplamı:{' '}
+                          {fmtMoneyTry(sumInvoiceLineItems(lineItems.filter((l) => l.total > 0)))}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.metaCard}>
+                      <Text style={styles.label}>Not</Text>
+                      <TextInput
+                        style={[styles.input, styles.area]}
+                        value={notes}
+                        onChangeText={setNotes}
+                        multiline
+                        placeholder="Ek açıklama"
+                      />
+                      <TouchableOpacity style={styles.rebuildNotesBtn} onPress={rebuildNotes}>
+                        <Text style={styles.rebuildNotesText}>Notu fatura bilgilerinden yenile</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.rawToggle} onPress={() => setRawTextOpen((v) => !v)}>
+                        <Ionicons
+                          name={rawTextOpen ? 'chevron-up' : 'chevron-down'}
+                          size={16}
+                          color={adminTheme.colors.textMuted}
+                        />
+                        <Text style={styles.rawToggleText}>Okunan ham metin</Text>
+                      </TouchableOpacity>
+                      {rawTextOpen ? (
+                        <Text style={styles.rawText} selectable>
+                          {rawText.slice(0, 4000) || '—'}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </ScrollView>
+
+                  <TouchableOpacity style={styles.saveBtn} onPress={() => void save()} disabled={saving}>
+                    {saving ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                        <Text style={styles.saveBtnText}>
+                          {kindLabels.debtOpen} ·{' '}
+                          {targetAmount ? fmtMoneyTry(parseFloat(targetAmount.replace(',', '.')) || 0) : '—'}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </KeyboardAvoidingView>
+              ) : null}
+            </View>
+          </View>
+        </View>
       </Modal>
 
       <ImageLightboxModal
@@ -640,6 +670,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     paddingHorizontal: 16,
     paddingTop: 8,
+    width: '100%',
+    alignSelf: 'flex-end',
   },
   handle: {
     alignSelf: 'center',
@@ -652,7 +684,8 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
   headTitle: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text },
   sub: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2 },
-  pickBody: { paddingVertical: 16, paddingBottom: 28 },
+  bodySlot: { flex: 1, minHeight: 0 },
+  pickBody: { flex: 1, justifyContent: 'center', paddingVertical: 16, paddingBottom: 28 },
   pickHero: { alignItems: 'center', marginBottom: 20 },
   pickTitle: { fontSize: 17, fontWeight: '800', color: adminTheme.colors.text, marginTop: 10 },
   pickHint: {
@@ -674,10 +707,12 @@ const styles = StyleSheet.create({
   },
   pickBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   pickFormats: { textAlign: 'center', fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 10 },
-  scanBody: { alignItems: 'center', paddingVertical: 40 },
+  scanBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
   scanText: { marginTop: 14, fontSize: 16, fontWeight: '700', color: adminTheme.colors.text },
   scanSub: { marginTop: 6, fontSize: 13, color: adminTheme.colors.textMuted },
-  reviewScroll: { maxHeight: SHEET_HEIGHT - 170 },
+  reviewRoot: { flex: 1, minHeight: 0 },
+  reviewScroll: { flex: 1 },
+  reviewScrollContent: { paddingBottom: 16 },
   previewSection: { marginBottom: 12 },
   previewHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   sectionTitle: { fontSize: 14, fontWeight: '800', color: adminTheme.colors.text },

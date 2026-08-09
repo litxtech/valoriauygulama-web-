@@ -439,7 +439,7 @@ export default function AdminLayout() {
       <Stack.Screen name="access/logs" options={{ title: t('adminAccessLogs'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="permissions" options={{ title: t('adminPermissions'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="ui-features/index" options={{ title: 'Uygulama özellikleri', headerRight: renderHeaderRight }} />
-      <Stack.Screen name="hamburger-menu/index" options={{ title: 'Hamburger menü tasarımı', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="hamburger-menu/index" options={{ title: 'Personel menü & sekmeler', headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-capture-notify" options={{ title: 'Kimlik çekim bildirimleri', headerRight: renderHeaderRight }} />

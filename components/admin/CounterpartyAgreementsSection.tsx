@@ -43,6 +43,7 @@ import {
   fetchUnlinkedCounterpartyMovements,
   formatAgreementSummary,
   linkMovementToAgreement,
+  recordCounterpartyPayment,
   type AgreementMovementKind,
   type CounterpartyAgreementRow,
   type UnlinkedExpenseMovementRow,
@@ -133,6 +134,8 @@ export function CounterpartyAgreementsSection({
   const [contractLightbox, setContractLightbox] = useState<string | null>(null);
   const [unlinkedPayments, setUnlinkedPayments] = useState<UnlinkedExpenseMovementRow[]>([]);
   const [linkingPaymentId, setLinkingPaymentId] = useState<string | null>(null);
+  const [inlinePayDraft, setInlinePayDraft] = useState<Record<string, string>>({});
+  const [inlinePayingId, setInlinePayingId] = useState<string | null>(null);
 
   const { openDebts, closedDebts } = useMemo(() => {
     const open: CounterpartyAgreementRow[] = [];
@@ -353,6 +356,67 @@ export function CounterpartyAgreementsSection({
     ]);
   };
 
+  const submitInlinePay = async (row: CounterpartyAgreementRow) => {
+    const raw = inlinePayDraft[row.id] ?? '';
+    let amount = parseFloat(raw.replace(',', '.'));
+    if (!amount || amount <= 0) {
+      Alert.alert('Tutar', 'Ödenecek tutarı girin.');
+      return;
+    }
+    const rem = Number(row.amount_remaining) || 0;
+    if (amount > rem + 0.009) {
+      Alert.alert(
+        'Kalan tutardan fazla',
+        `Kalan ${fmtMoneyTry(rem)}. Tamamını mı ödemek istiyorsunuz?`,
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Kalanı öde',
+            onPress: () => {
+              setInlinePayDraft((d) => ({ ...d, [row.id]: String(rem) }));
+              void doInlinePay(row, rem);
+            },
+          },
+        ]
+      );
+      return;
+    }
+    await doInlinePay(row, amount);
+  };
+
+  const doInlinePay = async (row: CounterpartyAgreementRow, amount: number) => {
+    if (!createdByStaffId) {
+      Alert.alert('Hata', 'Personel oturumu gerekli.');
+      return;
+    }
+    setInlinePayingId(row.id);
+    const today = new Date().toISOString().slice(0, 10);
+    const isReceivable = row.movement_kind === 'income';
+    const { error } = await recordCounterpartyPayment({
+      organizationId,
+      counterpartyId,
+      kind: row.movement_kind,
+      amount,
+      movementDate: today,
+      category: 'other',
+      description: isReceivable ? 'Tahsilat' : 'Ödeme',
+      ledgerScope: defaultLedgerScope,
+      agreementId: row.id,
+      createdByStaffId,
+    });
+    setInlinePayingId(null);
+    if (error) {
+      Alert.alert('Kayıt hatası', error);
+      return;
+    }
+    setInlinePayDraft((d) => {
+      const next = { ...d };
+      delete next[row.id];
+      return next;
+    });
+    onRefresh();
+  };
+
   const settleDebt = (row: CounterpartyAgreementRow) => {
     if (row.movement_kind === 'income') {
       if (onCollectDebt) {
@@ -461,9 +525,23 @@ export function CounterpartyAgreementsSection({
           </View>
 
           <View style={styles.planHeroAmounts}>
-            <View style={styles.planHeroMain}>
-              <Text style={styles.planHeroLbl}>Kalan {kindLabels.debtNoun.toLowerCase()}</Text>
-              <Text style={[styles.planHeroVal, isDone && styles.planHeroValDone]}>
+            <View style={styles.planStatCol}>
+              <Text style={styles.planStatLbl}>Açılan</Text>
+              <Text style={styles.planStatVal}>{fmtMoneyTry(row.target_amount)}</Text>
+            </View>
+            <View style={styles.planStatCol}>
+              <Text style={styles.planStatLbl}>Ödenen</Text>
+              <Text style={[styles.planStatVal, styles.planStatPaid]}>
+                {fmtMoneyTry(
+                  row.amount_paid >= 0.01
+                    ? row.amount_paid
+                    : Math.max(0, row.target_amount - row.amount_remaining)
+                )}
+              </Text>
+            </View>
+            <View style={styles.planStatCol}>
+              <Text style={styles.planStatLbl}>Kalan</Text>
+              <Text style={[styles.planStatVal, styles.planStatRemain, isDone && styles.planHeroValDone]}>
                 {fmtMoneyTry(row.amount_remaining)}
               </Text>
             </View>
@@ -485,25 +563,62 @@ export function CounterpartyAgreementsSection({
           </View>
         </View>
 
-        {row.line_items.length > 0 ? (
-          <View style={styles.lineItemsBlock}>
-            <Text style={styles.lineItemsTitle}>Malzeme kalemleri ({row.line_items.length})</Text>
-            {row.line_items.slice(0, 6).map((item) => (
-              <View key={item.id} style={styles.lineItemRow}>
-                <Text style={styles.lineItemName} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <Text style={styles.lineItemAmt}>{fmtMoneyTry(item.total)}</Text>
-              </View>
-            ))}
-            {row.line_items.length > 6 ? (
-              <Text style={styles.lineItemsMore}>+{row.line_items.length - 6} kalem daha</Text>
-            ) : null}
-          </View>
-        ) : null}
-
         {isOpen ? (
           <View style={styles.inlineActionsBlock}>
+            <View style={styles.inlinePayBox}>
+              <Text style={styles.inlinePayLbl}>
+                {isReceivable ? 'Tahsilat tutarı' : 'Ödeme tutarı'} — açılan sabit; ödenen artar, kalan düşer
+              </Text>
+              <View style={styles.inlinePayRow}>
+                <Text style={styles.inlinePayCurrency}>₺</Text>
+                <TextInput
+                  style={styles.inlinePayInput}
+                  value={inlinePayDraft[row.id] ?? ''}
+                  onChangeText={(v) => setInlinePayDraft((d) => ({ ...d, [row.id]: v }))}
+                  keyboardType="decimal-pad"
+                  placeholder={String(row.amount_remaining)}
+                  placeholderTextColor="#cbd5e1"
+                />
+                <TouchableOpacity
+                  style={styles.inlinePayAddBtn}
+                  onPress={() => void submitInlinePay(row)}
+                  disabled={inlinePayingId === row.id}
+                  activeOpacity={0.85}
+                >
+                  {inlinePayingId === row.id ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.inlinePayAddText}>Ekle</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.inlinePayQuick}>
+                <TouchableOpacity
+                  style={styles.inlinePayChip}
+                  onPress={() =>
+                    setInlinePayDraft((d) => ({
+                      ...d,
+                      [row.id]: String(Math.round(row.amount_remaining * 100) / 100),
+                    }))
+                  }
+                >
+                  <Text style={styles.inlinePayChipText}>Kalanı yaz</Text>
+                </TouchableOpacity>
+                {[500, 1000, 2000].map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={styles.inlinePayChip}
+                    onPress={() => {
+                      const cur = parseFloat((inlinePayDraft[row.id] ?? '').replace(',', '.')) || 0;
+                      setInlinePayDraft((d) => ({ ...d, [row.id]: String(cur + v) }));
+                    }}
+                  >
+                    <Text style={styles.inlinePayChipText}>+{v}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             <View style={styles.inlinePrimaryRow}>
               <TouchableOpacity
                 style={[
@@ -531,6 +646,7 @@ export function CounterpartyAgreementsSection({
               </TouchableOpacity>
             </View>
             <View style={styles.inlineReportRow}>
+              <Text style={styles.planPrintHint}>Bu planı yazdır</Text>
               <FinanceReportExportButtons
                 compact
                 fileName={`${isReceivable ? 'alacak' : 'borc'}-${row.id.slice(0, 8)}`}
@@ -645,6 +761,7 @@ export function CounterpartyAgreementsSection({
                     });
                   }}
                 />
+                <Text style={styles.planPrintHint}>Yalnızca bu plan</Text>
               </>
             )}
           </View>
@@ -992,11 +1109,22 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.2 },
   planHeroAmounts: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     marginTop: 14,
-    gap: 12,
+    gap: 8,
   },
+  planStatCol: { flex: 1, minWidth: 0 },
+  planStatLbl: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7c3aed',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  planStatVal: { fontSize: 15, fontWeight: '800', color: '#5b21b6', marginTop: 2 },
+  planStatPaid: { color: '#dc2626' },
+  planStatRemain: { color: '#b45309', fontSize: 17 },
   planHeroMain: { flex: 1 },
   planHeroLbl: {
     fontSize: 11,
@@ -1006,19 +1134,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   planHeroVal: { fontSize: 26, fontWeight: '800', color: '#5b21b6', marginTop: 2 },
+  planHeroSubMeta: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4, fontWeight: '600' },
   planHeroValDone: { color: '#15803d' },
   planPctRing: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 64,
-    paddingHorizontal: 10,
+    minWidth: 56,
+    paddingHorizontal: 8,
     paddingVertical: 8,
     borderRadius: 12,
     backgroundColor: adminTheme.colors.surface,
     borderWidth: 1,
     borderColor: '#ddd6fe',
   },
-  planPctVal: { fontSize: 18, fontWeight: '800', color: '#7c3aed' },
+  planPctVal: { fontSize: 16, fontWeight: '800', color: '#7c3aed' },
   planPctLbl: { fontSize: 10, color: adminTheme.colors.textMuted, marginTop: 1 },
   progressTrack: {
     height: 8,
@@ -1051,6 +1180,44 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 8,
   },
+  inlinePayBox: {
+    backgroundColor: '#fff7ed',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    gap: 8,
+  },
+  inlinePayLbl: { fontSize: 11, fontWeight: '700', color: '#c2410c' },
+  inlinePayRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inlinePayCurrency: { fontSize: 18, fontWeight: '800', color: '#ea580c' },
+  inlinePayInput: {
+    flex: 1,
+    fontSize: 22,
+    fontWeight: '800',
+    color: adminTheme.colors.text,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+  },
+  inlinePayAddBtn: {
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  inlinePayAddText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  inlinePayQuick: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  inlinePayChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  inlinePayChipText: { fontSize: 11, fontWeight: '700', color: '#c2410c' },
   inlinePrimaryRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1089,6 +1256,13 @@ const styles = StyleSheet.create({
   },
   inlineReportRow: {
     marginTop: 0,
+    gap: 4,
+  },
+  planPrintHint: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: adminTheme.colors.textMuted,
+    marginBottom: 2,
   },
   closedToggle: {
     flexDirection: 'row',
@@ -1312,17 +1486,6 @@ const styles = StyleSheet.create({
   },
   invoiceScanTitle: { fontSize: 14, fontWeight: '800', color: '#5b21b6' },
   invoiceScanSub: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
-  lineItemsBlock: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: adminTheme.colors.border,
-  },
-  lineItemsTitle: { fontSize: 12, fontWeight: '800', color: adminTheme.colors.textMuted, marginBottom: 6 },
-  lineItemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 3 },
-  lineItemName: { flex: 1, fontSize: 13, color: adminTheme.colors.text },
-  lineItemAmt: { fontSize: 13, fontWeight: '700', color: '#7c3aed' },
-  lineItemsMore: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4, fontStyle: 'italic' },
   inputLbl: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.textMuted, marginBottom: 4 },
   kindRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   kindChip: {

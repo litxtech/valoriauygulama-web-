@@ -212,7 +212,7 @@ export function HamburgerMenuDesignPanel({ theme, onChange }: Props) {
         [
           ['showHubCards', 'Hub kartları (F&B / yönetim)', theme.showHubCards ?? true],
           ['showSearch', 'Menü arama kutusu', theme.showSearch ?? true],
-          ['showRecentFlyout', 'Sağ son-kullanılan şeridi', theme.showRecentFlyout ?? true],
+          ['showRecentFlyout', 'Sağ son-kullanılan şeridi', theme.showRecentFlyout ?? false],
           ['showSectionIcons', 'Bölüm ikonları', theme.showSectionIcons ?? true],
           ['showSectionLabels', 'Bölüm başlıkları', theme.showSectionLabels ?? true],
         ] as const

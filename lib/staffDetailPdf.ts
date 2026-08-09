@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 
 export type StaffPdfData = {
@@ -133,7 +133,7 @@ export function buildStaffDetailHtml(data: StaffPdfData): string {
 
 export async function exportStaffDetailPdf(data: StaffPdfData): Promise<string> {
   const html = buildStaffDetailHtml(data);
-  const { uri } = await Print.printToFileAsync({
+  const { uri } = await printToLocalPdfFile({
     html,
     width: 595,
     height: 842,

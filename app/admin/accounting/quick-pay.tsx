@@ -56,14 +56,19 @@ import {
   bulkDeactivateFinanceCounterparties,
 } from '@/lib/financeCounterpartyActions';
 import {
+  buildSameNameCounts,
   counterpartyInitials,
   formatCounterpartyBalance,
+  normalizeCounterpartyName,
   resolveCounterpartyTypeMeta,
 } from '@/lib/financeCounterpartyUi';
 import {
   fetchOpenCounterpartyAgreements,
   fetchOpenDebtTotalsByCounterparty,
+  recordCounterpartyPayment,
+  suggestAgreementsToClose,
   type CounterpartyAgreementRow,
+  type CounterpartyOpenDebtTotals,
 } from '@/lib/financeCounterpartyAgreements';
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000, 2000, 5000] as const;
@@ -71,6 +76,19 @@ const HERO_GRAD = ['#0f172a', '#1e3a5f'] as const;
 const PAY_GRAD = ['#dc2626', '#b91c1c'] as const;
 const FAB_GRAD = ['#d97706', '#b45309'] as const;
 const PAY_SHEET_HEIGHT = Math.round(Dimensions.get('window').height * 0.92);
+
+const TYPE_FILTERS: { key: 'all' | FinanceCounterpartyType; label: string }[] = [
+  { key: 'all', label: 'Tümü' },
+  { key: 'private_person', label: 'Şahsi' },
+  { key: 'subcontractor', label: 'Usta' },
+  { key: 'supplier', label: 'Tedarikçi' },
+  { key: 'customer', label: 'Müşteri' },
+  { key: 'staff', label: 'Personel' },
+  { key: 'other', label: 'Diğer' },
+];
+
+type SortMode = 'name' | 'debt' | 'paid';
+type ExtraFilter = 'all' | 'debt' | 'dupes';
 
 type Row = {
   id: string;
@@ -92,11 +110,15 @@ export default function AccountingQuickPayScreen() {
   const [balances, setBalances] = useState<Map<string, { income: number; expense: number; net: number }>>(
     new Map()
   );
-  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, number>>(new Map());
+  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, CounterpartyOpenDebtTotals>>(new Map());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [scopeFilter, setScopeFilter] = useState<'all' | FinanceLedgerScope>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | FinanceCounterpartyType>('all');
+  const [extraFilter, setExtraFilter] = useState<ExtraFilter>('all');
+  const [sortMode, setSortMode] = useState<SortMode>('name');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -109,8 +131,10 @@ export default function AccountingQuickPayScreen() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [openAgreements, setOpenAgreements] = useState<CounterpartyAgreementRow[]>([]);
-  const [selectedAgreementId, setSelectedAgreementId] = useState<string | null>(null);
+  const [selectedAgreementIds, setSelectedAgreementIds] = useState<string[]>([]);
   const [loadingAgreements, setLoadingAgreements] = useState(false);
+  const payManualSelect = useRef(false);
+  const paySkipSuggest = useRef(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActing, setBulkActing] = useState(false);
@@ -171,12 +195,66 @@ export default function AccountingQuickPayScreen() {
     setCategory(opts[0]?.code ?? 'other');
   }, []);
 
+  const sameNameCounts = useMemo(() => buildSameNameCounts(rows), [rows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = rows;
-    if (q) list = list.filter((r) => r.name.toLowerCase().includes(q) || r.phone?.includes(q));
-    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-  }, [rows, search]);
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.name.toLowerCase().includes(q) ||
+          (r.phone != null && r.phone.includes(q)) ||
+          (r.party_type_label != null && r.party_type_label.toLowerCase().includes(q))
+      );
+    }
+    if (typeFilter !== 'all') {
+      list = list.filter((r) => r.party_type === typeFilter);
+    }
+    if (extraFilter === 'debt') {
+      list = list.filter((r) => (openDebtTotals.get(r.id)?.remaining ?? 0) >= 0.01);
+    } else if (extraFilter === 'dupes') {
+      list = list.filter((r) => (sameNameCounts.get(normalizeCounterpartyName(r.name)) ?? 0) >= 2);
+    }
+
+    const sorted = [...list];
+    if (sortMode === 'debt') {
+      sorted.sort(
+        (a, b) =>
+          (openDebtTotals.get(b.id)?.remaining ?? 0) - (openDebtTotals.get(a.id)?.remaining ?? 0) ||
+          a.name.localeCompare(b.name, 'tr')
+      );
+    } else if (sortMode === 'paid') {
+      sorted.sort(
+        (a, b) =>
+          (balances.get(b.id)?.expense ?? 0) - (balances.get(a.id)?.expense ?? 0) ||
+          a.name.localeCompare(b.name, 'tr')
+      );
+    } else {
+      sorted.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    }
+    return sorted;
+  }, [rows, search, typeFilter, extraFilter, sortMode, openDebtTotals, balances, sameNameCounts]);
+
+  const activeFilterCount =
+    (typeFilter !== 'all' ? 1 : 0) +
+    (extraFilter !== 'all' ? 1 : 0) +
+    (sortMode !== 'name' ? 1 : 0) +
+    (scopeFilter !== 'all' ? 1 : 0);
+
+  const openDetail = (row: Row) => {
+    router.push({
+      pathname: '/admin/accounting/counterparties/[id]',
+      params: { id: row.id },
+    } as never);
+  };
+
+  const openSameName = (row: Row) => {
+    router.push({
+      pathname: '/admin/accounting/counterparties/same-name',
+      params: { name: row.name },
+    } as never);
+  };
 
   const openPay = (row: Row) => {
     setSelected(row);
@@ -187,15 +265,19 @@ export default function AccountingQuickPayScreen() {
     setNewCategoryName('');
     setLastSaved(null);
     setOpenAgreements([]);
-    setSelectedAgreementId(null);
+    setSelectedAgreementIds([]);
+    payManualSelect.current = false;
+    paySkipSuggest.current = false;
     void loadCategoriesForOrg(row.organization_id);
     setLoadingAgreements(true);
     void fetchOpenCounterpartyAgreements(row.id)
       .then((plans) => {
         setOpenAgreements(plans);
         if (plans.length === 1) {
-          setSelectedAgreementId(plans[0].id);
+          setSelectedAgreementIds([plans[0].id]);
+          payManualSelect.current = true;
           if (plans[0].amount_remaining > 0) {
+            paySkipSuggest.current = true;
             setAmount(String(plans[0].amount_remaining));
           }
         }
@@ -211,7 +293,9 @@ export default function AccountingQuickPayScreen() {
     setShowNewCategory(false);
     setNewCategoryName('');
     setOpenAgreements([]);
-    setSelectedAgreementId(null);
+    setSelectedAgreementIds([]);
+    payManualSelect.current = false;
+    paySkipSuggest.current = false;
   };
 
   const addNewCategory = async () => {
@@ -239,32 +323,42 @@ export default function AccountingQuickPayScreen() {
       Alert.alert(t('quickPayAmountRequired'));
       return;
     }
+    if (openAgreements.length > 0 && selectedAgreementIds.length === 0) {
+      Alert.alert(t('quickPayPlanPickRequired'));
+      return;
+    }
     setSaving(true);
     const today = new Date().toISOString().slice(0, 10);
-    const { error } = await supabase.from('finance_movements').insert({
-      organization_id: selected.organization_id,
+    const { error, allocatedCount } = await recordCounterpartyPayment({
+      organizationId: selected.organization_id,
+      counterpartyId: selected.id,
       kind: 'expense',
       amount: a,
-      currency: 'TRY',
-      movement_date: today,
-      payment_method: 'cash',
+      movementDate: today,
       category,
-      counterparty_id: selected.id,
       description: note.trim() || t('quickPayDefaultNote'),
-      ledger_scope: ledgerScope,
-      agreement_id: selectedAgreementId,
-      created_by_staff_id: me.id,
+      ledgerScope,
+      agreementId: null,
+      agreementIds: selectedAgreementIds.length > 0 ? selectedAgreementIds : null,
+      createdByStaffId: me.id,
     });
     setSaving(false);
     if (error) {
-      Alert.alert(t('quickPaySaveError'), error.message);
+      Alert.alert(t('quickPaySaveError'), error);
       return;
     }
     invalidateCounterpartyBalanceCache(selected.organization_id);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setLastSaved(`${selected.name}: ${fmtMoneyTry(a)}`);
+    setLastSaved(
+      allocatedCount > 0
+        ? `${selected.name}: ${fmtMoneyTry(a)} · ${allocatedCount} borca düşüldü`
+        : `${selected.name}: ${fmtMoneyTry(a)}`
+    );
     setAmount('');
     setNote('');
+    setSelectedAgreementIds([]);
+    payManualSelect.current = false;
+    paySkipSuggest.current = false;
     const scope = scopeFilter === 'all' ? null : scopeFilter;
     if (orgScope === 'all') {
       setBalances(
@@ -276,7 +370,51 @@ export default function AccountingQuickPayScreen() {
     } else {
       setBalances(await fetchCounterpartyBalanceMap(selected.organization_id, scope));
     }
+    const debtOrgScope = !orgScope || orgScope === 'all' ? 'all' : orgScope;
+    void fetchOpenDebtTotalsByCounterparty(
+      debtOrgScope,
+      rows.map((r) => r.id)
+    )
+      .then(setOpenDebtTotals)
+      .catch(() => undefined);
+    void fetchOpenCounterpartyAgreements(selected.id, 'expense')
+      .then((plans) => {
+        setOpenAgreements(plans);
+        setSelectedAgreementIds([]);
+        payManualSelect.current = false;
+      })
+      .catch(() => setOpenAgreements([]));
   };
+
+  // Tutar → kapatılacak kart önerisi
+  useEffect(() => {
+    if (!selected || openAgreements.length === 0) return;
+    if (paySkipSuggest.current) {
+      paySkipSuggest.current = false;
+      return;
+    }
+    if (payManualSelect.current) return;
+    const target = parseFloat(amount.replace(',', '.')) || 0;
+    if (target <= 0) {
+      setSelectedAgreementIds([]);
+      return;
+    }
+    setSelectedAgreementIds(suggestAgreementsToClose(target, openAgreements).ids);
+  }, [amount, openAgreements, selected]);
+
+  const paySelectedSum = useMemo(() => {
+    const set = new Set(selectedAgreementIds);
+    return (
+      Math.round(
+        openAgreements
+          .filter((p) => set.has(p.id))
+          .reduce((s, p) => s + (Number(p.amount_remaining) || 0), 0) * 100
+      ) / 100
+    );
+  }, [openAgreements, selectedAgreementIds]);
+
+  const payAmountNum = parseFloat(amount.replace(',', '.')) || 0;
+  const payGap = Math.round((payAmountNum - paySelectedSum) * 100) / 100;
 
   const listReportRows = useMemo(() => {
     return filtered.map((r) => {
@@ -288,7 +426,9 @@ export default function AccountingQuickPayScreen() {
         income: b?.income ?? 0,
         expense: b?.expense ?? 0,
         net: b?.net ?? 0,
-        currentDebt: openDebtTotals.get(r.id) ?? 0,
+        currentDebt: openDebtTotals.get(r.id)?.remaining ?? 0,
+        openedDebt: openDebtTotals.get(r.id)?.opened ?? 0,
+        paidDebt: openDebtTotals.get(r.id)?.paid ?? 0,
       };
     });
   }, [filtered, balances, openDebtTotals]);
@@ -380,6 +520,7 @@ export default function AccountingQuickPayScreen() {
 
   const renderItem = ({ item }: { item: Row }) => {
     const bal = balances.get(item.id);
+    const dupCount = sameNameCounts.get(normalizeCounterpartyName(item.name)) ?? 0;
     return (
       <CounterpartyListCard
         id={item.id}
@@ -396,16 +537,27 @@ export default function AccountingQuickPayScreen() {
         income={bal?.income ?? 0}
         expense={bal?.expense ?? 0}
         net={bal?.net ?? 0}
-        openDebt={openDebtTotals.get(item.id) ?? 0}
+        openDebt={openDebtTotals.get(item.id)?.remaining ?? 0}
+        openedDebt={openDebtTotals.get(item.id)?.opened ?? 0}
+        paidDebt={openDebtTotals.get(item.id)?.paid ?? 0}
         selectionMode={selectionMode}
         selected={selectedIds.has(item.id)}
+        sameNameCount={dupCount}
+        onSameNamePress={dupCount >= 2 ? () => openSameName(item) : undefined}
         onPress={() => {
           if (selectionMode) {
             toggleSelect(item.id);
             return;
           }
-          openPay(item);
+          openDetail(item);
         }}
+        onPayPress={
+          selectionMode
+            ? undefined
+            : () => {
+                openPay(item);
+              }
+        }
         onLongPress={() => {
           if (selectionMode) toggleSelect(item.id);
           else enterSelectionWith(item.id);
@@ -479,26 +631,147 @@ export default function AccountingQuickPayScreen() {
           </View>
         </View>
       ) : (
-        <KeyboardAvoidingView
-          style={styles.listArea}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 52 : 0}
-        >
-          <View style={styles.searchCard}>
-            <Ionicons name="search" size={18} color={adminTheme.colors.accent} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder={t('quickPaySearchPlaceholder')}
-              placeholderTextColor={adminTheme.colors.textMuted}
-              value={search}
-              onChangeText={setSearch}
-              returnKeyType="search"
-              onFocus={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
-            />
-            {search.length > 0 ? (
-              <TouchableOpacity onPress={() => setSearch('')} hitSlop={8} style={styles.searchClear}>
-                <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+        <View style={styles.listArea}>
+          <View style={styles.searchToolbar}>
+            <View style={styles.searchCard}>
+              <Ionicons name="search" size={18} color={adminTheme.colors.accent} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder={t('quickPaySearchPlaceholder')}
+                placeholderTextColor={adminTheme.colors.textMuted}
+                value={search}
+                onChangeText={setSearch}
+                returnKeyType="search"
+                clearButtonMode="never"
+              />
+              {search.length > 0 ? (
+                <TouchableOpacity onPress={() => setSearch('')} hitSlop={8} style={styles.searchClear}>
+                  <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.filterToggle, filtersOpen && styles.filterToggleOn]}
+                onPress={() => setFiltersOpen((v) => !v)}
+                hitSlop={6}
+                accessibilityLabel="Detaylı filtre"
+              >
+                <Ionicons
+                  name="options-outline"
+                  size={18}
+                  color={filtersOpen || activeFilterCount > 0 ? '#7c3aed' : adminTheme.colors.textMuted}
+                />
+                {activeFilterCount > 0 ? (
+                  <View style={styles.filterBadge}>
+                    <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+                  </View>
+                ) : null}
               </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+              keyboardShouldPersistTaps="handled"
+            >
+              {TYPE_FILTERS.map((f) => {
+                const on = typeFilter === f.key;
+                return (
+                  <TouchableOpacity
+                    key={f.key}
+                    style={[styles.filterChip, on && styles.filterChipOn]}
+                    onPress={() => setTypeFilter(f.key)}
+                  >
+                    <Text style={[styles.filterChipText, on && styles.filterChipTextOn]}>{f.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={[styles.filterChip, extraFilter === 'debt' && styles.filterChipWarn]}
+                onPress={() => setExtraFilter((v) => (v === 'debt' ? 'all' : 'debt'))}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    extraFilter === 'debt' && styles.filterChipTextWarn,
+                  ]}
+                >
+                  Açık borç
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterChip, extraFilter === 'dupes' && styles.filterChipViolet]}
+                onPress={() => setExtraFilter((v) => (v === 'dupes' ? 'all' : 'dupes'))}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    extraFilter === 'dupes' && styles.filterChipTextViolet,
+                  ]}
+                >
+                  Aynı isim
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {filtersOpen ? (
+              <View style={styles.filterPanel}>
+                <Text style={styles.filterPanelLbl}>Kapsam</Text>
+                <View style={styles.scopeSegmented}>
+                  {(['all', 'hotel', 'personal'] as const).map((s) => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.scopeSegment, scopeFilter === s && styles.scopeSegmentOn]}
+                      onPress={() => setScopeFilter(s)}
+                      activeOpacity={0.88}
+                    >
+                      <Text
+                        style={[
+                          styles.scopeSegmentText,
+                          scopeFilter === s && styles.scopeSegmentTextOn,
+                        ]}
+                      >
+                        {s === 'all' ? t('quickPayScopeAll') : LEDGER_SCOPE_LABELS[s]}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.filterPanelLbl}>Sıralama</Text>
+                <View style={styles.sortRow}>
+                  {(
+                    [
+                      { key: 'name' as const, label: 'İsim' },
+                      { key: 'debt' as const, label: 'Borç' },
+                      { key: 'paid' as const, label: 'Ödenen' },
+                    ] as const
+                  ).map((s) => (
+                    <TouchableOpacity
+                      key={s.key}
+                      style={[styles.sortChip, sortMode === s.key && styles.sortChipOn]}
+                      onPress={() => setSortMode(s.key)}
+                    >
+                      <Text style={[styles.sortChipText, sortMode === s.key && styles.sortChipTextOn]}>
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {activeFilterCount > 0 ? (
+                  <TouchableOpacity
+                    style={styles.clearFiltersBtn}
+                    onPress={() => {
+                      setTypeFilter('all');
+                      setExtraFilter('all');
+                      setSortMode('name');
+                      setScopeFilter('all');
+                      setSearch('');
+                    }}
+                  >
+                    <Ionicons name="refresh-outline" size={14} color="#7c3aed" />
+                    <Text style={styles.clearFiltersText}>Filtreleri temizle</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             ) : null}
           </View>
 
@@ -513,8 +786,6 @@ export default function AccountingQuickPayScreen() {
                 canUseAllOrg={canUseAllOrg}
                 ownOrganizationId={me?.organization_id}
                 lastSaved={lastSaved}
-                scopeFilter={scopeFilter}
-                onScopeFilter={setScopeFilter}
                 showExport={filtered.length > 0}
                 scopeLabelForReport={scopeLabelForReport}
                 listReportRows={listReportRows}
@@ -522,7 +793,7 @@ export default function AccountingQuickPayScreen() {
                 reportFooter={reportFooter}
                 loading={loading && !refreshing}
                 listStats={listStats}
-                searchActive={search.trim().length > 0}
+                searchActive={search.trim().length > 0 || activeFilterCount > 0}
                 selectionMode={selectionMode}
                 selectedCount={selectedIds.size}
                 visibleCount={filtered.length}
@@ -534,41 +805,62 @@ export default function AccountingQuickPayScreen() {
             }
             contentContainerStyle={[
               styles.listContent,
+              { paddingBottom: 100 + Math.max(insets.bottom, 10) },
               selectionMode && { paddingBottom: 120 + Math.max(insets.bottom, 10) },
             ]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            automaticallyAdjustKeyboardInsets
             refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                load().finally(() => setRefreshing(false));
-              }}
-            />
-          }
-          ListEmptyComponent={
-            loading && !refreshing ? null : (
-              <View style={styles.emptyCard}>
-                <View style={styles.emptyIconWrap}>
-                  <Ionicons name="wallet-outline" size={36} color={adminTheme.colors.accent} />
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => {
+                  setRefreshing(true);
+                  load().finally(() => setRefreshing(false));
+                }}
+              />
+            }
+            ListEmptyComponent={
+              loading && !refreshing ? null : (
+                <View style={styles.emptyCard}>
+                  <View style={styles.emptyIconWrap}>
+                    <Ionicons name="wallet-outline" size={36} color={adminTheme.colors.accent} />
+                  </View>
+                  <Text style={styles.emptyTitle}>
+                    {search.trim() || activeFilterCount > 0
+                      ? t('quickPayNoResults')
+                      : t('quickPayEmpty')}
+                  </Text>
+                  <Text style={styles.emptySub}>{t('quickPaySubtitle')}</Text>
+                  {search.trim() || activeFilterCount > 0 ? (
+                    <TouchableOpacity
+                      style={styles.emptyBtn}
+                      onPress={() => {
+                        setSearch('');
+                        setTypeFilter('all');
+                        setExtraFilter('all');
+                        setSortMode('name');
+                        setScopeFilter('all');
+                      }}
+                      activeOpacity={0.9}
+                    >
+                      <Ionicons name="refresh" size={18} color="#fff" />
+                      <Text style={styles.emptyBtnText}>Filtreyi temizle</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.emptyBtn}
+                      onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
+                      activeOpacity={0.9}
+                    >
+                      <Ionicons name="person-add" size={18} color="#fff" />
+                      <Text style={styles.emptyBtnText}>{t('quickPayAddPerson')}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <Text style={styles.emptyTitle}>{t('quickPayEmpty')}</Text>
-                <Text style={styles.emptySub}>{t('quickPaySubtitle')}</Text>
-                <TouchableOpacity
-                  style={styles.emptyBtn}
-                  onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
-                  activeOpacity={0.9}
-                >
-                  <Ionicons name="person-add" size={18} color="#fff" />
-                  <Text style={styles.emptyBtnText}>{t('quickPayAddPerson')}</Text>
-                </TouchableOpacity>
-              </View>
-            )
-          }
+              )
+            }
           />
-        </KeyboardAvoidingView>
+        </View>
       )}
 
       {!needOrg && !selectionMode ? (
@@ -738,29 +1030,77 @@ export default function AccountingQuickPayScreen() {
                       <View style={styles.sheetSection}>
                         <Text style={styles.sectionLbl}>{t('quickPayPlanLabel')}</Text>
                         <Text style={styles.planHint}>{t('quickPayPlanHint')}</Text>
-                        <TouchableOpacity
-                          style={[styles.planChip, !selectedAgreementId && styles.planChipOn]}
-                          onPress={() => setSelectedAgreementId(null)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={[styles.planChipText, !selectedAgreementId && styles.planChipTextOn]}>
-                            {t('quickPayPlanNone')}
-                          </Text>
-                        </TouchableOpacity>
+                        {payAmountNum > 0 ? (
+                          <View style={styles.planMatchBox}>
+                            <Text style={styles.planMatchTitle}>
+                              {Math.abs(payGap) < 0.01
+                                ? t('quickPayPlanExact')
+                                : payGap > 0
+                                  ? t('quickPayPlanShort', {
+                                      sum: fmtMoneyTry(paySelectedSum),
+                                      gap: fmtMoneyTry(payGap),
+                                    })
+                                  : t('quickPayPlanOver', {
+                                      sum: fmtMoneyTry(paySelectedSum),
+                                      gap: fmtMoneyTry(Math.abs(payGap)),
+                                    })}
+                            </Text>
+                            <Text style={styles.planMatchSub}>
+                              {t('quickPayPlanSelected', {
+                                amount: fmtMoneyTry(payAmountNum),
+                                count: selectedAgreementIds.length,
+                              })}
+                            </Text>
+                            <View style={styles.planMatchActions}>
+                              <TouchableOpacity
+                                style={styles.planMatchBtn}
+                                onPress={() => {
+                                  payManualSelect.current = false;
+                                  const target = parseFloat(amount.replace(',', '.')) || 0;
+                                  if (target <= 0) return;
+                                  setSelectedAgreementIds(
+                                    suggestAgreementsToClose(target, openAgreements).ids
+                                  );
+                                  void Haptics.selectionAsync();
+                                }}
+                              >
+                                <Text style={styles.planMatchBtnText}>{t('quickPayPlanSuggest')}</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.planMatchBtn}
+                                onPress={() => {
+                                  if (paySelectedSum <= 0) return;
+                                  paySkipSuggest.current = true;
+                                  setAmount(String(paySelectedSum));
+                                  void Haptics.selectionAsync();
+                                }}
+                              >
+                                <Text style={styles.planMatchBtnText}>{t('quickPayPlanMatchAmount')}</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        ) : null}
                         {openAgreements.map((plan) => {
-                          const active = selectedAgreementId === plan.id;
+                          const active = selectedAgreementIds.includes(plan.id);
                           return (
                             <TouchableOpacity
                               key={plan.id}
                               style={[styles.planRow, active && styles.planRowOn]}
                               onPress={() => {
-                                setSelectedAgreementId(plan.id);
-                                if (plan.amount_remaining > 0 && !amount.trim()) {
-                                  setAmount(String(plan.amount_remaining));
-                                }
+                                payManualSelect.current = true;
+                                setSelectedAgreementIds((prev) =>
+                                  prev.includes(plan.id)
+                                    ? prev.filter((id) => id !== plan.id)
+                                    : [...prev, plan.id]
+                                );
                               }}
                               activeOpacity={0.85}
                             >
+                              <Ionicons
+                                name={active ? 'checkbox' : 'square-outline'}
+                                size={20}
+                                color={active ? '#7c3aed' : adminTheme.colors.textMuted}
+                              />
                               <View style={styles.planRowBody}>
                                 <Text style={[styles.planRowTitle, active && styles.planRowTitleOn]} numberOfLines={1}>
                                   {plan.title}
@@ -769,11 +1109,6 @@ export default function AccountingQuickPayScreen() {
                                   {t('quickPayPlanRemaining', { amount: fmtMoneyTry(plan.amount_remaining) })}
                                 </Text>
                               </View>
-                              {active ? (
-                                <Ionicons name="checkmark-circle" size={20} color="#7c3aed" />
-                              ) : (
-                                <Ionicons name="ellipse-outline" size={20} color={adminTheme.colors.textMuted} />
-                              )}
                             </TouchableOpacity>
                           );
                         })}
@@ -892,8 +1227,8 @@ export default function AccountingQuickPayScreen() {
                     >
                       <Ionicons name="person-circle-outline" size={26} color="#7c3aed" />
                       <View style={styles.detailLinkBody}>
-                        <Text style={styles.detailLinkTitle}>{t('quickPayViewDetail')}</Text>
-                        <Text style={styles.detailLinkSub}>{t('quickPayViewDetailSub')}</Text>
+                        <Text style={styles.detailLinkTitle}>{t('quickPayOpenProfile')}</Text>
+                        <Text style={styles.detailLinkSub}>{t('quickPayOpenProfileSub')}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={20} color="#a78bfa" />
                     </TouchableOpacity>
@@ -942,32 +1277,109 @@ const styles = StyleSheet.create({
   topActions: { flexDirection: 'row', alignItems: 'center' },
   listArea: { flex: 1 },
   list: { flex: 1 },
+  searchToolbar: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: adminTheme.colors.border,
+    zIndex: 3,
+  },
   searchCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginHorizontal: 16,
-    marginTop: 10,
-    marginBottom: 6,
+    marginBottom: 8,
     backgroundColor: adminTheme.colors.surface,
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
     ...adminTheme.shadow.sm,
-    zIndex: 2,
   },
   searchClear: { padding: 4 },
-  listHeader: { paddingTop: 2, marginBottom: 4 },
-  orgCard: {
+  filterToggle: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+  },
+  filterToggleOn: { backgroundColor: '#ede9fe' },
+  filterBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#7c3aed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  filterBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  chipRow: { paddingHorizontal: 16, gap: 8, paddingBottom: 8 },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
     backgroundColor: adminTheme.colors.surface,
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 10,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    ...adminTheme.shadow.sm,
+  },
+  filterChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  filterChipWarn: { backgroundColor: '#fffbeb', borderColor: '#f59e0b' },
+  filterChipViolet: { backgroundColor: '#f5f3ff', borderColor: '#8b5cf6' },
+  filterChipText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted },
+  filterChipTextOn: { color: '#fff' },
+  filterChipTextWarn: { color: '#b45309' },
+  filterChipTextViolet: { color: '#6d28d9' },
+  filterPanel: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: adminTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  filterPanelLbl: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: adminTheme.colors.textMuted,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  sortChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: adminTheme.colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: adminTheme.colors.border,
+  },
+  sortChipOn: { backgroundColor: '#ede9fe', borderColor: '#c4b5fd' },
+  sortChipText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.textMuted },
+  sortChipTextOn: { color: '#6d28d9' },
+  clearFiltersBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+  },
+  clearFiltersText: { fontSize: 13, fontWeight: '700', color: '#7c3aed' },
+  listHeader: { paddingTop: 2, marginBottom: 4 },
+  orgCard: {
+    marginBottom: 10,
   },
   listLoader: { marginVertical: 12 },
   needOrgWrap: { flex: 1, paddingTop: 8 },
@@ -1294,6 +1706,26 @@ const styles = StyleSheet.create({
   sectionLbl: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.textMuted, marginBottom: 8 },
   planLoading: { alignItems: 'center', paddingVertical: 8 },
   planHint: { fontSize: 11, color: adminTheme.colors.textMuted, marginBottom: 8, lineHeight: 15 },
+  planMatchBox: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+    marginBottom: 10,
+  },
+  planMatchTitle: { fontSize: 13, fontWeight: '800', color: adminTheme.colors.text },
+  planMatchSub: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 4 },
+  planMatchActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  planMatchBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+  },
+  planMatchBtnText: { fontSize: 11, fontWeight: '700', color: '#7c3aed' },
   planChip: {
     alignSelf: 'flex-start',
     paddingHorizontal: 12,
@@ -1432,8 +1864,6 @@ type QuickPayListHeaderProps = {
   canUseAllOrg: boolean;
   ownOrganizationId?: string | null;
   lastSaved: string | null;
-  scopeFilter: 'all' | FinanceLedgerScope;
-  onScopeFilter: (s: 'all' | FinanceLedgerScope) => void;
   showExport: boolean;
   scopeLabelForReport: string;
   listReportRows: {
@@ -1463,8 +1893,6 @@ function QuickPayListHeader({
   canUseAllOrg,
   ownOrganizationId,
   lastSaved,
-  scopeFilter,
-  onScopeFilter,
   showExport,
   scopeLabelForReport,
   listReportRows,
@@ -1516,25 +1944,8 @@ function QuickPayListHeader({
         </View>
       ) : null}
 
-      <View style={styles.scopeSegmented}>
-        {(['all', 'hotel', 'personal'] as const).map((s) => (
-          <TouchableOpacity
-            key={s}
-            style={[styles.scopeSegment, scopeFilter === s && styles.scopeSegmentOn]}
-            onPress={() => onScopeFilter(s)}
-            activeOpacity={0.88}
-          >
-            <Text style={[styles.scopeSegmentText, scopeFilter === s && styles.scopeSegmentTextOn]}>
-              {s === 'all' ? t('quickPayScopeAll') : LEDGER_SCOPE_LABELS[s]}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
       <Text style={styles.listHint}>
-        {selectionMode
-          ? t('quickPayBulkSelectHint')
-          : t('quickPayListHint')}
+        {selectionMode ? t('quickPayBulkSelectHint') : t('quickPayListHint')}
       </Text>
 
       {selectionMode && visibleCount > 0 ? (

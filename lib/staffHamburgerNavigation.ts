@@ -91,7 +91,14 @@ export function clearStaffHamburgerMenuRestore() {
 /** Personel feed ana ekranı (hamburger burada). */
 export function isStaffFeedHomePath(pathname: string | null | undefined): boolean {
   const p = (pathname ?? '').replace(/\/+$/, '') || '/staff';
-  return p === '/staff' || p === '/staff/(tabs)' || p === '/staff/(tabs)/index';
+  return (
+    p === '/staff' ||
+    p === '/staff/(tabs)' ||
+    p === '/staff/(tabs)/index' ||
+    p === '/staff/feed' ||
+    p.endsWith('/(tabs)/index') ||
+    p.endsWith('/(tabs)')
+  );
 }
 
 /** Stack veya başka sekmeden feed köküne dönüldüyse ve menüden gelindiyse menüyü anında göster. */

@@ -1,5 +1,6 @@
 import { Alert, Platform, Share } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { staffGetMessages } from '@/lib/messagingApi';
@@ -154,7 +155,7 @@ export function buildChatConversationPdfHtml(conversationName: string, messages:
 
 async function createChatConversationPdf(conversationName: string, messages: Message[]): Promise<string> {
   const html = buildChatConversationPdfHtml(conversationName, messages);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   return file.uri;
 }
 

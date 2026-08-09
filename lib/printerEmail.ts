@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '@/lib/supabase';
+import { persistExpoPrintPdfUri } from '@/lib/persistExpoPrintPdf';
 
 type PrinterSettings = {
   enabled?: boolean;
@@ -21,7 +22,10 @@ function normalizePdfUri(uri: string): string {
 }
 
 async function readPdfAsBase64(pdfUri: string): Promise<string> {
-  const uri = normalizePdfUri(pdfUri);
+  let uri = normalizePdfUri(pdfUri);
+  if (uri.startsWith('blob:') || uri.startsWith('data:application/pdf')) {
+    uri = await persistExpoPrintPdfUri(uri, null, 'printer-mail');
+  }
   const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists) {
     throw new Error('PDF dosyası bulunamadı. Önce PDF oluşturulduğundan emin olun.');

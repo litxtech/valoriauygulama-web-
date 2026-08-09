@@ -3,6 +3,7 @@
  */
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import type { HousekeepingStatus } from '@/lib/roomHousekeeping';
 import { formatHkDateTime } from '@/lib/roomHousekeeping';
@@ -108,7 +109,7 @@ export function buildHousekeepingListHtml(
 }
 
 export async function shareHousekeepingPdf(html: string, fileName: string): Promise<void> {
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const { uri } = await printToLocalPdfFile({ html, base64: false });
   if (Platform.OS === 'web') {
     await Print.printAsync({ html });
     return;

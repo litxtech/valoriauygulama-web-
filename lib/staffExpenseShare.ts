@@ -1,7 +1,7 @@
 import { Alert, Platform, Share, TurboModuleRegistry } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { formatDateShort } from '@/lib/date';
 import { log } from '@/lib/logger';
@@ -168,7 +168,7 @@ export async function buildStaffExpenseSharePdfHtml(expense: StaffExpenseShareRe
 
 async function createStaffExpenseSharePdf(expense: StaffExpenseShareRecord): Promise<{ uri: string; fileName: string }> {
   const html = await buildStaffExpenseSharePdfHtml(expense);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   const fileName = `harcama-${expense.id.slice(0, 8)}.pdf`;
   return { uri: file.uri, fileName };
 }

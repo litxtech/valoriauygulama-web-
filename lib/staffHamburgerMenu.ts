@@ -22,8 +22,8 @@ import {
   canViewStaffKitchenMenuOrders,
   canAccessKitchenReceptionAccounting,
   isKitchenStaffMember,
-  hasTechnicalAssetsStaffAccess,
   canAccessOccupancyOps,
+  canAccessRoomPaymentBoard,
   canAccessGuestComplaints,
   canViewManagedContracts,
   canManageManagedContracts,
@@ -88,6 +88,7 @@ const ACCENTS: Record<string, string> = {
   messages: '#2563eb',
   cleaning: '#0f766e',
   checkout_board: '#c2410c',
+  payment_board: '#0f766e',
   guests: '#0ea5e9',
   transfer: '#0f766e',
   dining: '#b45309',
@@ -258,7 +259,7 @@ export function buildStaffHamburgerMenuSections(
     });
   }
 
-  // —— Mutfak (mutfakçılar için en üstte — hızlı erişim) ——
+  // —— Mutfak (hub yeterli; alt işlemler hub içinden) ——
   if (isKitchenStaff) {
     push('kitchen', {
       id: 'kitchen_ops',
@@ -266,55 +267,6 @@ export function buildStaffHamburgerMenuSections(
       href: '/staff/kitchen-ops',
       icon: 'restaurant-outline',
       accent: ACCENTS.kitchen_ops,
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_entry',
-      label: t('staffKitchenStockAdd'),
-      href: '/staff/kitchen-ops/stock/entry',
-      icon: 'add-circle-outline',
-      accent: '#059669',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_exit',
-      label: t('staffKitchenStockExit'),
-      href: '/staff/kitchen-ops/stock/exit',
-      icon: 'remove-circle-outline',
-      accent: '#d97706',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_scan',
-      label: t('staffKitchenBarcodeScan'),
-      href: '/staff/kitchen-ops/stock/scan',
-      icon: 'scan-outline',
-      accent: '#7c3aed',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_current',
-      label: t('staffKitchenCurrentStock'),
-      href: '/staff/kitchen-ops/stock/current',
-      icon: 'layers-outline',
-      accent: '#2563eb',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_low',
-      label: t('staffKitchenLowStock'),
-      href: '/staff/kitchen-ops/stock/low',
-      icon: 'alert-circle-outline',
-      accent: '#dc2626',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_revenue',
-      label: t('staffKitchenRevenueEnter'),
-      href: '/staff/kitchen-ops/revenue/new',
-      icon: 'cash-outline',
-      accent: '#10b981',
-    });
-    push('kitchen', {
-      id: 'kitchen_quick_day_close',
-      label: t('staffKitchenDayClose'),
-      href: '/staff/kitchen-ops/day-close',
-      icon: 'moon-outline',
-      accent: '#4f46e5',
     });
     if (canSeeBreakfastModule(staff)) {
       push('kitchen', {
@@ -361,13 +313,6 @@ export function buildStaffHamburgerMenuSections(
       icon: 'megaphone-outline',
       accent: ACCENTS.announcement_compose,
     });
-    push('nav', {
-      id: 'engagement_tracking',
-      label: 'Okuma takibi',
-      href: '/admin/engagement',
-      icon: 'analytics-outline',
-      accent: '#4f46e5',
-    });
   }
 
   // —— Personel İşleri (personeli doğrudan ilgilendiren) ——
@@ -380,22 +325,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.attendance,
     });
   }
-  if (hasStaffAppPermission(staff, 'performans_paneli')) {
-    push('staff', {
-      id: 'perf',
-      label: t('perfDashboardTitle'),
-      href: '/staff/performance',
-      icon: 'stats-chart-outline',
-      accent: ACCENTS.perf,
-    });
-  }
-  push('staff', {
-    id: 'staff_points',
-    label: 'Alınan puanlarım',
-    href: '/staff/points',
-    icon: 'ribbon-outline',
-    accent: '#ca8a04',
-  });
   push('staff', {
     id: 'meal',
     label: t('staffMealMenuTitle'),
@@ -412,13 +341,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.meal_edit,
     });
   }
-  push('staff', {
-    id: 'meal_hist',
-    label: t('staffMealHistoryTitle'),
-    href: '/staff/meal-menu-history',
-    icon: 'time-outline',
-    accent: ACCENTS.meal_hist,
-  });
   if (canSeeBreakfastModule(staff) && !isKitchenStaff) {
     push('staff', {
       id: 'breakfast_staff',
@@ -445,28 +367,12 @@ export function buildStaffHamburgerMenuSections(
     accent: ACCENTS.cleaning,
   });
   push('staff', {
-    id: 'room_linen',
-    label: t('staffMenu_roomLinen'),
-    href: '/staff/room-linen',
-    icon: 'bed-outline',
-    accent: ACCENTS.cleaning,
-  });
-  push('staff', {
     id: 'official_warnings',
     label: t('staffOfficialWarningsNavTitle'),
     href: '/staff/warnings',
     icon: 'warning-outline',
     accent: ACCENTS.warnings,
   });
-  if (hasStaffAppPermission(staff, 'harcama_girisi')) {
-    push('staff', {
-      id: 'expenses_new',
-      label: t('staffExpenseNewTitle'),
-      href: '/staff/expenses/new',
-      icon: 'add-circle-outline',
-      accent: ACCENTS.expenses,
-    });
-  }
   if (hasStaffAppPermission(staff, 'harcama_yonetimi')) {
     push('staff', {
       id: 'expenses_all',
@@ -504,13 +410,6 @@ export function buildStaffHamburgerMenuSections(
   }
   if (canManageManagedContracts(staff)) {
     push('staff', {
-      id: 'managed_contracts_prepare',
-      label: 'Sözleşme hazırla',
-      href: '/admin/managed-contracts/new',
-      icon: 'create-outline',
-      accent: ACCENTS.contracts,
-    });
-    push('staff', {
       id: 'managed_contracts_hub',
       label: 'Sözleşme yönetimi',
       href: '/admin/managed-contracts',
@@ -527,13 +426,6 @@ export function buildStaffHamburgerMenuSections(
     });
   }
   if (canCreateDepartmentRules(staff)) {
-    push('ops', {
-      id: 'department_rules_new',
-      label: 'Kural oluştur',
-      href: '/admin/department-rules/new',
-      icon: 'add-circle-outline',
-      accent: ACCENTS.department_rules,
-    });
     push('ops', {
       id: 'department_rules_hub',
       label: canManageDepartmentRules(staff) ? 'Bölüm kuralları yönetimi' : 'Bölüm kurallarım',
@@ -574,13 +466,6 @@ export function buildStaffHamburgerMenuSections(
       label: t('staffKitchenIdCapturedList'),
       href: '/staff/kbs/capture-history',
       icon: 'albums-outline',
-      accent: ACCENTS.kbs,
-    });
-    push('hotel', {
-      id: 'passport_explore',
-      label: t('staffKitchenPassportExplore'),
-      href: '/staff/kbs/passport-explore',
-      icon: 'earth-outline',
       accent: ACCENTS.kbs,
     });
   }
@@ -633,13 +518,6 @@ export function buildStaffHamburgerMenuSections(
     });
   }
   push('hotel', {
-    id: 'security_recordings_new',
-    label: t('staffMenu_security_recordings_new'),
-    href: '/staff/security-recordings/new',
-    icon: 'cloud-upload-outline',
-    accent: ACCENTS.security_recordings,
-  });
-  push('hotel', {
     id: 'security_recordings',
     label: t('staffMenu_security_recordings'),
     href: '/staff/security-recordings',
@@ -660,6 +538,16 @@ export function buildStaffHamburgerMenuSections(
       push('payments', item);
     }
   }
+  // Tahsilat bölümünde — QR yetkisi olmasa da resepsiyon/admin görsün
+  if (canAccessRoomPaymentBoard(staff)) {
+    push('payments', {
+      id: 'payment_board',
+      label: 'Oda Ödemeleri',
+      href: '/staff/payment-board',
+      icon: 'cash-outline',
+      accent: ACCENTS.payment_board,
+    });
+  }
   if (canAccessOccupancyOps(staff)) {
     push('hotel', {
       id: 'occupancy_ops',
@@ -676,29 +564,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.checkout_board,
     });
   }
-  if (!isAdmin) {
-    push('hotel', {
-      id: 'transfer',
-      label: t('transferTourNavTitle'),
-      href: '/staff/transfer-tour',
-      icon: 'car-outline',
-      accent: ACCENTS.transfer,
-    });
-    push('hotel', {
-      id: 'dining',
-      label: t('diningVenuesNavTitle'),
-      href: '/staff/dining-venues',
-      icon: 'restaurant-outline',
-      accent: ACCENTS.dining,
-    });
-  }
-  push('hotel', {
-    id: 'area_guide_staff',
-    label: t('localAreaGuideScreenTitle'),
-    href: '/staff/local-area-guide',
-    icon: 'trail-sign-outline',
-    accent: ACCENTS.area_guide,
-  });
 
   // —— Operasyon (iş araçları / modüller) ——
   if (hasStaffAppPermission(staff, 'eksik_esya')) {
@@ -713,13 +578,6 @@ export function buildStaffHamburgerMenuSections(
   if (canAccessFacilityJournal(staff)) {
     const fjBase = isAdmin ? '/admin/facility-journal' : '/staff/facility-journal';
     push('ops', {
-      id: 'facility_journal_new',
-      label: t('staffMenu_facility_journal_new'),
-      href: `${fjBase}/new`,
-      icon: 'add-circle-outline',
-      accent: ACCENTS.facility_journal,
-    });
-    push('ops', {
       id: 'facility_journal',
       label: t('staffFacilityJournal'),
       href: fjBase,
@@ -727,13 +585,6 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.facility_journal,
     });
   }
-  push('ops', {
-    id: 'fault_records_new',
-    label: 'Arıza kaydı ekle',
-    href: '/staff/fault-records/new',
-    icon: 'construct-outline',
-    accent: ACCENTS.fault_records,
-  });
   push('ops', {
     id: 'fault_records',
     label: 'Arıza kayıtları',
@@ -743,13 +594,6 @@ export function buildStaffHamburgerMenuSections(
   });
   if (canAccessLostFound(staff)) {
     const lfBase = isAdmin ? '/admin/lost-found' : '/staff/lost-found';
-    push('ops', {
-      id: 'lost_found_new',
-      label: staffMenuLabel(t, 'lost_found_new'),
-      href: `${lfBase}/new`,
-      icon: 'add-circle-outline',
-      accent: ACCENTS.lost_found,
-    });
     push('ops', {
       id: 'lost_found',
       label: staffMenuLabel(t, 'lost_found'),
@@ -842,22 +686,8 @@ export function buildStaffHamburgerMenuSections(
       id: 'person_payments_quick',
       label: t('profileUiPersonPaymentsQuick'),
       href: '/admin/accounting/quick-pay',
-      icon: 'wallet-outline',
-      accent: ACCENTS.accounting,
-    });
-    push('ops', {
-      id: 'pos_receipt_invoice',
-      label: t('profileUiPosReceiptInvoice'),
-      href: '/admin/accounting/pos-receipts/new',
-      icon: 'receipt-outline',
-      accent: ACCENTS.accounting,
-    });
-    push('ops', {
-      id: 'pos_receipt_list',
-      label: t('profileUiPosReceiptList'),
-      href: '/admin/accounting/pos-receipts',
-      icon: 'list-outline',
-      accent: ACCENTS.accounting,
+      icon: 'people-outline',
+      accent: ACCENTS.finance,
     });
     push('ops', {
       id: 'accounting',
@@ -918,24 +748,6 @@ export function buildStaffHamburgerMenuSections(
         accent: '#0f3d3a',
       });
     }
-    if (canAccessAdminRoute(staff, '/admin/audits')) {
-      push('admin', {
-        id: 'audits',
-        label: t('perfAuditBoard'),
-        href: '/admin/audits',
-        icon: 'clipboard-outline',
-        accent: ACCENTS.audits,
-      });
-    }
-    if (canAccessAdminRoute(staff, '/admin/performance')) {
-      push('admin', {
-        id: 'staff_month_best',
-        label: t('perfStaffOfMonth'),
-        href: '/admin/performance',
-        icon: 'trophy-outline',
-        accent: ACCENTS.staff_month_best,
-      });
-    }
     if (canAccessAdminRoute(staff, '/admin/attendance')) {
       push('admin', {
         id: 'attendance_admin',
@@ -943,29 +755,6 @@ export function buildStaffHamburgerMenuSections(
         href: '/admin/attendance',
         icon: 'time-outline',
         accent: ACCENTS.attendance,
-      });
-    }
-    push('admin', {
-      id: 'transfer_a',
-      label: t('transferTourNavTitle'),
-      href: '/staff/transfer-tour',
-      icon: 'car-outline',
-      accent: ACCENTS.transfer,
-    });
-    push('admin', {
-      id: 'dining_a',
-      label: t('diningVenuesNavTitle'),
-      href: '/staff/dining-venues',
-      icon: 'restaurant-outline',
-      accent: ACCENTS.dining,
-    });
-    if (canAccessAdminRoute(staff, '/admin/local-area-guide')) {
-      push('admin', {
-        id: 'area_guide',
-        label: t('profileUiAdminAreaGuide'),
-        href: '/admin/local-area-guide',
-        icon: 'map-outline',
-        accent: ACCENTS.area_guide,
       });
     }
     if (canAccessAdminRoute(staff, '/admin/breakfast-confirm')) {
@@ -979,17 +768,10 @@ export function buildStaffHamburgerMenuSections(
     }
     if (canAccessAdminRoute(staff, '/admin/salary')) {
       push('admin', {
-        id: 'salary_pay',
-        label: 'Maaş öde',
-        href: '/admin/salary/pay',
-        icon: 'wallet-outline',
-        accent: ACCENTS.salary_all,
-      });
-      push('admin', {
-        id: 'salary_all',
-        label: t('profileUiAllPayments'),
-        href: '/admin/salary/all',
-        icon: 'cash-outline',
+        id: 'salary_hub',
+        label: t('profileUiSalaryHub'),
+        href: '/admin/salary',
+        icon: 'people-outline',
         accent: ACCENTS.salary_history,
       });
     }
@@ -1002,15 +784,6 @@ export function buildStaffHamburgerMenuSections(
         accent: ACCENTS.contracts,
       });
     }
-    if (canManageManagedContracts(staff)) {
-      push('admin', {
-        id: 'managed_contracts_prepare_admin',
-        label: 'Sözleşme hazırla',
-        href: '/admin/managed-contracts/new',
-        icon: 'create-outline',
-        accent: ACCENTS.contracts,
-      });
-    }
     push('admin', {
       id: 'managed_contracts_admin',
       label: 'Sözleşme yönetimi',
@@ -1018,15 +791,6 @@ export function buildStaffHamburgerMenuSections(
       icon: 'briefcase-outline',
       accent: ACCENTS.contracts,
     });
-    if (canCreateDepartmentRules(staff)) {
-      push('admin', {
-        id: 'department_rules_create_admin',
-        label: 'Kural oluştur',
-        href: '/admin/department-rules/new',
-        icon: 'add-circle-outline',
-        accent: ACCENTS.department_rules,
-      });
-    }
     if (canManageDepartmentRules(staff) || canCreateDepartmentRules(staff)) {
       push('admin', {
         id: 'department_rules_admin',
@@ -1072,15 +836,6 @@ export function buildStaffHamburgerMenuSections(
 
   if (isKbsUiEnabled() && (isAdmin || staff.kbs_access_enabled !== false)) {
     push('admin', { id: 'kbs', label: t('kbsNavOperation'), href: '/staff/kbs', icon: 'scan-outline', accent: ACCENTS.kbs });
-  }
-  if (hasTechnicalAssetsStaffAccess(staff)) {
-    push('admin', {
-      id: 'tech',
-      label: t('staffTechnicalAssetsTitle'),
-      href: '/staff/technical-assets',
-      icon: 'layers-outline',
-      accent: ACCENTS.tech,
-    });
   }
 
   pushBreakfastBriefingMenuItem(push, staff, isAdmin);

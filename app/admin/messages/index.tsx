@@ -15,7 +15,7 @@ import {
   staffDeleteConversation,
   staffListConversations,
 } from '@/lib/messagingApi';
-import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts, invalidateParticipantConvIdsCache } from '@/lib/messagingUnreadSync';
 import { consumeStaffConversationListDirty } from '@/lib/staffConversationListCache';
 import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
 import type { ConversationWithMeta, Message } from '@/lib/messaging';
@@ -76,6 +76,7 @@ export default function AdminMessagesScreen() {
         msg.sender_id === staff.id &&
         (msg.sender_type === 'staff' || msg.sender_type === 'admin');
       const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+      let missing = false;
       setConversations((prev) => {
         let found = false;
         const mapped = prev.map((c) => {
@@ -90,6 +91,7 @@ export default function AdminMessagesScreen() {
           };
         });
         if (!found) {
+          missing = true;
           inboxDirtyRef.current = true;
           return prev;
         }
@@ -99,8 +101,9 @@ export default function AdminMessagesScreen() {
           return tb - ta;
         });
       });
+      if (missing) void load({ force: true });
     },
-    [staff]
+    [staff, load]
   );
 
   useFocusEffect(
@@ -149,6 +152,7 @@ export default function AdminMessagesScreen() {
             Alert.alert('Hata', error);
             return;
           }
+          invalidateParticipantConvIdsCache({ kind: 'staff', staffId: staff.id });
           setConversations((prev) => prev.filter((c) => c.id !== item.id));
         },
       },

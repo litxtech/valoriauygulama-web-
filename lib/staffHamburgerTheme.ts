@@ -91,7 +91,7 @@ export const HAMBURGER_THEME_PRESET_META: {
   labelTr: string;
   descriptionTr: string;
 }[] = [
-  { id: 'default', labelTr: 'Varsayılan', descriptionTr: 'Mor-indigo gradient, liste düzeni' },
+  { id: 'default', labelTr: 'Varsayılan', descriptionTr: 'X tarzı sade profil, düz liste' },
   { id: 'indigo', labelTr: 'İndigo', descriptionTr: 'Canlı mor-mavi tonlar' },
   { id: 'emerald', labelTr: 'Zümrüt', descriptionTr: 'Yeşil-teal otel hissi' },
   { id: 'rose', labelTr: 'Gül', descriptionTr: 'Sıcak pembe-kırmızı vurgu' },
@@ -103,7 +103,20 @@ export const HAMBURGER_THEME_PRESET_META: {
 ];
 
 export const HAMBURGER_THEME_PRESETS: Record<StaffHamburgerThemePreset, Partial<StaffHamburgerThemeConfig>> = {
-  default: {},
+  default: {
+    headerStyle: 'minimal',
+    layoutMode: 'compact',
+    itemStyle: 'list',
+    backdropColor: 'rgba(15,20,25,0.45)',
+    showHubCards: false,
+    showSectionIcons: false,
+    showSectionLabels: true,
+    showRecentFlyout: false,
+    drawerBorderRadius: 16,
+    searchMinItems: 4,
+    primaryButtonColor: '#0f1419',
+    primaryButtonGradient: ['#0f1419', '#272c30'],
+  },
   indigo: {
     headerGradient: ['#6366f1', '#8b5cf6', '#a855f7'],
     backdropColor: 'rgba(88,28,135,0.32)',
@@ -277,15 +290,15 @@ export function hamburgerThemeColorErrors(theme: StaffHamburgerThemeConfig): str
 
 const FALLBACK_RESOLVED_THEME: ResolvedStaffHamburgerTheme = {
   preset: 'default',
-  layoutMode: 'classic',
-  headerStyle: 'gradient',
+  layoutMode: 'compact',
+  headerStyle: 'minimal',
   itemStyle: 'list',
-  headerGradient: ['#6366f1', '#8b5cf6', '#d946ef', '#fb7185'],
-  headerSolidColor: '#0f172a',
+  headerGradient: ['#0f1419', '#272c30'],
+  headerSolidColor: '#ffffff',
   drawerBackground: null,
-  backdropColor: 'rgba(88,28,135,0.28)',
-  primaryButtonColor: '#dc2626',
-  primaryButtonGradient: ['#dc2626', '#ef4444', '#f87171'],
+  backdropColor: 'rgba(15,20,25,0.45)',
+  primaryButtonColor: '#0f1419',
+  primaryButtonGradient: ['#0f1419', '#272c30'],
   cardBackground: null,
   cardBorder: null,
   textColor: null,
@@ -294,22 +307,22 @@ const FALLBACK_RESOLVED_THEME: ResolvedStaffHamburgerTheme = {
   sectionColors: {
     fnb: '#ea580c',
     kitchen: '#ea580c',
-    nav: '#6366f1',
+    nav: '#1d9bf0',
     staff: '#ea580c',
     hotel: '#0d9488',
     payments: '#635bff',
-    ops: '#2563eb',
-    admin: '#7c3aed',
+    ops: '#1d9bf0',
+    admin: '#536471',
   },
   itemAccents: {},
   sectionTitles: {},
   showSearch: true,
-  showRecentFlyout: true,
-  showHubCards: true,
-  showSectionIcons: true,
+  showRecentFlyout: false,
+  showHubCards: false,
+  showSectionIcons: false,
   showSectionLabels: true,
-  searchMinItems: 6,
-  drawerBorderRadius: 26,
+  searchMinItems: 4,
+  drawerBorderRadius: 16,
 };
 
 let cachedDefaultResolvedTheme: ResolvedStaffHamburgerTheme | null = null;
@@ -350,32 +363,37 @@ export function resolveStaffHamburgerTheme(raw: StaffHamburgerThemeConfig | null
 
   const layoutMode =
     merged.layoutMode ??
-    (presetId === 'grid' ? 'grid' : presetId === 'minimal' ? 'compact' : 'classic');
+    (presetId === 'grid' ? 'grid' : presetId === 'minimal' || presetId === 'default' ? 'compact' : 'classic');
   const itemStyle =
-    merged.itemStyle ?? (layoutMode === 'grid' ? 'grid' : presetId === 'minimal' ? 'list' : 'list');
+    merged.itemStyle ?? (layoutMode === 'grid' ? 'grid' : 'list');
 
   const sectionColors = { ...DEFAULT_SECTION_COLORS, ...(preset.sectionColors ?? {}), ...(merged.sectionColors ?? {}) };
 
   return {
     preset: presetId,
     layoutMode,
-    headerStyle: merged.headerStyle ?? preset.headerStyle ?? 'gradient',
+    headerStyle:
+      merged.headerStyle ??
+      preset.headerStyle ??
+      (presetId === 'default' || presetId === 'minimal' ? 'minimal' : 'gradient'),
     itemStyle,
     headerGradient: (merged.headerGradient?.length
       ? merged.headerGradient
       : preset.headerGradient?.length
         ? preset.headerGradient
         : DEFAULT_HEADER_GRADIENT) as readonly string[],
-    headerSolidColor: pickColor(merged.headerSolidColor ?? preset.headerSolidColor, '#0f172a'),
+    headerSolidColor: pickColor(merged.headerSolidColor ?? preset.headerSolidColor, '#ffffff'),
     drawerBackground: merged.drawerBackground ?? preset.drawerBackground ?? null,
     backdropColor:
-      merged.backdropColor ?? preset.backdropColor ?? (presetId === 'night' ? 'rgba(0,0,0,0.55)' : 'rgba(88,28,135,0.28)'),
-    primaryButtonColor: pickColor(merged.primaryButtonColor ?? preset.primaryButtonColor, '#dc2626'),
+      merged.backdropColor ??
+      preset.backdropColor ??
+      (presetId === 'night' ? 'rgba(0,0,0,0.55)' : 'rgba(15,20,25,0.45)'),
+    primaryButtonColor: pickColor(merged.primaryButtonColor ?? preset.primaryButtonColor, '#0f1419'),
     primaryButtonGradient: (merged.primaryButtonGradient?.length
       ? merged.primaryButtonGradient
       : preset.primaryButtonGradient?.length
         ? preset.primaryButtonGradient
-        : DEFAULT_PRIMARY_GRADIENT) as readonly string[],
+        : (['#0f1419', '#272c30'] as const)) as readonly string[],
     cardBackground: merged.cardBackground ?? preset.cardBackground ?? null,
     cardBorder: merged.cardBorder ?? preset.cardBorder ?? null,
     textColor: merged.textColor ?? preset.textColor ?? null,
@@ -385,12 +403,12 @@ export function resolveStaffHamburgerTheme(raw: StaffHamburgerThemeConfig | null
     itemAccents: { ...(merged.itemAccents ?? {}) },
     sectionTitles: { ...(merged.sectionTitles ?? {}) },
     showSearch: merged.showSearch ?? true,
-    showRecentFlyout: merged.showRecentFlyout ?? true,
-    showHubCards: merged.showHubCards ?? preset.showHubCards ?? true,
-    showSectionIcons: merged.showSectionIcons ?? true,
+    showRecentFlyout: merged.showRecentFlyout ?? false,
+    showHubCards: merged.showHubCards ?? preset.showHubCards ?? false,
+    showSectionIcons: merged.showSectionIcons ?? preset.showSectionIcons ?? false,
     showSectionLabels: merged.showSectionLabels ?? true,
-    searchMinItems: merged.searchMinItems ?? 6,
-    drawerBorderRadius: merged.drawerBorderRadius ?? 26,
+    searchMinItems: merged.searchMinItems ?? preset.searchMinItems ?? 4,
+    drawerBorderRadius: merged.drawerBorderRadius ?? preset.drawerBorderRadius ?? 16,
   };
 }
 

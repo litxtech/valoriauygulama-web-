@@ -5,11 +5,14 @@ import {
   TouchableOpacity,
   Platform,
   ScrollView,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
-import { theme } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
 import { CachedImage } from '@/components/CachedImage';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 
 type Props = {
   imageUri: string | null;
@@ -30,35 +33,128 @@ export function FeedNewPostMediaSection({
   onGallery,
   onRemoveMedia,
 }: Props) {
+  const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
+  const hasMedia = mediaItems.length > 0 || !!imageUri;
+
   return (
     <View style={styles.section}>
-      <View style={styles.actionsRow}>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnCamera, uploading && styles.actionBtnDisabled]}
-          onPress={onCamera}
-          disabled={uploading}
-          activeOpacity={0.88}
-          accessibilityLabel="Kamera"
-        >
-          <Ionicons name="camera" size={22} color="#fff" />
-        </TouchableOpacity>
+      {!hasMedia ? (
+        <View style={styles.emptyWrap}>
+          <View
+            style={[
+              styles.dropZone,
+              {
+                borderColor: palette.cardBorder,
+                backgroundColor: isNight ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.85)',
+              },
+            ]}
+          >
+            <LinearGradient
+              colors={palette.gradientPrimary}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.dropIconRing}
+            >
+              <Ionicons name="images-outline" size={22} color="#fff" />
+            </LinearGradient>
+            <Text style={[styles.dropTitle, { color: palette.text }]}>Fotoğraf veya video ekle</Text>
+            <Text style={[styles.dropHint, { color: palette.muted }]}>
+              Kameradan çek veya galeriden seç — en fazla 10 medya
+            </Text>
 
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.actionBtnGallery, uploading && styles.actionBtnDisabled]}
-          onPress={onGallery}
-          disabled={uploading}
-          activeOpacity={0.88}
-          accessibilityLabel="Galeri"
-        >
-          <Ionicons name="images" size={22} color="#fff" />
-        </TouchableOpacity>
-      </View>
+            <View style={styles.pickRow}>
+              <Pressable
+                onPress={onCamera}
+                disabled={uploading}
+                style={({ pressed }) => [
+                  styles.pickCard,
+                  {
+                    backgroundColor: isNight ? 'rgba(255,255,255,0.06)' : '#fff',
+                    borderColor: palette.borderLight,
+                    opacity: uploading ? 0.55 : pressed ? 0.92 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Kamera"
+              >
+                <LinearGradient
+                  colors={['#F59E0B', '#D97706']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.pickIcon}
+                >
+                  <Ionicons name="camera" size={20} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.pickLabel, { color: palette.text }]}>Kamera</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={onGallery}
+                disabled={uploading}
+                style={({ pressed }) => [
+                  styles.pickCard,
+                  {
+                    backgroundColor: isNight ? 'rgba(255,255,255,0.06)' : '#fff',
+                    borderColor: palette.borderLight,
+                    opacity: uploading ? 0.55 : pressed ? 0.92 : 1,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Galeri"
+              >
+                <LinearGradient
+                  colors={palette.gradientPremium}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.pickIcon}
+                >
+                  <Ionicons name="images" size={20} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.pickLabel, { color: palette.text }]}>Galeri</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.toolbar}>
+          <TouchableOpacity
+            style={[styles.toolBtn, uploading && styles.toolBtnDisabled]}
+            onPress={onCamera}
+            disabled={uploading}
+            activeOpacity={0.88}
+            accessibilityLabel="Kamera"
+          >
+            <LinearGradient colors={['#F59E0B', '#D97706']} style={styles.toolBtnGrad}>
+              <Ionicons name="camera" size={18} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.toolBtn, uploading && styles.toolBtnDisabled]}
+            onPress={onGallery}
+            disabled={uploading}
+            activeOpacity={0.88}
+            accessibilityLabel="Galeri"
+          >
+            <LinearGradient colors={palette.gradientPremium} style={styles.toolBtnGrad}>
+              <Ionicons name="images" size={18} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+          <Text style={[styles.toolbarHint, { color: palette.muted }]} numberOfLines={1}>
+            Medyayı değiştirmek için dokun
+          </Text>
+        </View>
+      )}
 
       {mediaItems.length > 0 ? (
         <View style={styles.previewShell} collapsable={false}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.multiPreviewRow}>
             {mediaItems.map((m, idx) => (
-              <View key={`${m.uri}-${idx}`} style={styles.multiPreviewCard} collapsable={false}>
+              <View
+                key={`${m.uri}-${idx}`}
+                style={[styles.multiPreviewCard, { borderColor: palette.cardBorder }]}
+                collapsable={false}
+              >
                 {m.type === 'video' ? (
                   <Video
                     key={m.uri}
@@ -71,23 +167,38 @@ export function FeedNewPostMediaSection({
                 ) : (
                   <CachedImage key={m.uri} uri={m.uri} style={styles.multiPreviewMedia} contentFit="cover" />
                 )}
+                {m.type === 'video' ? (
+                  <View style={styles.videoChip}>
+                    <Ionicons name="play" size={10} color="#fff" />
+                  </View>
+                ) : null}
               </View>
             ))}
           </ScrollView>
-          <TouchableOpacity style={styles.clearAllBtn} onPress={onRemoveMedia} disabled={uploading} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={[styles.clearAllBtn, { backgroundColor: isNight ? 'rgba(255,255,255,0.1)' : '#0F172A' }]}
+            onPress={onRemoveMedia}
+            disabled={uploading}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="trash-outline" size={14} color="#fff" />
             <Text style={styles.clearAllText}>Tümünü kaldır ({mediaItems.length})</Text>
           </TouchableOpacity>
         </View>
       ) : imageUri ? (
         <View style={styles.previewShell} collapsable={false}>
-          <View style={styles.previewCard} collapsable={false}>
+          <View
+            style={[
+              styles.previewCard,
+              {
+                borderColor: palette.cardBorder,
+                ...(Platform.OS === 'ios' ? palette.shadowCard : { elevation: 4 }),
+              },
+            ]}
+            collapsable={false}
+          >
             {mediaType === 'image' ? (
-              <CachedImage
-                key={imageUri}
-                uri={imageUri}
-                style={styles.previewImage}
-                contentFit="cover"
-              />
+              <CachedImage key={imageUri} uri={imageUri} style={styles.previewImage} contentFit="cover" />
             ) : (
               <Video
                 key={imageUri}
@@ -99,15 +210,20 @@ export function FeedNewPostMediaSection({
                 shouldPlay={false}
               />
             )}
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.55)']}
+              style={styles.previewFade}
+              pointerEvents="none"
+            />
             <View style={styles.typeBadge}>
               <Ionicons
                 name={mediaType === 'video' ? 'videocam' : 'image'}
-                size={14}
+                size={13}
                 color="#fff"
                 style={styles.typeBadgeIcon}
               />
               <Text style={styles.typeBadgeText}>
-                {mediaType === 'video' ? 'Video önizleme' : 'Fotoğraf önizleme'}
+                {mediaType === 'video' ? 'Video' : 'Fotoğraf'}
               </Text>
             </View>
             <TouchableOpacity
@@ -119,7 +235,7 @@ export function FeedNewPostMediaSection({
               accessibilityLabel="Medyayı kaldır"
             >
               <View style={styles.removeBtnInner}>
-                <Ionicons name="close" size={20} color="#fff" />
+                <Ionicons name="close" size={18} color="#fff" />
               </View>
             </TouchableOpacity>
           </View>
@@ -131,44 +247,154 @@ export function FeedNewPostMediaSection({
 
 const styles = StyleSheet.create({
   section: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 10,
+  },
+  emptyWrap: {
+    marginBottom: 4,
+  },
+  dropZone: {
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  dropIconRing: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  dropTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+  },
+  dropHint: {
     marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 17,
+    paddingHorizontal: 8,
+  },
+  pickRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+    width: '100%',
+  },
+  pickCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pickIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  toolBtn: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  toolBtnGrad: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolBtnDisabled: {
+    opacity: 0.55,
+  },
+  toolbarHint: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   previewShell: {
-    marginTop: 16,
+    marginTop: 2,
   },
-  multiPreviewRow: { gap: 8, paddingRight: 14 },
+  multiPreviewRow: { gap: 10, paddingRight: 8, paddingBottom: 2 },
   multiPreviewCard: {
-    width: 96,
-    height: 126,
-    borderRadius: 10,
+    width: 104,
+    height: 136,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#0f172a',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   multiPreviewMedia: { width: '100%', height: '100%' },
+  videoChip: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   clearAllBtn: {
-    marginTop: 8,
+    marginTop: 10,
     alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: '#111827',
   },
   clearAllText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   previewCard: {
-    borderRadius: theme.radius.lg,
+    borderRadius: 20,
     overflow: 'hidden',
     backgroundColor: '#0f172a',
-    ...(Platform.OS === 'ios' ? theme.shadows.md : { elevation: 4 }),
+    borderWidth: StyleSheet.hairlineWidth,
   },
   previewImage: {
     width: '100%',
     aspectRatio: 4 / 5,
+    maxHeight: 320,
     backgroundColor: '#1e293b',
   },
   previewVideo: {
     width: '100%',
     aspectRatio: 9 / 16,
+    maxHeight: 320,
     backgroundColor: '#000',
+  },
+  previewFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 72,
   },
   typeBadge: {
     position: 'absolute',
@@ -176,18 +402,20 @@ const styles = StyleSheet.create({
     bottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     paddingVertical: 6,
     paddingHorizontal: 10,
-    borderRadius: theme.radius.sm,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   typeBadgeIcon: {
-    marginRight: 6,
+    marginRight: 5,
   },
   typeBadgeText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   removeBtn: {
     position: 'absolute',
@@ -195,35 +423,13 @@ const styles = StyleSheet.create({
     right: 10,
   },
   removeBtnInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.25)',
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-    marginBottom: 6,
-  },
-  actionBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  actionBtnCamera: {
-    backgroundColor: '#0284c7',
-  },
-  actionBtnGallery: {
-    backgroundColor: '#7c3aed',
-  },
-  actionBtnDisabled: {
-    opacity: 0.55,
   },
 });

@@ -11,7 +11,7 @@ import {
   TextInput,
   Platform,
 } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -180,7 +180,7 @@ export default function HmbReportsScreen() {
         departureDate: formatTrDayMonthYear(filters.endDate),
         block: formBlock,
       });
-      const { uri } = await Print.printToFileAsync({
+      const { uri } = await printToLocalPdfFile({
         html,
         width: 595,
         height: 842,

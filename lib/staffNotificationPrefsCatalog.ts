@@ -98,6 +98,10 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
     soundFeatureKey: 'room_cleaning',
     matchPrefix: ['staff_room_cleaning'],
   }),
+  entry('room_payment', 'staffNotifRoomPaymentTitle', 'staffNotifRoomPaymentHint', {
+    soundFeatureKey: 'room_payment',
+    matchPrefix: ['staff_room_payment'],
+  }),
   entry('ops_morning_digest', 'staffNotifOpsMorningTitle', 'staffNotifOpsMorningHint', {
     soundFeatureKey: 'room_cleaning',
     matchExact: ['staff_ops_morning_digest'],

@@ -16,17 +16,23 @@ import i18n from '@/i18n';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import {
+  staffCloseGroup,
   staffDeleteConversation,
   staffListConversations,
   staffSetConversationMuted,
   staffSetConversationArchived,
 } from '@/lib/messagingApi';
-import { subscribeStaffInboxLive, subscribeStaffInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import {
+  invalidateParticipantConvIdsCache,
+  subscribeStaffInboxLive,
+  subscribeStaffInboxMessageInserts,
+} from '@/lib/messagingUnreadSync';
 import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
 import type { Message } from '@/lib/messaging';
 import { ChatListSwipeRow, type ChatListSwipeAction } from '@/components/chat/ChatListSwipeRow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
+import { useBottomNavigation } from '@/hooks/useBottomNavigation';
 import type { ConversationWithMeta } from '@/lib/messaging';
 import type { ChatThemePalette } from '@/hooks/useScreenTheme';
 import { useChatTheme } from '@/hooks/useScreenTheme';
@@ -71,6 +77,7 @@ export default function StaffMessagesTabScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const listBottomPad = getFloatingTabBarTotalHeight(insets) + 16;
+  const { onScroll: onTabBarScroll, scrollEventThrottle } = useBottomNavigation();
   const chat = useChatTheme();
   const styles = useMemo(() => createStaffMessagesStyles(chat), [chat]);
   const { t, i18n } = useTranslation();
@@ -168,6 +175,7 @@ export default function StaffMessagesTabScreen() {
         msg.sender_id === staff.id &&
         (msg.sender_type === 'staff' || msg.sender_type === 'admin');
       const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+      let missing = false;
       setConversations((prev) => {
         let found = false;
         const next = prev.map((c) => {
@@ -182,16 +190,24 @@ export default function StaffMessagesTabScreen() {
           };
         });
         if (!found) {
-          // Listede olmayan (yeni) sohbet → katılımcı dinleyicisi tam yenileme yapar.
+          // Silinmiş / listede yok → sunucudan geri getir (rejoin + kalın okunmamış)
+          missing = true;
           conversationListDirty = true;
           return prev;
         }
         conversationListCache = next;
         conversationListCacheUpdatedAt = Date.now();
+        void AsyncStorage.setItem(
+          STAFF_MESSAGES_PERSIST_KEY,
+          JSON.stringify({ conversations: next, updatedAt: conversationListCacheUpdatedAt })
+        ).catch(() => {});
         return next;
       });
+      if (missing) {
+        void load({ force: true });
+      }
     },
-    [staff]
+    [staff, load]
   );
 
   useFocusEffect(
@@ -276,31 +292,110 @@ export default function StaffMessagesTabScreen() {
     [t]
   );
 
+  const persistConversationList = useCallback((list: ConversationWithMeta[]) => {
+    conversationListCache = list;
+    conversationListCacheUpdatedAt = Date.now();
+    void AsyncStorage.setItem(
+      STAFF_MESSAGES_PERSIST_KEY,
+      JSON.stringify({ conversations: list, updatedAt: conversationListCacheUpdatedAt })
+    ).catch(() => {});
+  }, []);
+
+  const removeFromList = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      if (staff?.id) invalidateParticipantConvIdsCache({ kind: 'staff', staffId: staff.id });
+      setConversations((prev) => {
+        const next = prev.filter((c) => !ids.includes(c.id));
+        persistConversationList(next);
+        return next;
+      });
+      const total = conversationListCache.reduce((s, c) => s + (c.unread_count ?? 0), 0);
+      setUnreadCount(total);
+    },
+    [persistConversationList, setUnreadCount, staff?.id]
+  );
+
+  const deleteConversationForMe = useCallback(
+    async (conversationId: string) => {
+      if (!staff?.id) return { error: t('error') };
+      return staffDeleteConversation(conversationId, staff.id);
+    },
+    [staff?.id, t]
+  );
+
+  /** Admin: grubu herkesten kapat + kendi listesinden kaldır. Direct = yalnızca benden sil. */
+  const deleteConversationForEveryone = useCallback(
+    async (item: ConversationWithMeta) => {
+      if (!staff?.id) return { error: t('error') };
+      if (item.type === 'group') {
+        if (item.name === ALL_STAFF_GROUP_NAME_DB) {
+          return { error: 'group_members_all_staff_locked' };
+        }
+        const closed = await staffCloseGroup(item.id, staff.id);
+        if (!closed.ok) {
+          return { error: closed.error ?? 'group_members_close_failed' };
+        }
+      }
+      return staffDeleteConversation(item.id, staff.id);
+    },
+    [staff?.id, t]
+  );
+
+  const resolveDeleteError = useCallback(
+    (error: string | null | undefined) => {
+      if (!error) return t('error');
+      const translated = t(error, { defaultValue: '' });
+      return translated || error;
+    },
+    [t]
+  );
+
   const handleDeleteConversation = (item: ConversationWithMeta) => {
     if (!staff?.id) return;
     const name = getDisplayName(item);
+    const isAdmin = staff.role === 'admin';
+    const canCloseGroup =
+      isAdmin && item.type === 'group' && item.name !== ALL_STAFF_GROUP_NAME_DB;
+
     Alert.alert(t('staffMessagesDeleteChatTitle'), name, [
       { text: t('cancel'), style: 'cancel' },
       {
         text: t('staffChatActionDeleteMe'),
         style: 'destructive',
         onPress: async () => {
-          const { error } = await staffDeleteConversation(item.id, staff.id);
+          const { error } = await deleteConversationForMe(item.id);
           if (error) {
-            Alert.alert(t('error'), error);
+            Alert.alert(t('error'), resolveDeleteError(error));
             return;
           }
-          setConversations((prev) => prev.filter((c) => c.id !== item.id));
-          conversationListCache = conversationListCache.filter((c) => c.id !== item.id);
-          conversationListCacheUpdatedAt = Date.now();
+          removeFromList([item.id]);
         },
       },
+      ...(canCloseGroup
+        ? [
+            {
+              text: t('staffMessagesDeleteForEveryone'),
+              style: 'destructive' as const,
+              onPress: async () => {
+                const { error } = await deleteConversationForEveryone(item);
+                if (error) {
+                  Alert.alert(t('error'), resolveDeleteError(error));
+                  return;
+                }
+                removeFromList([item.id]);
+              },
+            },
+          ]
+        : []),
     ]);
   };
 
   const confirmBulkDelete = () => {
     if (!staff?.id || selectedIds.length === 0) return;
     const isAdmin = staff.role === 'admin';
+    const selectedItems = conversations.filter((c) => selectedIds.includes(c.id));
+
     Alert.alert(
       t('staffMessagesBulkDeleteTitle', { count: selectedIds.length }),
       undefined,
@@ -311,14 +406,11 @@ export default function StaffMessagesTabScreen() {
           style: 'destructive',
           onPress: async () => {
             const results = await Promise.all(
-              selectedIds.map((id) => staffDeleteConversation(id, staff.id))
+              selectedIds.map((id) => deleteConversationForMe(id))
             );
             const failed = results.filter((r) => r.error).length;
             const okIds = selectedIds.filter((_, i) => !results[i].error);
-            if (okIds.length) {
-              setConversations((prev) => prev.filter((c) => !okIds.includes(c.id)));
-              conversationListCache = conversationListCache.filter((c) => !okIds.includes(c.id));
-            }
+            removeFromList(okIds);
             exitSelection();
             if (failed > 0) Alert.alert(t('error'), t('staffMessagesBulkDeleteFailed', { count: failed }));
           },
@@ -328,8 +420,25 @@ export default function StaffMessagesTabScreen() {
               {
                 text: t('staffMessagesDeleteForEveryone'),
                 style: 'destructive' as const,
-                onPress: () => {
-                  Alert.alert(t('info'), t('staffChatDeleteGroupAdminHint'));
+                onPress: async () => {
+                  const results = await Promise.all(
+                    selectedItems.map((item) => deleteConversationForEveryone(item))
+                  );
+                  const failed = results.filter((r) => r.error).length;
+                  const okIds = selectedItems
+                    .filter((_, i) => !results[i].error)
+                    .map((c) => c.id);
+                  removeFromList(okIds);
+                  exitSelection();
+                  if (failed > 0) {
+                    const firstErr = results.find((r) => r.error)?.error;
+                    Alert.alert(
+                      t('error'),
+                      firstErr
+                        ? resolveDeleteError(firstErr)
+                        : t('staffMessagesBulkDeleteFailed', { count: failed })
+                    );
+                  }
                 },
               },
             ]
@@ -524,6 +633,8 @@ export default function StaffMessagesTabScreen() {
           }
           contentContainerStyle={{ paddingBottom: listBottomPad }}
           showsVerticalScrollIndicator={false}
+          onScroll={onTabBarScroll}
+          scrollEventThrottle={scrollEventThrottle}
         />
       )}
 

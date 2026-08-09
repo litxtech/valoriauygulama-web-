@@ -1,6 +1,7 @@
 import { Alert, Platform, Share, TurboModuleRegistry } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
@@ -126,7 +127,7 @@ export async function buildBreakfastConfirmPdfHtml(
 
 async function createBreakfastPdf(record: BreakfastShareRecord, caption?: string): Promise<{ uri: string; fileName: string }> {
   const html = await buildBreakfastConfirmPdfHtml(record, caption);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   const fileName = `kahvalti-teyit-${record.record_date}.pdf`;
   return { uri: file.uri, fileName };
 }

@@ -12,6 +12,9 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   View,
+  PanResponder,
+  type GestureResponderEvent,
+  type PanResponderGestureState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -105,7 +108,7 @@ const SECTION_THEME: Record<StaffHamburgerMenuSectionId, { color: string; icon: 
 };
 
 /** Android: her satırda LinearGradient yerine düz renk (admin panel ile aynı yaklaşım). */
-function accentTintBg(accent: string, alpha = '28') {
+function accentTintBg(accent: string, alpha = '18') {
   return `${accent}${alpha}`;
 }
 
@@ -348,15 +351,7 @@ function MenuListRow({
           </TouchableOpacity>
         </View>
       ) : (
-        <View
-          style={[
-            styles.listChevron,
-            IS_ANDROID && styles.listChevronAndroid,
-            { backgroundColor: palette.secondaryBtn },
-          ]}
-        >
-          <Ionicons name="chevron-forward" size={16} color={palette.indigo} />
-        </View>
+        <Ionicons name="chevron-forward" size={18} color={palette.muted} />
       )}
     </>
   );
@@ -551,10 +546,77 @@ function UnifiedMenuHeader({
       ? [theme.headerSolidColor, theme.headerSolidColor]
       : (theme.headerGradient?.length ?? 0) >= 2
         ? theme.headerGradient
-        : ['#6366f1', '#8b5cf6']
+        : ['#0f1419', '#272c30']
   ) as readonly [string, string, ...string[]];
-  const minimalText = palette.text;
-  const minimalSub = palette.muted;
+  const metaLine = [identity.roleLabel, identity.department?.trim(), identity.organizationName?.trim()]
+    .filter(Boolean)
+    .join(' · ');
+
+  /** X tarzı düz profil başlığı */
+  if (isMinimal) {
+    const body = (
+      <>
+        <View style={[styles.xAvatarRing, { borderColor: palette.cardBorder }]}>
+          {identity.profileImage ? (
+            <CachedImage uri={identity.profileImage} style={styles.xAvatarImg} contentFit="cover" />
+          ) : (
+            <View style={[styles.xAvatarPh, { backgroundColor: palette.borderLight }]}>
+              <Text style={[styles.xAvatarLetter, { color: palette.text }]}>
+                {displayName.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.xIdentityText}>
+          <Text style={[styles.xIdentityName, { color: palette.text }]} numberOfLines={1}>
+            {displayName}
+          </Text>
+          {metaLine ? (
+            <Text style={[styles.xIdentityMeta, { color: palette.muted }]} numberOfLines={2}>
+              {metaLine}
+            </Text>
+          ) : null}
+        </View>
+      </>
+    );
+
+    return (
+      <View
+        style={[
+          styles.xHeader,
+          {
+            paddingTop,
+            backgroundColor: palette.pageBg || palette.cardBg,
+            borderBottomColor: palette.divider || palette.cardBorder,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          onPress={onClose}
+          style={[styles.xCloseBtn, { backgroundColor: palette.secondaryBtn || 'transparent' }]}
+          activeOpacity={0.75}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={closeLabel}
+        >
+          <Ionicons name="close" size={22} color={palette.text} />
+        </TouchableOpacity>
+        {onProfilePress ? (
+          <TouchableOpacity
+            onPress={onProfilePress}
+            activeOpacity={0.85}
+            style={styles.xIdentityRow}
+            accessibilityRole="button"
+            accessibilityLabel={displayName}
+          >
+            {body}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.xIdentityRow}>{body}</View>
+        )}
+      </View>
+    );
+  }
 
   const identityBody = (
     <>
@@ -568,52 +630,22 @@ function UnifiedMenuHeader({
         )}
       </View>
       <View style={styles.identityTextCol}>
-        <Text style={[styles.identityName, isMinimal && { color: minimalText }]} numberOfLines={1}>
+        <Text style={styles.identityName} numberOfLines={1}>
           {displayName}
         </Text>
-        <View style={[styles.rolePill, isMinimal && styles.rolePillMinimal]}>
-          <Text style={[styles.rolePillText, isMinimal && { color: minimalSub }]} numberOfLines={1}>
+        <View style={styles.rolePill}>
+          <Text style={styles.rolePillText} numberOfLines={1}>
             {identity.roleLabel}
           </Text>
         </View>
         {[identity.department?.trim(), identity.organizationName?.trim()].filter(Boolean).length > 0 ? (
-          <Text style={[styles.identitySub, isMinimal && { color: minimalSub }]} numberOfLines={2}>
+          <Text style={styles.identitySub} numberOfLines={2}>
             {[identity.department?.trim(), identity.organizationName?.trim()].filter(Boolean).join(' · ')}
           </Text>
         ) : null}
       </View>
     </>
   );
-
-  if (isMinimal) {
-    return (
-      <View
-        style={[
-          styles.unifiedHeader,
-          styles.minimalHeader,
-          { paddingTop, backgroundColor: theme.headerSolidColor || palette.pageBg, borderBottomColor: palette.cardBorder },
-        ]}
-      >
-        <TouchableOpacity
-          onPress={onClose}
-          style={[styles.headerDismissBtn, styles.headerDismissBtnMinimal, { top: paddingTop + 6, backgroundColor: palette.secondaryBtn }]}
-          activeOpacity={0.82}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel={closeLabel}
-        >
-          <Ionicons name="chevron-back" size={20} color={palette.text} />
-        </TouchableOpacity>
-        {onProfilePress ? (
-          <TouchableOpacity onPress={onProfilePress} activeOpacity={0.88} style={styles.identityPressableFull} accessibilityRole="button" accessibilityLabel={displayName}>
-            {identityBody}
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.identityPressableFull}>{identityBody}</View>
-        )}
-      </View>
-    );
-  }
 
   return (
     <LinearGradient
@@ -632,7 +664,7 @@ function UnifiedMenuHeader({
         accessibilityRole="button"
         accessibilityLabel={closeLabel}
       >
-        <Ionicons name="chevron-back" size={20} color="#fff" />
+        <Ionicons name="close" size={20} color="#fff" />
       </TouchableOpacity>
       {onProfilePress ? (
         <TouchableOpacity
@@ -739,6 +771,8 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
   const drawer = useRef(new Animated.Value(0)).current;
+  /** Açık menüde parmakla sürükleme (sağa = kapat). */
+  const dragX = useRef(new Animated.Value(0)).current;
   const closingRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
@@ -747,10 +781,89 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const itemOffsetsRef = useRef<Record<string, number>>({});
   const restoreTargetRef = useRef<{ itemId: string | null; scrollY: number | null } | null>(null);
   const restoreAppliedRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const panelWidthRef = useRef(panelWidth);
+  panelWidthRef.current = panelWidth;
 
   useEffect(() => {
     if (!visible) setPinsEditMode(false);
-  }, [visible]);
+    if (visible) dragX.setValue(0);
+  }, [visible, dragX]);
+
+  const finishSwipeClose = useCallback(() => {
+    dragX.setValue(0);
+    drawer.setValue(0);
+    backdrop.setValue(0);
+    closingRef.current = false;
+    setMounted(false);
+    onCloseRef.current();
+  }, [backdrop, dragX, drawer]);
+
+  const swipeClosePan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_e: GestureResponderEvent, g: PanResponderGestureState) => {
+          if (navigatingAway || closingRef.current) return false;
+          // Sağa kaydır → kapat
+          return g.dx > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.05;
+        },
+        onMoveShouldSetPanResponderCapture: (_e, g) => {
+          if (navigatingAway || closingRef.current) return false;
+          // ScrollView’dan yatay sağa kaydırmayı al
+          return g.dx > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.1;
+        },
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderMove: (_e, g) => {
+          const w = panelWidthRef.current;
+          const x = Math.max(0, Math.min(w, g.dx));
+          dragX.setValue(x);
+          backdrop.setValue(Math.max(0, 1 - x / w));
+        },
+        onPanResponderRelease: (_e, g) => {
+          const w = panelWidthRef.current;
+          const shouldClose = g.dx > w * 0.12 || g.vx > 0.3;
+          if (shouldClose) {
+            closingRef.current = true;
+            setItemsPressEnabled(false);
+            if (IS_ANDROID || CLOSE_MS === 0) {
+              finishSwipeClose();
+              return;
+            }
+            Animated.parallel([
+              Animated.timing(dragX, {
+                toValue: w,
+                duration: CLOSE_MS,
+                easing: Easing.in(Easing.quad),
+                useNativeDriver: true,
+              }),
+              Animated.timing(backdrop, {
+                toValue: 0,
+                duration: CLOSE_MS,
+                useNativeDriver: true,
+              }),
+            ]).start(({ finished }) => {
+              if (finished) finishSwipeClose();
+              else closingRef.current = false;
+            });
+            return;
+          }
+          Animated.parallel([
+            Animated.spring(dragX, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 3 }),
+            Animated.timing(backdrop, { toValue: 1, duration: 120, useNativeDriver: true }),
+          ]).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.parallel([
+            Animated.spring(dragX, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 3 }),
+            Animated.timing(backdrop, { toValue: 1, duration: 120, useNativeDriver: true }),
+          ]).start();
+        },
+      }),
+    [navigatingAway, backdrop, dragX, finishSwipeClose]
+  );
 
   const handleTogglePinItem = useCallback(
     (itemId: string) => {
@@ -915,6 +1028,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
     inputRange: [0, 1],
     outputRange: [panelOffscreenX, 0],
   });
+  const panelTranslateX = Animated.add(drawerTranslateX, dragX);
 
   const handleClosePress = useCallback(() => {
     onClose();
@@ -942,8 +1056,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
       keyboardShouldPersistTaps="handled"
       bounces={!IS_ANDROID}
       removeClippedSubviews={IS_ANDROID}
-      pointerEvents={itemsPressEnabled ? 'auto' : 'box-none'}
+      directionalLockEnabled
       scrollEventThrottle={16}
+      pointerEvents={itemsPressEnabled ? 'auto' : 'box-none'}
       onScroll={(e) => {
         scrollYRef.current = e.nativeEvent.contentOffset.y;
       }}
@@ -957,6 +1072,42 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
         {showAttendanceShortcuts ? (
           <View style={styles.attendanceScrollBlock}>
             <StaffAttendanceHamburgerShortcuts menuOpen={visible} />
+          </View>
+        ) : null}
+
+        {showSearch ? (
+          <View
+            style={[
+              styles.searchWrap,
+              IS_ANDROID && styles.searchWrapAndroid,
+              {
+                backgroundColor: effectivePalette.cardBg,
+                borderColor: effectivePalette.cardBorder,
+              },
+            ]}
+          >
+            <Ionicons name="search-outline" size={18} color={effectivePalette.muted} style={styles.searchIcon} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('staffMenuSearch')}
+              placeholderTextColor={effectivePalette.muted}
+              style={[styles.searchInput, { color: effectivePalette.text }]}
+              autoCorrect={false}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('clear')}
+              >
+                <Ionicons name="close-circle" size={18} color={effectivePalette.muted} />
+              </TouchableOpacity>
+            ) : null}
           </View>
         ) : null}
 
@@ -1018,11 +1169,12 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                 styles.listCard,
                 IS_ANDROID && styles.listCardAndroid,
                 isCompact && styles.listCardCompact,
+                styles.listCardFlat,
                 {
-                  borderTopColor: 'rgba(217,119,6,0.22)',
-                  borderTopWidth: 2,
-                  backgroundColor: effectivePalette.cardBg,
-                  borderColor: effectivePalette.cardBorder,
+                  borderTopColor: 'transparent',
+                  borderTopWidth: 0,
+                  backgroundColor: 'transparent',
+                  borderColor: 'transparent',
                 },
               ]}
             >
@@ -1072,42 +1224,6 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
           </Text>
         ) : null}
 
-        {showSearch ? (
-          <View
-            style={[
-              styles.searchWrap,
-              IS_ANDROID && styles.searchWrapAndroid,
-              {
-                backgroundColor: effectivePalette.cardBg,
-                borderColor: effectivePalette.cardBorder,
-              },
-            ]}
-          >
-            <Ionicons name="search-outline" size={18} color={effectivePalette.muted} style={styles.searchIcon} />
-            <TextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={t('staffMenuSearch')}
-              placeholderTextColor={effectivePalette.muted}
-              style={[styles.searchInput, { color: effectivePalette.text }]}
-              autoCorrect={false}
-              autoCapitalize="none"
-              clearButtonMode="while-editing"
-              returnKeyType="search"
-            />
-            {searchQuery.length > 0 ? (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityRole="button"
-                accessibilityLabel={t('clear')}
-              >
-                <Ionicons name="close-circle" size={18} color={effectivePalette.muted} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : null}
-
         {filteredSections.map((section) => {
           const sectionId = section.id as StaffHamburgerMenuSectionId;
           const fallbackTheme = SECTION_THEME[sectionId] ?? SECTION_THEME.ops;
@@ -1130,7 +1246,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                       <Ionicons name={sectionIcon} size={14} color={sectionColor} style={{ marginRight: 5 }} />
                     </>
                   ) : null}
-                  <Text style={[styles.sectionLabel, { color: sectionColor }]}>{section.title}</Text>
+                  <Text style={[styles.sectionLabel, { color: effectivePalette.muted }]}>{section.title}</Text>
                 </View>
               ) : null}
               <View
@@ -1138,11 +1254,12 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                   useGrid ? styles.gridCard : usePill ? styles.pillCard : styles.listCard,
                   !useGrid && !usePill && IS_ANDROID && styles.listCardAndroid,
                   isCompact && !useGrid && !usePill && styles.listCardCompact,
+                  styles.listCardFlat,
                   {
-                    borderTopColor: `${sectionColor}20`,
-                    borderTopWidth: menuTheme.showSectionLabels ? 2 : 0,
-                    backgroundColor: effectivePalette.cardBg,
-                    borderColor: effectivePalette.cardBorder,
+                    borderTopColor: 'transparent',
+                    borderTopWidth: 0,
+                    backgroundColor: 'transparent',
+                    borderColor: 'transparent',
                   },
                 ]}
                 onLayout={(e) => {
@@ -1353,15 +1470,12 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               )}
             </Pressable>
 
-            {IS_ANDROID ? (
-              <View style={panelShellStyle}>{panelInner}</View>
-            ) : (
-              <Animated.View
-                style={[panelShellStyle, { transform: [{ translateX: drawerTranslateX }] }]}
-              >
-                {panelInner}
-              </Animated.View>
-            )}
+            <Animated.View
+              style={[panelShellStyle, { transform: [{ translateX: IS_ANDROID ? dragX : panelTranslateX }] }]}
+              {...swipeClosePan.panHandlers}
+            >
+              {panelInner}
+            </Animated.View>
           </View>
         )}
       </View>
@@ -1413,21 +1527,70 @@ const styles = StyleSheet.create({
     borderTopRightRadius: DRAWER_RADIUS,
     borderBottomRightRadius: DRAWER_RADIUS,
     borderWidth: StyleSheet.hairlineWidth,
-    shadowColor: '#7c3aed',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.2,
-    shadowRadius: 36,
-    elevation: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 4, height: 0 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 16,
     zIndex: 3,
   },
   menuPanelAndroid: {
     shadowOpacity: 0,
     shadowRadius: 0,
   },
+  xHeader: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  xCloseBtn: {
+    alignSelf: 'flex-end',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  xIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    minWidth: 0,
+  },
+  xAvatarRing: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  xAvatarImg: { width: 56, height: 56, borderRadius: 28 },
+  xAvatarPh: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  xAvatarLetter: { fontSize: 22, fontWeight: '700' },
+  xIdentityText: { flex: 1, minWidth: 0, gap: 2 },
+  xIdentityName: { fontSize: 20, fontWeight: '800', letterSpacing: -0.3 },
+  xIdentityMeta: { fontSize: 14, fontWeight: '400', lineHeight: 18 },
   unifiedHeader: {
     paddingHorizontal: 18,
     paddingBottom: 16,
     overflow: 'hidden',
+  },
+  listCardFlat: {
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    marginBottom: 4,
   },
   identityPressableFull: {
     flexDirection: 'row',
@@ -1749,18 +1912,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-    minHeight: 54,
-    paddingVertical: 14,
+    minHeight: 48,
+    paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 20,
-    shadowColor: '#fb7185',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    elevation: 6,
+    borderRadius: 999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 2,
   },
   primaryBtnAndroid: {
-    backgroundColor: '#f43f5e',
+    backgroundColor: '#0f1419',
     elevation: 0,
     shadowOpacity: 0,
     shadowRadius: 0,
@@ -1792,26 +1955,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#a78bfa',
   },
   sectionLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#6d28d9',
-    letterSpacing: 0.15,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#536471',
+    letterSpacing: -0.1,
   },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.35)',
-    paddingHorizontal: 12,
-    marginBottom: 16,
-    minHeight: 46,
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2,
+    backgroundColor: 'rgba(0,0,0,0.04)',
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.08)',
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    minHeight: 42,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   searchIcon: {
     marginRight: 6,
@@ -1847,13 +2007,13 @@ const styles = StyleSheet.create({
   },
   listRowDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(237,233,254,0.9)',
-    marginHorizontal: 10,
+    borderBottomColor: 'rgba(0,0,0,0.06)',
+    marginHorizontal: 0,
   },
   listIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -1862,12 +2022,12 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 10,
-    backgroundColor: 'rgba(237,233,254,0.85)',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
   listChevronAndroid: {
-    backgroundColor: 'rgba(237,233,254,0.55)',
+    backgroundColor: 'transparent',
   },
   listCardAndroid: {
     elevation: 0,

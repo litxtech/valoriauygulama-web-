@@ -5,10 +5,12 @@ import { getOrCreateGuestForCaller } from '@/lib/getOrCreateGuestForCaller';
 import { enterAppAfterSignIn } from '@/lib/enterAppAfterSignIn';
 import {
   claimOnlineBookingForCaller,
+  ensureOnlineBookingPdf,
+  getOnlineBookingById,
   trackBookingEvent,
   type OnlineBookingExtras,
 } from '@/lib/onlineBooking';
-import { generateAndUploadBookingPdf } from '@/lib/onlineBookingPdf';
+import { saveBookingWhatsAppShareDraft } from '@/lib/onlineBookingWhatsApp';
 import type { Router } from 'expo-router';
 import { log } from '@/lib/logger';
 
@@ -32,9 +34,10 @@ export type FinalizeBookingSessionInput = {
 
 /**
  * Rezervasyon sonrası: şifresiz anonim giriş → misafir hesabı → PDF → rezervasyonu hesaba bağla → uygulamaya gir.
+ * @param opts.negotiate — pazarlık teklifi sonrası (web: mağazaya yönlendir)
  */
 export async function finalizeBookingWithAutoLogin(
-  input: FinalizeBookingSessionInput
+  input: FinalizeBookingSessionInput & { negotiate?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     let user = (await supabase.auth.getSession()).data.session?.user ?? null;
@@ -49,7 +52,16 @@ export async function finalizeBookingWithAutoLogin(
     await completeSignIn(user);
     await getOrCreateGuestForCaller(user);
 
-    const pdf = await generateAndUploadBookingPdf({
+    const booking = await getOnlineBookingById(input.bookingId);
+    const pdfUrl = booking ? await ensureOnlineBookingPdf(booking) : null;
+    const refreshed = pdfUrl ? await getOnlineBookingById(input.bookingId) : booking;
+
+    await claimOnlineBookingForCaller(input.bookingId, {
+      url: pdfUrl ?? undefined,
+      path: refreshed?.pdf_path ?? undefined,
+    });
+
+    await saveBookingWhatsAppShareDraft({
       bookingId: input.bookingId,
       capacityLabel: input.capacityLabel,
       displayTitle: input.displayTitle,
@@ -64,20 +76,23 @@ export async function finalizeBookingWithAutoLogin(
       extras: input.extras,
       quotedTotal: input.quotedTotal,
       quotedPerNight: input.quotedPerNight,
-    });
-
-    await claimOnlineBookingForCaller(input.bookingId, {
-      url: pdf?.publicUrl,
-      path: pdf?.path,
+      pdfUrl: pdfUrl ?? null,
     });
 
     void trackBookingEvent('login_auto', { bookingId: input.bookingId, capacityLabel: input.capacityLabel });
-    if (pdf) {
+    if (pdfUrl) {
       void trackBookingEvent('pdf_ready', { bookingId: input.bookingId, capacityLabel: input.capacityLabel });
     }
 
     if (Platform.OS === 'web') {
-      input.router.replace({ pathname: '/booking/success', params: { id: input.bookingId, loggedIn: '1' } });
+      input.router.replace({
+        pathname: '/booking/success',
+        params: {
+          id: input.bookingId,
+          loggedIn: '1',
+          ...(input.negotiate ? { negotiate: '1' } : {}),
+        },
+      });
     } else {
       await enterAppAfterSignIn(input.router as Router, user.id);
       input.router.push({ pathname: '/customer/bookings', params: { highlight: input.bookingId } });

@@ -97,6 +97,28 @@ export function canAccessOccupancyOps(staff: StaffPermissionSlice): boolean {
   return staff.app_permissions?.doluluk_operasyon === true;
 }
 
+/** Oda ödeme / tahsilat panosu — admin, resepsiyon, tahsilat ve doluluk yetkilileri. */
+export function canAccessRoomPaymentBoard(staff: StaffPermissionSlice): boolean {
+  if (!staff) return false;
+  const role = String(staff.role ?? '').toLowerCase();
+  if (
+    role === 'admin' ||
+    role === 'manager' ||
+    role === 'reception_chief' ||
+    role === 'receptionist' ||
+    role === 'reception'
+  ) {
+    return true;
+  }
+  const perms = staff.app_permissions ?? {};
+  return (
+    perms.doluluk_operasyon === true ||
+    perms.oda_odeme_panosu === true ||
+    perms.odeme_al_qr === true ||
+    perms.stripe_odemeler === true
+  );
+}
+
 /** Referanslı satış / komisyon modülü (personel uygulaması + admin listesi için). */
 export function canAccessReservationSales(staff: StaffPermissionSlice): boolean {
   if (!staff) return false;

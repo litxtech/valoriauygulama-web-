@@ -1,4 +1,5 @@
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import { auditScoreLabel } from '@/lib/audit';
@@ -63,7 +64,7 @@ export function buildAuditMonthlyReportHtml(data: MonthlyReportData): string {
 
 export async function exportAuditMonthlyReportPdf(data: MonthlyReportData): Promise<string> {
   const html = buildAuditMonthlyReportHtml(data);
-  const { uri } = await Print.printToFileAsync({ html });
+  const { uri } = await printToLocalPdfFile({ html });
   if (Platform.OS !== 'web' && (await Sharing.isAvailableAsync())) {
     await Sharing.shareAsync(uri, {
       mimeType: 'application/pdf',

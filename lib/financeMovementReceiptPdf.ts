@@ -1,5 +1,6 @@
 import { Alert, Platform, TurboModuleRegistry } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
 import { supabase } from '@/lib/supabase';
@@ -388,7 +389,7 @@ export async function createMovementReceiptPdfFile(
   const html = buildFinanceMovementReceiptHtml(input, {
     includeReceiptPhotos: !opts?.forPrinterEmail,
   });
-  const file = await Print.printToFileAsync(
+  const file = await printToLocalPdfFile(
     opts?.forPrinterEmail
       ? { html, base64: false }
       : {

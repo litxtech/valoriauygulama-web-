@@ -6,7 +6,7 @@ export default function BookingLayout() {
       screenOptions={{
         headerShown: false,
         animation: 'fade',
-        contentStyle: { backgroundColor: '#f7f6f3' },
+        contentStyle: { backgroundColor: '#eef2f0' },
       }}
     />
   );

@@ -1,5 +1,5 @@
 import { Alert, Linking, Platform } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { TurboModuleRegistry } from 'react-native';
 import i18n from '@/i18n';
@@ -279,7 +279,7 @@ export async function exportKitchenMenuOrderPdf(
   orgName: string
 ): Promise<{ uri: string; fileName: string }> {
   const html = buildKitchenMenuReceiptHtml(order, orgName);
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const { uri } = await printToLocalPdfFile({ html, base64: false });
   return { uri, fileName: kitchenMenuOrderPdfFileName(order) };
 }
 

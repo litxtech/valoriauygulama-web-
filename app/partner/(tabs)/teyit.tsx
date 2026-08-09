@@ -16,7 +16,7 @@ import { partnerTheme } from '@/lib/breakfastPartnerTheme';
 
 export default function PartnerBreakfastTeyitScreen() {
   const insets = useSafeAreaInsets();
-  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
+  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 24;
   const partner = usePartnerAuthStore((s) => s.partner)!;
 
   const [refreshing, setRefreshing] = useState(false);

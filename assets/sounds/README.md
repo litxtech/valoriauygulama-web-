@@ -25,6 +25,7 @@ python scripts/generate_notification_sounds.py
 | `kbs_scan.wav` | `kbs_notification` (kimlik/pasaport) | `valoria_kbs_v1` |
 | `message_pop.wav` | `new_message` (mesaj — Instagram tarzı) | `valoria_messages_v2` |
 | `room_cleaning.wav` | `room_cleaning` (temizlik) | `valoria_cleaning_v1` |
+| `room_payment.wav` | `room_payment` (oda ödemeleri) | `valoria_room_payment_v1` |
 
 Diğer tüm özellikler **sistem varsayılanı** (`valoria_urgent` + `default`) kullanır.
 

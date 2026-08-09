@@ -47,6 +47,7 @@ export default function AccountingLayout() {
       <Stack.Screen name="counterparties/index" options={{ title: 'Kişi ödemeleri' }} />
       <Stack.Screen name="counterparties/new" options={{ title: 'Yeni kişi' }} />
       <Stack.Screen name="counterparties/[id]" options={{ title: 'Kişi detayı' }} />
+      <Stack.Screen name="counterparties/same-name" options={{ title: 'Aynı isimdeki kişiler' }} />
       <Stack.Screen name="counterparties/edit" options={{ title: 'Kişi düzenle' }} />
       <Stack.Screen name="categories/index" options={{ title: 'Kategoriler' }} />
       <Stack.Screen name="activity/index" options={{ title: 'Son işlemler' }} />

@@ -1227,6 +1227,8 @@ const translation = {
       staffNotifReceptionHint: 'Check-in, room, transfer and guest request notifications',
       staffNotifRoomCleaningTitle: 'Room cleaning plan',
       staffNotifRoomCleaningHint: 'Cleaning plan and room status notifications',
+      staffNotifRoomPaymentTitle: 'Room payments',
+      staffNotifRoomPaymentHint: 'Room collection status and amount change notifications',
       staffNotifOpsMorningTitle: 'Morning checkout / cleaning summary',
       staffNotifOpsMorningHint: 'Daily 08:00 counts for today checkout and cleaning rooms',
       staffNotifComplaintTitle: 'Complaints / feedback',

@@ -491,7 +491,7 @@ export default function AccountingMovementNew() {
         receipt_urls: receiptUrls,
         source_payment_request_id: sourcePaymentRequestId,
         ledger_scope: ledgerScope,
-        agreement_id: agreementId && kind === 'expense' ? agreementId : null,
+        agreement_id: agreementId || null,
         created_by_staff_id: me.id,
       })
       .select('id')

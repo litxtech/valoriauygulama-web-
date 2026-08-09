@@ -1,5 +1,6 @@
 import { Alert, Platform, TurboModuleRegistry } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { formatDateShort } from '@/lib/date';
 import {
@@ -159,7 +160,7 @@ export function buildFinanceCheckShareCaption(input: FinanceCheckPdfInput): stri
 
 async function createFinanceCheckPdfFile(input: FinanceCheckPdfInput): Promise<{ uri: string; fileName: string; html: string }> {
   const html = buildFinanceCheckPdfHtml(input);
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   const uri = file?.uri;
   if (!uri) throw new Error('PDF oluşturulamadı');
   const fileName = `cek-${checkFileSlug(input)}${input.id ? `-${input.id.slice(0, 8)}` : ''}.pdf`;

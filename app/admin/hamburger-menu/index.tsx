@@ -31,6 +31,7 @@ import {
 import { defaultStaffHamburgerTheme, hamburgerThemeColorErrors, themeToPayload } from '@/lib/staffHamburgerTheme';
 import { HamburgerMenuDesignPanel } from '@/components/admin/hamburgerMenu/HamburgerMenuDesignPanel';
 import { HamburgerMenuLivePreview } from '@/components/admin/hamburgerMenu/HamburgerMenuLivePreview';
+import { AdminStaffTabPinsPanel } from '@/components/admin/AdminStaffTabPinsPanel';
 import {
   STAFF_HAMBURGER_HUB_ITEM_IDS,
   buildStaffHamburgerMenuLayout,
@@ -38,6 +39,12 @@ import {
   type StaffHamburgerStaff,
 } from '@/lib/staffHamburgerMenu';
 import { STAFF_MENU_CATALOG, STAFF_MENU_SECTION_LABELS_TR, normalizeHiddenMenuItemIds } from '@/lib/staffMenuCatalog';
+import {
+  buildStaffCoreTabPinExtras,
+  buildStaffOpsTabPinExtras,
+  collectTabPinCandidates,
+} from '@/lib/staffTabCustomization';
+import type { StaffTabPinsConfig } from '@/lib/staffTabPinsConfig';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 
 type PreviewStaffRow = {
@@ -85,9 +92,10 @@ export default function AdminHamburgerMenuScreen() {
   const [saving, setSaving] = useState(false);
   const [fullConfig, setFullConfig] = useState<OrganizationUiFeaturesConfig | null>(null);
   const [layout, setLayout] = useState<StaffHamburgerLayoutConfig>({});
+  const [tabPins, setTabPins] = useState<StaffTabPinsConfig>({});
   const [previewStaffId, setPreviewStaffId] = useState<string | null>(null);
   const [staffOptions, setStaffOptions] = useState<PreviewStaffRow[]>([]);
-  const [activeTab, setActiveTab] = useState<'layout' | 'design'>('layout');
+  const [activeTab, setActiveTab] = useState<'layout' | 'design' | 'tabs'>('layout');
 
   const load = useCallback(async () => {
     if (!canQuery || !orgScoped) {
@@ -107,6 +115,7 @@ export default function AdminHamburgerMenuScreen() {
       Alert.alert('Hata', orgErr?.message ?? staffErr?.message ?? 'Yüklenemedi');
       setFullConfig(mergeOrganizationUiFeatures(null));
       setLayout({});
+      setTabPins({});
       setLoading(false);
       return;
     }
@@ -117,6 +126,7 @@ export default function AdminHamburgerMenuScreen() {
     } else {
       setLayout({});
     }
+    setTabPins(merged.tabPins ?? {});
     const rows = (staffRows ?? []) as PreviewStaffRow[];
     setStaffOptions(rows);
     const defaultPreview = staff?.id && rows.some((r) => r.id === staff.id) ? staff.id : rows[0]?.id ?? null;
@@ -161,6 +171,33 @@ export default function AdminHamburgerMenuScreen() {
     if (!previewStaff) return null;
     return buildStaffHamburgerMenuLayout(t, staffFromRow(previewStaff), editorOrgConfig);
   }, [previewStaff, editorOrgConfig, t]);
+
+  const tabPinCandidates = useMemo(() => {
+    if (!previewStaff) return [];
+    const staffSlice = staffFromRow(previewStaff);
+    const extras = [
+      {
+        id: 'tasks',
+        label: t('tasks'),
+        href: '/staff/tasks',
+        icon: 'checkbox-outline' as const,
+        accent: '#2563eb',
+      },
+      {
+        id: 'acceptances',
+        label: t('acceptances'),
+        href: '/staff/(tabs)/acceptances',
+        icon: 'document-text-outline' as const,
+        accent: '#7c3aed',
+      },
+      ...buildStaffCoreTabPinExtras(t, {
+        canIdCapture: true,
+        isAdmin: previewStaff.role === 'admin',
+      }),
+      ...buildStaffOpsTabPinExtras(staffSlice),
+    ];
+    return collectTabPinCandidates(editorMenu, extras);
+  }, [previewStaff, editorMenu, t]);
 
   useEffect(() => {
     if (!previewStaff || loading || !fullConfig) return;
@@ -248,7 +285,17 @@ export default function AdminHamburgerMenuScreen() {
       ...layout,
       theme: themeToPayload(layout.theme ?? defaultStaffHamburgerTheme()),
     };
-    const nextConfig: OrganizationUiFeaturesConfig = { ...fullConfig, hamburger: nextLayout };
+    const nextConfig: OrganizationUiFeaturesConfig = {
+      ...fullConfig,
+      hamburger: nextLayout,
+      tabPins:
+        tabPins.defaultIds?.length || tabPins.lockedIds?.length
+          ? {
+              defaultIds: tabPins.defaultIds?.length ? tabPins.defaultIds : undefined,
+              lockedIds: tabPins.lockedIds?.length ? tabPins.lockedIds : undefined,
+            }
+          : undefined,
+    };
     const { error } = await supabase.from('organizations').update({ ui_features: nextConfig }).eq('id', orgScoped);
     setSaving(false);
     if (error) {
@@ -257,10 +304,11 @@ export default function AdminHamburgerMenuScreen() {
     }
     setFullConfig(nextConfig);
     setLayout(nextLayout);
+    setTabPins(nextConfig.tabPins ?? {});
     await reloadStore(orgScoped);
     Alert.alert(
       'Kaydedildi',
-      'Hamburger menü düzeni güncellendi. Açık personel uygulamalarına anlık yansır (build gerekmez).'
+      'Hamburger menü ve alt sekme ayarları güncellendi. Açık personel uygulamalarına anlık yansır (build gerekmez).'
     );
   };
 
@@ -291,8 +339,8 @@ export default function AdminHamburgerMenuScreen() {
         ) : (
           <>
             <Text style={styles.intro}>
-              Personel hamburger menüsünün sırasını, renklerini ve düzenini buradan yönetin. Değişiklikler build almadan
-              anlık yansır.
+              Personel hamburger menüsünün sırasını, hangi özelliklerin görüneceğini, alt sekme
+              kısayollarını ve tasarımı buradan yönetin. Değişiklikler build almadan anlık yansır.
             </Text>
 
             <TouchableOpacity
@@ -308,7 +356,8 @@ export default function AdminHamburgerMenuScreen() {
             <View style={styles.tabRow}>
               {(
                 [
-                  ['layout', 'Düzen & gizleme'],
+                  ['layout', 'Menü sıra & gizle'],
+                  ['tabs', 'Alt sekme kısayol'],
                   ['design', 'Tasarım & renkler'],
                 ] as const
               ).map(([id, label]) => (
@@ -342,6 +391,12 @@ export default function AdminHamburgerMenuScreen() {
 
             {activeTab === 'design' ? (
               <HamburgerMenuDesignPanel theme={layout.theme ?? defaultStaffHamburgerTheme()} onChange={setTheme} />
+            ) : activeTab === 'tabs' ? (
+              <AdminStaffTabPinsPanel
+                tabPins={tabPins}
+                onChange={setTabPins}
+                candidates={tabPinCandidates}
+              />
             ) : (
               <>
             <Text style={styles.blockTitle}>Üst birincil buton</Text>

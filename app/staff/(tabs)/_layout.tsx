@@ -1,5 +1,5 @@
 /* @refresh reset */
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { View, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { subscribeAppForegroundDebounced } from '@/lib/appForegroundDebounce';
 import { Tabs, useRouter, type Href } from 'expo-router';
@@ -10,7 +10,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { pds } from '@/constants/personelDesignSystem';
 import { getAppTabBarColors } from '@/constants/tabBarTheme';
-import { getFloatingTabBarInnerHeight, getFloatingTabBarBarHeight } from '@/constants/floatingTabBarMetrics';
+import {
+  getFloatingTabBarInnerHeight,
+  getFloatingTabBarBarHeight,
+  FLOAT_BOTTOM_GAP,
+} from '@/constants/floatingTabBarMetrics';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffUnreadMessagesStore } from '@/stores/staffUnreadMessagesStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
@@ -23,7 +27,6 @@ import {
   StaffFeedHeaderRight,
   feedHeaderSideMinWidth,
 } from '@/components/header/StaffFeedHeaderControls';
-import { StaffFeedShareSheet } from '@/components/header/StaffFeedShareSheet';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
 import { StaffBoardAnnouncementToast } from '@/components/header/StaffBoardAnnouncementToast';
@@ -74,29 +77,15 @@ function scheduleDebouncedBoardLoad(staffId: string, run: () => void): void {
   );
 }
 
-function canStaffCreateFeed(staff: ReturnType<typeof useAuthStore.getState>['staff']): boolean {
-  if (!staff) return false;
-  if (staff.role === 'admin') return true;
-  const perms = staff.app_permissions ?? {};
-  return (
-    perms.video_paylasim === true ||
-    perms.feed_create_post === true ||
-    perms.feed_post_create === true ||
-    perms.feed_create === true ||
-    perms.feed === true
-  );
-}
-
-
 function GlassHeaderBackground() {
-  const { colors } = usePremiumTheme();
+  const { colors, isNight } = usePremiumTheme();
   return (
     <View
       style={{
         flex: 1,
-        backgroundColor: colors.glassStrong,
+        backgroundColor: isNight ? colors.glassStrong : '#FFFFFF',
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: colors.glassBorder,
+        borderBottomColor: isNight ? colors.glassBorder : '#E5E7EB',
       }}
     />
   );
@@ -114,13 +103,14 @@ function StaffMainTabsLayout() {
   const headerFg = isNight ? premiumColors.text : IG_HEADER_FG;
   const tabBarHeight = getFloatingTabBarBarHeight();
   const tabBarInnerHeight = getFloatingTabBarInnerHeight();
-  const tabBarPaddingBottom = Platform.OS === 'android' ? 0 : 4;
-  const tabBarPaddingTop = Platform.OS === 'android' ? 4 : 4;
+  const tabBarPaddingBottom = FLOAT_BOTTOM_GAP;
+  const tabBarPaddingTop = 4;
   const staff = useAuthStore((s) => s.staff);
   const loadOrgUi = useOrganizationUiFeaturesStore((s) => s.load);
   const refreshNotifications = useStaffNotificationStore((s) => s.refresh);
   const loadBoardList = useStaffBoardStore((s) => s.loadList);
   const unreadMessagesCount = useStaffUnreadMessagesStore((s) => s.unreadCount);
+  const unreadNotificationsCount = useStaffNotificationStore((s) => s.unreadCount);
   const refreshUnreadMessages = useStaffUnreadMessagesStore((s) => s.refreshUnread);
   const adminWarningCount = useAdminWarningStore((s) => s.count);
   const refreshAdminWarning = useAdminWarningStore((s) => s.refresh);
@@ -128,9 +118,6 @@ function StaffMainTabsLayout() {
   const bumpNewAssignFromRealtime = useStaffNewAssignmentHintStore((s) => s.bumpFromRealtime);
   const newTasksTabCount = useStaffNewAssignmentHintStore((s) => s.pendingTasksTabCount);
   const router = useRouter();
-  const [fabVisible, setFabVisible] = useState(false);
-  const canCreateFeed = canStaffCreateFeed(staff);
-  const showHeaderFabMenu = canCreateFeed;
   const badgeRefreshInFlightRef = useRef(false);
   const badgeRefreshLastAtRef = useRef(0);
 
@@ -304,20 +291,9 @@ function StaffMainTabsLayout() {
     });
   }, [staff?.id, refreshTabBadges]);
 
-  const shareFabLabel = t('staffFabCreatePostOrStory');
+  const feedHeaderSideW = feedHeaderSideMinWidth();
 
-  const feedHeaderSideW = feedHeaderSideMinWidth(showHeaderFabMenu);
-
-  const renderFeedHeaderLeft = useCallback(
-    () => (
-      <StaffFeedHeaderLeftConnected
-        showShare={showHeaderFabMenu}
-        onSharePress={() => setFabVisible(true)}
-        shareAccessibilityLabel={shareFabLabel}
-      />
-    ),
-    [showHeaderFabMenu, shareFabLabel]
-  );
+  const renderFeedHeaderLeft = useCallback(() => <StaffFeedHeaderLeftConnected />, []);
 
   const renderFeedHeaderRight = useCallback(() => <StaffFeedHeaderRight />, []);
 
@@ -327,20 +303,18 @@ function StaffMainTabsLayout() {
     (props: BottomTabBarProps) => (
       <StaffCustomizableTabBar
         {...props}
-        surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.shellBackground}
         unreadMessagesCount={unreadMessagesCount}
         newTasksTabCount={newTasksTabCount}
         adminWarningCount={staff?.role === 'admin' ? adminWarningCount : 0}
+        notificationsBadge={unreadNotificationsCount}
       />
     ),
     [
-      isNight,
-      premiumColors.pageBg,
-      tabBarColors.shellBackground,
       unreadMessagesCount,
       newTasksTabCount,
       staff?.role,
       adminWarningCount,
+      unreadNotificationsCount,
     ]
   );
 
@@ -371,12 +345,14 @@ function StaffMainTabsLayout() {
         const feedTab = isStaffFeedTab(route.name);
         return {
         /** İlk ziyarette mount; ana feed/admin hariç. Dönüşte bellekte tut (detach kapalı). */
-        sceneStyle: { backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg },
+        sceneStyle: {
+          backgroundColor: isNight ? premiumColors.pageBg : pds.pageBg,
+        },
         lazy: true,
         detachInactiveScreens: false,
         freezeOnBlur: true,
         tabBarHideOnKeyboard: true,
-        tabBarActiveTintColor: tabBarColors.fallbackActive,
+        tabBarActiveTintColor: pds.accent,
         tabBarInactiveTintColor: tabBarColors.inactive,
         tabBarStyle: {
           backgroundColor: 'transparent',
@@ -510,9 +486,9 @@ function StaffMainTabsLayout() {
       <Tabs.Screen
         name="notifications"
         options={{
+          href: null,
           title: t('notifications'),
           headerTitle: t('notifications'),
-          href: null,
         }}
       />
       <Tabs.Screen
@@ -554,19 +530,6 @@ function StaffMainTabsLayout() {
         }}
       />
     </Tabs>
-    <StaffFeedShareSheet
-      visible={fabVisible}
-      onClose={() => setFabVisible(false)}
-      canCreateFeed={canCreateFeed}
-      onPost={() => {
-        setFabVisible(false);
-        router.push('/staff/feed/new' as never);
-      }}
-      onStory={() => {
-        setFabVisible(false);
-        router.push('/staff/feed/story-new' as never);
-      }}
-    />
     </>
   );
 }

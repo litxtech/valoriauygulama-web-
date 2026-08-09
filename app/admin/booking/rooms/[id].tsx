@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
 import { uploadUriToPublicBucket } from '@/lib/storagePublicUpload';
+import { DEFAULT_PUBLIC_MENU_ORG_SLUG } from '@/lib/publicPortalNav';
 
 type RoomEdit = {
   id: string;
@@ -110,6 +111,10 @@ export default function AdminBookingRoomEditor() {
 
   const save = async () => {
     if (!id) return;
+    if (!capacityLabel.trim()) {
+      Alert.alert('Hata', 'Kapasite etiketi gerekli.');
+      return;
+    }
     setSaving(true);
     try {
       const priceNum = price.trim() ? Number(price.replace(',', '.')) : null;
@@ -133,13 +138,45 @@ export default function AdminBookingRoomEditor() {
         })
         .eq('id', id);
       if (error) throw error;
-      Alert.alert('Kaydedildi', 'Oda vitrini güncellendi.');
+      Alert.alert('Kaydedildi', 'Oda düzenlendi.');
       await load();
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message || 'Kaydedilemedi');
     } finally {
       setSaving(false);
     }
+  };
+
+  const removeRoom = () => {
+    if (!id) return;
+    Alert.alert(
+      'Odayı sil',
+      'Bu oda online rezervasyon vitrininden kaldırılacak. Devam edilsin mi?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setSaving(true);
+              try {
+                const { error } = await supabase.rpc('delete_bookable_showcase_room', {
+                  p_room_id: id,
+                });
+                if (error) throw error;
+                Alert.alert('Silindi', 'Oda kaldırıldı.');
+                router.replace('/admin/booking');
+              } catch (e) {
+                Alert.alert('Hata', (e as Error)?.message || 'Silinemedi');
+              } finally {
+                setSaving(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
   };
 
   const addPhoto = async () => {
@@ -210,6 +247,66 @@ export default function AdminBookingRoomEditor() {
       await load();
     } catch (e) {
       Alert.alert('Hata', (e as Error)?.message || 'Silinemedi');
+    }
+  };
+
+  /** Oda düzenlerken otel galerisine de kapak / tanıtım ekle */
+  const addToHotelShowcase = async (kind: 'image' | 'video') => {
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes:
+        kind === 'video'
+          ? ImagePicker.MediaTypeOptions.Videos
+          : ImagePicker.MediaTypeOptions.Images,
+      quality: kind === 'image' ? 0.85 : 0.8,
+      allowsMultipleSelection: kind === 'image',
+      selectionLimit: kind === 'image' ? 20 : 1,
+    });
+    if (picked.canceled || !picked.assets?.length) return;
+    setUploading(true);
+    try {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('slug', DEFAULT_PUBLIC_MENU_ORG_SLUG)
+        .maybeSingle();
+      if (!org?.id) throw new Error('Organizasyon bulunamadı');
+
+      const { count } = await supabase
+        .from('booking_hotel_showcase')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', org.id)
+        .eq('is_active', true);
+
+      let sort = count ?? 0;
+      let added = 0;
+      for (const asset of picked.assets) {
+        if (!asset.uri) continue;
+        if (sort >= 100) break;
+        const uploaded = await uploadUriToPublicBucket({
+          bucketId: 'room-booking-media',
+          uri: asset.uri,
+          subfolder: `hotel-showcase/${org.id}`,
+          kind,
+        });
+        const { error } = await supabase.from('booking_hotel_showcase').insert({
+          organization_id: org.id,
+          media_kind: kind,
+          media_url: uploaded.publicUrl,
+          thumbnail_url: kind === 'image' ? uploaded.publicUrl : null,
+          title: room?.display_title || room?.capacity_label || null,
+          category: kind === 'video' ? 'Tanıtım' : 'Oda',
+          sort_order: sort,
+          is_active: true,
+        });
+        if (error) throw error;
+        sort += 1;
+        added += 1;
+      }
+      Alert.alert('Oteli gezelim', `${added} medya otel galerisine eklendi.`);
+    } catch (e) {
+      Alert.alert('Hata', (e as Error)?.message || 'Otel galerisine eklenemedi');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -355,8 +452,46 @@ export default function AdminBookingRoomEditor() {
         <Text style={styles.secondaryBtnText}>Galeriden video yükle</Text>
       </TouchableOpacity>
 
+      <Text style={styles.section}>Oteli gezelim (otel kapakları)</Text>
+      <Text style={styles.hotelHint}>
+        Bu oda düzenlemesinden otelin ortak galerisine fotoğraf / video ekleyebilirsiniz. Misafir rezervasyonda “Oteli gezelim” ile görür.
+      </Text>
+      <View style={styles.hotelRow}>
+        <TouchableOpacity
+          style={styles.hotelBtn}
+          onPress={() => void addToHotelShowcase('image')}
+          disabled={uploading}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="images-outline" size={18} color="#fff" />
+          <Text style={styles.hotelBtnText}>Kapak fotoğrafı</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.hotelBtnSecondary}
+          onPress={() => void addToHotelShowcase('video')}
+          disabled={uploading}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="videocam-outline" size={18} color="#0f766e" />
+          <Text style={styles.hotelBtnSecondaryText}>Tanıtım videosu</Text>
+        </TouchableOpacity>
+      </View>
+      <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/admin/booking/showcase')} activeOpacity={0.85}>
+        <Text style={styles.link}>Tüm otel galerisini yönet →</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={() => void save()} disabled={saving} activeOpacity={0.88}>
-        {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Kaydet</Text>}
+        {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Düzenlemeyi kaydet</Text>}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.deleteBtn, saving && { opacity: 0.6 }]}
+        onPress={removeRoom}
+        disabled={saving}
+        activeOpacity={0.88}
+      >
+        <Ionicons name="trash-outline" size={18} color="#b91c1c" />
+        <Text style={styles.deleteBtnText}>Odayı sil</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/booking')} activeOpacity={0.85}>
@@ -398,6 +533,38 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   section: { marginTop: 20, marginBottom: 10, fontSize: 16, fontWeight: '800', color: adminTheme.colors.text },
+  hotelHint: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: adminTheme.colors.textMuted,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  hotelRow: { flexDirection: 'row', gap: 10, marginBottom: 4 },
+  hotelBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#0f766e',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  hotelBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  hotelBtnSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#ecfdf5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(15,118,110,0.2)',
+  },
+  hotelBtnSecondaryText: { color: '#0f766e', fontWeight: '800', fontSize: 13 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 12,
@@ -458,6 +625,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  deleteBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#fee2e2',
+    borderRadius: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  deleteBtnText: { color: '#b91c1c', fontWeight: '800', fontSize: 15 },
   linkBtn: { marginTop: 14, alignItems: 'center' },
   link: { color: '#0f766e', fontWeight: '800' },
   error: { color: '#b91c1c', fontWeight: '700' },

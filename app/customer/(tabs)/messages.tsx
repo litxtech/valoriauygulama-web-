@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase';
 import { formatRelative } from '@/lib/date';
 import { formatReplyMessagePreview } from '@/lib/chatPreviewText';
 import { syncGuestMessagingAppToken, getOrCreateGuestForCurrentSession } from '@/lib/getOrCreateGuestForCaller';
-import { subscribeGuestInboxLive, subscribeGuestInboxMessageInserts } from '@/lib/messagingUnreadSync';
+import { subscribeGuestInboxLive, subscribeGuestInboxMessageInserts, invalidateParticipantConvIdsCache } from '@/lib/messagingUnreadSync';
 import {
   clearGuestConversationListDirty,
   isGuestConversationListDirty,
@@ -123,39 +123,6 @@ export default function CustomerMessagesScreen() {
 
   const sessionUserId = useAuthStore((s) => s.user?.id ?? null);
 
-  /** Yeni mesaj gelince listeyi ağ turu olmadan anında güncelle (önizleme/sıra/okunmamış). */
-  const applyIncomingInboxMessage = useCallback((msg: Message) => {
-    if (!msg?.conversation_id || msg.is_deleted) return;
-    const isOwn = msg.sender_type === 'guest' && msg.sender_id === guestIdRef.current;
-    const preview = formatReplyMessagePreview(msg.message_type, msg.content);
-    setConversations((prev) => {
-      let found = false;
-      const mapped = prev.map((c) => {
-        if (c.id !== msg.conversation_id) return c;
-        found = true;
-        return {
-          ...c,
-          last_message_id: msg.id,
-          last_message_at: msg.created_at,
-          last_message_preview: preview,
-          unread_count: isOwn ? c.unread_count ?? 0 : (c.unread_count ?? 0) + 1,
-        };
-      });
-      if (!found) {
-        markGuestConversationListDirty();
-        return prev;
-      }
-      const next = mapped.sort((a, b) => {
-        const ta = new Date(a.last_message_at ?? 0).getTime();
-        const tb = new Date(b.last_message_at ?? 0).getTime();
-        return tb - ta;
-      });
-      conversationListCache = next;
-      conversationListCacheUpdatedAt = Date.now();
-      return next;
-    });
-  }, []);
-
   const loadConversations = useCallback(
     async (opts?: { showRefreshing?: boolean; force?: boolean }) => {
       if (!appToken) return;
@@ -193,6 +160,55 @@ export default function CustomerMessagesScreen() {
       }
     },
     [appToken, setUnreadCount]
+  );
+
+  /** Yeni mesaj gelince listeyi ağ turu olmadan anında güncelle (önizleme/sıra/okunmamış). */
+  const applyIncomingInboxMessage = useCallback(
+    (msg: Message) => {
+      if (!msg?.conversation_id || msg.is_deleted) return;
+      const isOwn = msg.sender_type === 'guest' && msg.sender_id === guestIdRef.current;
+      const preview = formatReplyMessagePreview(msg.message_type, msg.content);
+      let missing = false;
+      setConversations((prev) => {
+        let found = false;
+        const mapped = prev.map((c) => {
+          if (c.id !== msg.conversation_id) return c;
+          found = true;
+          return {
+            ...c,
+            last_message_id: msg.id,
+            last_message_at: msg.created_at,
+            last_message_preview: preview,
+            unread_count: isOwn ? c.unread_count ?? 0 : (c.unread_count ?? 0) + 1,
+          };
+        });
+        if (!found) {
+          missing = true;
+          markGuestConversationListDirty();
+          return prev;
+        }
+        const next = mapped.sort((a, b) => {
+          const ta = new Date(a.last_message_at ?? 0).getTime();
+          const tb = new Date(b.last_message_at ?? 0).getTime();
+          return tb - ta;
+        });
+        conversationListCache = next;
+        conversationListCacheUpdatedAt = Date.now();
+        void AsyncStorage.setItem(
+          GUEST_CUSTOMER_MESSAGES_LIST_CACHE_KEY,
+          JSON.stringify({
+            conversations: next,
+            updatedAt: conversationListCacheUpdatedAt,
+            appToken: appToken ?? '',
+          })
+        ).catch(() => {});
+        return next;
+      });
+      if (missing) {
+        void loadConversations({ force: true });
+      }
+    },
+    [appToken, loadConversations]
   );
 
   useEffect(() => {
@@ -303,8 +319,19 @@ export default function CustomerMessagesScreen() {
               const next = prev.filter((c) => c.id !== item.id);
               conversationListCache = next;
               conversationListCacheUpdatedAt = Date.now();
+              void AsyncStorage.setItem(
+                GUEST_CUSTOMER_MESSAGES_LIST_CACHE_KEY,
+                JSON.stringify({
+                  conversations: next,
+                  updatedAt: conversationListCacheUpdatedAt,
+                  appToken: appToken ?? '',
+                })
+              ).catch(() => {});
               return next;
             });
+            if (guestIdRef.current) {
+              invalidateParticipantConvIdsCache({ kind: 'guest', guestId: guestIdRef.current });
+            }
           },
         },
       ]);

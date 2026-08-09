@@ -2,7 +2,7 @@
  * Tüm stok listesi PDF – HTML tablo + expo-print / web yazdır.
  */
 import { Platform } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 
 export type StockListPdfRow = {
@@ -162,7 +162,7 @@ export function openStockListPrintWindow(html: string): void {
 
 /** A4 yatay (points @72dpi) – tablo daha geniş sığar */
 export async function exportStockListPdf(html: string): Promise<string> {
-  const { uri } = await Print.printToFileAsync({
+  const { uri } = await printToLocalPdfFile({
     html,
     width: 842,
     height: 595,

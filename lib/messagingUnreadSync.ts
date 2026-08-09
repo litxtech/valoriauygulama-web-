@@ -228,11 +228,14 @@ export function subscribeMessagingUnreadLive(scope: MessagingUnreadScope, onUpda
 }
 
 /**
- * Personel sohbet listesi — yalnızca yeni sohbet katılımında hafif yenileme.
- * Önizleme güncellemesi: sekme odağı + pull-to-refresh (global messages/conversations yok).
+ * Personel sohbet listesi — yeni katılım veya left_at temizlenince (silme sonrası rejoin) yenileme.
  */
 export function subscribeStaffInboxLive(staffId: string, onInboxChange: () => void): () => void {
-  const notify = () => scheduleDebounced(`staff_inbox:${staffId}`, onInboxChange, 2_000);
+  const notify = () => scheduleDebounced(`staff_inbox:${staffId}`, onInboxChange, 650);
+  const onParticipantChange = () => {
+    invalidateParticipantConvIdsCache({ kind: 'staff', staffId });
+    notify();
+  };
   const channel = supabase
     .channel(`staff_inbox_${staffId}`)
     .on(
@@ -243,10 +246,17 @@ export function subscribeStaffInboxLive(staffId: string, onInboxChange: () => vo
         table: 'conversation_participants',
         filter: `participant_id=eq.${staffId}`,
       },
-      () => {
-        invalidateParticipantConvIdsCache({ kind: 'staff', staffId });
-        notify();
-      }
+      onParticipantChange
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${staffId}`,
+      },
+      onParticipantChange
     )
     .subscribe();
   return () => {
@@ -263,18 +273,70 @@ export function subscribeStaffInboxMessageInserts(
   staffId: string,
   onMessage: (msg: Message) => void
 ): () => void {
+  const scope = { kind: 'staff' as const, staffId };
   let cancelled = false;
-  let channel: ReturnType<typeof supabase.channel> | null = null;
-  void (async () => {
-    const ids = await fetchParticipantConversationIds({ kind: 'staff', staffId });
-    if (cancelled || ids.size === 0) return;
-    channel = supabase.channel(`staff_inbox_msgs_${staffId}`);
-    attachScopedMessageInsertListeners(channel, ids, onMessage);
-    channel.subscribe();
-  })();
+  let bindGeneration = 0;
+  let messagesChannel: ReturnType<typeof supabase.channel> | null = null;
+
+  const teardownMessages = () => {
+    if (messagesChannel) {
+      void supabase.removeChannel(messagesChannel);
+      messagesChannel = null;
+    }
+  };
+
+  const bindMessages = async () => {
+    const generation = ++bindGeneration;
+    const ids = await fetchParticipantConversationIds(scope);
+    if (cancelled || generation !== bindGeneration) return;
+    teardownMessages();
+    if (ids.size === 0) return;
+    messagesChannel = supabase.channel(`staff_inbox_msgs_${staffId}_${generation}`);
+    attachScopedMessageInsertListeners(messagesChannel, ids, onMessage);
+    messagesChannel.subscribe();
+  };
+
+  const scheduleRebind = () =>
+    scheduleDebounced(`staff_inbox_msgs_rebind:${staffId}`, () => {
+      void bindMessages();
+    }, 400);
+
+  const participantChannel = supabase
+    .channel(`staff_inbox_msgs_part_${staffId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${staffId}`,
+      },
+      () => {
+        invalidateParticipantConvIdsCache(scope);
+        scheduleRebind();
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${staffId}`,
+      },
+      () => {
+        invalidateParticipantConvIdsCache(scope);
+        scheduleRebind();
+      }
+    )
+    .subscribe();
+
+  void bindMessages();
+
   return () => {
     cancelled = true;
-    if (channel) void supabase.removeChannel(channel);
+    teardownMessages();
+    void supabase.removeChannel(participantChannel);
   };
 }
 
@@ -283,24 +345,80 @@ export function subscribeGuestInboxMessageInserts(
   guestId: string,
   onMessage: (msg: Message) => void
 ): () => void {
+  const scope = { kind: 'guest' as const, guestId };
   let cancelled = false;
-  let channel: ReturnType<typeof supabase.channel> | null = null;
-  void (async () => {
-    const ids = await fetchParticipantConversationIds({ kind: 'guest', guestId });
-    if (cancelled || ids.size === 0) return;
-    channel = supabase.channel(`guest_inbox_msgs_${guestId}`);
-    attachScopedMessageInsertListeners(channel, ids, onMessage);
-    channel.subscribe();
-  })();
+  let bindGeneration = 0;
+  let messagesChannel: ReturnType<typeof supabase.channel> | null = null;
+
+  const teardownMessages = () => {
+    if (messagesChannel) {
+      void supabase.removeChannel(messagesChannel);
+      messagesChannel = null;
+    }
+  };
+
+  const bindMessages = async () => {
+    const generation = ++bindGeneration;
+    const ids = await fetchParticipantConversationIds(scope);
+    if (cancelled || generation !== bindGeneration) return;
+    teardownMessages();
+    if (ids.size === 0) return;
+    messagesChannel = supabase.channel(`guest_inbox_msgs_${guestId}_${generation}`);
+    attachScopedMessageInsertListeners(messagesChannel, ids, onMessage);
+    messagesChannel.subscribe();
+  };
+
+  const scheduleRebind = () =>
+    scheduleDebounced(`guest_inbox_msgs_rebind:${guestId}`, () => {
+      void bindMessages();
+    }, 400);
+
+  const participantChannel = supabase
+    .channel(`guest_inbox_msgs_part_${guestId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${guestId}`,
+      },
+      () => {
+        invalidateParticipantConvIdsCache(scope);
+        scheduleRebind();
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${guestId}`,
+      },
+      () => {
+        invalidateParticipantConvIdsCache(scope);
+        scheduleRebind();
+      }
+    )
+    .subscribe();
+
+  void bindMessages();
+
   return () => {
     cancelled = true;
-    if (channel) void supabase.removeChannel(channel);
+    teardownMessages();
+    void supabase.removeChannel(participantChannel);
   };
 }
 
-/** Misafir sohbet listesi — yalnızca yeni katılım; liste odağında yenilenir. */
+/** Misafir sohbet listesi — yeni katılım veya left_at rejoin yenilemesi. */
 export function subscribeGuestInboxLive(guestId: string, onInboxChange: () => void): () => void {
-  const notify = () => scheduleDebounced(`guest_inbox:${guestId}`, onInboxChange, 2_000);
+  const notify = () => scheduleDebounced(`guest_inbox:${guestId}`, onInboxChange, 650);
+  const onParticipantChange = () => {
+    invalidateParticipantConvIdsCache({ kind: 'guest', guestId });
+    notify();
+  };
   const channel = supabase
     .channel(`guest_inbox_${guestId}`)
     .on(
@@ -311,10 +429,17 @@ export function subscribeGuestInboxLive(guestId: string, onInboxChange: () => vo
         table: 'conversation_participants',
         filter: `participant_id=eq.${guestId}`,
       },
-      () => {
-        invalidateParticipantConvIdsCache({ kind: 'guest', guestId });
-        notify();
-      }
+      onParticipantChange
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversation_participants',
+        filter: `participant_id=eq.${guestId}`,
+      },
+      onParticipantChange
     )
     .subscribe();
   return () => {
@@ -347,7 +472,7 @@ async function fetchParticipantConversationIds(
 
   let query = supabase
     .from('conversation_participants')
-    .select('conversation_id')
+    .select('conversation_id, is_archived')
     .eq('participant_id', participantId)
     .is('left_at', null);
   query =
@@ -356,12 +481,18 @@ async function fetchParticipantConversationIds(
       : query.eq('participant_type', 'guest');
 
   const { data } = await query;
-  const ids = new Set((data ?? []).map((r: { conversation_id: string }) => r.conversation_id));
+  const ids = new Set(
+    (data ?? [])
+      .filter((r: { is_archived?: boolean | null }) => !r.is_archived)
+      .map((r: { conversation_id: string }) => r.conversation_id)
+  );
   participantConvIdsCache.set(cacheKey, { ids, at: Date.now() });
   return ids;
 }
 
-function invalidateParticipantConvIdsCache(scope: MessagingUnreadScope | LiveMessagePushScope): void {
+export function invalidateParticipantConvIdsCache(
+  scope: MessagingUnreadScope | LiveMessagePushScope
+): void {
   const cacheKey = scope.kind === 'staff' ? `staff:${scope.staffId}` : `guest:${scope.guestId}`;
   participantConvIdsCache.delete(cacheKey);
 }

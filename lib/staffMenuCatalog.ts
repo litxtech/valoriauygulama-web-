@@ -28,6 +28,10 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'kitchen_quick_day_close', labelTr: 'Mutfak — gün kapanışı', section: 'kitchen' },
   // Gezinti
   { id: 'home', labelTr: 'Ana sayfa (feed)', section: 'nav' },
+  { id: 'messages', labelTr: 'Mesajlar', section: 'nav' },
+  { id: 'notifications', labelTr: 'Bildirimler', section: 'nav' },
+  { id: 'profile', labelTr: 'Profil', section: 'nav' },
+  { id: 'admin', labelTr: 'Yönetim (sekme)', section: 'admin' },
   { id: 'map', labelTr: 'Harita', section: 'nav' },
   { id: 'board', labelTr: 'Duyuru panosu', section: 'nav' },
   { id: 'emergency', labelTr: 'Acil durum', section: 'nav' },
@@ -88,6 +92,7 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'dining', labelTr: 'Yemek & mekanlar', section: 'hotel' },
   { id: 'area_guide_staff', labelTr: 'Bölge rehberi', section: 'hotel' },
   // Tahsilat & Ödeme
+  { id: 'payment_board', labelTr: 'Oda Ödemeleri', section: 'payments' },
   { id: 'payments_hub', labelTr: 'Tahsilat Merkezi', section: 'payments' },
   { id: 'payments_qr_standing', labelTr: 'Sabit QR oluştur', section: 'payments' },
   { id: 'payments_qr_single', labelTr: 'Tek seferlik QR', section: 'payments' },
@@ -132,6 +137,8 @@ export const STAFF_MENU_CATALOG: StaffMenuCatalogEntry[] = [
   { id: 'dining_a', labelTr: 'Yemek & mekanlar (yönetim)', section: 'admin' },
   { id: 'area_guide', labelTr: 'Bölge rehberi (admin)', section: 'admin' },
   { id: 'breakfast_admin', labelTr: 'Kahvaltı kayıtları', section: 'admin' },
+  { id: 'salary_quick', labelTr: 'Personel maaş girişi', section: 'admin' },
+  { id: 'salary_hub', labelTr: 'Maaş yönetimi', section: 'admin' },
   { id: 'salary_all', labelTr: 'Tüm ödemeler', section: 'admin' },
   { id: 'contracts_all', labelTr: 'Tüm sözleşmeler', section: 'admin' },
   { id: 'stock_all', labelTr: 'Tüm stoklar', section: 'admin' },

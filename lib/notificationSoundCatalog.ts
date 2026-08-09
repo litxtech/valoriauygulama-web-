@@ -366,6 +366,19 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     maxDurationSec: 3,
   },
   {
+    featureKey: 'room_payment',
+    titleTr: 'Oda ödemeleri',
+    descriptionTr: 'Oda tahsilatı: alınacak, bekliyor ve ödeme alındı bildirimleri.',
+    audiences: ['staff', 'admin'],
+    notificationTypeHints: ['staff_room_payment'],
+    defaultIosPushSound: 'room_payment.wav',
+    defaultAndroidPushSound: 'room_payment.wav',
+    defaultAndroidChannelId: 'valoria_room_payment_v1',
+    priority: 'high',
+    userCanMuteSound: true,
+    maxDurationSec: 3,
+  },
+  {
     featureKey: 'managed_contract',
     titleTr: 'Sözleşme yönetimi',
     descriptionTr: 'İş sözleşmesi imza ve onay bildirimleri.',
@@ -544,12 +557,27 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
     key: 'department_rule',
   },
   {
+    test: (t) => t.includes('staff_room_payment'),
+    key: 'room_payment',
+  },
+  {
+    test: (t) =>
+      t.includes('staff_room_cleaning') ||
+      t.includes('room_cleaning') ||
+      t.includes('ops_morning_digest'),
+    key: 'room_cleaning',
+  },
+  {
     test: (t) =>
       t.includes('guest_request') ||
       t.includes('checkin') ||
       t.includes('checkout') ||
       t.includes('transfer_tour') ||
-      (t.includes('room_') && !t.startsWith('guest_service_request')),
+      (t.includes('room_') &&
+        !t.startsWith('guest_service_request') &&
+        !t.includes('staff_room_payment') &&
+        !t.includes('staff_room_cleaning') &&
+        !t.includes('room_cleaning')),
     key: 'reception_request',
   },
   {
@@ -589,7 +617,6 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
   { test: (t) => t === 'report_status', key: 'report_status' },
   { test: (t) => t.includes('staff_shift') || t.includes('pending_leave'), key: 'shift_leave' },
   { test: (t) => t.includes('staff_permission'), key: 'permission_update' },
-  { test: (t) => t.includes('staff_room_cleaning') || t.includes('room_cleaning') || t.includes('ops_morning_digest'), key: 'room_cleaning' },
   { test: (t) => t === 'managed_contract', key: 'managed_contract' },
   { test: (t) => t === 'group_added', key: 'group_added' },
 ];

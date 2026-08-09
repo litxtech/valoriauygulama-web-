@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
@@ -552,7 +553,7 @@ export default function KbsCaptureHistoryScreen() {
     setPdfBusy(true);
     try {
       const html = await buildKbsCaptureReportHtml('KBS Kimlik Raporu', combined, canSeeImages);
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const { uri } = await printToLocalPdfFile({ html, base64: false });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'KBS kimlik raporu' });
       } else {

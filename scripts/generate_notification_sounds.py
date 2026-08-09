@@ -13,6 +13,7 @@ Her özellik için kısa, telifsiz (sentezlenmiş) bir WAV bildirim sesi üretir
   kbs_scan.wav         - Kimlik/pasaport (tarama onay bipleri)
   message_pop.wav      - Mesaj (Instagram DM tarzı yumuşak pop)
   room_cleaning.wav    - Temizlik (modern sparkle: whoosh + kristal arpej)
+  room_payment.wav     - Oda ödemesi (kasa zili + kısa coin clink)
 """
 import math
 import os
@@ -188,6 +189,20 @@ def make_room_cleaning():
     return out
 
 
+# 9) Oda ödemesi: klasik kasa zili + kısa metalik coin (maaş arpejinden farklı)
+def make_room_payment():
+    out = bell(987, 0.22, amp=0.62)  # B5 ding
+    out += silence(0.06)
+    out += bell(1318, 0.32, amp=0.58)  # E6 ding
+    out += silence(0.04)
+    out += tone(2050, 0.055, amp=0.36, wave_type="triangle", attack=0.002, release=0.028)
+    out += silence(0.028)
+    out += tone(2450, 0.048, amp=0.28, wave_type="triangle", attack=0.002, release=0.024)
+    out += silence(0.02)
+    out += bell(1568, 0.42, amp=0.42)  # G6 settle
+    return out
+
+
 def main():
     print("Valoria bildirim sesleri üretiliyor...")
     _write_wav("emergency_alert.wav", make_emergency())
@@ -198,6 +213,7 @@ def main():
     _write_wav("kbs_scan.wav", make_kbs())
     _write_wav("message_pop.wav", make_message())
     _write_wav("room_cleaning.wav", make_room_cleaning())
+    _write_wav("room_payment.wav", make_room_payment())
     print("Tamamlandı:", os.path.normpath(OUT_DIR))
 
 

@@ -52,10 +52,11 @@ import { CounterpartyQuickPaySheet } from '@/components/admin/CounterpartyQuickP
 import { CounterpartyInvoiceScanSheet } from '@/components/admin/CounterpartyInvoiceScanSheet';
 import { CounterpartyQuickCollectSheet } from '@/components/admin/CounterpartyQuickCollectSheet';
 import {
+  AGREEMENT_STATUS_LABELS,
   fetchCounterpartyAgreements,
   defaultAgreementMovementKind,
   agreementKindLabels,
-  sumOpenAgreementRemaining,
+  summarizeOpenAgreements,
   type CounterpartyAgreementRow,
 } from '@/lib/financeCounterpartyAgreements';
 import {
@@ -129,7 +130,6 @@ export default function CounterpartyDetailScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuMovement, setMenuMovement] = useState<MovRow | null>(null);
   const [menuPerson, setMenuPerson] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
   const [imageLightbox, setImageLightbox] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [agreements, setAgreements] = useState<CounterpartyAgreementRow[]>([]);
@@ -223,6 +223,12 @@ export default function CounterpartyDetailScreen() {
     const suggestions = findCounterpartyMergeSuggestions(orgCounterparties);
     return suggestions.find((s) => s.counterpartyIds.includes(cp.id) && s.id !== dismissedMergeId) ?? null;
   }, [cp, orgCounterparties, dismissedMergeId]);
+
+  const debtSummary = useMemo(
+    () => summarizeOpenAgreements(agreements, 'expense'),
+    [agreements]
+  );
+  const openDebtsTotal = debtSummary.remaining;
 
   if (loading && !refreshing) {
     return (
@@ -387,8 +393,6 @@ export default function CounterpartyDetailScreen() {
   const openIncome = () => {
     openQuickCollect();
   };
-
-  const openDebtsTotal = sumOpenAgreementRemaining(agreements);
 
   const startNameEdit = () => {
     if (!cp) return;
@@ -570,10 +574,23 @@ export default function CounterpartyDetailScreen() {
           </View>
 
           <View style={styles.balanceStrip}>
-            {openDebtsTotal > 0 ? (
+            {debtSummary.count > 0 ? (
               <View style={styles.balanceMain}>
-                <Text style={styles.balanceLbl}>Açık borç toplamı</Text>
-                <Text style={styles.balanceValDebt}>{fmtMoneyTry(openDebtsTotal)}</Text>
+                <Text style={styles.balanceLbl}>Açık cari borç</Text>
+                <View style={styles.debtStatRow}>
+                  <View style={styles.debtStat}>
+                    <Text style={styles.debtStatLbl}>Açılan</Text>
+                    <Text style={styles.debtStatVal}>{fmtMoneyTry(debtSummary.opened)}</Text>
+                  </View>
+                  <View style={styles.debtStat}>
+                    <Text style={styles.debtStatLbl}>Ödenen</Text>
+                    <Text style={[styles.debtStatVal, styles.out]}>{fmtMoneyTry(debtSummary.paid)}</Text>
+                  </View>
+                  <View style={styles.debtStat}>
+                    <Text style={styles.debtStatLbl}>Kalan</Text>
+                    <Text style={styles.balanceValDebt}>{fmtMoneyTry(debtSummary.remaining)}</Text>
+                  </View>
+                </View>
               </View>
             ) : (
               <View style={styles.balanceMain}>
@@ -591,7 +608,7 @@ export default function CounterpartyDetailScreen() {
             )}
             <View style={styles.balanceSide}>
               <TouchableOpacity onPress={() => openQuickPay()} activeOpacity={0.85}>
-                <Text style={styles.balanceSideLbl}>Ödenen</Text>
+                <Text style={styles.balanceSideLbl}>Ödenen (kasa)</Text>
                 <Text style={[styles.balanceSideVal, styles.out]}>{fmtMoneyTry(expense)}</Text>
                 <Text style={[styles.balanceSideAction, { color: '#dc2626' }]}>Ödeme ekle →</Text>
               </TouchableOpacity>
@@ -644,6 +661,54 @@ export default function CounterpartyDetailScreen() {
             <Text style={styles.hubCardTitle}>Tahsilat</Text>
             <Text style={styles.hubCardSub}>Para al</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.generalPrintCard}>
+          <View style={styles.generalPrintHead}>
+            <Ionicons name="print-outline" size={22} color="#7c3aed" />
+            <View style={styles.generalPrintText}>
+              <Text style={styles.generalPrintTitle}>Genel cari yazdır</Text>
+              <Text style={styles.generalPrintSub}>
+                Tüm planlar + işlemler tek belgede (malzeme kalemi yok)
+              </Text>
+            </View>
+          </View>
+          <FinanceReportExportButtons
+            compact
+            disabled={!cp}
+            fileName={`cari-genel-${cp.id.slice(0, 8)}`}
+            mailSubject={`Genel cari: ${cp.name}`}
+            shareDialogTitle={`${cp.name} — genel cari`}
+            getHtml={async (kind) => {
+              const allMovements = await fetchCounterpartyMovementsForReport(cp.id, scopeFilter);
+              return buildCounterpartyPersonReportHtml(
+                {
+                  personName: cp.name,
+                  partyTypeLabel: meta.label,
+                  phone: cp.phone,
+                  notes: cp.notes,
+                  profileImageUrl: cp.profile_image,
+                  scopeLabel:
+                    scopeFilter === 'all' ? 'Tüm kayıtlar (otel + şahsi)' : LEDGER_SCOPE_LABELS[scopeFilter],
+                  income,
+                  expense,
+                  movements: allMovements,
+                  footer: reportFooter,
+                  currentDebt: openDebtsTotal,
+                  agreements: agreements.map((a) => ({
+                    title: a.title,
+                    statusLabel: AGREEMENT_STATUS_LABELS[a.status],
+                    target_amount: a.target_amount,
+                    amount_paid: a.amount_paid,
+                    amount_remaining: a.amount_remaining,
+                    movement_kind: a.movement_kind,
+                    started_on: a.started_on,
+                  })),
+                },
+                kind
+              );
+            }}
+          />
         </View>
 
         <Text style={styles.debtsSectionTitle}>Açık {debtLabels.debtNoun.toLowerCase()}lar</Text>
@@ -768,44 +833,6 @@ export default function CounterpartyDetailScreen() {
               </TouchableOpacity>
             ))
           )
-        ) : null}
-
-        {reportOpen ? null : (
-          <TouchableOpacity style={styles.reportLink} onPress={() => setReportOpen(true)} activeOpacity={0.85}>
-            <Ionicons name="document-text-outline" size={16} color={adminTheme.colors.primary} />
-            <Text style={styles.reportLinkText}>Rapor / PDF</Text>
-          </TouchableOpacity>
-        )}
-        {reportOpen ? (
-          <View style={styles.reportSection}>
-            <FinanceReportExportButtons
-              compact
-              disabled={!cp}
-              fileName={`kisi-${cp.id.slice(0, 8)}`}
-              mailSubject={`Kişi ödemeleri: ${cp.name}`}
-              shareDialogTitle={`${cp.name} — ödeme raporu`}
-              getHtml={async (kind) => {
-                const allMovements = await fetchCounterpartyMovementsForReport(cp.id, scopeFilter);
-                return buildCounterpartyPersonReportHtml(
-                  {
-                    personName: cp.name,
-                    partyTypeLabel: meta.label,
-                    phone: cp.phone,
-                    notes: cp.notes,
-                    profileImageUrl: cp.profile_image,
-                    scopeLabel:
-                      scopeFilter === 'all' ? 'Tüm kayıtlar (otel + şahsi)' : LEDGER_SCOPE_LABELS[scopeFilter],
-                    income,
-                    expense,
-                    movements: allMovements,
-                    footer: reportFooter,
-                    currentDebt: openDebtsTotal,
-                  },
-                  kind
-                );
-              }}
-            />
-          </View>
         ) : null}
       </ScrollView>
 
@@ -1100,7 +1127,11 @@ const styles = StyleSheet.create({
   balanceMain: { flex: 1 },
   balanceLbl: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
   balanceVal: { fontSize: 18, fontWeight: '800', color: adminTheme.colors.text, marginTop: 4 },
-  balanceValDebt: { fontSize: 22, fontWeight: '900', color: '#dc2626', marginTop: 4 },
+  balanceValDebt: { fontSize: 18, fontWeight: '900', color: '#dc2626', marginTop: 2 },
+  debtStatRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
+  debtStat: { minWidth: 72 },
+  debtStatLbl: { fontSize: 10, fontWeight: '700', color: adminTheme.colors.textMuted, textTransform: 'uppercase' },
+  debtStatVal: { fontSize: 15, fontWeight: '800', color: adminTheme.colors.text, marginTop: 2 },
   balanceSide: {
     alignItems: 'flex-end',
     paddingLeft: 12,
@@ -1118,6 +1149,19 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   hubRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  generalPrintCard: {
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+    gap: 10,
+  },
+  generalPrintHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  generalPrintText: { flex: 1, minWidth: 0 },
+  generalPrintTitle: { fontSize: 15, fontWeight: '800', color: '#5b21b6' },
+  generalPrintSub: { fontSize: 12, color: adminTheme.colors.textMuted, marginTop: 2, lineHeight: 16 },
   hubCard: {
     flex: 1,
     alignItems: 'center',

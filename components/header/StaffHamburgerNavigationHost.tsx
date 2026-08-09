@@ -7,6 +7,7 @@ import {
 } from '@/lib/staffHamburgerNavigation';
 import { useStaffHamburgerUiStore } from '@/stores/staffHamburgerUiStore';
 import { StaffHamburgerMenuOverlay } from '@/components/header/StaffHamburgerMenuOverlay';
+import { StaffHamburgerEdgeOpenGesture } from '@/components/header/StaffHamburgerEdgeOpenGesture';
 
 /** Personel hamburger menü + pathname tabanlı geçiş/kapanış — tüm staff stack üzerinde. */
 export const StaffHamburgerNavigationHost = memo(function StaffHamburgerNavigationHost() {
@@ -43,5 +44,10 @@ export const StaffHamburgerNavigationHost = memo(function StaffHamburgerNavigati
     reopenInstant();
   }, [pathname, reopenInstant]);
 
-  return <StaffHamburgerMenuOverlay />;
+  return (
+    <>
+      <StaffHamburgerEdgeOpenGesture />
+      <StaffHamburgerMenuOverlay />
+    </>
+  );
 });

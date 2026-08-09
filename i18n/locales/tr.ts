@@ -1238,6 +1238,8 @@ const translation = {
       staffNotifReceptionHint: 'Check-in, oda, transfer ve misafir talepleri',
       staffNotifRoomCleaningTitle: 'Oda temizlik planı',
       staffNotifRoomCleaningHint: 'Temizlik planı ve oda durumu bildirimleri',
+      staffNotifRoomPaymentTitle: 'Oda ödemeleri',
+      staffNotifRoomPaymentHint: 'Oda tahsilat durumu ve tutar değişiklik bildirimleri',
       staffNotifOpsMorningTitle: 'Sabah çıkış / temizlik özeti',
       staffNotifOpsMorningHint: 'Her sabah 08:00 bugün çıkış ve temizlik oda sayıları',
       staffNotifComplaintTitle: 'Şikayet / geri bildirim',

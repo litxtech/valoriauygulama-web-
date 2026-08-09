@@ -10,13 +10,21 @@ export async function enterAppAfterSignIn(router: Pick<Router, 'replace'>, userI
   const { staff } = useAuthStore.getState();
   const partner = staff ? null : usePartnerAuthStore.getState().partner;
   const surface = usePartnerAppSurfaceStore.getState().surface;
+
+  // Personel: lobi flash'ı olmadan doğrudan feed; sözleşme yoksa policies'e çek.
+  if (staff) {
+    safeRouterReplace(router, '/staff');
+    const accepted = await hasPolicyConsent(userId);
+    if (!accepted) {
+      safeRouterReplace(router, { pathname: '/policies', params: { next: 'staff' } });
+    }
+    return;
+  }
+
   const accepted = await hasPolicyConsent(userId);
   let path = '/customer';
   let nextParam = 'customer';
-  if (staff) {
-    path = '/staff';
-    nextParam = 'staff';
-  } else if (partner) {
+  if (partner) {
     path = resolvePartnerEntryPath(partner, surface);
     nextParam = 'partner';
   }

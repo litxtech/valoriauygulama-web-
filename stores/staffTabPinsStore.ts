@@ -3,9 +3,10 @@ import { create } from 'zustand';
 import { moveInList } from '@/lib/staffHamburgerLayoutConfig';
 import type { StaffHamburgerMenuItem } from '@/lib/staffHamburgerTypes';
 
-/** Alt tab çubuğunda sabitler dışında en fazla bu kadar özellik */
-export const STAFF_TAB_MAX_PINS = 3;
-const STORAGE_VERSION = 'v1';
+/** Alt tab’ta ana sayfa dışında en fazla bu kadar sekme */
+export const STAFF_TAB_MAX_PINS = 8;
+/** v2: Mesaj / Kimlik / Admin / Profil pin olarak düzenlenebilir */
+const STORAGE_VERSION = 'v2';
 
 function storageKey(staffId: string) {
   return `staff_tab_pins_${STORAGE_VERSION}_${staffId}`;

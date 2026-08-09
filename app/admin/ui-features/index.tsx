@@ -171,8 +171,10 @@ export default function AdminUiFeaturesScreen() {
             <Ionicons name="menu-outline" size={22} color={adminTheme.colors.primary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.hamburgerLinkTitle}>Personel hamburger menü tasarımı</Text>
-            <Text style={styles.hamburgerLinkSub}>Sıra, renk, üst buton ve canlı önizleme</Text>
+            <Text style={styles.hamburgerLinkTitle}>Personel menü & alt sekmeler</Text>
+            <Text style={styles.hamburgerLinkSub}>
+              Hamburger sıra/gizleme, sekme kısayolları, renk ve canlı önizleme
+            </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={adminTheme.colors.textMuted} />
         </TouchableOpacity>

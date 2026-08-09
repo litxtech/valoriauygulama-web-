@@ -8,8 +8,12 @@ import {
   normalizeStaffHamburgerLayout,
   type StaffHamburgerLayoutConfig,
 } from '@/lib/staffHamburgerLayoutConfig';
+import {
+  normalizeStaffTabPinsConfig,
+  type StaffTabPinsConfig,
+} from '@/lib/staffTabPinsConfig';
 
-export type { StaffHamburgerLayoutConfig };
+export type { StaffHamburgerLayoutConfig, StaffTabPinsConfig };
 
 export type FeatureOverride = {
   enabled?: boolean;
@@ -21,6 +25,8 @@ export type OrganizationUiFeaturesConfig = {
   features: Record<string, FeatureOverride>;
   /** Personel hamburger menü sırası / işletme geneli gizleme */
   hamburger?: StaffHamburgerLayoutConfig;
+  /** Personel alt sekme varsayılanları / kilitli kısayollar */
+  tabPins?: StaffTabPinsConfig;
 };
 
 export const EMPTY_UI_FEATURES: OrganizationUiFeaturesConfig = { v: 1, features: {} };
@@ -50,10 +56,12 @@ export function normalizeOrganizationUiFeatures(raw: unknown): OrganizationUiFea
     }
   }
   const hamburger = normalizeStaffHamburgerLayout(o.hamburger);
+  const tabPins = normalizeStaffTabPinsConfig(o.tabPins);
   return {
     v: 1,
     features,
     hamburger: Object.keys(hamburger).length ? hamburger : undefined,
+    tabPins: Object.keys(tabPins).length ? tabPins : undefined,
   };
 }
 
@@ -114,7 +122,15 @@ export function mergeOrganizationUiFeatures(
   const hamburger = stored.hamburger
     ? normalizeStaffHamburgerLayout(stored.hamburger)
     : defaults.hamburger;
-  return { v: 1, features: merged, hamburger };
+  const tabPins = stored.tabPins
+    ? normalizeStaffTabPinsConfig(stored.tabPins)
+    : defaults.tabPins;
+  return {
+    v: 1,
+    features: merged,
+    hamburger,
+    tabPins: tabPins && Object.keys(tabPins).length ? tabPins : undefined,
+  };
 }
 
 export function catalogGroupedByAudience(): Record<AppFeatureAudience, typeof APP_FEATURE_CATALOG> {

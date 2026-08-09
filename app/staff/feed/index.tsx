@@ -20,6 +20,7 @@ import {
   Pressable,
   Animated,
   PanResponder,
+  AppState,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +31,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
-import { pds, feedXMediaWidth } from '@/constants/personelDesignSystem';
+import { useBottomNavigation } from '@/hooks/useBottomNavigation';
+import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
@@ -44,7 +46,8 @@ import { formatDateTime } from '@/lib/date';
 import { log } from '@/lib/logger';
 import { blockUserForStaff, getHiddenUsersForStaff } from '@/lib/userBlocks';
 import { StaffFeedPostCard } from '@/components/StaffFeedPostCard';
-import { StaffFeedDashboardStrip } from '@/components/premium/StaffFeedDashboardStrip';
+import { FeedComposePromptRow } from '@/components/feed/FeedComposePromptRow';
+import { FeedStaffRail } from '@/components/feed/FeedStaffRail';
 import { StaffFeedStoryAvatarCard } from '@/components/premium/StaffFeedStoryAvatarCard';
 import { resolveStaffPresenceStatus } from '@/lib/workStatusAura';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
@@ -65,7 +68,12 @@ import {
   getFeedPostViewCounts,
   type FeedPostViewerRow,
 } from '@/lib/feedPostViewers';
-import { fetchFeedPostViewersCached, getCachedFeedPostViewers, prefetchFeedPostViewers } from '@/lib/feedViewersCache';
+import {
+  fetchFeedPostViewersCached,
+  getCachedFeedPostViewers,
+  invalidateFeedPostViewersCache,
+  prefetchFeedPostViewers,
+} from '@/lib/feedViewersCache';
 import { loadFeedRepostSource, repostFeedPostAsStaff } from '@/lib/feedRepost';
 import { createOptimisticCommentId, persistStaffFeedLike } from '@/lib/feedLikeActions';
 import { feedCommentInputRowBottomPad, FEED_COMMENT_MODAL_ANDROID_PROPS } from '@/lib/feedCommentSheetLayout';
@@ -103,6 +111,7 @@ import { FeedPostMediaGrid, feedPostMediaGridHeight } from '@/components/FeedPos
 import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
+import { FeedZoomableMedia } from '@/components/FeedZoomableMedia';
 import { MentionableText } from '@/components/MentionableText';
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
 import { FEED_FLASH_LIST_PROPS } from '@/lib/feedFlashListPerf';
@@ -201,6 +210,7 @@ export default function StaffHomeScreen() {
   const palette = usePersonelDesign();
   const insets = useSafeAreaInsets();
   const feedListBottomPad = getFloatingTabBarTotalHeight(insets) + 16;
+  const { onScroll: onTabBarScroll, scrollEventThrottle: tabBarScrollThrottle } = useBottomNavigation();
   const [posts, setPosts] = useState<FeedPostRow[]>([]);
   const [staffList, setStaffList] = useState<StaffAvatarRow[]>([]);
   const staffAvatarById = useMemo(() => buildStaffAvatarLookup(staffList), [staffList]);
@@ -222,6 +232,8 @@ export default function StaffHomeScreen() {
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [notificationPrefs, setNotificationPrefs] = useState<Set<string>>(new Set());
   const [viewersModalPostId, setViewersModalPostId] = useState<string | null>(null);
+  const viewersModalPostIdRef = useRef<string | null>(null);
+  viewersModalPostIdRef.current = viewersModalPostId;
   const [viewersList, setViewersList] = useState<FeedPostViewerRow[]>([]);
   const [loadingViewers, setLoadingViewers] = useState(false);
   const [togglingNotif, setTogglingNotif] = useState<string | null>(null);
@@ -777,6 +789,78 @@ export default function StaffHomeScreen() {
       supabase.removeChannel(channel);
     };
   }, [scheduleLoadStoriesFromRealtime]);
+
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
+  const staffIdRef = useRef(staff?.id);
+  staffIdRef.current = staff?.id;
+
+  const refreshViewStatsForPostIds = useCallback((postIds: string[]) => {
+    const ids = [...new Set(postIds.filter(Boolean))];
+    if (!ids.length || !shouldRunOptionalSupabaseWork()) return;
+    for (const id of ids) invalidateFeedPostViewersCache(id);
+    void getFeedPostViewCounts(ids).then((map) => {
+      if (!mountedRef.current) return;
+      setViewCounts((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of ids) {
+          if (map[id] == null) continue;
+          if (next[id] !== map[id]) {
+            next[id] = map[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    });
+    const openId = viewersModalPostIdRef.current;
+    if (openId && ids.includes(openId)) {
+      void fetchFeedPostViewersCached(openId, { force: true }).then(({ rows }) => {
+        if (!mountedRef.current || viewersModalPostIdRef.current !== openId) return;
+        setViewersList(rows);
+        setViewCounts((prev) => (prev[openId] === rows.length ? prev : { ...prev, [openId]: rows.length }));
+      });
+    }
+  }, []);
+
+  const viewStatsEligiblePostIds = useCallback((): string[] => {
+    const sid = staffIdRef.current;
+    if (!sid) return [];
+    return postsRef.current
+      .filter((p) => p.staff_id === sid || !!p.guest_id)
+      .map((p) => p.id);
+  }, []);
+
+  // Yeni görüntülemeler: sayaç + açık liste anlık yenilensin.
+  useEffect(() => {
+    const channel = supabase
+      .channel('feed_post_views_changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'feed_post_views' },
+        (payload) => {
+          const postId = (payload.new as { post_id?: string } | null)?.post_id;
+          if (!postId) return;
+          const eligible = viewStatsEligiblePostIds();
+          if (!eligible.includes(postId)) return;
+          refreshViewStatsForPostIds([postId]);
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refreshViewStatsForPostIds, viewStatsEligiblePostIds]);
+
+  // Uygulama ön plana gelince görüntülenme sayılarını yenile (realtime yoksa / kaçtıysa).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      refreshViewStatsForPostIds(viewStatsEligiblePostIds());
+    });
+    return () => sub.remove();
+  }, [refreshViewStatsForPostIds, viewStatsEligiblePostIds]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1486,7 +1570,8 @@ export default function StaffHomeScreen() {
       setLoadingViewers(true);
       setViewersList([]);
     }
-    void fetchFeedPostViewersCached(postId).then(({ rows, error }) => {
+    // Her açılışta sunucudan yenile — aksi halde kimlerin gördüğü uygulama yeniden açılana kadar eski kalır.
+    void fetchFeedPostViewersCached(postId, { force: true }).then(({ rows, error }) => {
       setViewersList(rows);
       setLoadingViewers(false);
       setViewCounts((prev) => (prev[postId] === rows.length ? prev : { ...prev, [postId]: rows.length }));
@@ -1584,43 +1669,47 @@ export default function StaffHomeScreen() {
   };
 
   const handleDeletePost = (post: FeedPostRow) => {
+    if (!canDeletePost(post)) {
+      Alert.alert(t('error'), feedSharedText('staffDeletePostNoPermission'));
+      return;
+    }
     setMenuPostId(null);
-    if (!canDeletePost(post)) return;
-    Alert.alert(
-      t('deletePostTitle'),
-      feedSharedText('staffDeletePostConfirm'),
-      [
+    // Alert’i bir frame sonra aç — Modal kapanırken Android’de yutulmasın
+    requestAnimationFrame(() => {
+      Alert.alert(t('deletePostTitle'), feedSharedText('staffDeletePostConfirm'), [
         { text: t('cancel'), style: 'cancel' },
         {
           text: t('delete'),
           style: 'destructive',
-          onPress: async () => {
-            setDeletingPostId(post.id);
-            try {
-              const { data, error } = await supabase
-                .from('feed_posts')
-                .delete()
-                .eq('id', post.id)
-                .select('id');
-              if (error) {
-                Alert.alert(t('error'), error.message || t('postDeleteFailed'));
-                return;
+          onPress: () => {
+            void (async () => {
+              setDeletingPostId(post.id);
+              try {
+                const { data, error } = await supabase
+                  .from('feed_posts')
+                  .delete()
+                  .eq('id', post.id)
+                  .select('id');
+                if (error) {
+                  Alert.alert(t('error'), error.message || t('postDeleteFailed'));
+                  return;
+                }
+                if (data && data.length > 0) {
+                  await removeFeedMediaObjectsForPostUrls([post.media_url, post.thumbnail_url]);
+                  setPosts((prev) => prev.filter((p) => p.id !== post.id));
+                } else {
+                  Alert.alert(t('error'), feedSharedText('staffDeletePostNoPermission'));
+                }
+              } catch (e) {
+                Alert.alert(t('error'), (e as Error).message || t('unknownError'));
+              } finally {
+                setDeletingPostId(null);
               }
-              if (data && data.length > 0) {
-                await removeFeedMediaObjectsForPostUrls([post.media_url, post.thumbnail_url]);
-                setPosts((prev) => prev.filter((p) => p.id !== post.id));
-              } else {
-                Alert.alert(t('error'), feedSharedText('staffDeletePostNoPermission'));
-              }
-            } catch (e) {
-              Alert.alert(t('error'), (e as Error).message || t('unknownError'));
-            } finally {
-              setDeletingPostId(null);
-            }
+            })();
           },
         },
-      ]
-    );
+      ]);
+    });
   };
 
   const promotePostToCustomers = async (post: FeedPostRow) => {
@@ -1780,7 +1869,7 @@ export default function StaffHomeScreen() {
   );
 
   const renderStaffAvatarCard = useCallback(
-    (s: StaffAvatarRow) => {
+    (s: StaffAvatarRow, animationIndex = 0) => {
       const name = displayStaffNameForViewer(
         s.full_name,
         s.profile_hidden_by_admin ?? null,
@@ -1812,6 +1901,7 @@ export default function StaffHomeScreen() {
           profileHidden={!!s.profile_hidden_by_admin && staff?.role !== 'admin'}
           presenceStatus={resolveStaffPresenceStatus({ isOnline: s.is_online, workStatus: s.work_status })}
           compact
+          animationIndex={animationIndex}
           onPress={() => {
             if (hasStory) {
               openStoryByStaffId(s.id);
@@ -1842,23 +1932,20 @@ export default function StaffHomeScreen() {
   const feedListHeader = useMemo(
     () => (
       <>
-        <StaffFeedDashboardStrip refreshKey={refreshing ? Date.now() : 0} />
-        <View
-          style={[
-            styles.staffAvatarsSection,
-            isNight && { backgroundColor: 'transparent', borderBottomColor: palette.cardBorder },
-          ]}
+        <FeedComposePromptRow
+          avatarUrl={staff?.profile_image ?? null}
+          displayName={staff?.full_name ?? null}
+          placeholder={t('feedWhatsHappening')}
+          onPress={() => router.push('/staff/feed/new')}
+          onCameraPress={() => router.push('/staff/feed/new')}
+          onGalleryPress={() => router.push('/staff/feed/new')}
+        />
+        <FeedStaffRail
+          title="Ekip"
+          onStoryPress={() => router.push('/staff/feed/story-new')}
         >
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator={false}
-            style={styles.staffAvatarsScroll}
-            contentContainerStyle={styles.staffAvatarsScrollContent}
-          >
-            {orderedStaffList.map((s) => renderStaffAvatarCard(s))}
-          </ScrollView>
-        </View>
+          {orderedStaffList.map((s, i) => renderStaffAvatarCard(s, i))}
+        </FeedStaffRail>
 
         {loading && posts.length === 0 ? (
           <View style={{ marginTop: 12, gap: 14, paddingHorizontal: 16 }}>
@@ -1879,7 +1966,9 @@ export default function StaffHomeScreen() {
       </>
     ),
     [
-      refreshing,
+      staff?.profile_image,
+      staff?.full_name,
+      t,
       isNight,
       palette.cardBorder,
       palette.subtext,
@@ -1912,7 +2001,10 @@ export default function StaffHomeScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, isNight && { backgroundColor: premiumColors.pageBg }]}
+      style={[
+        styles.container,
+        { backgroundColor: isNight ? premiumColors.pageBg : '#FFFFFF' },
+      ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
@@ -1925,7 +2017,18 @@ export default function StaffHomeScreen() {
         estimatedItemSize={FEED_FLASH_LIST_PROPS.estimatedItemSize}
         drawDistance={FEED_FLASH_LIST_PROPS.drawDistance}
         removeClippedSubviews={FEED_FLASH_LIST_PROPS.removeClippedSubviews}
-        showsVerticalScrollIndicator={false}
+        decelerationRate={FEED_FLASH_LIST_PROPS.decelerationRate}
+        scrollEventThrottle={Math.min(
+          FEED_FLASH_LIST_PROPS.scrollEventThrottle,
+          tabBarScrollThrottle
+        )}
+        onScroll={onTabBarScroll}
+        showsVerticalScrollIndicator={FEED_FLASH_LIST_PROPS.showsVerticalScrollIndicator}
+        bounces={FEED_FLASH_LIST_PROPS.bounces}
+        alwaysBounceVertical={FEED_FLASH_LIST_PROPS.alwaysBounceVertical}
+        overScrollMode={FEED_FLASH_LIST_PROPS.overScrollMode}
+        nestedScrollEnabled={FEED_FLASH_LIST_PROPS.nestedScrollEnabled}
+        keyboardDismissMode={FEED_FLASH_LIST_PROPS.keyboardDismissMode}
         scrollEnabled={!commentsSheetPostId}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.white} />
@@ -1945,7 +2048,7 @@ export default function StaffHomeScreen() {
         }}
         ListHeaderComponent={feedListHeader}
         renderItem={({ item: p }) => {
-          const feedCardWidth = feedXMediaWidth(SCREEN_WIDTH, 12);
+          const feedCardWidth = feedPostCardWidth(SCREEN_WIDTH, 0);
             const maySeeHiddenFull = staff?.role === 'admin';
             const likeCount = likeCounts[p.id] ?? 0;
             const commentCount = commentCounts[p.id] ?? 0;
@@ -1999,14 +2102,14 @@ export default function StaffHomeScreen() {
                 ? [{ media_type: p.media_type === 'video' ? 'video' : 'image', media_url: p.media_url || p.thumbnail_url || '', thumbnail_url: p.thumbnail_url, sort_order: 0 }]
                 : []);
             const hasMedia = mediaItems.length > 0;
-            const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, mediaItems.length);
+            const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, mediaItems);
             const mediaEl =
               hasMedia ? (
                 <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
                   <FeedPostMediaGrid
                     items={mediaItems.map((m, i) => ({
                       id: `${p.id}-${i}`,
-                      media_type: m.media_type,
+                      media_type: m.media_type as 'image' | 'video',
                       media_url: m.media_url,
                       thumbnail_url: m.thumbnail_url,
                     }))}
@@ -2075,7 +2178,7 @@ export default function StaffHomeScreen() {
                   commentPreview={commentPreview}
                   deletingPost={deletingPostId === p.id}
                   socialHeader
-                  horizontalInset={12}
+                  horizontalInset={0}
                   onAuthorPress={
                     p.staff_id
                       ? () => openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id)
@@ -2098,7 +2201,8 @@ export default function StaffHomeScreen() {
       />
 
       <Modal visible={!!menuPost} transparent animationType="fade" onRequestClose={() => setMenuPostId(null)}>
-        <Pressable style={styles.menuModalOverlay} onPress={() => setMenuPostId(null)}>
+        <View style={styles.menuModalOverlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setMenuPostId(null)} />
           <View style={styles.menuModalBox}>
             {menuPost ? (
               <>
@@ -2170,7 +2274,7 @@ export default function StaffHomeScreen() {
               </>
             ) : null}
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {/* Bildir modal: sebep seçenekleri + açıklama */}
@@ -2587,7 +2691,7 @@ export default function StaffHomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Gönderi medyası tam ekran: yükleme çubuğu, sol/sağ tıkla sarma, yorum kartı birlikte açılır */}
+      {/* Gönderi medyası tam ekran — pinch zoom */}
       <Modal
         visible={!!fullscreenPostMedia}
         transparent
@@ -2598,8 +2702,13 @@ export default function StaffHomeScreen() {
         <View style={styles.fullscreenOverlay}>
           {fullscreenPostMedia ? (
             <>
-              {fullscreenPostMedia.mediaType === 'video' ? (
-                <>
+              <FeedZoomableMedia
+                onDismiss={() => {
+                  setFullscreenPostMedia(null);
+                  setCommentsSheetPostId(null);
+                }}
+              >
+                {fullscreenPostMedia.mediaType === 'video' ? (
                   <FeedFullscreenVideoPlayer
                     ref={fullscreenVideoRef}
                     uri={fullscreenPostMedia.uri}
@@ -2607,47 +2716,58 @@ export default function StaffHomeScreen() {
                     progressUpdateIntervalMillis={500}
                     onReady={() => setFullscreenVideoReady(true)}
                   />
-                  <View style={styles.fullscreenSeekZones} pointerEvents="box-none">
-                      <Pressable
-                        style={styles.fullscreenSeekZoneLeft}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          fullscreenVideoRef.current?.getStatusAsync().then((s) => {
-                            if (s.isLoaded && 'positionMillis' in s) {
-                              const pos = Math.max(0, (s.positionMillis ?? 0) - 10000);
-                              fullscreenVideoRef.current?.setPositionAsync(pos);
-                            }
-                          });
-                        }}
-                      />
-                      <Pressable style={styles.fullscreenSeekZoneCenter} onPress={() => { setFullscreenPostMedia(null); setCommentsSheetPostId(null); }} />
-                      <Pressable
-                        style={styles.fullscreenSeekZoneRight}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          fullscreenVideoRef.current?.getStatusAsync().then((s) => {
-                            if (s.isLoaded && 'positionMillis' in s) {
-                              const dur = (s as { durationMillis?: number }).durationMillis ?? 0;
-                              const pos = Math.min(dur, (s.positionMillis ?? 0) + 10000);
-                              fullscreenVideoRef.current?.setPositionAsync(pos);
-                            }
-                          });
-                        }}
-                      />
-                    </View>
-                  </>
-              ) : (
-                <Pressable
-                  style={styles.fullscreenImageWrap}
-                  onPress={() => { setFullscreenPostMedia(null); setCommentsSheetPostId(null); }}
-                >
+                ) : (
                   <CachedImage
                     uri={fullscreenPostMedia.uri}
                     style={[styles.fullscreenImage, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
                     contentFit="contain"
                   />
-                </Pressable>
-              )}
+                )}
+              </FeedZoomableMedia>
+
+              {fullscreenPostMedia.mediaType === 'video' ? (
+                <View style={styles.fullscreenSeekZones} pointerEvents="box-none">
+                  <Pressable
+                    style={styles.fullscreenSeekZoneLeft}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      fullscreenVideoRef.current?.getStatusAsync().then((s) => {
+                        if (s.isLoaded && 'positionMillis' in s) {
+                          const pos = Math.max(0, (s.positionMillis ?? 0) - 10000);
+                          fullscreenVideoRef.current?.setPositionAsync(pos);
+                        }
+                      });
+                    }}
+                  />
+                  <View style={styles.fullscreenSeekZoneCenter} pointerEvents="none" />
+                  <Pressable
+                    style={styles.fullscreenSeekZoneRight}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      fullscreenVideoRef.current?.getStatusAsync().then((s) => {
+                        if (s.isLoaded && 'positionMillis' in s) {
+                          const dur = (s as { durationMillis?: number }).durationMillis ?? 0;
+                          const pos = Math.min(dur, (s.positionMillis ?? 0) + 10000);
+                          fullscreenVideoRef.current?.setPositionAsync(pos);
+                        }
+                      });
+                    }}
+                  />
+                </View>
+              ) : null}
+
+              <Pressable
+                style={[styles.fullscreenCloseBtn, { top: insets.top + 10 }]}
+                onPress={() => {
+                  setFullscreenPostMedia(null);
+                  setCommentsSheetPostId(null);
+                }}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel={t('back')}
+              >
+                <Ionicons name="close" size={26} color="#fff" />
+              </Pressable>
             </>
           ) : null}
         </View>
@@ -2977,7 +3097,7 @@ export default function StaffHomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: pds.pageBg },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   scroll: { flex: 1 },
   content: { paddingTop: 4, paddingBottom: 120 },
   hero: {
@@ -3009,14 +3129,22 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   staffAvatarsSection: {
-    backgroundColor: pds.pageBg,
-    paddingTop: 4,
-    paddingBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E7EB',
+    marginHorizontal: 14,
+    marginTop: 2,
+    marginBottom: 10,
+    borderRadius: 18,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'visible',
   },
-  staffAvatarsScroll: {},
-  staffAvatarsScrollContent: { paddingLeft: 12, paddingRight: 16, alignItems: 'center' },
+  staffAvatarsScroll: { overflow: 'visible' },
+  staffAvatarsScrollContent: {
+    paddingLeft: 10,
+    paddingRight: 14,
+    paddingVertical: 4,
+    alignItems: 'flex-start',
+  },
   staffAvatarCard: { width: 72, marginRight: 24, alignItems: 'center' },
   staffAvatarCardInner: { alignItems: 'center' },
   staffAvatarRing: {
@@ -3110,20 +3238,20 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 24,
-    backgroundColor: theme.colors.primary,
+    borderRadius: 16,
+    backgroundColor: pds.accent,
   },
-  emptyBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.white },
+  emptyBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
   showMoreBtn: {
     marginTop: 8,
     marginHorizontal: 16,
     marginBottom: 4,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    backgroundColor: pds.cardBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: pds.cardBorder,
   },
   showMoreBtnText: { fontSize: 14, fontWeight: '700', color: theme.colors.primary },
   menuModalOverlay: {
@@ -3274,8 +3402,8 @@ const styles = StyleSheet.create({
     position: 'relative',
     width: '100%',
     overflow: 'hidden',
-    borderRadius: 16,
-    backgroundColor: theme.colors.borderLight,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
   },
   postImage: {
     width: '100%',
@@ -3517,10 +3645,22 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     flexDirection: 'row',
+    zIndex: 2,
   },
-  fullscreenSeekZoneLeft: { flex: 1 },
+  fullscreenSeekZoneLeft: { width: '18%' },
   fullscreenSeekZoneCenter: { flex: 1 },
-  fullscreenSeekZoneRight: { flex: 1 },
+  fullscreenSeekZoneRight: { width: '18%' },
+  fullscreenCloseBtn: {
+    position: 'absolute',
+    right: 16,
+    zIndex: 5,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   storyFullscreenRoot: { flex: 1, backgroundColor: '#000' },
   storyMediaFullscreen: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   storyChromeTop: {

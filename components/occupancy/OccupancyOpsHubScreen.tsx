@@ -689,6 +689,22 @@ export function OccupancyOpsHubScreen() {
               </View>
               <Ionicons name="chevron-forward" size={20} color="#fdba74" />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.checkoutBoardCta, { marginTop: 10, backgroundColor: '#0f766e' }]}
+              onPress={() => router.push('/staff/payment-board' as never)}
+              activeOpacity={0.88}
+            >
+              <View style={[styles.checkoutBoardCtaIcon, { backgroundColor: '#115e59' }]}>
+                <Ionicons name="cash-outline" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.checkoutBoardCtaTitle}>Oda Ödemeleri panosu</Text>
+                <Text style={styles.checkoutBoardCtaSub}>
+                  Alınmadı · Bekliyor · Alındı — tutar ve alan personel
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#99f6e4" />
+            </TouchableOpacity>
             <Text style={styles.sectionTitle}>Bugün giriş yapanlar</Text>
             {filterGuests(snapshot.todayCheckIns).length === 0 ? (
               <Text style={styles.emptyHint}>Bugün giriş yok.</Text>

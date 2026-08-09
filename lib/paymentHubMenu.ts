@@ -70,79 +70,6 @@ function itemsForVariant(variant: PaymentHubVariant, staff: StaffPermissionSlice
     },
   ];
 
-  if (variant === 'admin') {
-    defs.push(
-      {
-        id: 'payments_tips_lane',
-        label: 'Bahşiş tahsilatları',
-        icon: 'gift-outline',
-        accent: '#b8860b',
-        path: '/admin/payments?lane=tips',
-        adminOnly: true,
-      },
-      {
-        id: 'payments_tips_confirm',
-        label: 'Bahşiş onay & iade',
-        icon: 'checkmark-done-outline',
-        accent: '#ca8a04',
-        path: '/admin/tips',
-        adminOnly: true,
-      },
-      {
-        id: 'payments_kitchen_lane',
-        label: 'Mutfak & restoran',
-        icon: 'restaurant-outline',
-        accent: '#ea580c',
-        path: '/admin/payments?lane=kitchen',
-        adminOnly: true,
-      },
-      {
-        id: 'payments_hotel_lane',
-        label: 'Otel hizmetleri',
-        icon: 'business-outline',
-        accent: '#4338ca',
-        path: '/admin/payments?lane=hotel',
-        adminOnly: true,
-      },
-      {
-        id: 'payments_room_service',
-        label: 'Oda servisi siparişleri',
-        icon: 'bed-outline',
-        accent: '#2563eb',
-        path: '/admin/room-service',
-        adminOnly: true,
-        adminRoute: '/admin/room-service',
-      },
-      {
-        id: 'payments_guest_extras',
-        label: 'Ekstra ücret siparişleri',
-        icon: 'pricetags-outline',
-        accent: '#7c3aed',
-        path: '/admin/guest-extras?tab=orders',
-        adminOnly: true,
-        adminRoute: '/admin/guest-extras',
-      },
-      {
-        id: 'payments_accounting',
-        label: 'Muhasebe defteri',
-        icon: 'calculator-outline',
-        accent: '#0f766e',
-        path: '/admin/accounting/movements',
-        adminOnly: true,
-        adminRoute: '/admin/accounting',
-      },
-      {
-        id: 'payments_accounting_hub',
-        label: 'Muhasebe merkezi',
-        icon: 'stats-chart-outline',
-        accent: '#0369a1',
-        path: '/admin/accounting',
-        adminOnly: true,
-        adminRoute: '/admin/accounting',
-      }
-    );
-  }
-
   return defs.filter((d) => {
     if (d.adminOnly && variant !== 'admin') return false;
     if (d.staffOnly && variant !== 'staff') return false;
@@ -269,26 +196,6 @@ export function buildAdminPaymentHubNavSections(): PaymentHubNavSection[] {
           label: 'Ekstra ücret siparişleri',
           sub: 'Battaniye, su, minibar vb.',
           accent: '#7c3aed',
-        },
-      ],
-    },
-    {
-      title: 'Muhasebe bağlantısı',
-      subtitle: 'Tahsilat sonrası gelir kaydı',
-      links: [
-        {
-          href: '/admin/accounting/movements',
-          icon: 'calculator-outline',
-          label: 'Gelir / gider defteri',
-          sub: 'Stripe ödemeleri otomatik gelir satırı',
-          accent: '#0f766e',
-        },
-        {
-          href: '/admin/accounting',
-          icon: 'stats-chart-outline',
-          label: 'Muhasebe merkezi',
-          sub: 'Özet, borç/alacak, hızlı kayıt',
-          accent: '#0369a1',
         },
       ],
     },

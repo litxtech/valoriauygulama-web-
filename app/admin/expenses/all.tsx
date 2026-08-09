@@ -15,7 +15,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { Ionicons } from '@expo/vector-icons';
@@ -507,7 +507,7 @@ ${list.map((x) => `<tr><td class="colDate">${formatDateShort(x.expense_date)}</t
 <div class="footer">VALORİA HOTEL · Bu rapor otomatik oluşturulmuştur.</div>
 </div>
 </body></html>`;
-      const { uri } = await Print.printToFileAsync({ html });
+      const { uri } = await printToLocalPdfFile({ html });
       if (mode === 'mail') {
         await sendPdfToPrinterEmail({
           pdfUri: uri,
@@ -806,7 +806,7 @@ ${sorted.map((e) => `<tr><td class="colDate">${formatDateShort(e.expense_date)}<
 </div>
 </body></html>`;
       try {
-        const { uri } = await Print.printToFileAsync({ html });
+        const { uri } = await printToLocalPdfFile({ html });
         if (mode === 'mail') {
           await sendPdfToPrinterEmail({
             pdfUri: uri,

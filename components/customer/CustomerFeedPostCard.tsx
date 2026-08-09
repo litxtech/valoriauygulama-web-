@@ -10,8 +10,10 @@ import {
   Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
+import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
@@ -21,9 +23,11 @@ import { useTranslation } from 'react-i18next';
 import { FeedTextTranslate } from '@/components/FeedTextTranslate';
 import { getFeedRoleBadge, detectFeedCelebration, type FeedCelebrationKind } from '@/lib/feedRoleBadge';
 
-const LIKE_COLOR = '#f91880';
-const REPOST_COLOR = '#00ba7c';
+const LIKE_COLOR = '#E11D48';
+const REPOST_COLOR = '#0D9488';
+const REPLY_COLOR = '#0EA5E9';
 const BODY_MAX_LINES = 8;
+const AVATAR = 46;
 
 export type CustomerFeedPostCardProps = {
   postTag: PostTagValue | string | null | undefined;
@@ -63,7 +67,6 @@ export type CustomerFeedPostCardProps = {
   onCardPress: () => void;
   onMenu: () => void;
   horizontalInset?: number;
-  /** Akışta sade başlık — rol/otel satırları gizlenir (personel feed ile aynı) */
   socialHeader?: boolean;
 };
 
@@ -73,7 +76,7 @@ const CELEBRATION_META: Record<FeedCelebrationKind, { emoji: string; key: string
   promotion: { emoji: '🎉', key: 'feedBadgePromotion' },
 };
 
-function XAction({
+function PremiumAction({
   icon,
   activeIcon,
   count,
@@ -85,6 +88,7 @@ function XAction({
   disabled,
   scale,
   showZeroCount,
+  pressBg,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   activeIcon?: keyof typeof Ionicons.glyphMap;
@@ -97,6 +101,7 @@ function XAction({
   disabled?: boolean;
   scale?: Animated.Value;
   showZeroCount?: boolean;
+  pressBg?: string;
 }) {
   const tint = active ? (activeColor ?? color) : color;
   const iconNode = (
@@ -105,10 +110,14 @@ function XAction({
   const showCount = count != null && (showZeroCount || count > 0);
   return (
     <Pressable
-      style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}
+      style={({ pressed }) => [
+        actionStyles.action,
+        pressed && pressBg ? { backgroundColor: pressBg } : null,
+        pressed && actionStyles.actionPressed,
+      ]}
       onPress={onPress}
       disabled={disabled || loading || !onPress}
-      hitSlop={8}
+      hitSlop={6}
     >
       {loading ? (
         <ActivityIndicator size="small" color={color} />
@@ -117,10 +126,24 @@ function XAction({
       ) : (
         iconNode
       )}
-      {showCount ? <Text style={[styles.actionCount, { color: tint }]}>{count}</Text> : null}
+      {showCount ? <Text style={[actionStyles.actionCount, { color: tint }]}>{count}</Text> : null}
     </Pressable>
   );
 }
+
+const actionStyles = StyleSheet.create({
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    minWidth: 48,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+  },
+  actionPressed: { opacity: 0.9 },
+  actionCount: { fontSize: 13, fontWeight: '700' },
+});
 
 export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
   postTag,
@@ -133,7 +156,6 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
   department,
   position,
   hotelName,
-  hotelLocation,
   timeAgo,
   title,
   media,
@@ -162,28 +184,21 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
   socialHeader = false,
 }: CustomerFeedPostCardProps) {
   const { t } = useTranslation();
-  const { isNight, colors } = usePremiumTheme();
+  const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
+  const styles = useMemo(() => createPostCardStyles(palette), [isNight]); // eslint-disable-line react-hooks/exhaustive-deps
   const [expanded, setExpanded] = useState(false);
   const likePulse = useRef(new Animated.Value(1)).current;
 
-  const text = isNight ? colors.text : '#0f1419';
-  const sub = isNight ? colors.subtext : '#536471';
-  const border = isNight ? 'rgba(255,255,255,0.1)' : '#eff3f4';
-  const mediaBorder = isNight ? 'rgba(255,255,255,0.12)' : '#eff3f4';
-
+  const sub = palette.subtext;
   const visual = getPostTagVisual(postTag);
   const isUrgent = isUrgentProp ?? visual.urgent ?? false;
   const celebrationKind = celebrationKindProp ?? detectFeedCelebration(title);
-  const celebration = useMemo(() => {
-    if (!celebrationKind) return null;
-    const base = CELEBRATION_META[celebrationKind];
-    return { emoji: base.emoji, title: t(base.key) };
-  }, [celebrationKind, t]);
+  const celebration = celebrationKind ? CELEBRATION_META[celebrationKind] : null;
   const roleBadge = getFeedRoleBadge(department, position);
 
   const rawTitle = (title ?? '').trim();
   const showReadMore = rawTitle.length > 280 || rawTitle.split('\n').length > BODY_MAX_LINES;
-
   const avatarUri = (authorAvatarUrl ?? '').trim() || null;
 
   const metaParts: string[] = [];
@@ -194,49 +209,86 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
     else if (roleLabel && roleLabel !== '—') metaParts.push(roleLabel);
     if (hotelName) metaParts.push(hotelName);
   }
-  if (timeAgo) metaParts.push(timeAgo);
-  else metaParts.push(t('feedNow'));
+  metaParts.push(timeAgo || t('feedNow'));
 
   useEffect(() => {
     if (!liked) return;
     Animated.sequence([
-      Animated.timing(likePulse, { toValue: 1.3, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(likePulse, {
+        toValue: 1.28,
+        duration: 120,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
       Animated.spring(likePulse, { toValue: 1, useNativeDriver: true, speed: 26, bounciness: 10 }),
     ]).start();
   }, [liked, likePulse]);
 
   const avatarInner = avatarUri ? (
-    <CachedImage uri={avatarUri} style={styles.avatarImg} contentFit="cover" transition={0} recyclingKey={avatarUri} />
+    <CachedImage
+      uri={avatarUri}
+      style={styles.avatarImg}
+      contentFit="cover"
+      transition={0}
+      recyclingKey={avatarUri}
+    />
   ) : (
-    <View style={[styles.avatarPh, isGuestPost && styles.avatarPhGuest]}>
-      <Text style={[styles.avatarLetter, isGuestPost && styles.avatarLetterGuest]}>
-        {(authorName || '?').charAt(0).toUpperCase()}
-      </Text>
-    </View>
+    <LinearGradient
+      colors={isGuestPost ? ['#94A3B8', '#64748B'] : [palette.accent, '#14B8A6']}
+      style={styles.avatarPh}
+    >
+      <Text style={styles.avatarLetter}>{(authorName || '?').charAt(0).toUpperCase()}</Text>
+    </LinearGradient>
   );
 
   return (
-    <View style={[styles.post, { borderBottomColor: border, marginHorizontal: horizontalInset }]}>
-      {isPinned ? (
-        <View style={styles.topLabel}>
-          <Ionicons name="pin" size={13} color={sub} />
-          <Text style={[styles.topLabelText, { color: sub }]}>{t('feedPinned')}</Text>
+    <View
+      style={[
+        styles.post,
+        palette.shadowCard,
+        {
+          marginHorizontal: horizontalInset,
+          borderColor: isUrgent ? 'rgba(239,68,68,0.35)' : palette.cardBorder,
+        },
+      ]}
+    >
+      <LinearGradient
+        colors={
+          isUrgent
+            ? (['#F43F5E', '#F59E0B'] as [string, string])
+            : isPinned
+              ? (['#0D9488', '#38BDF8'] as [string, string])
+              : (palette.gradientCta as [string, string])
+        }
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.topAccent}
+      />
+      {(isPinned || isUrgent || celebration) && (
+        <View style={styles.bannerRow}>
+          {isPinned ? (
+            <View style={[styles.chip, { backgroundColor: palette.accentSoft }]}>
+              <Ionicons name="pin" size={12} color={palette.accent} />
+              <Text style={[styles.chipText, { color: palette.accent }]}>{t('feedPinned')}</Text>
+            </View>
+          ) : null}
+          {!isPinned && isUrgent ? (
+            <View style={[styles.chip, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
+              <Ionicons name="alert-circle" size={12} color="#ef4444" />
+              <Text style={[styles.chipText, { color: '#ef4444' }]}>{t('feedUrgentBanner')}</Text>
+            </View>
+          ) : null}
+          {celebration ? (
+            <View style={[styles.chip, { backgroundColor: 'rgba(217,119,6,0.12)' }]}>
+              <Text style={[styles.chipText, { color: palette.gold }]}>
+                {celebration.emoji} {t(celebration.key)}
+              </Text>
+            </View>
+          ) : null}
         </View>
-      ) : null}
-      {!isPinned && isUrgent ? (
-        <View style={styles.topLabel}>
-          <Ionicons name="alert-circle" size={13} color="#ef4444" />
-          <Text style={[styles.topLabelText, { color: '#ef4444' }]}>{t('feedUrgentBanner')}</Text>
-        </View>
-      ) : null}
-      {celebration ? (
-        <View style={styles.topLabel}>
-          <Text style={styles.topLabelText}>{celebration.emoji}</Text>
-          <Text style={[styles.topLabelText, { color: sub }]}>{celebration.title}</Text>
-        </View>
-      ) : null}
+      )}
 
-      <View style={styles.row}>
+      <View style={styles.header}>
         <TouchableOpacity
           onPress={onAvatarPress ?? onAuthorPress}
           onLongPress={onAvatarLongPress}
@@ -244,98 +296,102 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
           activeOpacity={0.75}
           style={styles.avatarCol}
         >
-          <View style={styles.avatarWrap}>{avatarInner}</View>
+          <View style={[styles.avatarRing, { borderColor: authorIsOnline ? palette.online : palette.borderLight }]}>
+            <View style={styles.avatarWrap}>{avatarInner}</View>
+          </View>
           {!isGuestPost && authorIsOnline ? (
             <View style={styles.onlineDot}>
-              <OnlinePresenceDot online size={12} borderColor={isNight ? colors.pageBg : '#fff'} />
+              <OnlinePresenceDot online size={12} borderColor={palette.cardBg} />
             </View>
           ) : null}
         </TouchableOpacity>
 
-        <View style={styles.content}>
-          <View style={styles.topRow}>
-            <TouchableOpacity
-              style={styles.identity}
-              onPress={onAuthorPress}
-              activeOpacity={onAuthorPress ? 0.7 : 1}
-              disabled={!onAuthorPress}
-            >
-              <View style={styles.nameWrap}>
-                <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={[styles.name, { color: text }]} />
-              </View>
-              <Text style={[styles.meta, { color: sub }]} numberOfLines={1}>
-                {'  ·  '}
-                {metaParts.join('  ·  ')}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuBtn} onPress={onMenu} disabled={!!deletingPost} hitSlop={12}>
-              {deletingPost ? (
-                <ActivityIndicator size="small" color={sub} />
-              ) : (
-                <Ionicons name="ellipsis-horizontal" size={18} color={sub} />
-              )}
-            </TouchableOpacity>
-          </View>
+        <TouchableOpacity
+          style={styles.identity}
+          onPress={onAuthorPress}
+          activeOpacity={onAuthorPress ? 0.7 : 1}
+          disabled={!onAuthorPress}
+        >
+          <StaffNameWithBadge name={authorName} badge={authorBadge} textStyle={styles.name} />
+          <Text style={styles.meta} numberOfLines={1}>
+            {metaParts.join(' · ')}
+          </Text>
+        </TouchableOpacity>
 
-          <Pressable onPress={onCardPress}>
-            {rawTitle ? (
-              <View style={styles.body}>
-                <Text style={[styles.postText, { color: text }]} numberOfLines={expanded ? undefined : BODY_MAX_LINES}>
-                  {rawTitle}
-                </Text>
-                {showReadMore ? (
-                  <TouchableOpacity onPress={() => setExpanded((v) => !v)} hitSlop={8}>
-                    <Text style={[styles.readMore, { color: sub }]}>
-                      {expanded ? t('feedReadLess') : t('feedReadMore')}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-                <FeedTextTranslate text={rawTitle} />
-              </View>
+        <TouchableOpacity style={styles.menuBtn} onPress={onMenu} disabled={!!deletingPost} hitSlop={12}>
+          {deletingPost ? (
+            <ActivityIndicator size="small" color={sub} />
+          ) : (
+            <Ionicons name="ellipsis-horizontal" size={18} color={sub} />
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <Pressable onPress={onCardPress}>
+        {rawTitle ? (
+          <View style={styles.body}>
+            <Text style={styles.postText} numberOfLines={expanded ? undefined : BODY_MAX_LINES}>
+              {rawTitle}
+            </Text>
+            {showReadMore ? (
+              <TouchableOpacity onPress={() => setExpanded((v) => !v)} hitSlop={8}>
+                <Text style={styles.readMore}>{expanded ? t('feedReadLess') : t('feedReadMore')}</Text>
+              </TouchableOpacity>
             ) : null}
-
-            {hasMedia ? (
-              <View style={[styles.mediaSlot, { borderColor: mediaBorder }]}>{media}</View>
-            ) : null}
-          </Pressable>
-
-          <View style={styles.actionsRow}>
-            <XAction icon="chatbubble-outline" count={commentCount} color={sub} onPress={onComment} />
-            {onRepost ? (
-              <XAction
-                icon="repeat-outline"
-                color={sub}
-                activeColor={REPOST_COLOR}
-                onPress={onRepost}
-                loading={reposting}
-              />
-            ) : (
-              <View style={styles.action} />
-            )}
-            <XAction
-              icon="heart-outline"
-              activeIcon="heart"
-              count={likeCount}
-              color={sub}
-              activeColor={LIKE_COLOR}
-              active={liked}
-              onPress={onLike}
-              scale={likePulse}
-            />
-            {showViewStats ? (
-              <XAction
-                icon="stats-chart-outline"
-                count={viewCount}
-                showZeroCount
-                color={sub}
-                onPress={viewersListEnabled ? onViewers : undefined}
-                disabled={!viewersListEnabled}
-              />
-            ) : (
-              <View style={styles.action} />
-            )}
+            <FeedTextTranslate text={rawTitle} />
           </View>
-        </View>
+        ) : null}
+
+        {hasMedia ? (
+          <View style={[styles.mediaSlot, { marginHorizontal: -palette.cardPadding }]}>{media}</View>
+        ) : null}
+      </Pressable>
+
+      <View style={styles.actionsRow}>
+        <PremiumAction
+          icon="chatbubble-outline"
+          count={commentCount}
+          color={REPLY_COLOR}
+          pressBg="rgba(14,165,233,0.16)"
+          activeColor={REPLY_COLOR}
+          onPress={onComment}
+        />
+        {onRepost ? (
+          <PremiumAction
+            icon="repeat-outline"
+            color={REPOST_COLOR}
+            activeColor={REPOST_COLOR}
+            pressBg="rgba(13,148,136,0.16)"
+            onPress={onRepost}
+            loading={reposting}
+          />
+        ) : (
+          <View style={actionStyles.action} />
+        )}
+        <PremiumAction
+          icon="heart-outline"
+          activeIcon="heart"
+          count={likeCount}
+          color={liked ? LIKE_COLOR : palette.muted}
+          activeColor={LIKE_COLOR}
+          active={liked}
+          pressBg="rgba(225,29,72,0.14)"
+          onPress={onLike}
+          scale={likePulse}
+        />
+        {showViewStats ? (
+          <PremiumAction
+            icon="stats-chart-outline"
+            count={viewCount}
+            showZeroCount
+            color={palette.accent}
+            pressBg="rgba(15,118,110,0.12)"
+            onPress={viewersListEnabled ? onViewers : undefined}
+            disabled={!viewersListEnabled}
+          />
+        ) : (
+          <View style={actionStyles.action} />
+        )}
       </View>
     </View>
   );
@@ -343,67 +399,100 @@ export const CustomerFeedPostCard = memo(function CustomerFeedPostCard({
 
 CustomerFeedPostCard.displayName = 'CustomerFeedPostCard';
 
-const AVATAR = 44;
-
-const styles = StyleSheet.create({
-  post: {
-    paddingTop: 12,
-    paddingBottom: 4,
-    paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  topLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginLeft: AVATAR + 12,
-    marginBottom: 2,
-  },
-  topLabelText: { fontSize: 12, fontWeight: '700' },
-  row: { flexDirection: 'row', gap: 12 },
-  avatarCol: { width: AVATAR, height: AVATAR, position: 'relative' },
-  avatarWrap: {
-    width: AVATAR,
-    height: AVATAR,
-    borderRadius: AVATAR / 2,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.borderLight,
-  },
-  avatarImg: { width: '100%', height: '100%' },
-  avatarPh: {
-    flex: 1,
-    backgroundColor: theme.colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarPhGuest: { backgroundColor: theme.colors.guestAvatarBg },
-  avatarLetter: { fontSize: 18, fontWeight: '800', color: theme.colors.white },
-  avatarLetterGuest: { color: theme.colors.guestAvatarLetter },
-  onlineDot: { position: 'absolute', bottom: 0, right: 0 },
-  content: { flex: 1, minWidth: 0 },
-  topRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  identity: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
-  nameWrap: { flexShrink: 1 },
-  name: { fontSize: 15, fontWeight: '800', lineHeight: 20 },
-  meta: { flexShrink: 1, fontSize: 14, fontWeight: '400' },
-  menuBtn: { paddingLeft: 8, marginTop: -2 },
-  body: { marginTop: 2 },
-  postText: { fontSize: 15, fontWeight: '400', lineHeight: 21 },
-  readMore: { marginTop: 4, fontSize: 14, fontWeight: '600' },
-  mediaSlot: {
-    marginTop: 12,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-    paddingRight: 12,
-  },
-  action: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 44, paddingVertical: 4 },
-  actionPressed: { opacity: 0.6 },
-  actionCount: { fontSize: 13, fontWeight: '600' },
-});
+function createPostCardStyles(p: PersonelDesignPalette) {
+  return StyleSheet.create({
+    post: {
+      marginBottom: p.cardGap,
+      paddingTop: 12,
+      paddingBottom: 10,
+      paddingHorizontal: p.cardPadding,
+      backgroundColor: p.cardBg,
+      borderRadius: p.cardRadius,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden',
+    },
+    topAccent: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 3,
+    },
+    bannerRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 10,
+    },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    chipText: { fontSize: 11, fontWeight: '800' },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      marginBottom: 10,
+    },
+    avatarCol: { width: AVATAR + 4, height: AVATAR + 4, position: 'relative' },
+    avatarRing: {
+      width: AVATAR + 4,
+      height: AVATAR + 4,
+      borderRadius: (AVATAR + 4) / 2,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 1.5,
+    },
+    avatarWrap: {
+      width: AVATAR,
+      height: AVATAR,
+      borderRadius: AVATAR / 2,
+      overflow: 'hidden',
+      backgroundColor: p.borderLight,
+    },
+    avatarImg: { width: '100%', height: '100%' },
+    avatarPh: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    avatarLetter: { fontSize: 18, fontWeight: '800', color: '#fff' },
+    onlineDot: { position: 'absolute', bottom: 0, right: 0 },
+    identity: { flex: 1, minWidth: 0 },
+    name: { fontSize: 15, fontWeight: '800', color: p.text, lineHeight: 20 },
+    meta: { marginTop: 2, fontSize: 12, fontWeight: '600', color: p.muted },
+    menuBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: p.accentSoft,
+    },
+    body: { marginBottom: 4 },
+    postText: { fontSize: 15, fontWeight: '400', color: p.text, lineHeight: 22 },
+    readMore: { marginTop: 6, fontSize: 13, fontWeight: '700', color: p.accent },
+    mediaSlot: {
+      marginTop: 10,
+      borderRadius: 0,
+      overflow: 'hidden',
+      backgroundColor: p.borderLight,
+    },
+    actionsRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 12,
+      borderRadius: 16,
+      paddingHorizontal: 4,
+      paddingVertical: 2,
+      backgroundColor: p.accentSoft,
+    },
+  });
+}

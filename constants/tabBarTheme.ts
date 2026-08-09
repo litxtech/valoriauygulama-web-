@@ -24,20 +24,22 @@ export const appTabBar = {
   },
 } as const;
 
-/** Instagram tarzı buzlu cam — yoğun blur + çok ince yarı saydam dolgu + parlak üst kenar */
+/**
+ * Instagram tab bar buzlu cam — blur baskın, dolgu sadece hafif cila.
+ * fill çok yüksek olursa buz kaybolur, düz beyaz/gri görünür.
+ */
 export const appTabBarGlass = {
   light: {
-    blurIntensity: 100,
-    fill: 'rgba(255,255,255,0.40)',
-    border: 'rgba(15,23,42,0.08)',
-    /** Cam üst kenarındaki ışık çizgisi (buz parıltısı) */
-    highlight: 'rgba(255,255,255,0.65)',
+    blurIntensity: 95,
+    fill: 'rgba(255,255,255,0.22)',
+    border: 'rgba(0,0,0,0.10)',
+    highlight: 'rgba(255,255,255,0.45)',
   },
   dark: {
-    blurIntensity: 100,
-    fill: 'rgba(20,22,30,0.42)',
-    border: 'rgba(255,255,255,0.12)',
-    highlight: 'rgba(255,255,255,0.18)',
+    blurIntensity: 95,
+    fill: 'rgba(0,0,0,0.28)',
+    border: 'rgba(255,255,255,0.14)',
+    highlight: 'rgba(255,255,255,0.12)',
   },
 } as const;
 

@@ -61,8 +61,8 @@ function NotifRow({ item, onPress }: { item: PartnerNotification; onPress?: () =
 export default function PartnerNotificationsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const listBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
-  const footerBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 16;
+  const listBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 24;
+  const footerBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 16;
   const [rows, setRows] = useState<PartnerNotification[]>([]);
   const rowsRef = useRef<PartnerNotification[]>([]);
   const lastLoadAtRef = useRef(0);

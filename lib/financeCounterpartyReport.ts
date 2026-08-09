@@ -1,4 +1,5 @@
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Alert, Platform, TurboModuleRegistry } from 'react-native';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
@@ -80,6 +81,16 @@ export type CounterpartyPersonReportInput = {
   footer: FinanceReportFooter;
   /** Açık/kısmi planların kalan tutarı — PDF’te “Mevcut borç” */
   currentDebt?: number;
+  /** Cari borç / alacak planları özeti (malzeme kalemi yok) */
+  agreements?: {
+    title: string;
+    statusLabel: string;
+    target_amount: number;
+    amount_paid: number;
+    amount_remaining: number;
+    movement_kind: 'expense' | 'income';
+    started_on: string;
+  }[];
 };
 
 export type CounterpartyListReportRow = {
@@ -334,6 +345,34 @@ export function buildCounterpartyPersonReportHtml(
 ${personCard}
 ${summaryHtml}
 </div>
+${
+  input.agreements && input.agreements.length > 0
+    ? `<div class="section">
+  <h2>Cari planlar (${input.agreements.length})</h2>
+  <table class="reportTable">
+    <thead><tr>
+      <th>Plan</th><th>Tür</th><th>Durum</th><th>Başlangıç</th><th>Hedef</th><th>Ödenen</th><th>Kalan</th>
+    </tr></thead>
+    <tbody>
+      ${input.agreements
+        .map((a) => {
+          const kindLbl = a.movement_kind === 'income' ? 'Alacak' : 'Borç';
+          return `<tr>
+        <td>${esc(a.title)}</td>
+        <td>${esc(kindLbl)}</td>
+        <td>${esc(a.statusLabel)}</td>
+        <td>${esc(formatDateShort(a.started_on))}</td>
+        <td class="colAmt">${esc(fmtMoneyTry(a.target_amount))}</td>
+        <td class="colAmt">${esc(fmtMoneyTry(a.amount_paid))}</td>
+        <td class="colAmt sumDebt">${esc(fmtMoneyTry(a.amount_remaining))}</td>
+      </tr>`;
+        })
+        .join('')}
+    </tbody>
+  </table>
+</div>`
+    : ''
+}
 <div class="section">
   <h2>İşlem listesi (${sorted.length} kayıt)</h2>
   ${sorted.length === 0 ? '<p>Seçilen türde kayıt yok.</p>' : `<table class="reportTable">
@@ -343,7 +382,7 @@ ${summaryHtml}
     <tbody>${rows}</tbody></table>`}
 </div>`;
 
-  return reportShell('Kişi ödeme raporu', reportMetaLine, body, input.footer);
+  return reportShell('Genel cari raporu', reportMetaLine, body, input.footer);
 }
 
 function listReportGrandCurrentDebt(rows: CounterpartyListReportRow[]): number {
@@ -680,7 +719,7 @@ async function tryShareFinancePdfWithRNShare(
 
 /** PDF üretimi — paylaşım/yazdırma öncesi; spinner bu aşamada gösterilir. */
 export async function createFinanceReportPdfUri(html: string): Promise<string> {
-  const file = await Print.printToFileAsync({ html, base64: false });
+  const file = await printToLocalPdfFile({ html, base64: false });
   const uri = file?.uri;
   if (!uri) throw new Error('PDF dosyası oluşturulamadı');
   return uri;

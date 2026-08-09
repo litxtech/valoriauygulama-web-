@@ -19,11 +19,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { adminTheme } from '@/constants/adminTheme';
-import { supabase } from '@/lib/supabase';
 import { loadMovementCategories } from '@/lib/financeCategoriesApi';
 import { invalidateCounterpartyBalanceCache } from '@/lib/financeCounterpartyBalances';
 import {
   fetchOpenCounterpartyAgreements,
+  recordCounterpartyPayment,
   type CounterpartyAgreementRow,
 } from '@/lib/financeCounterpartyAgreements';
 import { fmtMoneyTry, LEDGER_SCOPE_LABELS, type FinanceLedgerScope } from '@/lib/financeLedger';
@@ -117,27 +117,33 @@ export function CounterpartyQuickCollectSheet({
     }
     setSaving(true);
     const today = new Date().toISOString().slice(0, 10);
-    const { error } = await supabase.from('finance_movements').insert({
-      organization_id: person.organization_id,
+    const { error, allocatedCount, leftover } = await recordCounterpartyPayment({
+      organizationId: person.organization_id,
+      counterpartyId: person.id,
       kind: 'income',
       amount: a,
-      currency: 'TRY',
-      movement_date: today,
-      payment_method: 'cash',
+      movementDate: today,
       category,
-      counterparty_id: person.id,
       description: note.trim() || 'Tahsilat',
-      ledger_scope: ledgerScope,
-      agreement_id: selectedAgreementId,
-      created_by_staff_id: staffId,
+      ledgerScope,
+      agreementId: selectedAgreementId,
+      createdByStaffId: staffId,
     });
     setSaving(false);
     if (error) {
-      Alert.alert('Kayıt hatası', error.message);
+      Alert.alert('Kayıt hatası', error);
       return;
     }
     invalidateCounterpartyBalanceCache(person.organization_id);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (allocatedCount > 0) {
+      Alert.alert(
+        'Tahsilat kaydedildi',
+        leftover > 0.009
+          ? `${allocatedCount} alacağa düşüldü; fazla ${leftover.toFixed(2)} TL plansız.`
+          : `${allocatedCount} açık alacağa düşüldü.`
+      );
+    }
     onSaved();
     onClose();
   };
@@ -221,13 +227,15 @@ export function CounterpartyQuickCollectSheet({
               ) : openAgreements.length > 0 ? (
                 <View style={styles.block}>
                   <Text style={styles.lbl}>Hangi alacağa?</Text>
-                  <Text style={styles.hint}>Alacak seçerseniz kalan tutar düşer ve kayıt kapanır.</Text>
+                  <Text style={styles.hint}>
+                    Genel tahsilat açık alacaklara eskiden yeniye dağıtılır. İsterseniz tek alacak seçin.
+                  </Text>
                   <TouchableOpacity
                     style={[styles.planOpt, !selectedAgreementId && styles.planOptOn]}
                     onPress={() => setSelectedAgreementId(null)}
                   >
                     <Text style={[styles.planOptText, !selectedAgreementId && styles.planOptTextOn]}>
-                      Genel tahsilat (alacaksız)
+                      Genel tahsilat (açık alacaklara dağıt)
                     </Text>
                   </TouchableOpacity>
                   {openAgreements.map((plan) => {

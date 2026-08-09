@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '@/lib/supabase';
 import { adminTheme } from '@/constants/adminTheme';
@@ -140,7 +140,7 @@ export default function AdminSalaryHistoryScreen() {
         .map((p) => `<tr><td>${MONTH_NAMES[p.period_month - 1]} ${p.period_year}</td><td>${formatDateShort(p.payment_date)}</td><td>${formatTime(p.payment_time)}</td><td>${fmtMoney(Number(p.amount))}</td><td>${p.status === 'approved' ? 'Onaylandı' : p.status === 'rejected' ? 'Reddedildi' : 'Onay bekliyor'}</td></tr>`)
         .join('')}
       </table></body></html>`;
-    const { uri } = await Print.printToFileAsync({ html });
+    const { uri } = await printToLocalPdfFile({ html });
     if (mode === 'mail') {
       await sendPdfToPrinterEmail({
         pdfUri: uri,

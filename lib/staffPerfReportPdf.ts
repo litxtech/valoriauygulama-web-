@@ -2,7 +2,7 @@
  * Resmi Personel Denetim & Performans PDF raporu (İK dosyası kalitesinde).
  */
 import { Platform } from 'react-native';
-import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { sendPdfToPrinterEmail } from '@/lib/printerEmail';
 import {
@@ -373,7 +373,7 @@ export function buildStaffPerfReportHtml(input: StaffPerfReportInput): string {
 
 export async function exportStaffPerfReportPdf(input: StaffPerfReportInput): Promise<string> {
   const html = buildStaffPerfReportHtml(input);
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  const { uri } = await printToLocalPdfFile({ html, base64: false });
   if (Platform.OS === 'web') {
     await sendPdfToPrinterEmail({
       pdfUri: uri,

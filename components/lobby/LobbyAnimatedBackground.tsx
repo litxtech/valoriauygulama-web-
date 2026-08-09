@@ -1,208 +1,174 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { View, StyleSheet, Animated, useWindowDimensions, AppState } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, Image, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Video, ResizeMode } from 'expo-av';
 import { lobbyTheme } from '@/constants/lobbyTheme';
+import { useLobbyCover } from '@/hooks/useLobbyCover';
+import type { LobbyCover } from '@/lib/lobbyCover';
 
-const SPARKLE_SEEDS = [
-  { top: 0.1, left: 0.14, size: 3, delay: 0 },
-  { top: 0.18, left: 0.82, size: 2, delay: 400 },
-  { top: 0.32, left: 0.06, size: 2, delay: 800 },
-  { top: 0.44, left: 0.76, size: 4, delay: 200 },
-  { top: 0.58, left: 0.22, size: 2, delay: 1200 },
-  { top: 0.72, left: 0.88, size: 3, delay: 600 },
-  { top: 0.26, left: 0.48, size: 2, delay: 1000 },
-  { top: 0.64, left: 0.52, size: 2, delay: 300 },
-];
+const DEFAULT_HERO = require('../../assets/lobby-hero-uzungol.png');
 
-function Sparkle({ top, left, size, delay }: (typeof SPARKLE_SEEDS)[number]) {
-  const opacity = useRef(new Animated.Value(0.25)).current;
-  const { width, height } = useWindowDimensions();
+type Props = {
+  /** Test / önizleme override; yoksa canlı ayar kullanılır */
+  cover?: LobbyCover | null;
+};
 
-  useEffect(() => {
-    const buildAnim = () =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(opacity, { toValue: 1, duration: 1400, useNativeDriver: true }),
-          Animated.timing(opacity, { toValue: 0.2, duration: 1400, useNativeDriver: true }),
-        ])
-      );
-    let anim = buildAnim();
-    const start = () => {
-      anim.stop();
-      anim = buildAnim();
-      anim.start();
-    };
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') start();
-      else anim.stop();
-    });
-    if (AppState.currentState === 'active') anim.start();
-    return () => {
-      anim.stop();
-      sub.remove();
-    };
-  }, [delay, opacity]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.sparkle,
-        {
-          width: size,
-          height: size,
-          borderRadius: size,
-          top: top * height,
-          left: left * width,
-          opacity,
-        },
-      ]}
-    />
-  );
-}
-
-export function LobbyAnimatedBackground() {
-  const { width, height } = useWindowDimensions();
-  const drift1 = useRef(new Animated.Value(0)).current;
-  const drift2 = useRef(new Animated.Value(0)).current;
-  const drift3 = useRef(new Animated.Value(0)).current;
-  const spin = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
+/**
+ * Full-bleed lobi kapağı (resim veya video) + canlı renk wash.
+ * Soft dawn pulse ve lake shimmer — soyut orb yok.
+ * Video eklendiğinde resim kalkar; aynı ebat (cover / absolute fill).
+ * Kapak app_settings üzerinden anlık güncellenir.
+ */
+export function LobbyAnimatedBackground({ cover: coverOverride }: Props) {
+  const liveCover = useLobbyCover();
+  const cover = coverOverride !== undefined ? coverOverride : liveCover;
+  const { height, width } = useWindowDimensions();
+  const dawn = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const loop = (val: Animated.Value, duration: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, { toValue: 1, duration, useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration, useNativeDriver: true }),
-        ])
-      );
-    const a1 = loop(drift1, 16000);
-    const a2 = loop(drift2, 22000);
-    const a3 = loop(drift3, 19000);
-    const a4 = loop(pulse, 3600);
-    const a5 = Animated.loop(
-      Animated.timing(spin, { toValue: 1, duration: 48000, useNativeDriver: true })
+    const dawnLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dawn, {
+          toValue: 1,
+          duration: 5200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(dawn, {
+          toValue: 0,
+          duration: 5200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
     );
-    const anims = [a1, a2, a3, a4, a5];
-    const start = () => anims.forEach((a) => a.start());
-    const stop = () => anims.forEach((a) => a.stop());
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') start();
-      else stop();
-    });
-    if (AppState.currentState === 'active') start();
+    const shimmerLoop = Animated.loop(
+      Animated.timing(shimmer, {
+        toValue: 1,
+        duration: 9000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    dawnLoop.start();
+    shimmerLoop.start();
     return () => {
-      stop();
-      sub.remove();
+      dawnLoop.stop();
+      shimmerLoop.stop();
     };
-  }, [drift1, drift2, drift3, pulse, spin]);
+  }, [dawn, shimmer]);
 
-  const orbSize = Math.max(width, height) * 0.72;
-  const y1 = drift1.interpolate({ inputRange: [0, 1], outputRange: [0, 48] });
-  const x2 = drift2.interpolate({ inputRange: [0, 1], outputRange: [0, -44] });
-  const y3 = drift3.interpolate({ inputRange: [0, 1], outputRange: [0, -36] });
-  const glow = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] });
-  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const dawnOpacity = dawn.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.48] });
+  const shimmerX = shimmer.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-width * 0.35, width * 0.55],
+  });
+
+  const isRemoteVideo = cover?.mediaType === 'video' && !!cover.url;
+  const isRemoteImage = cover?.mediaType === 'image' && !!cover.url;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <LinearGradient colors={[...lobbyTheme.heroGradient]} locations={[0, 0.35, 0.72, 1]} style={StyleSheet.absoluteFill} />
-
-      <LinearGradient
-        colors={['transparent', 'rgba(45,212,191,0.08)', 'transparent']}
-        start={{ x: 0, y: 0.5 }}
-        end={{ x: 1, y: 0.5 }}
-        style={[styles.auroraBand, { top: height * 0.22, width: width * 1.4, marginLeft: -width * 0.2 }]}
-      />
-
-      <Animated.View
-        style={[
-          styles.orb,
-          {
-            width: orbSize,
-            height: orbSize,
-            borderRadius: orbSize / 2,
-            left: -orbSize * 0.42,
-            top: -orbSize * 0.18,
-            backgroundColor: 'rgba(45, 212, 191, 0.32)',
-            transform: [{ translateY: y1 }],
-            opacity: glow,
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.orb,
-          {
-            width: orbSize * 0.88,
-            height: orbSize * 0.88,
-            borderRadius: (orbSize * 0.88) / 2,
-            right: -orbSize * 0.4,
-            top: height * 0.12,
-            backgroundColor: 'rgba(167, 139, 250, 0.26)',
-            transform: [{ translateX: x2 }, { rotate }],
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.orb,
-          {
-            width: orbSize * 0.62,
-            height: orbSize * 0.62,
-            borderRadius: (orbSize * 0.62) / 2,
-            left: width * 0.05,
-            bottom: -orbSize * 0.08,
-            backgroundColor: 'rgba(56, 189, 248, 0.2)',
-            transform: [{ translateY: y3 }],
-          },
-        ]}
-      />
-      <Animated.View
-        style={[
-          styles.orb,
-          {
-            width: orbSize * 0.38,
-            height: orbSize * 0.38,
-            borderRadius: (orbSize * 0.38) / 2,
-            right: width * 0.08,
-            bottom: height * 0.06,
-            backgroundColor: 'rgba(251, 191, 36, 0.16)',
-            opacity: glow,
-          },
-        ]}
-      />
-
-      {useMemo(
-        () => SPARKLE_SEEDS.map((s, i) => <Sparkle key={i} {...s} />),
-        []
+      {isRemoteVideo ? (
+        <Video
+          key={cover.url}
+          source={{ uri: cover.url }}
+          style={styles.photo}
+          resizeMode={ResizeMode.COVER}
+          isLooping
+          isMuted
+          shouldPlay
+          useNativeControls={false}
+        />
+      ) : isRemoteImage ? (
+        <Image key={cover.url} source={{ uri: cover.url }} style={styles.photo} resizeMode="cover" />
+      ) : (
+        <Image source={DEFAULT_HERO} style={styles.photo} resizeMode="cover" />
       )}
 
-      <View style={styles.gridOverlay} />
+      <LinearGradient
+        colors={[
+          'rgba(4,47,46,0.42)',
+          'rgba(13,148,136,0.12)',
+          'transparent',
+          lobbyTheme.floor,
+        ]}
+        locations={[0, 0.28, 0.58, 0.8]}
+        style={[styles.wash, { height }]}
+      />
+
+      <Animated.View style={[styles.dawnBand, { opacity: dawnOpacity, height: height * 0.38 }]}>
+        <LinearGradient
+          colors={['rgba(251,191,36,0.45)', 'rgba(251,146,60,0.18)', 'transparent']}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.15, y: 0 }}
+          end={{ x: 0.85, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          styles.shimmer,
+          {
+            height: height * 0.55,
+            transform: [{ translateX: shimmerX }, { rotate: '-18deg' }],
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={['transparent', 'rgba(45,212,191,0.18)', 'transparent']}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+
+      <LinearGradient
+        colors={['transparent', 'rgba(20,184,166,0.18)', lobbyTheme.floor]}
+        locations={[0.35, 0.72, 1]}
+        style={[styles.lakeFade, { height: height * 0.45, top: height * 0.48 }]}
+      />
+
+      <View style={[styles.floorFill, { top: height * 0.78 }]} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  orb: { position: 'absolute' },
-  auroraBand: {
-    position: 'absolute',
-    height: 120,
-    transform: [{ rotate: '-8deg' }],
-  },
-  sparkle: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    shadowColor: '#fff',
-    shadowOpacity: 0.8,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  gridOverlay: {
+  photo: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0.04,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
+    width: '100%',
+    height: '100%',
+  },
+  wash: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  dawnBand: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  shimmer: {
+    position: 'absolute',
+    top: '18%',
+    width: 120,
+  },
+  lakeFade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+  },
+  floorFill: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: lobbyTheme.floor,
   },
 });

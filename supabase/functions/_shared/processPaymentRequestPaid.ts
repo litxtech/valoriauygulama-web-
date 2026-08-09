@@ -319,5 +319,57 @@ export async function processPaymentRequestPaid(ctx: ProcessPaidContext): Promis
     }
   }
 
+  if (row.reference_type === "online_booking" && row.reference_id) {
+    const bookingId = row.reference_id as string;
+    const { data: booking } = await ctx.admin
+      .from("online_bookings")
+      .select("id, room_id, status, check_in_date, check_out_date")
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (booking?.status === "pending") {
+      let roomTaken = false;
+      if (booking.room_id) {
+        const { data: conflicts } = await ctx.admin
+          .from("online_bookings")
+          .select("id")
+          .eq("room_id", booking.room_id)
+          .in("status", ["confirmed", "converted"])
+          .lt("check_in_date", booking.check_out_date)
+          .gt("check_out_date", booking.check_in_date)
+          .neq("id", bookingId)
+          .limit(1);
+        roomTaken = (conflicts?.length ?? 0) > 0;
+      }
+
+      if (roomTaken) {
+        // Ödeme alındı ama oda başka onaylı rezervasyonda — rezervasyon sayılmaz
+        await ctx.admin
+          .from("online_bookings")
+          .update({
+            status: "expired",
+            payment_request_id: ctx.requestId,
+            paid_at: new Date().toISOString(),
+            paid_amount: Number(row.amount ?? 0) || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", bookingId)
+          .eq("status", "pending");
+      } else {
+        await ctx.admin
+          .from("online_bookings")
+          .update({
+            status: "confirmed",
+            paid_at: new Date().toISOString(),
+            payment_request_id: ctx.requestId,
+            paid_amount: Number(row.amount ?? 0) || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", bookingId)
+          .in("status", ["pending"]);
+      }
+    }
+  }
+
   return { processed: true };
 }

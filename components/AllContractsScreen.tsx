@@ -38,6 +38,7 @@ import {
   type GuestForPdf,
 } from '@/lib/contractPdf';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 
 type Row = {
@@ -433,7 +434,7 @@ export function AllContractsScreen() {
           setTimeout(() => w.print(), 300);
         }
       } else {
-        const { uri } = await Print.printToFileAsync({ html, width: 842, height: 595 });
+        const { uri } = await printToLocalPdfFile({ html, width: 842, height: 595 });
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Liste Yazdır' });
@@ -460,7 +461,7 @@ export function AllContractsScreen() {
           setTimeout(() => w.print(), 300);
         }
       } else {
-        const { uri } = await Print.printToFileAsync({ html, width: 595, height: 842 });
+        const { uri } = await printToLocalPdfFile({ html, width: 595, height: 842 });
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Misafir Yazdır' });

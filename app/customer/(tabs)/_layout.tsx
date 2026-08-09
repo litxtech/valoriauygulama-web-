@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, AppState, Platform } from 'react-native';
 import { Tabs, useRouter, useFocusEffect, type Href } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -29,7 +29,6 @@ import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesS
 import { useAppFeatureVisible, useCustomerTabHref } from '@/hooks/useAppFeatureVisible';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 import { GlassSurface } from '@/components/premium/GlassSurface';
-import { FeedCreateAnchorMenu } from '@/components/header/FeedCreateAnchorMenu';
 import { PartnerReturnPortalHeaderButton } from '@/components/breakfastPartner/PartnerUi';
 import { usePartnerAuthStore } from '@/stores/partnerAuthStore';
 
@@ -164,32 +163,6 @@ function NewChatHeaderButton() {
   );
 }
 
-function FeedCreateHeaderButton({ onPress }: { onPress: () => void }) {
-  const { t } = useTranslation();
-  const { isNight, colors: premiumColors } = usePremiumTheme();
-  const iconColor = isNight ? premiumColors.text : IG_HEADER_FG;
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={styles.feedCreateBtn}
-      activeOpacity={0.7}
-      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      accessibilityLabel={t('share')}
-    >
-      <Ionicons name="add-outline" size={28} color={iconColor} />
-    </TouchableOpacity>
-  );
-}
-
-const styles = StyleSheet.create({
-  feedCreateBtn: {
-    marginLeft: 8,
-    padding: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
-
 function CustomerNightHeaderBackground() {
   return <GlassSurface style={{ flex: 1, borderRadius: 0 }} strong intensity={52} />;
 }
@@ -216,9 +189,7 @@ function CustomerFeedTabHeaderRight({
 }
 
 export default function CustomerTabsLayout() {
-  const router = useRouter();
   const { t } = useTranslation();
-  const [feedCreateMenuOpen, setFeedCreateMenuOpen] = useState(false);
   const { isNight, colors: premiumColors } = usePremiumTheme();
   const tabBarColors = getAppTabBarColors(isNight);
   const headerTitleColor = isNight ? premiumColors.text : '#111827';
@@ -239,7 +210,6 @@ export default function CustomerTabsLayout() {
   const tabHrefComplaints = useCustomerTabHref('complaints');
   const tabHrefPersonel = useCustomerTabHref('personel');
   const tabHrefProfile = useCustomerTabHref('profile');
-  const showFeedCreate = useAppFeatureVisible('customer_feed_create', 'header_left');
   const showNotifBell = useAppFeatureVisible('customer_notifications_bell', 'header_right');
   const { appToken, setUnreadCount, loadStoredToken, unreadCount: guestMsgUnread } = useGuestMessagingStore();
   const refreshNotifications = useGuestNotificationStore((s) => s.refresh);
@@ -316,38 +286,22 @@ export default function CustomerTabsLayout() {
     };
   }, [appToken]);
 
-  const feedCreateItems = useMemo(
-    () => [
-      {
-        key: 'post',
-        label: t('post'),
-        icon: 'images' as const,
-        iconColor: '#8b5cf6',
-        onPress: () => router.push('/customer/feed/new'),
-      },
-    ],
-    [router, t]
-  );
-
   const renderFeedHeaderRight = useCallback(
     () => <CustomerFeedTabHeaderRight showNotifBell={showNotifBell} />,
     [showNotifBell]
   );
 
-  const renderFeedHeaderLeft = useCallback(
-    () => <FeedCreateHeaderButton onPress={() => setFeedCreateMenuOpen(true)} />,
-    []
-  );
+  const renderFeedHeaderLeft = useCallback(() => null, []);
 
   const renderTabBar = useCallback(
     (props: BottomTabBarProps) => (
       <FloatingIslandTabBar
         {...props}
-        surfaceColor={isNight ? premiumColors.pageBg : tabBarColors.shellBackground}
+        surfaceColor="transparent"
         borderColor={tabBarColors.border}
       />
     ),
-    [isNight, premiumColors.pageBg, tabBarColors.shellBackground, tabBarColors.border]
+    [tabBarColors.border]
   );
 
   return (
@@ -401,11 +355,10 @@ export default function CustomerTabsLayout() {
         headerTintColor: headerFg,
         headerTitleStyle: { fontSize: 19, fontWeight: '800', color: headerTitleColor, letterSpacing: 0.3 },
         ...(Platform.OS === 'android' ? { statusBarStyle: (isNight ? 'light' : 'dark') as const } : null),
-        headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 88 } : { paddingLeft: 0, minWidth: 0 },
+        headerLeftContainerStyle: feedTab ? { paddingLeft: 6, minWidth: 48 } : { paddingLeft: 0, minWidth: 0 },
         headerRightContainerStyle: feedTab ? { paddingRight: 6, minWidth: 88 } : { paddingRight: 0, minWidth: 0 },
         headerRight: feedTab ? renderFeedHeaderRight : () => null,
-        headerLeft:
-          feedTab && showFeedCreate ? renderFeedHeaderLeft : () => null,
+        headerLeft: feedTab ? renderFeedHeaderLeft : () => null,
       };
       }}
     >
@@ -614,11 +567,6 @@ export default function CustomerTabsLayout() {
         }}
       />
     </Tabs>
-    <FeedCreateAnchorMenu
-      visible={feedCreateMenuOpen}
-      onClose={() => setFeedCreateMenuOpen(false)}
-      items={feedCreateItems}
-    />
     </>
   );
 }

@@ -6,6 +6,9 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 
 type Props = {
   /** Medya seçici + önizleme — klavye açılınca kaybolmaz */
@@ -20,10 +23,35 @@ type Props = {
  * ScrollView içinde medya+metin birlikte olunca klavye açılınca önizleme kayboluyordu.
  */
 export function FeedComposeLayout({ mediaSlot, hasMedia, children, footer }: Props) {
+  const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: palette.pageBg }]}>
+      <LinearGradient
+        colors={
+          isNight
+            ? ['rgba(251,191,36,0.08)', 'transparent', 'rgba(45,212,191,0.06)']
+            : ['rgba(245,158,11,0.07)', 'transparent', 'rgba(15,118,110,0.05)']
+        }
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+
       <View
-        style={[styles.mediaPane, hasMedia ? styles.mediaPaneFilled : styles.mediaPaneEmpty]}
+        style={[
+          styles.mediaPane,
+          hasMedia ? styles.mediaPaneFilled : styles.mediaPaneEmpty,
+          {
+            borderBottomColor: palette.divider,
+            backgroundColor: hasMedia
+              ? isNight
+                ? 'rgba(0,0,0,0.35)'
+                : 'rgba(255,255,255,0.72)'
+              : 'transparent',
+          },
+        ]}
         collapsable={false}
       >
         {mediaSlot}
@@ -52,20 +80,18 @@ export function FeedComposeLayout({ mediaSlot, hasMedia, children, footer }: Pro
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
   },
   mediaPane: {
     flexShrink: 0,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
   },
   mediaPaneEmpty: {
-    paddingBottom: 4,
+    paddingBottom: 2,
   },
   mediaPaneFilled: {
-    minHeight: 280,
-    maxHeight: '52%',
+    minHeight: 260,
+    maxHeight: '48%',
+    overflow: 'hidden',
   },
   formPane: {
     flex: 1,
@@ -74,7 +100,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   formContent: {
-    padding: 16,
-    paddingBottom: 32,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 28,
   },
 });

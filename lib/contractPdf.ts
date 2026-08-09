@@ -5,6 +5,7 @@
  */
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { formatDateTime } from '@/lib/date';
@@ -379,7 +380,7 @@ export async function exportContractPdf(guest: GuestForPdf): Promise<string> {
   const appearance = await fetchContractPdfAppearance();
   const html = buildContractHtml(guest, appearance);
   const margins = printMarginsForAppearance(appearance);
-  const { uri } = await Print.printToFileAsync({
+  const { uri } = await printToLocalPdfFile({
     html,
     width: 595,
     height: 842,

@@ -114,6 +114,11 @@ function resolveByNotificationType(
     case 'staff_room_cleaning_plan_note_saved':
     case 'staff_room_cleaning_plan':
       return '/staff/cleaning-plan';
+    case 'staff_room_payment_status':
+    case 'staff_room_payment_amount':
+    case 'staff_room_payment_added':
+    case 'staff_room_payment_needed':
+      return '/staff/payment-board';
     case 'staff_ops_morning_digest': {
       const checkout = Number(data.checkoutPending ?? data.checkout_pending ?? 0);
       if (Number.isFinite(checkout) && checkout > 0) return '/staff/checkout-board';
@@ -385,6 +390,16 @@ export function resolveNotificationHref(
       return '/staff/checkout-board';
     }
     return '/staff/cleaning-plan';
+  }
+
+  if (
+    notificationType === 'staff_room_payment_status' ||
+    notificationType === 'staff_room_payment_amount' ||
+    notificationType === 'staff_room_payment_added' ||
+    notificationType === 'staff_room_payment_needed' ||
+    url === '/staff/payment-board'
+  ) {
+    return '/staff/payment-board';
   }
 
   if (

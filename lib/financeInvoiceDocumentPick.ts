@@ -48,7 +48,7 @@ export async function pickInvoiceFromCamera(): Promise<PickedInvoiceDocument | n
   if (!ok) return null;
   const r = await ImagePicker.launchCameraAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    quality: 0.82,
+    quality: 1,
     exif: false,
     allowsEditing: false,
   });
@@ -58,7 +58,7 @@ export async function pickInvoiceFromCamera(): Promise<PickedInvoiceDocument | n
 }
 
 export async function pickInvoiceFromGallery(): Promise<PickedInvoiceDocument[]> {
-  const uris = await pickGalleryImages({ quality: 0.85, selectionLimit: 8 });
+  const uris = await pickGalleryImages({ quality: 1, selectionLimit: 8 });
   return uris.map((uri, i) => toPicked(uri, `fatura-${Date.now()}-${i + 1}.jpg`, 'image/jpeg'));
 }
 

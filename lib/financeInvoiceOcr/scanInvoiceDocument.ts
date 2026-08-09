@@ -23,15 +23,9 @@ function isImageFile(fileName: string): boolean {
 }
 
 async function ocrImageUri(uri: string): Promise<{ text: string; engine: string | null }> {
-  const { ocrLinesFromImage } = await import('@/lib/scanner/ocrLinesFromImage');
-  try {
-    const { lines, engine } = await ocrLinesFromImage(uri, { document: true, fast: false });
-    return { text: lines.join('\n'), engine };
-  } catch {
-    const { ocrLinesFromImageExpoOnly } = await import('@/lib/scanner/ocrLinesFromImage');
-    const { lines, engine } = await ocrLinesFromImageExpoOnly(uri, { document: true });
-    return { text: lines.join('\n'), engine };
-  }
+  const { ocrInvoiceImage } = await import('@/lib/financeInvoiceOcr/ocrInvoiceImage');
+  const r = await ocrInvoiceImage(uri);
+  return { text: r.text, engine: r.engine };
 }
 
 async function readFileText(uri: string, fileName: string): Promise<string> {

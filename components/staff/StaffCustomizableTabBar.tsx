@@ -23,24 +23,29 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { getEffectiveBottomInset } from '@/lib/effectiveSafeArea';
-import { GlassTabBarShell } from '@/components/premium/GlassTabBarShell';
+import { GlassBackground } from '@/components/navigation/GlassBackground';
 import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
-import { getAppTabBarColors } from '@/constants/tabBarTheme';
 import {
   FLOAT_SIDE_INSET,
   FLOAT_BOTTOM_GAP,
+  VALORIA_TAB_BAR_RADIUS,
   getFloatingTabBarInnerHeight,
 } from '@/constants/floatingTabBarMetrics';
+import { pds, pdsNight } from '@/constants/personelDesignSystem';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffTabPinsStore } from '@/stores/staffTabPinsStore';
 import { useOrganizationUiFeaturesStore } from '@/stores/organizationUiFeaturesStore';
+import { useStaffBottomNavStore } from '@/stores/staffBottomNavStore';
 import { buildStaffHamburgerMenuLayout } from '@/lib/staffHamburgerMenu';
 import {
   collectTabPinCandidates,
+  buildStaffCoreTabPinExtras,
+  buildStaffOpsTabPinExtras,
   nativeTabRouteForPinId,
   resolveShortcutItems,
   seedDefaultTabPinsIfNeeded,
 } from '@/lib/staffTabCustomization';
+import { mergePinnedIdsWithOrgLocks } from '@/lib/staffTabPinsConfig';
 import type { StaffHamburgerMenuItem } from '@/lib/staffHamburgerTypes';
 import { hapticSelection } from '@/lib/hapticsSafe';
 import { canStaffUseIdCapture } from '@/lib/kbsMrzAccess';
@@ -48,9 +53,9 @@ import { clearAdminAutoOpenSuppress, signalStaffExitedAdminPanelFromRoot } from 
 import { CachedImage } from '@/components/CachedImage';
 import { theme } from '@/constants/theme';
 
-const ISLAND_RADIUS = 26;
 const ICON_SIZE = 22;
 const PROFILE_AVATAR = 26;
+const HIDE_MS = 300;
 
 type BuiltItem =
   | {
@@ -74,6 +79,7 @@ type Props = BottomTabBarProps & {
   unreadMessagesCount?: number;
   newTasksTabCount?: number;
   adminWarningCount?: number;
+  notificationsBadge?: number;
 };
 
 function ProfileIcon({ focused, color }: { focused: boolean; color: string }) {
@@ -90,23 +96,26 @@ function ProfileIcon({ focused, color }: { focused: boolean; color: string }) {
 }
 
 /**
- * Personel alt tab: sabit sekmeler + kullanıcının eklediği özellikler + düzenle.
+ * Personel alt tab: Ana sayfa + kullanıcının pinlediği özellikler + düzenle.
+ * Admin yetkisi olan personel Admin’i pinleyebilir / varsayılan pin’de gelir.
  */
 export function StaffCustomizableTabBar({
   state,
   navigation,
   descriptors: _descriptors,
   insets: navInsets,
-  surfaceColor,
   unreadMessagesCount = 0,
   newTasksTabCount = 0,
   adminWarningCount = 0,
+  notificationsBadge = 0,
 }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
   const { isNight } = usePremiumTheme();
-  const tabBar = getAppTabBarColors(isNight);
+  const colors = isNight ? pdsNight : pds;
+  const activeColor = colors.accent;
+  const inactiveColor = isNight ? '#8FA39E' : '#7A8F89';
   const staff = useAuthStore((s) => s.staff);
   const orgUiConfig = useOrganizationUiFeaturesStore((s) => s.config);
   const hydrate = useStaffTabPinsStore((s) => s.hydrate);
@@ -114,6 +123,7 @@ export function StaffCustomizableTabBar({
   const hydrated = useStaffTabPinsStore((s) => s.hydrated);
   const setPinnedOrder = useStaffTabPinsStore((s) => s.setPinnedOrder);
   const [seedDone, setSeedDone] = useState(false);
+  const barVisible = useStaffBottomNavStore((s) => s.visible);
 
   const safeInsets = useSafeAreaInsets();
   const rawBottom = navInsets?.bottom ?? safeInsets.bottom;
@@ -122,7 +132,7 @@ export function StaffCustomizableTabBar({
     FLOAT_BOTTOM_GAP;
   const onTabBarHeightChange = useContext(BottomTabBarHeightCallbackContext);
   const translateY = useRef(new Animated.Value(0)).current;
-  const resolvedSurface = surfaceColor ?? 'transparent';
+  const [barH, setBarH] = useState(getFloatingTabBarInnerHeight() + bottomPad);
   const innerH = getFloatingTabBarInnerHeight();
   const canIdCapture = canStaffUseIdCapture(staff);
   const isAdmin = staff?.role === 'admin';
@@ -131,6 +141,18 @@ export function StaffCustomizableTabBar({
     if (!staff?.id) return;
     void hydrate(staff.id);
   }, [staff?.id, hydrate]);
+
+  useEffect(() => {
+    Animated.timing(translateY, {
+      toValue: barVisible ? 0 : barH + 24,
+      duration: HIDE_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [barVisible, barH, translateY]);
+
+  useEffect(() => {
+    useStaffBottomNavStore.getState().setVisible(true);
+  }, [state.index]);
 
   const menuLayout = useMemo(() => {
     if (!staff) return null;
@@ -171,18 +193,41 @@ export function StaffCustomizableTabBar({
         icon: 'document-text-outline',
         accent: '#7c3aed',
       },
+      {
+        id: 'notifications',
+        label: t('notifications'),
+        href: '/staff/(tabs)/notifications',
+        icon: 'notifications-outline',
+        accent: '#e11d48',
+      },
+      ...buildStaffCoreTabPinExtras(t, { canIdCapture, isAdmin: Boolean(isAdmin) }),
+      ...buildStaffOpsTabPinExtras(staff),
     ],
-    [t]
+    [t, canIdCapture, isAdmin, staff]
   );
 
   const available = useMemo(
     () => collectTabPinCandidates(menuLayout, extras),
     [menuLayout, extras]
   );
-  const pinnedItems = useMemo(
-    () => resolveShortcutItems(available, pinnedIds),
-    [available, pinnedIds]
+
+  const availableIdSet = useMemo(() => new Set(available.map((i) => i.id)), [available]);
+
+  const effectivePinnedIds = useMemo(
+    () => mergePinnedIdsWithOrgLocks(pinnedIds, orgUiConfig?.tabPins, availableIdSet),
+    [pinnedIds, orgUiConfig?.tabPins, availableIdSet]
   );
+
+  const pinnedItems = useMemo(
+    () => resolveShortcutItems(available, effectivePinnedIds),
+    [available, effectivePinnedIds]
+  );
+
+  useEffect(() => {
+    if (!staff?.id || !hydrated || !available.length) return;
+    if (effectivePinnedIds.join() === pinnedIds.join()) return;
+    void setPinnedOrder(staff.id, effectivePinnedIds);
+  }, [staff?.id, hydrated, available.length, effectivePinnedIds, pinnedIds, setPinnedOrder]);
 
   useEffect(() => {
     if (!staff?.id || !hydrated || seedDone || !available.length) return;
@@ -193,6 +238,7 @@ export function StaffCustomizableTabBar({
         pinnedIds,
         available,
         setPinnedOrder,
+        orgDefaultIds: orgUiConfig?.tabPins?.defaultIds,
       });
       if (!cancelled) setSeedDone(true);
       if (seeded) hapticSelection();
@@ -200,7 +246,15 @@ export function StaffCustomizableTabBar({
     return () => {
       cancelled = true;
     };
-  }, [staff?.id, hydrated, seedDone, available, pinnedIds, setPinnedOrder]);
+  }, [
+    staff?.id,
+    hydrated,
+    seedDone,
+    available,
+    pinnedIds,
+    setPinnedOrder,
+    orgUiConfig?.tabPins?.defaultIds,
+  ]);
 
   const focusedRoute = state.routes[state.index]?.name;
 
@@ -220,6 +274,80 @@ export function StaffCustomizableTabBar({
       const routeName = nativeTabRouteForPinId(pin.id);
       if (routeName === 'emergency' && isAdmin) {
         out.push({ key: `href-${pin.id}`, kind: 'href', item: pin });
+        continue;
+      }
+      if (routeName === 'messages') {
+        out.push({
+          key: 'messages',
+          kind: 'route',
+          routeName: 'messages',
+          label: pin.label,
+          icon: 'chatbubbles-outline',
+          iconFocused: 'chatbubbles',
+          badge:
+            unreadMessagesCount > 0
+              ? unreadMessagesCount > 99
+                ? '99+'
+                : unreadMessagesCount
+              : undefined,
+        });
+        continue;
+      }
+      if (routeName === 'notifications') {
+        out.push({
+          key: 'notifications',
+          kind: 'route',
+          routeName: 'notifications',
+          label: pin.label,
+          icon: 'notifications-outline',
+          iconFocused: 'notifications',
+          badge:
+            notificationsBadge > 0
+              ? notificationsBadge > 99
+                ? '99+'
+                : notificationsBadge
+              : undefined,
+        });
+        continue;
+      }
+      if (routeName === 'id-capture') {
+        out.push({
+          key: 'id-capture',
+          kind: 'route',
+          routeName: 'id-capture',
+          label: pin.label,
+          icon: 'id-card-outline',
+          iconFocused: 'id-card',
+        });
+        continue;
+      }
+      if (routeName === 'admin') {
+        out.push({
+          key: 'admin',
+          kind: 'route',
+          routeName: 'admin',
+          label: pin.label,
+          icon: 'shield-outline',
+          iconFocused: 'shield',
+          badge:
+            adminWarningCount > 0
+              ? adminWarningCount > 99
+                ? '99+'
+                : adminWarningCount
+              : undefined,
+        });
+        continue;
+      }
+      if (routeName === 'profile') {
+        out.push({
+          key: 'profile',
+          kind: 'route',
+          routeName: 'profile',
+          label: pin.label,
+          icon: 'person-outline',
+          iconFocused: 'person',
+          isProfile: true,
+        });
         continue;
       }
       if (routeName) {
@@ -242,74 +370,21 @@ export function StaffCustomizableTabBar({
       }
     }
 
-    out.push({
-      key: 'messages',
-      kind: 'route',
-      routeName: 'messages',
-      label: t('messages'),
-      icon: 'chatbubbles-outline',
-      iconFocused: 'chatbubbles',
-      badge:
-        unreadMessagesCount > 0
-          ? unreadMessagesCount > 99
-            ? '99+'
-            : unreadMessagesCount
-          : undefined,
-    });
-
-    if (canIdCapture) {
-      out.push({
-        key: 'id-capture',
-        kind: 'route',
-        routeName: 'id-capture',
-        label: t('staffTabIdCapture'),
-        icon: 'id-card-outline',
-        iconFocused: 'id-card',
-      });
-    }
-
-    if (isAdmin) {
-      out.push({
-        key: 'admin',
-        kind: 'route',
-        routeName: 'admin',
-        label: t('adminTab'),
-        icon: 'shield-outline',
-        iconFocused: 'shield',
-        badge:
-          adminWarningCount > 0
-            ? adminWarningCount > 99
-              ? '99+'
-              : adminWarningCount
-            : undefined,
-      });
-    }
-
-    out.push({
-      key: 'profile',
-      kind: 'route',
-      routeName: 'profile',
-      label: t('myProfile'),
-      icon: 'person-outline',
-      iconFocused: 'person',
-      isProfile: true,
-    });
-
     return out;
   }, [
     t,
     pinnedItems,
     isAdmin,
-    canIdCapture,
     newTasksTabCount,
     unreadMessagesCount,
     adminWarningCount,
+    notificationsBadge,
   ]);
 
   const handleShellLayout = useCallback(
     (e: LayoutChangeEvent) => {
+      setBarH(e.nativeEvent.layout.height);
       onTabBarHeightChange?.(0);
-      void e;
     },
     [onTabBarHeightChange]
   );
@@ -326,6 +401,7 @@ export function StaffCustomizableTabBar({
   const onPressItem = useCallback(
     (item: BuiltItem) => {
       hapticSelection();
+      useStaffBottomNavStore.getState().setVisible(true);
       if (item.kind === 'href') {
         signalStaffExitedAdminPanelFromRoot();
         router.push(item.item.href as Href);
@@ -362,23 +438,27 @@ export function StaffCustomizableTabBar({
         styles.shell,
         styles.shellFloating,
         {
-          backgroundColor: resolvedSurface,
-          paddingBottom: bottomPad,
-          paddingHorizontal: FLOAT_SIDE_INSET,
+          left: FLOAT_SIDE_INSET,
+          right: FLOAT_SIDE_INSET,
           transform: [{ translateY }],
         },
       ]}
-      pointerEvents="box-none"
+      pointerEvents={barVisible ? 'box-none' : 'none'}
     >
-      <View
-        style={[styles.shadowHost, isNight && styles.shadowHostNight]}
-        pointerEvents="box-none"
-      >
-        <GlassTabBarShell borderRadius={ISLAND_RADIUS}>
-          <View style={[styles.row, { minHeight: innerH }]}>
+      <View style={styles.shadowHost} pointerEvents="box-none">
+        <GlassBackground borderRadius={VALORIA_TAB_BAR_RADIUS} opacity={0.85} style={styles.glassFill}>
+          <View
+            style={[
+              styles.row,
+              {
+                minHeight: innerH,
+                paddingBottom: Math.max(bottomPad, 8),
+              },
+            ]}
+          >
             {items.map((item) => {
               let focused = false;
-              let color: string = tabBar.inactive;
+              let color: string = inactiveColor;
               let label = '';
               let iconNode: ReactNode = null;
               let badge: string | number | undefined;
@@ -386,12 +466,12 @@ export function StaffCustomizableTabBar({
               if (item.kind === 'href') {
                 label = item.item.label;
                 focused = isHrefActive(item.item.href);
-                color = focused ? tabBar.fallbackActive : tabBar.inactive;
+                color = focused ? activeColor : inactiveColor;
                 iconNode = <Ionicons name={item.item.icon} size={ICON_SIZE} color={color} />;
               } else {
                 label = item.label;
                 focused = focusedRoute === item.routeName;
-                color = focused ? tabBar.fallbackActive : tabBar.inactive;
+                color = focused ? activeColor : inactiveColor;
                 badge = item.badge;
                 iconNode = item.isProfile ? (
                   <ProfileIcon focused={focused} color={color} />
@@ -415,7 +495,7 @@ export function StaffCustomizableTabBar({
                 >
                   <View>
                     {iconNode}
-                    {badge != null ? (
+                    {badge != null && badge !== 0 && badge !== '0' ? (
                       <View style={styles.badge}>
                         <Text style={styles.badgeText}>{badge}</Text>
                       </View>
@@ -430,39 +510,33 @@ export function StaffCustomizableTabBar({
               );
             })}
           </View>
-        </GlassTabBarShell>
+        </GlassBackground>
       </View>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  shell: { width: '100%' },
+  shell: {},
   shellFloating: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
   },
   shadowHost: {
-    borderRadius: ISLAND_RADIUS,
-    overflow: 'visible',
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
+    borderRadius: VALORIA_TAB_BAR_RADIUS,
+    shadowColor: '#0B3D36',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 10,
   },
-  shadowHostNight: {
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-  },
+  glassFill: { width: '100%' },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-around',
     paddingHorizontal: 4,
-    paddingTop: 4,
-    paddingBottom: 2,
+    paddingTop: 8,
   },
   item: {
     flex: 1,
@@ -471,6 +545,7 @@ const styles = StyleSheet.create({
     gap: 2,
     paddingVertical: 2,
     minWidth: 0,
+    minHeight: 48,
   },
   itemPressed: { opacity: 0.75 },
   label: {

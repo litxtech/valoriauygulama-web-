@@ -77,7 +77,7 @@ const PartnerMessageRow = memo(function PartnerMessageRow({
 export default function PartnerMessagesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const listBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
+  const listBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 24;
   const setUnreadCount = usePartnerMessagingStore((s) => s.setUnreadCount);
   const [rows, setRows] = useState<ConversationWithMeta[]>(() => partnerMessagesCache);
   const [loading, setLoading] = useState(() => partnerMessagesCache.length === 0);

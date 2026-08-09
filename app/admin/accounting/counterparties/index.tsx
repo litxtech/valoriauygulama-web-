@@ -31,7 +31,7 @@ import {
   FINANCE_REPORT_KIND_LABELS,
 } from '@/lib/financeCounterpartyReport';
 import { footerOptsFromOrganization } from '@/lib/financeReportBranding';
-import { fetchOpenDebtTotalsByCounterparty } from '@/lib/financeCounterpartyAgreements';
+import { fetchOpenDebtTotalsByCounterparty, type CounterpartyOpenDebtTotals } from '@/lib/financeCounterpartyAgreements';
 import {
   accountingCanUseAllOrg,
   mergeCounterpartyBalancesForOrgs,
@@ -47,6 +47,7 @@ import {
   mergeFinanceCounterparties,
   type CounterpartyMergeSuggestion,
 } from '@/lib/financeCounterpartyMerge';
+import { buildSameNameCounts, normalizeCounterpartyName } from '@/lib/financeCounterpartyUi';
 
 type Row = {
   id: string;
@@ -90,7 +91,7 @@ export default function AccountingCounterpartiesIndex() {
   const [balances, setBalances] = useState<
     Map<string, { income: number; expense: number; net: number }>
   >(new Map());
-  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, number>>(new Map());
+  const [openDebtTotals, setOpenDebtTotals] = useState<Map<string, CounterpartyOpenDebtTotals>>(new Map());
   const [rowsLoading, setRowsLoading] = useState(true);
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -256,6 +257,8 @@ export default function AccountingCounterpartiesIndex() {
     return list;
   }, [rows, typeFilter, search, sortMode, balances, flowFilter]);
 
+  const sameNameCounts = useMemo(() => buildSameNameCounts(rows), [rows]);
+
   const mergeSuggestions = useMemo(() => {
     return findCounterpartyMergeSuggestions(rows, balances).filter((s) => !dismissedMergeIds.has(s.id));
   }, [rows, balances, dismissedMergeIds]);
@@ -270,7 +273,7 @@ export default function AccountingCounterpartiesIndex() {
         income: b?.income ?? 0,
         expense: b?.expense ?? 0,
         net: b?.net ?? 0,
-        currentDebt: openDebtTotals.get(r.id) ?? 0,
+        currentDebt: openDebtTotals.get(r.id)?.remaining ?? 0,
       };
     });
   }, [filtered, balances, openDebtTotals]);
@@ -747,10 +750,22 @@ export default function AccountingCounterpartiesIndex() {
                         expense={bal?.expense ?? 0}
                         net={bal?.net ?? 0}
                         amountsPending={amountsPending}
-                        openDebt={openDebtTotals.get(r.id) ?? 0}
+                        openDebt={openDebtTotals.get(r.id)?.remaining ?? 0}
+                        openedDebt={openDebtTotals.get(r.id)?.opened ?? 0}
+                        paidDebt={openDebtTotals.get(r.id)?.paid ?? 0}
                         organizationName={
                           showOrgBadge
                             ? organizationNameById(r.organization_id, organizations)
+                            : undefined
+                        }
+                        sameNameCount={sameNameCounts.get(normalizeCounterpartyName(r.name)) ?? 0}
+                        onSameNamePress={
+                          (sameNameCounts.get(normalizeCounterpartyName(r.name)) ?? 0) >= 2
+                            ? () =>
+                                router.push({
+                                  pathname: '/admin/accounting/counterparties/same-name',
+                                  params: { name: r.name },
+                                } as never)
                             : undefined
                         }
                         onPress={() =>

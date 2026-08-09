@@ -13,6 +13,7 @@ import {
 import { Image } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/constants/theme';
@@ -232,7 +233,7 @@ export function KbsCaptureDetailView({
     setExportBusy(true);
     try {
       const html = await buildReportHtml();
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const { uri } = await printToLocalPdfFile({ html, base64: false });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Kimlik PDF' });
       } else {

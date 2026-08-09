@@ -8,6 +8,7 @@ import { AvatarWithBadge, StaffNameWithBadge } from '@/components/VerifiedBadge'
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
 import { CachedImage } from '@/components/CachedImage';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
+import { usePremiumTheme } from '@/contexts/PremiumThemeContext';
 
 export type StaffFeedStoryAvatarProps = {
   id: string;
@@ -26,11 +27,13 @@ export type StaffFeedStoryAvatarProps = {
   presenceStatus?: StaffPresenceStatus;
   /** Instagram tarzı story şeridi — sadece avatar + kısa isim */
   compact?: boolean;
+  animationIndex?: number;
   onPress: () => void;
 };
 
 export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
   const palette = usePersonelDesign();
+  const { isNight } = usePremiumTheme();
   const {
     name,
     profileImage,
@@ -44,7 +47,7 @@ export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
     hasStory,
     hasUnseen,
     profileHidden,
-    presenceStatus = isOnline ? 'available' : 'break',
+    presenceStatus = isOnline ? 'available' : 'offline',
     compact = false,
     onPress,
   } = props;
@@ -58,10 +61,29 @@ export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
     <AnimatedStoryRing hasStory={hasStory} hasUnseen={hasUnseen} isOnline={!!isOnline} size={ringSize}>
       <AvatarWithBadge badge={verificationBadge ?? null} avatarSize={avatarSize} badgeSize={14} showBadge={false}>
         {profileImage ? (
-          <CachedImage uri={profileImage} style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]} contentFit="cover" />
+          <CachedImage
+            uri={profileImage}
+            style={[
+              styles.avatar,
+              { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 },
+            ]}
+            contentFit="cover"
+          />
         ) : (
-          <View style={[styles.placeholder, { backgroundColor: palette.borderLight, width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
-            <Text style={[styles.letter, { color: palette.subtext, fontSize: compact ? 20 : 22 }]}>{name.charAt(0).toUpperCase()}</Text>
+          <View
+            style={[
+              styles.placeholder,
+              {
+                backgroundColor: isNight ? palette.borderLight : '#FFFFFF',
+                width: avatarSize,
+                height: avatarSize,
+                borderRadius: avatarSize / 2,
+              },
+            ]}
+          >
+            <Text style={[styles.letter, { color: palette.subtext, fontSize: compact ? 20 : 22 }]}>
+              {name.charAt(0).toUpperCase()}
+            </Text>
           </View>
         )}
       </AvatarWithBadge>
@@ -120,7 +142,7 @@ export function StaffFeedStoryAvatarCard(props: StaffFeedStoryAvatarProps) {
 
 const styles = StyleSheet.create({
   card: { width: 88, marginRight: 10 },
-  cardCompact: { width: 72, marginRight: 6 },
+  cardCompact: { width: 72, marginRight: 8 },
   inner: { alignItems: 'center', width: '100%' },
   avatarCluster: {
     width: 76,
@@ -146,7 +168,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#7C5CFF',
+    backgroundColor: '#0D9488',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,

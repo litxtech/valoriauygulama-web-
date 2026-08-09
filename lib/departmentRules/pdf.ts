@@ -1,5 +1,6 @@
 import { Alert, Platform } from 'react-native';
 import * as Print from 'expo-print';
+import { printToLocalPdfFile } from '@/lib/persistExpoPrintPdf';
 import * as Sharing from 'expo-sharing';
 import type { DepartmentRuleDetail } from './types';
 import { departmentLabel, ruleTypeLabel } from './constants';
@@ -125,7 +126,7 @@ export function buildDepartmentRulePdfHtml(
 
 export async function printDepartmentRulePdf(html: string, dialogTitle = 'Bölüm Kuralı PDF'): Promise<void> {
   try {
-    const { uri } = await Print.printToFileAsync({ html });
+    const { uri } = await printToLocalPdfFile({ html });
     if (Platform.OS === 'web') {
       await Print.printAsync({ html });
       return;

@@ -206,3 +206,27 @@ export function formatCounterpartyFlow(income: number, expense: number): string 
   if (expense >= 0.01) parts.push(`↓ ${fmtMoneyTry(expense)}`);
   return parts.join('  ·  ');
 }
+
+/** Aynı isim eşleştirmesi — boşluk / büyük-küçük harf duyarsız */
+export function normalizeCounterpartyName(name: string): string {
+  return name
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .replace(/\s+/g, ' ');
+}
+
+/** İsim anahtarı → kişi sayısı (yalnızca 2+ olanlar) */
+export function buildSameNameCounts(
+  rows: { id: string; name: string }[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const key = normalizeCounterpartyName(r.name);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  for (const [k, n] of [...counts.entries()]) {
+    if (n < 2) counts.delete(k);
+  }
+  return counts;
+}

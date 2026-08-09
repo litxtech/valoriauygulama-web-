@@ -22,6 +22,7 @@ import { AdminOrganizationPicker } from '@/components/admin';
 import { AdminSalaryStaffPickerSheet } from '@/components/admin/AdminSalaryStaffPickerSheet';
 import { adminTheme } from '@/constants/adminTheme';
 import { sendNotification } from '@/lib/notificationService';
+import { AdminStackBackButton } from '@/lib/adminStackBack';
 import {
   createAdminSalaryPayment,
   fetchStaffSalaryMonthSnapshot,
@@ -31,20 +32,36 @@ import {
 } from '@/lib/adminSalaryPayments';
 import { formatSalaryMoney } from '@/lib/staffSalaryTracking';
 import type { OrgStaffOption } from '@/lib/notificationTemplateRecipients';
+import { counterpartyInitials, resolveCounterpartyTypeMeta } from '@/lib/financeCounterpartyUi';
 
-const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+const MONTH_NAMES = [
+  'Ocak',
+  'Şubat',
+  'Mart',
+  'Nisan',
+  'Mayıs',
+  'Haziran',
+  'Temmuz',
+  'Ağustos',
+  'Eylül',
+  'Ekim',
+  'Kasım',
+  'Aralık',
+];
 const PAYMENT_TYPES = [
   { value: 'transfer' as const, label: 'Havale / EFT', icon: 'card-outline' as const },
   { value: 'cash' as const, label: 'Nakit', icon: 'cash-outline' as const },
   { value: 'credit_card' as const, label: 'Kredi Kartı', icon: 'wallet-outline' as const },
 ];
 const ENTRY_KINDS: SalaryEntryKind[] = ['regular', 'bonus', 'early_partial'];
-
 const ENTRY_ICONS: Record<SalaryEntryKind, keyof typeof Ionicons.glyphMap> = {
   regular: 'wallet',
   bonus: 'gift',
   early_partial: 'pie-chart',
 };
+const HERO_GRAD = ['#0f172a', '#1e3a5f'] as const;
+const PAY_GRAD = ['#dc2626', '#b91c1c'] as const;
+const QUICK_AMOUNTS = [1000, 2500, 5000, 10000, 15000, 25000] as const;
 
 export default function AdminSalaryPayScreen() {
   const router = useRouter();
@@ -76,6 +93,8 @@ export default function AdminSalaryPayScreen() {
   const [saving, setSaving] = useState(false);
   const [monthSnap, setMonthSnap] = useState({ approvedTotal: 0, pendingTotal: 0, paymentCount: 0 });
   const [snapLoading, setSnapLoading] = useState(false);
+
+  const staffMeta = resolveCounterpartyTypeMeta('staff');
 
   useEffect(() => {
     if (!params.staffId || staffName) return;
@@ -126,6 +145,11 @@ export default function AdminSalaryPayScreen() {
     return `${period} maaş ödemesi`;
   }, [entryKind, periodMonth, periodYear]);
 
+  const appendQuickAmount = (value: number) => {
+    const cur = parseFloat(amount.replace(',', '.')) || 0;
+    setAmount(String(cur + value));
+  };
+
   const save = async () => {
     if (canUseAllOrganizations && selectedOrganizationId === 'all') {
       Alert.alert('Otel seçin', 'Maaş ödemesi için tek bir otel seçmelisiniz.');
@@ -175,32 +199,57 @@ export default function AdminSalaryPayScreen() {
     }).catch(() => {});
 
     Alert.alert('Ödeme kaydedildi', 'Personele bildirim gönderildi.', [
-      { text: 'Yeni ödeme', onPress: () => { setAmount(''); setDescription(''); } },
+      {
+        text: 'Yeni ödeme',
+        onPress: () => {
+          setAmount('');
+          setDescription('');
+        },
+      },
       { text: 'Listeye dön', onPress: () => router.replace('/admin/salary') },
     ]);
   };
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <LinearGradient colors={[...HERO_GRAD]} style={[styles.heroBar, { paddingTop: insets.top + 8 }]}>
+        <AdminStackBackButton tintColor="#fff" fallback="/admin/salary" />
+        <View style={styles.heroTitleWrap}>
+          <Text style={styles.heroTitle} numberOfLines={1}>
+            Maaş öde
+          </Text>
+          <Text style={styles.heroSub} numberOfLines={1}>
+            Personel seçin · tutar girin · kaydedin
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.heroIconBtn}
+          onPress={() => router.push('/admin/salary/all')}
+          accessibilityLabel="Tüm ödemeler"
+        >
+          <Ionicons name="list-outline" size={22} color="#fff" />
+        </TouchableOpacity>
+      </LinearGradient>
+
       <ScrollView
         style={styles.container}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <LinearGradient colors={['#065F46', '#059669', '#10B981']} style={styles.hero}>
-          <View style={styles.heroIcon}>
-            <Ionicons name="wallet" size={28} color="#fff" />
-          </View>
-          <Text style={styles.heroTitle}>Maaş Öde</Text>
-          <Text style={styles.heroSub}>Personel seçin, ödeme türünü belirleyin ve kaydedin.</Text>
-        </LinearGradient>
-
         <AdminOrganizationPicker canUseAll={canUseAllOrganizations} ownOrganizationId={me?.organization_id} />
 
         <Text style={styles.label}>Personel</Text>
         <TouchableOpacity style={styles.staffPickBtn} onPress={() => setPickerOpen(true)} activeOpacity={0.85}>
-          <Ionicons name="person-circle-outline" size={22} color={adminTheme.colors.accent} />
+          {staffName ? (
+            <View style={[styles.staffAvatar, { backgroundColor: staffMeta.bg }]}>
+              <Text style={[styles.staffAvatarText, { color: staffMeta.color }]}>
+                {counterpartyInitials(staffName)}
+              </Text>
+            </View>
+          ) : (
+            <Ionicons name="person-circle-outline" size={22} color={adminTheme.colors.accent} />
+          )}
           <Text style={styles.staffPickText} numberOfLines={1}>
             {staffName ?? 'Personel seçin…'}
           </Text>
@@ -221,7 +270,9 @@ export default function AdminSalaryPayScreen() {
                   <Text style={styles.snapLbl}>Onaylı</Text>
                 </View>
                 <View style={styles.snapItem}>
-                  <Text style={styles.snapVal}>{formatSalaryMoney(monthSnap.pendingTotal)}</Text>
+                  <Text style={[styles.snapVal, styles.snapValPending]}>
+                    {formatSalaryMoney(monthSnap.pendingTotal)}
+                  </Text>
                   <Text style={styles.snapLbl}>Bekleyen</Text>
                 </View>
                 <View style={styles.snapItem}>
@@ -244,7 +295,7 @@ export default function AdminSalaryPayScreen() {
                 onPress={() => setEntryKind(kind)}
                 activeOpacity={0.85}
               >
-                <Ionicons name={ENTRY_ICONS[kind]} size={18} color={on ? '#fff' : '#059669'} />
+                <Ionicons name={ENTRY_ICONS[kind]} size={18} color={on ? '#fff' : '#0f172a'} />
                 <Text style={[styles.kindChipText, on && styles.kindChipTextOn]} numberOfLines={2}>
                   {SALARY_ENTRY_KIND_LABELS[kind]}
                 </Text>
@@ -278,19 +329,55 @@ export default function AdminSalaryPayScreen() {
           placeholder="Yıl"
         />
 
-        <Text style={styles.label}>Tutar (₺)</Text>
-        <TextInput
-          style={[styles.input, styles.amountInput]}
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="decimal-pad"
-          placeholder="0"
-        />
+        <LinearGradient colors={['#fff7ed', '#ffffff']} style={styles.amountHero}>
+          <Text style={styles.amountLbl}>Tutar (₺)</Text>
+          <View style={styles.amountRow}>
+            <Text style={styles.amountCurrency}>₺</Text>
+            <TextInput
+              style={styles.amountInput}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="decimal-pad"
+              placeholder="0"
+              placeholderTextColor="#cbd5e1"
+            />
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.quickAmtScroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            <TouchableOpacity
+              style={styles.quickAmtClear}
+              onPress={() => setAmount('')}
+              hitSlop={6}
+            >
+              <Ionicons name="backspace-outline" size={14} color={adminTheme.colors.textMuted} />
+              <Text style={styles.quickAmtClearText}>Temizle</Text>
+            </TouchableOpacity>
+            {QUICK_AMOUNTS.map((v) => (
+              <TouchableOpacity key={v} style={styles.quickAmtChip} onPress={() => appendQuickAmount(v)}>
+                <Text style={styles.quickAmtText}>+{v.toLocaleString('tr-TR')}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </LinearGradient>
 
         <Text style={styles.label}>Ödeme tarihi / saati</Text>
         <View style={styles.row2}>
-          <TextInput style={[styles.input, styles.half]} value={paymentDate} onChangeText={setPaymentDate} placeholder="YYYY-MM-DD" />
-          <TextInput style={[styles.input, styles.half]} value={paymentTime} onChangeText={setPaymentTime} placeholder="12:00" />
+          <TextInput
+            style={[styles.input, styles.half]}
+            value={paymentDate}
+            onChangeText={setPaymentDate}
+            placeholder="YYYY-MM-DD"
+          />
+          <TextInput
+            style={[styles.input, styles.half]}
+            value={paymentTime}
+            onChangeText={setPaymentTime}
+            placeholder="12:00"
+          />
         </View>
 
         <Text style={styles.label}>Ödeme yöntemi</Text>
@@ -327,15 +414,17 @@ export default function AdminSalaryPayScreen() {
           multiline
         />
 
-        <TouchableOpacity style={styles.saveBtn} onPress={() => void save()} disabled={saving} activeOpacity={0.88}>
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="checkmark-circle" size={20} color="#fff" />
-              <Text style={styles.saveBtnText}>Kaydet ve personele bildir</Text>
-            </>
-          )}
+        <TouchableOpacity onPress={() => void save()} disabled={saving} activeOpacity={0.9}>
+          <LinearGradient colors={[...PAY_GRAD]} style={styles.saveBtn}>
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="flash" size={20} color="#fff" />
+                <Text style={styles.saveBtnText}>Kaydet ve personele bildir</Text>
+              </>
+            )}
+          </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
 
@@ -351,22 +440,28 @@ export default function AdminSalaryPayScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  container: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
-  content: { padding: 16 },
-  hero: { borderRadius: 20, padding: 18, marginBottom: 16 },
-  heroIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+  flex: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  heroBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+    paddingHorizontal: 6,
+    paddingBottom: 10,
   },
-  heroTitle: { fontSize: 24, fontWeight: '800', color: '#fff' },
-  heroSub: { marginTop: 6, fontSize: 14, color: 'rgba(255,255,255,0.9)', lineHeight: 20 },
-  label: { fontSize: 14, fontWeight: '700', color: adminTheme.colors.text, marginBottom: 8, marginTop: 4 },
+  heroIconBtn: { padding: 8 },
+  heroTitleWrap: { flex: 1, marginHorizontal: 4 },
+  heroTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
+  heroSub: { fontSize: 11, color: 'rgba(255,255,255,0.72)', marginTop: 2 },
+  container: { flex: 1 },
+  content: { padding: 16 },
+  label: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: adminTheme.colors.textMuted,
+    marginBottom: 8,
+    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   staffPickBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -375,23 +470,32 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    padding: 14,
+    padding: 12,
     marginBottom: 12,
   },
+  staffAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  staffAvatarText: { fontSize: 13, fontWeight: '800' },
   staffPickText: { flex: 1, fontSize: 15, fontWeight: '600', color: adminTheme.colors.text },
   snapCard: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: adminTheme.colors.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: adminTheme.colors.border,
     padding: 14,
     marginBottom: 12,
   },
-  snapTitle: { fontSize: 13, fontWeight: '700', color: '#047857', marginBottom: 10 },
+  snapTitle: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.text, marginBottom: 10 },
   snapRow: { flexDirection: 'row', gap: 8 },
   snapItem: { flex: 1, alignItems: 'center' },
-  snapVal: { fontSize: 15, fontWeight: '800', color: '#065F46' },
-  snapLbl: { fontSize: 11, color: '#059669', marginTop: 2 },
+  snapVal: { fontSize: 14, fontWeight: '800', color: '#16a34a' },
+  snapValPending: { color: '#b45309' },
+  snapLbl: { fontSize: 11, color: adminTheme.colors.textMuted, marginTop: 2 },
   kindRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
   kindChip: {
     flex: 1,
@@ -402,10 +506,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: adminTheme.colors.surface,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: adminTheme.colors.border,
   },
-  kindChipOn: { backgroundColor: '#059669', borderColor: '#059669' },
-  kindChipText: { fontSize: 11, fontWeight: '700', color: '#047857', textAlign: 'center' },
+  kindChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  kindChipText: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.textMuted, textAlign: 'center' },
   kindChipTextOn: { color: '#fff' },
   hint: { fontSize: 12, color: adminTheme.colors.textMuted, marginBottom: 12 },
   monthScroll: { marginBottom: 8, maxHeight: 44 },
@@ -418,7 +522,7 @@ const styles = StyleSheet.create({
     borderColor: adminTheme.colors.border,
     marginRight: 8,
   },
-  monthChipOn: { backgroundColor: adminTheme.colors.accent, borderColor: adminTheme.colors.accent },
+  monthChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
   monthChipText: { fontSize: 12, fontWeight: '600', color: adminTheme.colors.text },
   monthChipTextOn: { color: '#fff' },
   input: {
@@ -431,7 +535,45 @@ const styles = StyleSheet.create({
     color: adminTheme.colors.text,
     marginBottom: 12,
   },
-  amountInput: { fontSize: 22, fontWeight: '800' },
+  amountHero: {
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  amountLbl: { fontSize: 11, fontWeight: '700', color: adminTheme.colors.accent, marginBottom: 6 },
+  amountRow: { flexDirection: 'row', alignItems: 'center' },
+  amountCurrency: { fontSize: 32, fontWeight: '800', color: adminTheme.colors.accent, marginRight: 6 },
+  amountInput: {
+    flex: 1,
+    fontSize: 36,
+    fontWeight: '800',
+    color: adminTheme.colors.text,
+    paddingVertical: 4,
+  },
+  quickAmtScroll: { marginTop: 10, maxHeight: 34 },
+  quickAmtChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    marginRight: 8,
+  },
+  quickAmtText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.accent },
+  quickAmtClear: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: adminTheme.colors.surfaceTertiary,
+    marginRight: 8,
+  },
+  quickAmtClearText: { fontSize: 11, fontWeight: '600', color: adminTheme.colors.textMuted },
   row2: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
   textArea: { minHeight: 72, textAlignVertical: 'top' },
@@ -447,7 +589,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
   },
-  payTypeChipOn: { backgroundColor: adminTheme.colors.accent, borderColor: adminTheme.colors.accent },
+  payTypeChipOn: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
   payTypeText: { fontSize: 13, fontWeight: '600', color: adminTheme.colors.text },
   payTypeTextOn: { color: '#fff' },
   saveBtn: {
@@ -455,10 +597,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#059669',
     borderRadius: 14,
     paddingVertical: 16,
     marginTop: 8,
+    ...adminTheme.shadow.md,
   },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
 });

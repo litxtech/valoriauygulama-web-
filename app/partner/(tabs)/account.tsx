@@ -90,7 +90,7 @@ export default function PartnerAccountScreen() {
     }
   );
 
-  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets) + 24;
+  const scrollBottomPad = insets.bottom + getFloatingTabBarTotalHeight(insets, { partner: true }) + 24;
 
   useFocusEffect(
     useCallback(() => {
