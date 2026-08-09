@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
     overflow: 'hidden',
-    minHeight: 480,
+    minHeight: 0,
   },
   head: {
     flexDirection: 'row',

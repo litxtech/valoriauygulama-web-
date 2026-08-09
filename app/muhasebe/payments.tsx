@@ -5,10 +5,11 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  FlatList,
+  Pressable,
+  ScrollView,
   ActivityIndicator,
-  RefreshControl,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,6 +39,7 @@ import {
   normalizeCounterpartyName,
   resolveCounterpartyTypeMeta,
 } from '@/lib/financeCounterpartyUi';
+import { supabase } from '@/lib/supabase';
 
 const TYPE_FILTERS: { key: 'all' | FinanceCounterpartyType; labelKey: string }[] = [
   { key: 'all', labelKey: 'quickPayScopeAll' },
@@ -52,11 +54,12 @@ const TYPE_FILTERS: { key: 'all' | FinanceCounterpartyType; labelKey: string }[]
 export default function MuhasebePaymentsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const wide = width >= 900;
+  const { width, height } = useWindowDimensions();
+  const wide = width >= 960;
   const me = useAuthStore((s) => s.staff);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
   const organizations = useAdminOrgStore((s) => s.organizations);
+  const orgHydrated = useAdminOrgStore((s) => s.orgHydrated);
 
   const [rows, setRows] = useState<MuhasebeCounterpartyRow[]>([]);
   const [balances, setBalances] = useState<Map<string, MuhasebeBalance>>(new Map());
@@ -64,7 +67,7 @@ export default function MuhasebePaymentsScreen() {
     new Map()
   );
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | FinanceCounterpartyType>('all');
   const [debtOnly, setDebtOnly] = useState(false);
@@ -78,58 +81,67 @@ export default function MuhasebePaymentsScreen() {
   const canUseAllOrg = accountingCanUseAllOrg(me);
 
   const load = useCallback(async () => {
+    if (!orgHydrated) return;
     if (!orgScope) {
       setRows([]);
       setBalances(new Map());
       setOpenDebtTotals(new Map());
       setLoading(false);
+      setLoadError(null);
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
+      // Önce kişileri getir — bakiye beklerken arama/liste boş kalmasın
+      let q = supabase
+        .from('finance_counterparties')
+        .select('id, organization_id, name, party_type, party_type_label, phone, profile_image')
+        .eq('is_active', true)
+        .order('name');
+      if (orgScope !== 'all') q = q.eq('organization_id', orgScope);
+      const { data, error } = await q;
+      if (error) throw error;
+      const list = ((data as MuhasebeCounterpartyRow[]) ?? []) as MuhasebeCounterpartyRow[];
+      setRows(list);
+      setSelected((prev) => {
+        if (!prev) return null;
+        return list.find((r) => r.id === prev.id) ?? null;
+      });
+      setLoading(false);
+
       const bundle = await loadMuhasebePersonList({
         orgScope,
         ledgerScopeFilter: scopeFilter,
       });
-      setRows(bundle.rows);
       setBalances(bundle.balances);
       setOpenDebtTotals(bundle.openDebtTotals);
-      setSelected((prev) => {
-        if (!prev) return null;
-        return bundle.rows.find((r) => r.id === prev.id) ?? null;
-      });
-    } finally {
+      if (bundle.rows.length !== list.length) {
+        setRows(bundle.rows);
+      }
+    } catch (err) {
+      setLoadError((err as Error)?.message ?? t('muhasebeWebLoadError'));
       setLoading(false);
     }
-  }, [orgScope, scopeFilter]);
+  }, [orgScope, scopeFilter, orgHydrated, t]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
-
   const afterSaved = async () => {
     if (!orgScope) return;
-    const { balances: b, openDebtTotals: d } = await refreshMuhasebeBalances({
-      orgScope,
-      organizationIds: rows.map((r) => r.organization_id),
-      ledgerScopeFilter: scopeFilter,
-      counterpartyIds: rows.map((r) => r.id),
-    });
-    setBalances(b);
-    setOpenDebtTotals(d);
-    if (selected) {
-      const plansBundle = await loadMuhasebePersonList({
+    try {
+      const { balances: b, openDebtTotals: d } = await refreshMuhasebeBalances({
         orgScope,
+        organizationIds: rows.map((r) => r.organization_id),
         ledgerScopeFilter: scopeFilter,
+        counterpartyIds: rows.map((r) => r.id),
       });
-      const next = plansBundle.rows.find((r) => r.id === selected.id);
-      if (next) setSelected(next);
+      setBalances(b);
+      setOpenDebtTotals(d);
+    } catch {
+      // liste kalır
     }
   };
 
@@ -166,103 +178,140 @@ export default function MuhasebePaymentsScreen() {
 
   const showList = wide || !selected;
   const showPanel = wide || !!selected;
+  const workspaceHeight = Math.max(480, height - 120);
+
+  const selectPerson = (item: MuhasebeCounterpartyRow) => {
+    setSelected(item);
+  };
 
   return (
     <MuhasebeWebShell title={t('muhasebeWebNavPayments')} subtitle={t('muhasebeWebPaymentsHint')}>
-      {!orgScope ? (
+      {!orgHydrated ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator color={adminTheme.colors.accent} />
+        </View>
+      ) : !orgScope ? (
         <View style={styles.hintBox}>
-          <AdminOrgHint canUseAll={canUseAllOrg} />
+          {canUseAllOrg ? (
+            <Ionicons name="business-outline" size={20} color={adminTheme.colors.accent} />
+          ) : null}
           <Text style={styles.hintText}>{t('quickPaySelectOrg')}</Text>
         </View>
       ) : (
-        <View style={[styles.workspace, wide && styles.workspaceWide]}>
+        <View
+          style={[
+            styles.workspace,
+            wide && styles.workspaceWide,
+            Platform.OS === 'web' ? { height: workspaceHeight } : { flex: 1, minHeight: workspaceHeight },
+          ]}
+        >
           {showList ? (
             <View style={[styles.listPane, wide && styles.listPaneWide]}>
-              <View style={styles.searchCard}>
-                <Ionicons name="search" size={18} color={adminTheme.colors.accent} />
-                <TextInput
-                  style={styles.searchInput}
-                  value={search}
-                  onChangeText={setSearch}
-                  placeholder={t('quickPaySearchPlaceholder')}
-                  placeholderTextColor={adminTheme.colors.textMuted}
-                />
-                {search ? (
-                  <TouchableOpacity onPress={() => setSearch('')}>
-                    <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              <View style={styles.filterRow}>
-                {TYPE_FILTERS.map((f) => {
-                  const on = typeFilter === f.key;
-                  return (
-                    <TouchableOpacity
-                      key={f.key}
-                      style={[styles.filterChip, on && styles.filterChipOn]}
-                      onPress={() => setTypeFilter(f.key)}
-                    >
-                      <Text style={[styles.filterText, on && styles.filterTextOn]}>{t(f.labelKey)}</Text>
+              <View style={styles.listHeader}>
+                <View style={styles.searchCard}>
+                  <Ionicons name="search" size={18} color={adminTheme.colors.accent} />
+                  <TextInput
+                    style={styles.searchInput}
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder={t('quickPaySearchPlaceholder')}
+                    placeholderTextColor={adminTheme.colors.textMuted}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                  {search ? (
+                    <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                      <Ionicons name="close-circle" size={18} color={adminTheme.colors.textMuted} />
                     </TouchableOpacity>
-                  );
-                })}
-                <TouchableOpacity
-                  style={[styles.filterChip, debtOnly && styles.filterChipDebt]}
-                  onPress={() => setDebtOnly((v) => !v)}
+                  ) : null}
+                </View>
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.filterScroll}
+                  contentContainerStyle={styles.filterRow}
                 >
-                  <Text style={[styles.filterText, debtOnly && styles.filterTextOn]}>
-                    {t('muhasebeWebDebtOnly')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.scopeRow}>
-                {(['all', 'hotel', 'personal'] as const).map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.scopeChip, scopeFilter === s && styles.scopeChipOn]}
-                    onPress={() => setScopeFilter(s)}
-                  >
-                    <Text style={[styles.scopeText, scopeFilter === s && styles.scopeTextOn]}>
-                      {s === 'all' ? t('quickPayScopeAll') : s === 'hotel' ? t('muhasebeWebScopeHotel') : t('muhasebeWebScopePersonal')}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.statsRow}>
-                <Text style={styles.statsText}>
-                  {t('muhasebeWebListStats', {
-                    count: listStats.total,
-                    debtPeople: listStats.peopleWithDebt,
-                    debtSum: fmtMoneyTry(listStats.debtSum),
+                  {TYPE_FILTERS.map((f) => {
+                    const on = typeFilter === f.key;
+                    return (
+                      <Pressable
+                        key={f.key}
+                        style={[styles.filterChip, on && styles.filterChipOn]}
+                        onPress={() => setTypeFilter(f.key)}
+                      >
+                        <Text style={[styles.filterText, on && styles.filterTextOn]}>{t(f.labelKey)}</Text>
+                      </Pressable>
+                    );
                   })}
-                </Text>
-                <TouchableOpacity
-                  style={styles.addBtn}
-                  onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
-                >
-                  <Ionicons name="person-add-outline" size={16} color={adminTheme.colors.accent} />
-                  <Text style={styles.addBtnText}>{t('quickPayAddPerson')}</Text>
-                </TouchableOpacity>
+                  <Pressable
+                    style={[styles.filterChip, debtOnly && styles.filterChipDebt]}
+                    onPress={() => setDebtOnly((v) => !v)}
+                  >
+                    <Text style={[styles.filterText, debtOnly && styles.filterTextOn]}>
+                      {t('muhasebeWebDebtOnly')}
+                    </Text>
+                  </Pressable>
+                </ScrollView>
+
+                <View style={styles.scopeRow}>
+                  {(['all', 'hotel', 'personal'] as const).map((s) => (
+                    <Pressable
+                      key={s}
+                      style={[styles.scopeChip, scopeFilter === s && styles.scopeChipOn]}
+                      onPress={() => setScopeFilter(s)}
+                    >
+                      <Text style={[styles.scopeText, scopeFilter === s && styles.scopeTextOn]}>
+                        {s === 'all'
+                          ? t('quickPayScopeAll')
+                          : s === 'hotel'
+                            ? t('muhasebeWebScopeHotel')
+                            : t('muhasebeWebScopePersonal')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <View style={styles.statsRow}>
+                  <Text style={styles.statsText}>
+                    {t('muhasebeWebListStats', {
+                      count: listStats.total,
+                      debtPeople: listStats.peopleWithDebt,
+                      debtSum: fmtMoneyTry(listStats.debtSum),
+                    })}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.addBtn}
+                    onPress={() => router.push('/admin/accounting/counterparties/new' as never)}
+                  >
+                    <Ionicons name="person-add-outline" size={16} color={adminTheme.colors.accent} />
+                    <Text style={styles.addBtnText}>{t('quickPayAddPerson')}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {loading ? (
-                <ActivityIndicator color={adminTheme.colors.accent} style={{ marginTop: 40 }} />
-              ) : (
-                <FlatList
-                  data={filtered}
-                  keyExtractor={(item) => item.id}
-                  style={styles.list}
-                  contentContainerStyle={styles.listContent}
-                  refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />
-                  }
-                  ListEmptyComponent={
-                    <Text style={styles.empty}>{t('quickPayEmpty')}</Text>
-                  }
-                  renderItem={({ item }) => {
+              <ScrollView
+                style={styles.listScroll}
+                contentContainerStyle={styles.listContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                {loading ? (
+                  <ActivityIndicator color={adminTheme.colors.accent} style={{ marginTop: 32 }} />
+                ) : loadError ? (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.errorText}>{loadError}</Text>
+                    <TouchableOpacity onPress={() => void load()} style={styles.retryBtn}>
+                      <Text style={styles.retryText}>{t('muhasebeWebRetry')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : filtered.length === 0 ? (
+                  <Text style={styles.empty}>
+                    {search || typeFilter !== 'all' || debtOnly
+                      ? t('quickPayNoResults')
+                      : t('quickPayEmpty')}
+                  </Text>
+                ) : (
+                  filtered.map((item) => {
                     const bal = balances.get(item.id);
                     const debt = openDebtTotals.get(item.id)?.remaining ?? 0;
                     const meta = resolveCounterpartyTypeMeta(item.party_type, item.party_type_label);
@@ -273,10 +322,14 @@ export default function MuhasebePaymentsScreen() {
                         : null;
                     const dupe = sameNameCounts.get(normalizeCounterpartyName(item.name)) ?? 0;
                     return (
-                      <TouchableOpacity
-                        style={[styles.row, active && styles.rowActive]}
-                        onPress={() => setSelected(item)}
-                        activeOpacity={0.88}
+                      <Pressable
+                        key={item.id}
+                        style={({ pressed }) => [
+                          styles.row,
+                          active && styles.rowActive,
+                          pressed && styles.rowPressed,
+                        ]}
+                        onPress={() => selectPerson(item)}
                       >
                         <View style={[styles.avatar, { backgroundColor: meta.bg }]}>
                           <Text style={[styles.avatarText, { color: meta.color }]}>
@@ -302,14 +355,14 @@ export default function MuhasebePaymentsScreen() {
                           <Ionicons
                             name="chevron-forward"
                             size={16}
-                            color={adminTheme.colors.textMuted}
+                            color={active ? adminTheme.colors.accent : adminTheme.colors.textMuted}
                           />
                         </View>
-                      </TouchableOpacity>
+                      </Pressable>
                     );
-                  }}
-                />
-              )}
+                  })
+                )}
+              </ScrollView>
             </View>
           ) : null}
 
@@ -317,6 +370,7 @@ export default function MuhasebePaymentsScreen() {
             <View style={[styles.detailPane, wide && styles.detailPaneWide]}>
               {selected && me?.id ? (
                 <MuhasebePersonPayPanel
+                  key={selected.id}
                   person={selected}
                   staffId={me.id}
                   balanceNet={balances.get(selected.id)?.net ?? 0}
@@ -328,7 +382,7 @@ export default function MuhasebePaymentsScreen() {
                       params: { id: selected.id },
                     } as never)
                   }
-                  onClearSelection={wide ? undefined : () => setSelected(null)}
+                  onClearSelection={() => setSelected(null)}
                 />
               ) : (
                 <View style={styles.emptyPanel}>
@@ -345,12 +399,8 @@ export default function MuhasebePaymentsScreen() {
   );
 }
 
-function AdminOrgHint({ canUseAll }: { canUseAll: boolean }) {
-  if (!canUseAll) return null;
-  return <Ionicons name="business-outline" size={20} color={adminTheme.colors.accent} />;
-}
-
 const styles = StyleSheet.create({
+  centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 240 },
   hintBox: {
     backgroundColor: adminTheme.colors.surface,
     borderRadius: 14,
@@ -361,7 +411,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   hintText: { fontSize: 14, color: adminTheme.colors.textSecondary, lineHeight: 20 },
-  workspace: { flex: 1, gap: 12, minHeight: 560 },
+  workspace: { gap: 12, width: '100%' },
   workspaceWide: { flexDirection: 'row', alignItems: 'stretch' },
   listPane: {
     flex: 1,
@@ -369,12 +419,20 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,
-    padding: 12,
-    minHeight: 420,
+    overflow: 'hidden',
+    minWidth: 0,
   },
-  listPaneWide: { flex: 0.42, maxWidth: 480 },
-  detailPane: { flex: 1, minHeight: 480 },
-  detailPaneWide: { flex: 0.58 },
+  listPaneWide: { flexGrow: 0, flexShrink: 0, flexBasis: 420, maxWidth: 460, width: 420 },
+  listHeader: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: adminTheme.colors.borderLight,
+    flexShrink: 0,
+    zIndex: 2,
+    backgroundColor: adminTheme.colors.surface,
+  },
+  detailPane: { flex: 1, minWidth: 0, minHeight: 0 },
+  detailPaneWide: { flex: 1 },
   searchCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -387,14 +445,15 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 15,
     color: adminTheme.colors.text,
   },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  filterScroll: { marginTop: 10, maxHeight: 40 },
+  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 8 },
   filterChip: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
     backgroundColor: adminTheme.colors.surfaceTertiary,
   },
@@ -405,7 +464,7 @@ const styles = StyleSheet.create({
   scopeRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
   scopeChip: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
     backgroundColor: adminTheme.colors.surfaceTertiary,
   },
@@ -417,30 +476,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: 10,
-    marginBottom: 6,
     gap: 8,
   },
   statsText: { flex: 1, fontSize: 12, color: adminTheme.colors.textMuted, fontWeight: '600' },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   addBtnText: { fontSize: 12, fontWeight: '700', color: adminTheme.colors.accent },
-  list: { flex: 1 },
-  listContent: { paddingBottom: 16 },
+  listScroll: { flex: 1, minHeight: 0 },
+  listContent: { padding: 8, paddingBottom: 24 },
   empty: {
     textAlign: 'center',
     color: adminTheme.colors.textMuted,
     marginTop: 40,
     fontSize: 14,
+    paddingHorizontal: 16,
   },
+  errorBox: { padding: 20, alignItems: 'center', gap: 12 },
+  errorText: { color: adminTheme.colors.error, textAlign: 'center', fontSize: 14 },
+  retryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#fff7ed',
+  },
+  retryText: { color: adminTheme.colors.accent, fontWeight: '700' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: 12,
     marginBottom: 2,
   },
-  rowActive: { backgroundColor: '#fff7ed' },
+  rowActive: {
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fdba74',
+  },
+  rowPressed: { opacity: 0.85, backgroundColor: adminTheme.colors.surfaceTertiary },
   avatar: {
     width: 40,
     height: 40,
@@ -457,7 +530,6 @@ const styles = StyleSheet.create({
   netAmt: { fontSize: 13, fontWeight: '700', color: adminTheme.colors.textSecondary },
   emptyPanel: {
     flex: 1,
-    minHeight: 420,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: adminTheme.colors.border,

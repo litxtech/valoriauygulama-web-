@@ -57,7 +57,13 @@ export function MuhasebeWebShell({ children, title, subtitle }: Props) {
   };
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.root,
+        { paddingTop: insets.top },
+        Platform.OS === 'web' ? styles.rootWeb : null,
+      ]}
+    >
       <LinearGradient colors={['#0f172a', '#1e293b']} style={styles.topBar}>
         <View style={styles.brandRow}>
           <View style={styles.brandIcon}>
@@ -124,10 +130,9 @@ export function MuhasebeWebShell({ children, title, subtitle }: Props) {
 
         <View
           style={[
-            styles.contentScroll,
-            styles.contentInner,
-            { paddingBottom: Math.max(insets.bottom, 24) },
-            Platform.OS === 'web' && styles.contentInnerWeb,
+            styles.contentArea,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+            Platform.OS === 'web' && styles.contentAreaWeb,
           ]}
         >
           {!wide ? (
@@ -157,6 +162,11 @@ export function MuhasebeWebShell({ children, title, subtitle }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: adminTheme.colors.surfaceSecondary },
+  rootWeb: {
+    height: '100%' as unknown as number,
+    minHeight: '100%' as unknown as number,
+    overflow: 'hidden',
+  },
   topBar: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -166,6 +176,8 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#334155',
+    flexShrink: 0,
+    zIndex: 5,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   brandIcon: {
@@ -227,10 +239,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   adminLinkText: { fontSize: 12, color: adminTheme.colors.textMuted, fontWeight: '600' },
-  contentScroll: { flex: 1 },
-  contentInner: { padding: 16, flex: 1 },
-  contentInnerWeb: { maxWidth: 1280, width: '100%', alignSelf: 'center' },
-  contentBody: { flex: 1, minHeight: 0 },
+  contentArea: { flex: 1, padding: 16, minHeight: 0, minWidth: 0 },
+  contentAreaWeb: { width: '100%', maxWidth: 1400, alignSelf: 'center' },
+  contentBody: { flex: 1, minHeight: 0, minWidth: 0 },
   mobileNavRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   mobileNavChip: {
     paddingHorizontal: 12,
