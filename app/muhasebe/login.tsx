@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -22,6 +21,10 @@ import { canAccessMuhasebeWeb } from '@/lib/muhasebeAccess';
 import { safeRouterReplace } from '@/lib/safeRouter';
 import { adminTheme } from '@/constants/adminTheme';
 
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 export default function MuhasebeLoginScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -33,6 +36,7 @@ export default function MuhasebeLoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !staffCheckComplete) return;
@@ -43,16 +47,24 @@ export default function MuhasebeLoginScreen() {
 
   const signIn = async () => {
     const e = email.trim().toLowerCase();
-    if (!e || !password || password.length < 6) {
-      Alert.alert(t('muhasebeWebLoginErrorTitle'), t('muhasebeWebLoginInvalid'));
+    setError(null);
+    if (!e || !isValidEmail(e)) {
+      setError(t('muhasebeWebLoginNeedEmail'));
+      return;
+    }
+    if (!password || password.length < 6) {
+      setError(t('muhasebeWebLoginInvalid'));
       return;
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: e, password });
-      if (error) throw error;
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email: e, password });
+      if (authError) throw authError;
       if (!data.user) throw new Error(t('muhasebeWebLoginFailed'));
-      await completeSignIn(data.user);
+      const signInResult = await completeSignIn(data.user);
+      if (signInResult.denied === 'account_locked') {
+        throw new Error(t('accountLockedMessage'));
+      }
       const s = useAuthStore.getState().staff;
       if (!s || !canAccessMuhasebeWeb(s)) {
         await useAuthStore.getState().signOut();
@@ -60,9 +72,11 @@ export default function MuhasebeLoginScreen() {
       }
       safeRouterReplace(router, '/muhasebe/payments');
     } catch (err) {
-      Alert.alert(t('muhasebeWebLoginErrorTitle'), (err as Error)?.message ?? t('muhasebeWebLoginFailed'));
+      const msg = (err as Error)?.message ?? t('muhasebeWebLoginFailed');
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -92,29 +106,51 @@ export default function MuhasebeLoginScreen() {
         <Text style={styles.subtitle}>{t('muhasebeWebLoginSubtitle')}</Text>
 
         <View style={styles.card}>
+          {error ? (
+            <View style={styles.errorBox} accessibilityLiveRegion="polite">
+              <Ionicons name="alert-circle" size={18} color="#fecaca" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.label}>{t('muhasebeWebEmail')}</Text>
           <TextInput
             style={styles.input}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(v) => {
+              setEmail(v);
+              if (error) setError(null);
+            }}
             autoCapitalize="none"
+            autoCorrect={false}
             keyboardType="email-address"
             autoComplete="email"
-            placeholder="muhasebe@valoria.com"
+            textContentType="emailAddress"
+            placeholder="ornek@valoria.tr"
             placeholderTextColor="#94a3b8"
           />
+          <Text style={styles.hint}>{t('muhasebeWebLoginEmailHint')}</Text>
           <Text style={styles.label}>{t('muhasebeWebPassword')}</Text>
           <TextInput
             style={styles.input}
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(v) => {
+              setPassword(v);
+              if (error) setError(null);
+            }}
             secureTextEntry
             autoComplete="password"
+            textContentType="password"
             placeholder="••••••••"
             placeholderTextColor="#94a3b8"
             onSubmitEditing={() => void signIn()}
           />
-          <TouchableOpacity style={styles.btn} onPress={() => void signIn()} disabled={loading} activeOpacity={0.88}>
+          <TouchableOpacity
+            style={[styles.btn, loading && styles.btnDisabled]}
+            onPress={() => void signIn()}
+            disabled={loading}
+            activeOpacity={0.88}
+          >
             {loading ? (
               <ActivityIndicator color="#0f172a" />
             ) : (
@@ -162,7 +198,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.25)',
   },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: 'rgba(185,28,28,0.35)',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  errorText: { flex: 1, color: '#fecaca', fontSize: 14, fontWeight: '600', lineHeight: 20 },
   label: { color: '#94a3b8', fontSize: 13, marginBottom: 6, marginTop: 8, fontWeight: '600' },
+  hint: { color: '#64748b', fontSize: 12, marginTop: 4, marginBottom: 4 },
   input: {
     backgroundColor: '#0f172a',
     borderRadius: 12,
@@ -180,5 +229,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
+  btnDisabled: { opacity: 0.7 },
   btnText: { color: '#0f172a', fontWeight: '800', fontSize: 16 },
 });

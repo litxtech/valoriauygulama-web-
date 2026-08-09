@@ -17,7 +17,8 @@ export default function MuhasebeLayout() {
   const enterAccountingScope = useAdminOrgStore((s) => s.enterAccountingScope);
   const leaveAccountingScope = useAdminOrgStore((s) => s.leaveAccountingScope);
 
-  const isLogin = pathname === '/muhasebe/login' || pathname?.endsWith('/muhasebe/login');
+  const normalizedPath = (pathname || '').replace(/\/+/g, '/');
+  const isLogin = normalizedPath === '/muhasebe/login' || normalizedPath.endsWith('/muhasebe/login');
 
   useEffect(() => {
     if (isLogin) return;
