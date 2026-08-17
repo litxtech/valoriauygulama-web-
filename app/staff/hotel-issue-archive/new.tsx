@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,16 @@ import {
   Image,
   Alert,
   ActivityIndicator,
-  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/constants/theme';
+import { PressableScale } from '@/components/premium/PressableScale';
+import { HotelIssueArchiveSection } from '@/components/hotelIssueArchive/HotelIssueArchiveSection';
 import { useAuthStore } from '@/stores/authStore';
 import { ensureCameraPermission } from '@/lib/cameraPermission';
 import { ensureMediaLibraryPermission } from '@/lib/mediaLibraryPermission';
@@ -36,32 +38,7 @@ import {
 
 type PendingMedia = { uri: string; type: 'image' | 'video'; posterUri?: string | null };
 
-function Section({
-  title,
-  subtitle,
-  icon,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionIconWrap}>
-          <Ionicons name={icon} size={18} color={theme.colors.primary} />
-        </View>
-        <View style={styles.sectionHeaderText}>
-          <Text style={styles.sectionTitle}>{title}</Text>
-          {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
-        </View>
-      </View>
-      {children}
-    </View>
-  );
-}
+const ACCENT = '#7c3aed';
 
 export default function HotelIssueArchiveNew() {
   const router = useRouter();
@@ -77,6 +54,8 @@ export default function HotelIssueArchiveNew() {
   const [pickingMedia, setPickingMedia] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadStep, setUploadStep] = useState<string | null>(null);
+
+  const activeCat = HOTEL_ISSUE_ARCHIVE_CATEGORIES.find((c) => c.value === category);
 
   const pickMedia = useCallback(
     async (fromCamera: boolean) => {
@@ -214,147 +193,164 @@ export default function HotelIssueArchiveNew() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <View style={styles.hero}>
+        <LinearGradient
+          colors={['#1e1b4b', '#312e81', '#4c1d95']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.hero}
+        >
           <View style={styles.heroIcon}>
-            <Ionicons name="archive" size={28} color={theme.colors.primary} />
+            <Ionicons name="camera" size={24} color="#c4b5fd" />
           </View>
-          <Text style={styles.heroTitle}>Otel kaydı oluştur</Text>
+          <Text style={styles.heroTitle}>Yeni kayıt</Text>
           <Text style={styles.heroHint}>
-            Sorun, risk, düzenleme veya herhangi bir durumu foto/video ile arşivleyin. Kaydettiğinizde diğer personele bildirim gider.
+            Sorun, risk veya düzenlemeyi foto/video ile arşivleyin — personele anında bildirim gider.
           </Text>
-        </View>
+        </LinearGradient>
 
-        <Section title="Kayıt türü" subtitle="Ne tür bir durum?" icon="pricetag-outline">
-          <View style={styles.chipGrid}>
+        <HotelIssueArchiveSection title="Kayıt türü" subtitle="Ne tür bir durum?" icon="pricetag-outline" accent={activeCat?.color ?? ACCENT}>
+          <View style={styles.catGrid}>
             {HOTEL_ISSUE_ARCHIVE_CATEGORIES.map((c) => {
               const active = category === c.value;
               return (
-                <TouchableOpacity
+                <PressableScale
                   key={c.value}
-                  style={[styles.catChip, active && { borderColor: c.color, backgroundColor: `${c.color}12` }]}
+                  style={[styles.catTile, active && { borderColor: c.color, backgroundColor: `${c.color}10` }]}
                   onPress={() => setCategory(c.value)}
-                  activeOpacity={0.85}
                 >
-                  <Ionicons name={c.icon as never} size={16} color={active ? c.color : theme.colors.textSecondary} />
-                  <Text style={[styles.catChipText, active && { color: c.color, fontWeight: '700' }]}>{c.label}</Text>
-                </TouchableOpacity>
+                  <View style={[styles.catIconWrap, { backgroundColor: `${c.color}${active ? '22' : '12'}` }]}>
+                    <Ionicons name={c.icon as never} size={18} color={c.color} />
+                  </View>
+                  <Text style={[styles.catLabel, active && { color: c.color, fontWeight: '800' }]} numberOfLines={2}>
+                    {c.label}
+                  </Text>
+                  {active ? <View style={[styles.catActiveDot, { backgroundColor: c.color }]} /> : null}
+                </PressableScale>
               );
             })}
           </View>
-        </Section>
+        </HotelIssueArchiveSection>
 
-        <Section title="Konum" subtitle="Oda veya alan — isteğe bağlı" icon="location-outline">
-          <TextInput
-            style={styles.input}
-            value={roomNumber}
-            onChangeText={setRoomNumber}
-            placeholder="Oda numarası (örn. 205)"
-            placeholderTextColor={theme.colors.textMuted}
-          />
-          <TextInput
-            style={[styles.input, styles.inputSpaced]}
-            value={locationLabel}
-            onChangeText={setLocationLabel}
-            placeholder="Alan (örn. Depo, Lobi, Çamaşırhane)"
-            placeholderTextColor={theme.colors.textMuted}
-          />
-        </Section>
+        <HotelIssueArchiveSection title="Konum" subtitle="Oda veya alan — isteğe bağlı" icon="location-outline" accent={ACCENT}>
+          <View style={styles.inputRow}>
+            <Ionicons name="bed-outline" size={18} color={theme.colors.textMuted} />
+            <TextInput
+              style={styles.inputInner}
+              value={roomNumber}
+              onChangeText={setRoomNumber}
+              placeholder="Oda numarası"
+              placeholderTextColor={theme.colors.textMuted}
+              keyboardType="number-pad"
+            />
+          </View>
+          <View style={[styles.inputRow, styles.inputRowSpaced]}>
+            <Ionicons name="business-outline" size={18} color={theme.colors.textMuted} />
+            <TextInput
+              style={styles.inputInner}
+              value={locationLabel}
+              onChangeText={setLocationLabel}
+              placeholder="Depo, lobi, çamaşırhane…"
+              placeholderTextColor={theme.colors.textMuted}
+            />
+          </View>
+        </HotelIssueArchiveSection>
 
-        <Section title="Not" subtitle="Zorunlu — ne gördünüz / ne yaptınız?" icon="create-outline">
+        <HotelIssueArchiveSection title="Not" subtitle="Zorunlu — ne gördünüz / ne yaptınız?" icon="create-outline" accent={ACCENT}>
           <TextInput
-            style={[styles.input, styles.multiline]}
+            style={styles.noteInput}
             value={note}
             onChangeText={setNote}
             multiline
             textAlignVertical="top"
-            placeholder="Örn. Banyo vanası sızıntı yapıyor / Depo düzenlendi, raflar etiketlendi…"
+            placeholder="Örn. Banyo vanası sızıntı yapıyor / Depo düzenlendi…"
             placeholderTextColor={theme.colors.textMuted}
           />
-        </Section>
+          <Text style={styles.charHint}>{note.trim().length} karakter</Text>
+        </HotelIssueArchiveSection>
 
-        <Section
+        <HotelIssueArchiveSection
           title="Fotoğraf / video"
-          subtitle={`İsteğe bağlı — en fazla ${MAX_HOTEL_ISSUE_ARCHIVE_MEDIA} medya, hızlı paralel yükleme`}
+          subtitle={`En fazla ${MAX_HOTEL_ISSUE_ARCHIVE_MEDIA} medya · paralel hızlı yükleme`}
           icon="images-outline"
+          accent={ACCENT}
         >
           <View style={styles.mediaActions}>
-            <TouchableOpacity
+            <PressableScale
               style={[styles.mediaBtn, styles.mediaBtnPrimary, pickingMedia && styles.mediaBtnDisabled]}
               onPress={() => pickMedia(true)}
               disabled={pickingMedia}
-              activeOpacity={0.85}
             >
               {pickingMedia ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Ionicons name="camera" size={20} color="#fff" />
+                <Ionicons name="camera" size={22} color="#fff" />
               )}
               <Text style={styles.mediaBtnPrimaryText}>Kamera</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableScale>
+            <PressableScale
               style={[styles.mediaBtn, pickingMedia && styles.mediaBtnDisabled]}
               onPress={() => pickMedia(false)}
               disabled={pickingMedia}
-              activeOpacity={0.85}
             >
-              {pickingMedia ? (
-                <ActivityIndicator size="small" color={theme.colors.primary} />
-              ) : (
-                <Ionicons name="images-outline" size={20} color={theme.colors.primary} />
-              )}
+              <Ionicons name="images-outline" size={22} color={ACCENT} />
               <Text style={styles.mediaBtnText}>Galeri</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
 
           {media.length > 0 ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaStrip}>
+            <View style={styles.mediaGrid}>
               {media.map((m, idx) => (
-                <View key={`${m.uri}-${idx}`} style={styles.mediaThumb}>
+                <View key={`${m.uri}-${idx}`} style={styles.mediaTile}>
                   <Image source={{ uri: m.posterUri ?? m.uri }} style={styles.mediaImg} />
                   {m.type === 'video' ? (
-                    <View style={styles.videoPlayDot} pointerEvents="none">
-                      <Ionicons name="play" size={14} color="#fff" />
+                    <View style={styles.videoBadge}>
+                      <Ionicons name="play" size={12} color="#fff" />
                     </View>
                   ) : null}
-                  <TouchableOpacity
-                    style={styles.mediaRemove}
-                    onPress={() => setMedia((arr) => arr.filter((_, i) => i !== idx))}
-                  >
-                    <Ionicons name="close-circle" size={22} color="#dc2626" />
-                  </TouchableOpacity>
+                  <PressableScale style={styles.mediaRemove} onPress={() => setMedia((arr) => arr.filter((_, i) => i !== idx))}>
+                    <Ionicons name="close" size={14} color="#fff" />
+                  </PressableScale>
                 </View>
               ))}
-            </ScrollView>
-          ) : (
-            <View style={styles.mediaEmpty}>
-              <Ionicons name="cloud-upload-outline" size={26} color={theme.colors.textMuted} />
-              <Text style={styles.mediaEmptyText}>Durumu fotoğraf veya video ile belgeleyin</Text>
+              {media.length < MAX_HOTEL_ISSUE_ARCHIVE_MEDIA ? (
+                <PressableScale style={styles.mediaAddTile} onPress={() => pickMedia(true)} disabled={pickingMedia}>
+                  <Ionicons name="add" size={28} color={ACCENT} />
+                </PressableScale>
+              ) : null}
             </View>
+          ) : (
+            <PressableScale style={styles.mediaEmpty} onPress={() => pickMedia(true)} disabled={pickingMedia}>
+              <Ionicons name="cloud-upload-outline" size={32} color={ACCENT} />
+              <Text style={styles.mediaEmptyTitle}>Medya ekle</Text>
+              <Text style={styles.mediaEmptyHint}>Dokunarak kamera açın veya galeriden seçin</Text>
+            </PressableScale>
           )}
-        </Section>
+        </HotelIssueArchiveSection>
 
         {uploadStep ? (
           <View style={styles.uploadBanner}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <ActivityIndicator size="small" color={ACCENT} />
             <Text style={styles.uploadStepText}>{uploadStep}</Text>
           </View>
         ) : null}
 
-        <TouchableOpacity
-          style={[styles.saveBtn, !canSubmit && styles.saveBtnDisabled]}
-          onPress={submit}
-          disabled={!canSubmit}
-          activeOpacity={0.85}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="checkmark-circle" size={22} color="#fff" />
-              <Text style={styles.saveBtnText}>Kaydet ve bildir</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <PressableScale style={[styles.saveBtnWrap, !canSubmit && styles.saveBtnDisabled]} onPress={submit} disabled={!canSubmit}>
+          <LinearGradient
+            colors={canSubmit ? ['#6d28d9', '#7c3aed', '#8b5cf6'] : ['#94a3b8', '#94a3b8']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.saveBtn}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="notifications" size={20} color="#fff" />
+                <Text style={styles.saveBtnText}>Kaydet ve personele bildir</Text>
+              </>
+            )}
+          </LinearGradient>
+        </PressableScale>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -363,63 +359,78 @@ export default function HotelIssueArchiveNew() {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: theme.colors.backgroundSecondary },
   scroll: { padding: 16, paddingBottom: 48 },
-  hero: { alignItems: 'center', paddingVertical: 8, paddingHorizontal: 8, marginBottom: 8 },
+  hero: {
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 14,
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
   heroIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: `${theme.colors.primary}18`,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(196,181,253,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
   },
-  heroTitle: { fontSize: 22, fontWeight: '800', color: theme.colors.text, textAlign: 'center' },
-  heroHint: { marginTop: 8, fontSize: 14, lineHeight: 21, color: theme.colors.textMuted, textAlign: 'center', maxWidth: 340 },
-  section: {
-    backgroundColor: theme.colors.background,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
+  heroTitle: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: -0.3 },
+  heroHint: { marginTop: 8, fontSize: 14, lineHeight: 21, color: '#c4b5fd', textAlign: 'center', maxWidth: 300 },
+  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  catTile: {
+    width: '48%',
+    flexGrow: 1,
+    minWidth: '46%',
+    borderRadius: 14,
+    borderWidth: 1.5,
     borderColor: theme.colors.borderLight,
-    ...theme.shadows.sm,
+    padding: 12,
+    backgroundColor: theme.colors.backgroundSecondary,
+    position: 'relative',
   },
-  sectionHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
-  sectionIconWrap: {
+  catIconWrap: {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: `${theme.colors.primary}14`,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 8,
   },
-  sectionHeaderText: { flex: 1 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-  sectionSubtitle: { fontSize: 13, color: theme.colors.textMuted, marginTop: 2, lineHeight: 18 },
-  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  catChip: {
+  catLabel: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 16, fontWeight: '600' },
+  catActiveDot: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
+    gap: 10,
     backgroundColor: theme.colors.backgroundSecondary,
-  },
-  catChipText: { fontSize: 12, color: theme.colors.textSecondary },
-  input: {
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  inputRowSpaced: { marginTop: 10 },
+  inputInner: { flex: 1, fontSize: 16, color: theme.colors.text, paddingVertical: 10 },
+  noteInput: {
+    minHeight: 110,
+    backgroundColor: theme.colors.backgroundSecondary,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight,
     padding: 14,
     fontSize: 16,
     color: theme.colors.text,
-    backgroundColor: theme.colors.backgroundSecondary,
+    lineHeight: 22,
   },
-  inputSpaced: { marginTop: 10 },
-  multiline: { minHeight: 96 },
+  charHint: { marginTop: 6, fontSize: 11, color: theme.colors.textMuted, textAlign: 'right' },
   mediaActions: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   mediaBtn: {
     flex: 1,
@@ -428,42 +439,64 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
     backgroundColor: theme.colors.backgroundSecondary,
   },
-  mediaBtnPrimary: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  mediaBtnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  mediaBtnText: { color: theme.colors.primary, fontWeight: '700', fontSize: 15 },
+  mediaBtnPrimary: { backgroundColor: ACCENT, borderColor: ACCENT },
+  mediaBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  mediaBtnText: { color: ACCENT, fontWeight: '800', fontSize: 15 },
   mediaBtnDisabled: { opacity: 0.6 },
-  mediaStrip: { marginTop: 4 },
-  mediaThumb: { width: 92, height: 92, marginRight: 10, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.colors.backgroundSecondary },
+  mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  mediaTile: { width: '31%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.colors.backgroundSecondary },
   mediaImg: { width: '100%', height: '100%' },
-  videoPlayDot: {
+  videoBadge: {
     position: 'absolute',
-    right: 6,
+    left: 6,
     bottom: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(15,23,42,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaRemove: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(15,23,42,0.65)',
+    backgroundColor: 'rgba(220,38,38,0.9)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mediaRemove: { position: 'absolute', top: 2, right: 2 },
+  mediaAddTile: {
+    width: '31%',
+    aspectRatio: 1,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: `${ACCENT}55`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: `${ACCENT}08`,
+  },
   mediaEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 24,
-    borderRadius: 12,
-    borderWidth: 1,
+    gap: 6,
+    paddingVertical: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: theme.colors.borderLight,
-    backgroundColor: theme.colors.backgroundSecondary,
+    borderColor: `${ACCENT}44`,
+    backgroundColor: `${ACCENT}06`,
   },
-  mediaEmptyText: { fontSize: 13, color: theme.colors.textMuted, textAlign: 'center', paddingHorizontal: 16 },
+  mediaEmptyTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
+  mediaEmptyHint: { fontSize: 12, color: theme.colors.textMuted, textAlign: 'center', paddingHorizontal: 16 },
   uploadBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -472,20 +505,17 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
     borderRadius: 12,
-    backgroundColor: `${theme.colors.primary}10`,
+    backgroundColor: `${ACCENT}10`,
   },
   uploadStepText: { fontSize: 14, color: theme.colors.textSecondary },
+  saveBtnWrap: { marginTop: 4, borderRadius: 16, overflow: 'hidden', ...theme.shadows.md },
+  saveBtnDisabled: { opacity: 0.55 },
   saveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginTop: 8,
-    backgroundColor: theme.colors.primary,
     paddingVertical: 16,
-    borderRadius: 14,
-    ...theme.shadows.md,
   },
-  saveBtnDisabled: { opacity: 0.55 },
   saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 });
