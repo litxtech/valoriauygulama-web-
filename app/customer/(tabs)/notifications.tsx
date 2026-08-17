@@ -27,6 +27,12 @@ import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
 import {
+  isLongNotificationBody,
+  resolveNotificationModuleHref,
+} from '@/lib/notificationListInteraction';
+import { NotificationActorAvatar } from '@/components/notifications/NotificationActorAvatar';
+import { useNotificationActorProfiles } from '@/hooks/useNotificationActorProfiles';
+import {
   getListCacheAgeMs,
   getListCacheRaw,
   hydrateListCache,
@@ -42,8 +48,10 @@ type NotifRow = {
   body: string | null;
   read_at: string | null;
   created_at: string;
-  data?: Record<string, unknown> | null;
+  notification_type?: string | null;
   category?: string | null;
+  created_by?: string | null;
+  data?: Record<string, unknown> | null;
 };
 
 type LoadOpts = { force?: boolean };
@@ -53,6 +61,11 @@ type NotifRowItemProps = {
   title: string;
   body: string;
   locale: string;
+  expanded: boolean;
+  moduleHref: ReturnType<typeof resolveNotificationModuleHref>;
+  actorKind: import('@/lib/notificationActor').NotificationActorKind;
+  actorName: string;
+  actorAvatarUrl: string | null;
   onPress: (item: NotifRow) => void;
   styles: ReturnType<typeof createCustomerNotifStyles>;
 };
@@ -62,29 +75,54 @@ const NotifRowItem = memo(function NotifRowItem({
   title,
   body,
   locale,
+  expanded,
+  moduleHref,
+  actorKind,
+  actorName,
+  actorAvatarUrl,
   onPress,
   styles,
 }: NotifRowItemProps) {
+  const collapsible = isLongNotificationBody(body);
   return (
     <TouchableOpacity
-      style={[styles.row, item.read_at ? styles.rowRead : null]}
+      style={[
+        styles.row,
+        !item.read_at ? styles.rowUnread : null,
+        expanded ? styles.rowExpanded : null,
+        item.read_at ? styles.rowRead : null,
+      ]}
       onPress={() => onPress(item)}
       activeOpacity={0.8}
     >
       <View style={styles.rowContent}>
-        {!item.read_at ? <View style={styles.unreadDot} /> : null}
+        <NotificationActorAvatar
+          kind={actorKind}
+          name={actorName}
+          avatarUrl={actorAvatarUrl}
+          unread={!item.read_at}
+          size={48}
+        />
         <View style={styles.rowTextWrap}>
+          <Text style={styles.rowActorName} numberOfLines={1}>
+            {actorName}
+          </Text>
           <Text style={styles.rowTitle}>{title}</Text>
           {body ? (
-            <Text style={styles.rowBody} numberOfLines={2}>
+            <Text style={styles.rowBody} numberOfLines={expanded ? undefined : 3}>
               {body}
             </Text>
+          ) : null}
+          {collapsible && !expanded ? (
+            <Text style={styles.expandHint}>{i18n.t('staffNotifTapToExpand')}</Text>
+          ) : collapsible && expanded && moduleHref ? (
+            <Text style={styles.expandHint}>{i18n.t('staffNotifTapToOpenModule')}</Text>
           ) : null}
           <Text style={styles.rowTime}>
             {new Date(item.created_at).toLocaleString(locale === 'tr' ? 'tr-TR' : locale)}
           </Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
+        <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} style={styles.rowChevron} />
       </View>
     </TouchableOpacity>
   );
@@ -101,6 +139,7 @@ export default function CustomerNotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
   const listRef = useRef<NotifRow[]>([]);
   const listMaxCreatedRef = useRef<string | null>(null);
@@ -139,6 +178,7 @@ export default function CustomerNotificationsScreen() {
 
   const { refresh: refreshNotificationCount, setUnreadCount, setNotificationsScreenFocused } = useGuestNotificationStore();
   const { displayFor } = useNotificationLocalization(list, { guestAppToken: token, enabled: Boolean(token) });
+  const { actorFor } = useNotificationActorProfiles(list);
 
   const load = useCallback(async (opts?: LoadOpts) => {
     const force = opts?.force === true;
@@ -314,44 +354,38 @@ export default function CustomerNotificationsScreen() {
       setList((prev) => prev.map((item) => (item.id === n.id ? { ...item, read_at: new Date().toISOString() } : item)));
       refreshNotificationCount();
 
-      const data = n.data ?? {};
-      const url = data.url as string | undefined;
-      const postId = data.postId as string | undefined;
-      const conversationId =
-        typeof data.conversationId === 'string'
-          ? data.conversationId.trim()
-          : typeof data.conversation_id === 'string'
-            ? data.conversation_id.trim()
-            : '';
+      const body = (displayFor(n).body ?? n.body ?? '').trim();
+      const expanded = expandedIds.has(n.id);
+      const moduleHref = resolveNotificationModuleHref(n, { isStaff: false });
 
-      if (conversationId && url?.startsWith('/customer/chat/')) {
-        router.push({ pathname: '/customer/chat/[id]', params: { id: conversationId } });
+      if (isLongNotificationBody(body) && !expanded) {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(n.id);
+          return next;
+        });
         return;
       }
-      if (url?.startsWith('/customer/chat/')) {
-        const idFromUrl = url.slice('/customer/chat/'.length).split('/')[0]?.split('?')[0];
-        if (idFromUrl) {
-          router.push({ pathname: '/customer/chat/[id]', params: { id: idFromUrl } });
-          return;
-        }
+
+      if (moduleHref) {
+        router.push(moduleHref as never);
+        return;
       }
 
-      const isInternalPath = url && typeof url === 'string' && url.startsWith('/');
-      if (isInternalPath) {
-        if (postId) {
-          if (url.includes('/customer/feed/[id]')) {
-            router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
-          } else {
-            router.push({ pathname: url, params: { openPostId: postId } });
-          }
+      const data = n.data ?? {};
+      const url = typeof data.url === 'string' ? data.url : undefined;
+      const postId = typeof data.postId === 'string' ? data.postId : undefined;
+      if (url?.startsWith('/')) {
+        if (postId && url.includes('/customer/feed')) {
+          router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
         } else {
-          router.push(url);
+          router.push(url as never);
         }
       } else if (postId) {
         router.push({ pathname: '/customer/feed/[id]', params: { id: postId } });
       }
     },
-    [token, refreshNotificationCount, router]
+    [token, refreshNotificationCount, router, expandedIds, displayFor]
   );
 
   const user = useAuthStore((s) => s.user);
@@ -450,18 +484,24 @@ export default function CustomerNotificationsScreen() {
   const renderItem = useCallback(
     ({ item }: { item: NotifRow }) => {
       const shown = displayFor(item);
+      const actor = actorFor(item);
       return (
         <NotifRowItem
           item={item}
           title={shown.title}
           body={shown.body ?? ''}
           locale={notifLocale}
+          expanded={expandedIds.has(item.id)}
+          moduleHref={resolveNotificationModuleHref(item, { isStaff: false })}
+          actorKind={actor.kind}
+          actorName={actor.name}
+          actorAvatarUrl={actor.avatarUrl}
           onPress={handleNotificationPress}
           styles={styles}
         />
       );
     },
-    [displayFor, handleNotificationPress, notifLocale, styles]
+    [displayFor, actorFor, expandedIds, handleNotificationPress, notifLocale, styles]
   );
 
   return (
@@ -540,14 +580,21 @@ function createCustomerNotifStyles(p: PersonelDesignPalette) {
   noList: { color: p.muted, fontSize: 14 },
   row: {
     backgroundColor: p.cardBg,
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 10,
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: p.cardBorder,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
   },
-  rowRead: { opacity: 0.85 },
-  rowContent: { flexDirection: 'row', alignItems: 'center' },
+  rowUnread: { borderColor: '#93c5fd' },
+  rowExpanded: { borderColor: '#93c5fd' },
+  rowRead: { opacity: 0.88 },
+  rowContent: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   unreadDot: {
     width: 8,
     height: 8,
@@ -555,9 +602,18 @@ function createCustomerNotifStyles(p: PersonelDesignPalette) {
     backgroundColor: theme.colors.primary,
     marginRight: 10,
   },
-  rowTextWrap: { flex: 1 },
+  rowTextWrap: { flex: 1, minWidth: 0 },
+  rowActorName: { fontSize: 12, fontWeight: '700', color: p.muted, marginBottom: 2 },
+  rowChevron: { marginTop: 14 },
   rowTitle: { fontSize: 16, fontWeight: '600', color: p.text, marginBottom: 4 },
   rowBody: { fontSize: 14, color: p.subtext, marginBottom: 8 },
   rowTime: { fontSize: 12, color: p.muted },
+  expandHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.primary,
+    marginTop: 2,
+    marginBottom: 4,
+  },
   });
 }

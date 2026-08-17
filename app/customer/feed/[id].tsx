@@ -367,7 +367,7 @@ export default function CustomerFeedPostDetail() {
             body: t('notifNewLikeBody', { name: displayName }),
             category: 'staff',
             notificationType: 'feed_like',
-            data: { url: '/staff', postId: post.id },
+            data: { url: '/staff', postId: post.id, guestId, senderName: displayName },
           });
         } else if (post.guest_id && post.guest_id !== guestId) {
           void sendNotification({
@@ -376,7 +376,7 @@ export default function CustomerFeedPostDetail() {
             body: t('notifNewLikeBody', { name: displayName }),
             category: 'guest',
             notificationType: 'feed_like',
-            data: { url: '/customer', postId: post.id },
+            data: { url: '/customer', postId: post.id, guestId, senderName: displayName },
           });
         }
       }

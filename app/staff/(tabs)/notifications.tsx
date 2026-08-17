@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+﻿import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   Alert,
   ActivityIndicator,
   Linking,
-  Modal,
   type ListRenderItem,
 } from 'react-native';
 import { useFocusEffect, usePathname, useRouter } from 'expo-router';
@@ -20,17 +19,9 @@ import { getExpoPushTokenAsync, savePushTokenForStaff, isExpoGo } from '@/lib/no
 import ExpoNotifications from '@/lib/expoNotificationsModule';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffNotificationStore } from '@/stores/staffNotificationStore';
-import type { StaffPersonnelWarningSeverity } from '@/lib/staffPersonnelWarnings';
-import {
-  isStaffMealMenuDailyNotification,
-  staffMealMenuNotificationHref,
-} from '@/lib/staffMealMenuNotification';
-import { isSmartOpsNotificationType } from '@/lib/smartOps';
 import { usePersonelDesign } from '@/hooks/usePersonelDesign';
 import type { PersonelDesignPalette } from '@/constants/personelDesignSystem';
 import {
-  acknowledgeNotificationEvent,
-  eventIdFromNotificationData,
   isEmergencyNotificationPayload,
   markNotificationEventOpenedFromPayload,
 } from '@/lib/notificationEventLog';
@@ -44,7 +35,10 @@ import {
   isStaffAssignmentNotification,
   type StaffAssignmentBrief,
 } from '@/lib/staffAssignmentNotification';
-import { resolveNotificationHref } from '@/lib/notificationNavigation';
+import {
+  isLongNotificationBody,
+  resolveNotificationModuleHref,
+} from '@/lib/notificationListInteraction';
 import { useNotificationLocalization } from '@/hooks/useNotificationLocalization';
 import { breakfastBriefingFromNotification } from '@/lib/breakfastMorningBriefing';
 import { BreakfastBriefingNotifCard } from '@/components/breakfast/BreakfastBriefingNotifCard';
@@ -59,17 +53,13 @@ import {
   staffEmergencyAlertFromData,
 } from '@/lib/staffEmergency';
 import {
-  buildAnnouncementActionHref,
-  hasStaffNotificationAction,
-  parseStaffNotificationAction,
-} from '@/lib/staffNotificationActions';
-import { StaffAnnouncementActionPanel } from '@/components/staff/StaffAnnouncementActionPanel';
-import {
   getListCacheAgeMs,
   getListCacheRaw,
   hydrateListCache,
   setListCache,
 } from '@/lib/listCache';
+import { NotificationActorAvatar } from '@/components/notifications/NotificationActorAvatar';
+import { useNotificationActorProfiles } from '@/hooks/useNotificationActorProfiles';
 
 const NOTIF_LIST_TTL_MS = 60_000;
 
@@ -98,73 +88,16 @@ type NotifRow = {
   notification_type: string | null;
   read_at: string | null;
   created_at: string;
-  data?: {
-    postId?: string;
-    url?: string;
-    missingItemId?: string;
-    missingItemReportId?: string;
-    area?: string;
-    kind?: string;
-    note?: string;
-    conversationId?: string;
-    warningId?: string;
-    screen?: string;
-    mealDate?: string;
-    taskInstanceId?: string;
-    lostFoundItemId?: string;
-    subjectStaffId?: string;
-    subject_staff_id?: string;
-    breakfastGuestCount?: number;
-    hotelGuestCount?: number;
-    recordDate?: string;
-    briefingId?: string;
-    assignmentId?: string;
-  } | null;
+  created_by?: string | null;
+  data?: Record<string, unknown> | null;
 };
 
-type MissingItemDetail = {
-  id: string;
-  title: string;
-  description: string | null;
-  priority: 'low' | 'medium' | 'high';
-  status: 'open' | 'resolved';
-  created_at: string;
-  resolved_at: string | null;
-  reminder_count: number;
-  creator?: { full_name: string | null } | null;
-  resolver?: { full_name: string | null } | null;
-};
-
-type MissingItemReportDetail = {
-  id: string;
-  area: 'kitchen' | 'hotel';
-  note: string | null;
-  priority: 'low' | 'medium' | 'high';
-  status: 'open' | 'resolved';
-  item_count: number;
-  created_at: string;
-  resolved_at: string | null;
-  creator?: { full_name: string | null } | null;
-  resolver?: { full_name: string | null } | null;
-  items?: { title: string }[];
-};
-
-type PersonnelWarningDetail = {
-  id: string;
-  severity: StaffPersonnelWarningSeverity;
-  subject_line: string | null;
-  body: string;
-  created_at: string;
-  acknowledged_at: string | null;
-  acknowledgement_note: string | null;
-  image_urls: unknown;
-};
-
-function warningIdFromNotifData(data: Record<string, unknown> | NotifRow['data'] | null | undefined): string {
-  if (!data || typeof data !== 'object') return '';
-  const o = data as Record<string, unknown>;
-  const w = o.warningId ?? o.warning_id;
-  return typeof w === 'string' ? w.trim() : '';
+function hasRichNotificationCard(n: NotifRow): boolean {
+  return (
+    isBreakfastBriefingNotification(n) ||
+    isStaffEmergencyAlertNotification(n.notification_type) ||
+    isCounterpartyAgreementNotification(n.notification_type)
+  );
 }
 
 function createStaffNotifStyles(p: PersonelDesignPalette) {
@@ -220,13 +153,26 @@ function createStaffNotifStyles(p: PersonelDesignPalette) {
   empty: { color: p.muted, fontSize: 14 },
   row: {
     backgroundColor: p.cardBg,
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 10,
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: p.cardBorder,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 3,
   },
-  rowRead: { opacity: 0.85 },
+  rowUnread: {
+    borderColor: '#93c5fd',
+    backgroundColor: p.cardBg,
+  },
+  rowRead: { opacity: 0.88 },
+  rowContent: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  rowTextWrap: { flex: 1, minWidth: 0 },
+  rowActorName: { fontSize: 12, fontWeight: '700', color: p.muted, marginBottom: 2 },
+  rowChevron: { marginTop: 14 },
   rowCategory: { fontSize: 12, color: '#b8860b', fontWeight: '600', marginBottom: 4 },
   briefingTypePill: {
     flexDirection: 'row',
@@ -259,78 +205,16 @@ function createStaffNotifStyles(p: PersonelDesignPalette) {
   rowTitle: { fontSize: 16, fontWeight: '600', color: p.text, marginBottom: 4 },
   rowBody: { fontSize: 14, color: p.subtext, marginBottom: 8 },
   rowTime: { fontSize: 12, color: p.muted },
-  detailBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'center', padding: 20 },
-  detailCard: {
-    backgroundColor: p.cardBg,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: p.cardBorder,
-    padding: 16,
+  expandHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+    marginTop: 2,
+    marginBottom: 4,
   },
-  detailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 },
-  detailTitle: { flex: 1, fontSize: 17, fontWeight: '800', color: p.text },
-  detailBody: { fontSize: 14, lineHeight: 20, color: p.subtext, marginBottom: 8 },
-  detailMeta: { fontSize: 12, color: p.muted, marginBottom: 4 },
-  detailBox: {
-    marginTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: p.cardBorder,
-    paddingTop: 10,
-    gap: 4,
+  rowExpanded: {
+    borderColor: '#93c5fd',
   },
-  detailSectionTitle: { marginTop: 6, marginBottom: 2, fontSize: 13, fontWeight: '700', color: p.text },
-  detailLine: { fontSize: 13, color: p.subtext },
-  detailNote: { fontSize: 13, color: p.text, lineHeight: 20 },
-  detailWarn: { marginTop: 10, fontSize: 13, color: '#b45309' },
-  warningDetailBtn: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#991b1b',
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  warningDetailBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  emergencyBanner: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-  },
-  emergencyBannerText: { color: '#991b1b', fontSize: 14, fontWeight: '600', lineHeight: 20 },
-  emergencyAckBtn: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#dc2626',
-    paddingVertical: 14,
-    borderRadius: 10,
-  },
-  emergencyAckBtnDone: { backgroundColor: '#16a34a' },
-  emergencyAckBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  detailLinkBtn: {
-    marginTop: 12,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#2b6cb0',
-  },
-  detailLinkBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  detailLinkBtnSecondary: {
-    marginTop: 8,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2b6cb0',
-  },
-  detailLinkBtnSecondaryText: { color: '#2b6cb0', fontWeight: '700', fontSize: 14 },
   taskCompleteBtn: {
     marginTop: 10,
     flexDirection: 'row',
@@ -342,25 +226,6 @@ function createStaffNotifStyles(p: PersonelDesignPalette) {
     backgroundColor: '#16a34a',
   },
   taskCompleteBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  taskCompleteDetailBtn: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#16a34a',
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  taskCompleteDetailBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
-  taskCompletedBadge: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-  },
-  taskCompletedBadgeText: { color: '#16a34a', fontWeight: '700', fontSize: 14 },
   });
 }
 
@@ -372,7 +237,6 @@ export default function StaffNotificationsScreen() {
   const fmtDate = (iso: string) => new Date(iso).toLocaleString(dateLoc);
   const router = useRouter();
   const pathname = usePathname();
-  const missingItemsBase = pathname?.startsWith('/admin') ? '/admin/missing-items' : '/staff/missing-items';
   const { staff } = useAuthStore();
   const scrollRef = useRef<FlatList<NotifRow>>(null);
   const listRef = useRef<NotifRow[]>([]);
@@ -383,17 +247,9 @@ export default function StaffNotificationsScreen() {
   const [list, setList] = useState<NotifRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingAll, setDeletingAll] = useState(false);
-  const [detailVisible, setDetailVisible] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedNotification, setSelectedNotification] = useState<NotifRow | null>(null);
-  const [missingItemDetail, setMissingItemDetail] = useState<MissingItemDetail | null>(null);
-  const [missingReportDetail, setMissingReportDetail] = useState<MissingItemReportDetail | null>(null);
-  const [personnelWarningDetail, setPersonnelWarningDetail] = useState<PersonnelWarningDetail | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [pushPerm, setPushPerm] = useState<'granted' | 'denied' | 'undetermined' | 'unknown'>('unknown');
   const [enablingPush, setEnablingPush] = useState(false);
-  const [emergencyAckSubmitting, setEmergencyAckSubmitting] = useState(false);
-  const [emergencyAcknowledged, setEmergencyAcknowledged] = useState(false);
-  const [assignmentDetail, setAssignmentDetail] = useState<StaffAssignmentBrief | null>(null);
   const [completeTarget, setCompleteTarget] = useState<StaffAssignmentBrief | null>(null);
   const [completing, setCompleting] = useState(false);
   const { refresh: refreshBadge, setUnreadCount, setNotificationsScreenFocused } = useStaffNotificationStore();
@@ -401,6 +257,7 @@ export default function StaffNotificationsScreen() {
     staffPersist: Boolean(staff?.id),
     enabled: Boolean(staff?.id),
   });
+  const { actorFor } = useNotificationActorProfiles(list);
 
   useEffect(() => {
     listRef.current = list;
@@ -485,7 +342,7 @@ export default function StaffNotificationsScreen() {
     }
     const { data } = await supabase
       .from('notifications')
-      .select('id, title, body, category, notification_type, read_at, created_at, data')
+      .select('id, title, body, category, notification_type, read_at, created_at, created_by, data')
       .eq('staff_id', staff.id)
       .order('created_at', { ascending: false })
       .limit(100);
@@ -501,7 +358,7 @@ export default function StaffNotificationsScreen() {
     }
   }, [staff?.id, refreshPushPerm]);
 
-  // Yeni bildirim gelince listeyi güncelle (beğeni/yorum push’u anında görünsün)
+  // Yeni bildirim gelince listeyi güncelle (beğeni/yorum push'u anında görünsün)
   useEffect(() => {
     if (!staff?.id) return;
     const channel = supabase
@@ -590,126 +447,6 @@ export default function StaffNotificationsScreen() {
   const isMissingNotification = (n: NotifRow) =>
     (n.notification_type ?? '').startsWith('missing_item_') || (n.data?.kind ?? '').startsWith('missing_item_');
 
-  const formatMissingPriority = (priority?: MissingItemDetail['priority']) => {
-    if (!priority) return '-';
-    if (priority === 'high') return t('missingItemsPriorityHigh');
-    if (priority === 'medium') return t('missingItemsPriorityMedium');
-    return t('missingItemsPriorityLow');
-  };
-
-  const formatMissingStatus = (status?: MissingItemDetail['status']) => {
-    if (!status) return '-';
-    return status === 'resolved' ? t('staffNotifMissingStatusResolved') : t('staffNotifMissingStatusOpen');
-  };
-
-  const fetchMissingItemDetail = async (missingItemId: string) => {
-    setDetailLoading(true);
-    const { data, error } = await supabase
-      .from('missing_items')
-      .select(
-        `
-        id,
-        title,
-        description,
-        priority,
-        status,
-        created_at,
-        resolved_at,
-        reminder_count,
-        creator:staff!missing_items_created_by_staff_id_fkey(full_name),
-        resolver:staff!missing_items_resolved_by_staff_id_fkey(full_name)
-      `
-      )
-      .eq('id', missingItemId)
-      .maybeSingle();
-    setDetailLoading(false);
-    if (error) {
-      setMissingItemDetail(null);
-      return;
-    }
-    setMissingItemDetail((data as MissingItemDetail | null) ?? null);
-  };
-
-  const fetchMissingReportDetail = async (reportId: string) => {
-    setDetailLoading(true);
-    const { data, error } = await supabase
-      .from('missing_item_reports')
-      .select(
-        `
-        id,
-        area,
-        note,
-        priority,
-        status,
-        item_count,
-        created_at,
-        resolved_at,
-        creator:staff!missing_item_reports_created_by_staff_id_fkey(full_name),
-        resolver:staff!missing_item_reports_resolved_by_staff_id_fkey(full_name),
-        items:missing_items(title)
-      `
-      )
-      .eq('id', reportId)
-      .maybeSingle();
-    setDetailLoading(false);
-    if (error) {
-      setMissingReportDetail(null);
-      return;
-    }
-    setMissingReportDetail((data as MissingItemReportDetail | null) ?? null);
-  };
-
-  const openNotificationDetail = async (n: NotifRow) => {
-    setSelectedNotification(n);
-    setMissingItemDetail(null);
-    setMissingReportDetail(null);
-    setPersonnelWarningDetail(null);
-    setAssignmentDetail(null);
-    setDetailVisible(true);
-    const reportId =
-      typeof n.data?.missingItemReportId === 'string' ? n.data.missingItemReportId.trim() : '';
-    if (reportId) {
-      await fetchMissingReportDetail(reportId);
-    } else if (n.data?.missingItemId) {
-      await fetchMissingItemDetail(n.data.missingItemId);
-    } else {
-      setDetailLoading(false);
-    }
-  };
-
-  const fetchPersonnelWarningDetail = async (warningId: string) => {
-    if (!staff?.id || !warningId) {
-      setPersonnelWarningDetail(null);
-      setDetailLoading(false);
-      return;
-    }
-    setDetailLoading(true);
-    const { data, error } = await supabase
-      .from('staff_personnel_warnings')
-      .select('id, severity, subject_line, body, created_at, acknowledged_at, acknowledgement_note, image_urls')
-      .eq('id', warningId)
-      .eq('subject_staff_id', staff.id)
-      .maybeSingle();
-    setDetailLoading(false);
-    if (error || !data) {
-      setPersonnelWarningDetail(null);
-      return;
-    }
-    setPersonnelWarningDetail(data as PersonnelWarningDetail);
-  };
-
-  const loadAssignmentForNotification = async (assignmentId: string) => {
-    if (!staff?.id) {
-      setAssignmentDetail(null);
-      setDetailLoading(false);
-      return;
-    }
-    setDetailLoading(true);
-    const row = await fetchMyStaffAssignmentBrief(assignmentId, staff.id);
-    setAssignmentDetail(row);
-    setDetailLoading(false);
-  };
-
   const openTaskCompleteFromNotif = async (n: NotifRow) => {
     if (!staff?.id) return;
     if (!n.read_at) markRead(n.id);
@@ -753,25 +490,7 @@ export default function StaffNotificationsScreen() {
       completedByStaffName: staff.full_name ?? '',
     });
     setCompleteTarget(null);
-    setAssignmentDetail((prev) =>
-      prev?.id === target.id ? { ...prev, status: 'completed' } : prev
-    );
     Alert.alert(t('staffTasks_savedTitle'), t('staffTasks_taskCompletedBody'));
-  };
-
-  const openPersonnelWarningsFromDetail = () => {
-    const wid =
-      personnelWarningDetail?.id?.trim() ||
-      (selectedNotification ? warningIdFromNotifData(selectedNotification.data) : '');
-    setDetailVisible(false);
-    setSelectedNotification(null);
-    setMissingItemDetail(null);
-    setPersonnelWarningDetail(null);
-    if (wid) {
-      router.push({ pathname: '/staff/warnings', params: { focus: wid } });
-    } else {
-      router.push('/staff/warnings');
-    }
   };
 
   const staffEmergencySnapshot = (n: NotifRow) =>
@@ -797,205 +516,66 @@ export default function StaffNotificationsScreen() {
       displayFor(n).body ?? n.body
     );
 
-  const onNotificationPress = (n: NotifRow) => {
-    if (!n.read_at) markRead(n.id);
-    if (
-      isEmergencyNotificationPayload(
-        (n.data ?? {}) as Record<string, unknown>,
-        n.notification_type
-      )
-    ) {
-      setSelectedNotification(n);
-      setMissingItemDetail(null);
-      setMissingReportDetail(null);
-      setPersonnelWarningDetail(null);
-      setEmergencyAcknowledged(false);
-      setDetailVisible(true);
-      void markNotificationEventOpenedFromPayload((n.data ?? {}) as Record<string, unknown>);
-      return;
-    }
-    if (n.notification_type === 'staff_personnel_warning') {
-      setSelectedNotification(n);
-      setMissingItemDetail(null);
-      setPersonnelWarningDetail(null);
-      setDetailVisible(true);
-      setDetailLoading(true);
-      const wid = warningIdFromNotifData(n.data);
-      if (wid) {
-        void fetchPersonnelWarningDetail(wid);
-      } else {
-        setDetailLoading(false);
+  const navCtx = useMemo(
+    () => ({
+      pathnameIsAdmin: !!pathname?.startsWith('/admin'),
+      isStaff: true as const,
+    }),
+    [pathname]
+  );
+
+  const navigateNotificationModule = useCallback(
+    (n: NotifRow) => {
+      const payload = (n.data ?? {}) as Record<string, unknown>;
+      if (isEmergencyNotificationPayload(payload, n.notification_type)) {
+        void markNotificationEventOpenedFromPayload(payload);
       }
-      return;
-    }
-    if (n.notification_type === 'staff_personnel_warning_ack') {
-      const raw = n.data as Record<string, unknown> | undefined;
-      const sid =
-        typeof raw?.subjectStaffId === 'string'
-          ? raw.subjectStaffId.trim()
-          : typeof raw?.subject_staff_id === 'string'
-            ? raw.subject_staff_id.trim()
-            : '';
-      if (sid) {
-        router.push({ pathname: '/admin/staff/[id]', params: { id: sid } } as never);
-      }
-      return;
-    }
-    if (isStaffMealMenuDailyNotification((n.data ?? {}) as Record<string, unknown>)) {
-      router.push(staffMealMenuNotificationHref((n.data ?? {}) as Record<string, unknown>));
-      return;
-    }
-    if (isBreakfastBriefingNotification(n)) {
-      router.push('/staff/breakfast-briefing' as never);
-      return;
-    }
-    if (
-      n.notification_type === 'staff_feature_intro' ||
-      (n.notification_type === 'staff_board_announcement' && hasStaffNotificationAction(n.data))
-    ) {
-      const action = parseStaffNotificationAction((n.data ?? {}) as Record<string, unknown>);
-      if (action?.videoUrl) {
-        router.push(buildAnnouncementActionHref((n.data ?? {}) as Record<string, unknown>));
-        return;
-      }
-      if (action?.openScreen) {
-        router.push(action.openScreen as never);
-        return;
-      }
-    }
-    if (isStaffAssignmentNotification(n.notification_type, n.data)) {
-      setSelectedNotification(n);
-      setMissingItemDetail(null);
-      setMissingReportDetail(null);
-      setPersonnelWarningDetail(null);
-      setAssignmentDetail(null);
-      setDetailVisible(true);
-      const assignmentId = assignmentIdFromNotificationData(n.data);
-      if (assignmentId) {
-        void loadAssignmentForNotification(assignmentId);
-      } else {
-        setDetailLoading(false);
-      }
-      return;
-    }
-    if (isSmartOpsNotificationType(n.notification_type)) {
-      const taskId =
-        typeof n.data?.taskInstanceId === 'string'
-          ? n.data.taskInstanceId.trim()
-          : typeof n.data?.url === 'string'
-            ? n.data.url.replace(/.*\/staff\/smart-ops\//, '').split(/[?#]/)[0]
-            : '';
-      if (taskId) {
-        router.push(`/staff/smart-ops/${taskId}` as never);
-        return;
-      }
-      router.push('/staff/operations');
-      return;
-    }
-    if (n.data?.postId) {
-      router.push({ pathname: '/staff/feed', params: { openPostId: n.data.postId } });
-      return;
-    }
-    const cid = typeof n.data?.conversationId === 'string' ? n.data.conversationId.trim() : '';
-    if (cid) {
-      const u = n.data?.url;
-      if (typeof u === 'string' && u.includes('/admin/messages/chat/')) {
-        const m = u.match(/\/admin\/messages\/chat\/([^/?#]+)/);
-        if (m?.[1]) {
-          router.push({ pathname: '/admin/messages/chat/[id]', params: { id: m[1] } });
-          return;
-        }
-      }
-      router.push({ pathname: '/staff/chat/[id]', params: { id: cid } });
-      return;
-    }
-    const lostFoundId =
-      typeof n.data?.lostFoundItemId === 'string' ? n.data.lostFoundItemId.trim() : '';
-    const lostFoundBase = pathname?.startsWith('/admin') ? '/admin/lost-found' : '/staff/lost-found';
-    if (lostFoundId) {
-      router.push(`${lostFoundBase}/${lostFoundId}` as never);
-      return;
-    }
-    const missingUrl = typeof n.data?.url === 'string' ? n.data.url : '';
-    const lostFoundUrlMatch = missingUrl.match(/\/lost-found\/([0-9a-f-]{36})/i);
-    if (lostFoundUrlMatch?.[1]) {
-      router.push(`${lostFoundBase}/${lostFoundUrlMatch[1]}` as never);
-      return;
-    }
-    if (isMissingNotification(n)) {
-      const href = resolveNotificationHref(
-        {
-          ...((n.data ?? {}) as Record<string, unknown>),
-          notificationType: n.notification_type ?? undefined,
-          notification_type: n.notification_type ?? undefined,
-        },
-        {
-          pathnameIsAdmin: !!pathname?.startsWith('/admin'),
-          isStaff: true,
-        }
-      );
-      if (href && href !== '/staff/notifications' && href !== '/admin/notifications') {
+      const href = resolveNotificationModuleHref(n, navCtx);
+      if (href) {
         router.push(href as never);
+      }
+    },
+    [navCtx, router]
+  );
+
+  const shouldExpandBeforeNavigate = useCallback((n: NotifRow, body: string | null, expanded: boolean) => {
+    if (expanded) return false;
+    if (hasRichNotificationCard(n)) return true;
+    return isLongNotificationBody(body);
+  }, []);
+
+  const onNotificationPress = useCallback(
+    (n: NotifRow) => {
+      if (!n.read_at) markRead(n.id);
+
+      const body = displayBody(n);
+      const expanded = expandedIds.has(n.id);
+      const moduleHref = resolveNotificationModuleHref(n, navCtx);
+
+      if (shouldExpandBeforeNavigate(n, body, expanded)) {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(n.id);
+          return next;
+        });
         return;
       }
-      openNotificationDetail(n);
-      return;
-    }
 
-    // Bas-konuş / tip+url ile bilinen derin linkler — detay modalına düşmesin
-    {
-      const href = resolveNotificationHref(
-        {
-          ...((n.data ?? {}) as Record<string, unknown>),
-          notificationType: n.notification_type ?? undefined,
-          notification_type: n.notification_type ?? undefined,
-        },
-        {
-          pathnameIsAdmin: !!pathname?.startsWith('/admin'),
-          isStaff: true,
-        }
-      );
-      const hrefStr = typeof href === 'string' ? href : href?.pathname ?? '';
-      if (
-        hrefStr === '/staff/ptt' ||
-        hrefStr.startsWith('/staff/ptt') ||
-        n.notification_type === 'staff_ptt_talk' ||
-        n.notification_type === 'staff_ptt'
-      ) {
-        router.push(
-          (typeof href === 'object' && href
-            ? href
-            : {
-                pathname: '/staff/ptt',
-                params: { autoJoin: '1' },
-              }) as never
-        );
+      if (moduleHref) {
+        navigateNotificationModule(n);
         return;
       }
-      if (
-        href &&
-        href !== '/staff/notifications' &&
-        href !== '/admin/notifications' &&
-        hrefStr.startsWith('/') &&
-        !hrefStr.includes('notifications')
-      ) {
-        // Güvenli derin linkler (cleaning-plan, payment-board, …)
-        const deep =
-          hrefStr === '/staff/cleaning-plan' ||
-          hrefStr === '/staff/payment-board' ||
-          hrefStr === '/staff/checkout-board' ||
-          hrefStr === '/staff/tasks' ||
-          hrefStr.startsWith('/staff/kbs') ||
-          hrefStr.startsWith('/staff/expenses');
-        if (deep) {
-          router.push(href as never);
-          return;
-        }
-      }
-    }
 
-    openNotificationDetail(n);
-  };
+      if (!expanded && body && isLongNotificationBody(body)) {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(n.id);
+          return next;
+        });
+      }
+    },
+    [displayBody, expandedIds, markRead, navCtx, navigateNotificationModule, shouldExpandBeforeNavigate]
+  );
 
   const deleteAllNotifications = () => {
     if (!staff?.id || list.length === 0) return;
@@ -1038,6 +618,10 @@ export default function StaffNotificationsScreen() {
 
   const renderItem: ListRenderItem<NotifRow> = ({ item: n }) => {
     const isTaskNotif = isStaffAssignmentNotification(n.notification_type, n.data);
+    const expanded = expandedIds.has(n.id);
+    const bodyText = displayBody(n);
+    const collapsible = hasRichNotificationCard(n) || isLongNotificationBody(bodyText);
+    const moduleHref = resolveNotificationModuleHref(n, navCtx);
     const briefingSnap = isBreakfastBriefingNotification(n) ? breakfastBriefingSnapshot(n) : null;
     const emergencySnap = isStaffEmergencyAlertNotification(n.notification_type)
       ? staffEmergencySnapshot(n)
@@ -1045,40 +629,69 @@ export default function StaffNotificationsScreen() {
     const agreementSnap = isCounterpartyAgreementNotification(n.notification_type)
       ? counterpartyAgreementNotifFromData((n.data ?? {}) as Record<string, unknown>)
       : null;
+    const actor = actorFor(n);
     return (
-      <View style={[styles.row, n.read_at ? styles.rowRead : null]}>
+      <View
+        style={[
+          styles.row,
+          !n.read_at ? styles.rowUnread : null,
+          expanded ? styles.rowExpanded : null,
+          n.read_at ? styles.rowRead : null,
+        ]}
+      >
         <TouchableOpacity onPress={() => onNotificationPress(n)} activeOpacity={0.8}>
-          {isBreakfastBriefingNotification(n) ? (
-            <View style={styles.briefingTypePill}>
-              <Ionicons name="cafe-outline" size={12} color="#b45309" />
-              <Text style={styles.briefingTypePillText}>KAHVALTI BRİFİNGİ</Text>
+          <View style={styles.rowContent}>
+            <NotificationActorAvatar
+              kind={actor.kind}
+              name={actor.name}
+              avatarUrl={actor.avatarUrl}
+              unread={!n.read_at}
+              size={48}
+            />
+            <View style={styles.rowTextWrap}>
+              <Text style={styles.rowActorName} numberOfLines={1}>
+                {actor.name}
+                {actor.subtitle ? ` · ${actor.subtitle}` : ''}
+              </Text>
+              {isBreakfastBriefingNotification(n) ? (
+                <View style={styles.briefingTypePill}>
+                  <Ionicons name="cafe-outline" size={12} color="#b45309" />
+                  <Text style={styles.briefingTypePillText}>KAHVALTI BRİFİNGİ</Text>
+                </View>
+              ) : emergencySnap ? (
+                <View style={styles.emergencyTypePill}>
+                  <Ionicons name="warning" size={12} color="#dc2626" />
+                  <Text style={styles.emergencyTypePillText}>{t('staffNotifCatEmergency').toUpperCase()}</Text>
+                </View>
+              ) : agreementSnap ? (
+                <View style={styles.briefingTypePill}>
+                  <Ionicons name="wallet-outline" size={12} color="#7c3aed" />
+                  <Text style={[styles.briefingTypePillText, { color: '#5b21b6' }]}>BORÇ / ALACAK</Text>
+                </View>
+              ) : categoryLabel(n.category) ? (
+                <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
+              ) : null}
+              <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
+              {briefingSnap ? (
+                <BreakfastBriefingNotifCard snapshot={briefingSnap} compact={!expanded} />
+              ) : emergencySnap ? (
+                <StaffEmergencyNotifCard payload={emergencySnap} compact={!expanded} />
+              ) : agreementSnap ? (
+                <CounterpartyAgreementNotifCard snapshot={agreementSnap} compact={!expanded} />
+              ) : bodyText ? (
+                <Text style={styles.rowBody} numberOfLines={expanded ? undefined : isMissingNotification(n) ? 6 : 3}>
+                  {bodyText}
+                </Text>
+              ) : null}
+              {collapsible && !expanded ? (
+                <Text style={styles.expandHint}>{t('staffNotifTapToExpand')}</Text>
+              ) : collapsible && expanded && moduleHref ? (
+                <Text style={styles.expandHint}>{t('staffNotifTapToOpenModule')}</Text>
+              ) : null}
+              <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
             </View>
-          ) : emergencySnap ? (
-            <View style={styles.emergencyTypePill}>
-              <Ionicons name="warning" size={12} color="#dc2626" />
-              <Text style={styles.emergencyTypePillText}>{t('staffNotifCatEmergency').toUpperCase()}</Text>
-            </View>
-          ) : agreementSnap ? (
-            <View style={styles.briefingTypePill}>
-              <Ionicons name="wallet-outline" size={12} color="#7c3aed" />
-              <Text style={[styles.briefingTypePillText, { color: '#5b21b6' }]}>BORÇ / ALACAK</Text>
-            </View>
-          ) : categoryLabel(n.category) ? (
-            <Text style={styles.rowCategory}>{categoryLabel(n.category)}</Text>
-          ) : null}
-          <Text style={styles.rowTitle}>{displayTitle(n)}</Text>
-          {briefingSnap ? (
-            <BreakfastBriefingNotifCard snapshot={briefingSnap} compact />
-          ) : emergencySnap ? (
-            <StaffEmergencyNotifCard payload={emergencySnap} compact />
-          ) : agreementSnap ? (
-            <CounterpartyAgreementNotifCard snapshot={agreementSnap} compact />
-          ) : displayBody(n) ? (
-            <Text style={styles.rowBody} numberOfLines={isMissingNotification(n) ? 8 : 4}>
-              {displayBody(n)}
-            </Text>
-          ) : null}
-          <Text style={styles.rowTime}>{fmtDate(n.created_at)}</Text>
+            <Ionicons name="chevron-forward" size={18} color={palette.muted} style={styles.rowChevron} />
+          </View>
         </TouchableOpacity>
         {isTaskNotif ? (
           <TouchableOpacity
@@ -1178,338 +791,6 @@ export default function StaffNotificationsScreen() {
         windowSize={7}
         removeClippedSubviews
       />
-      <Modal
-        visible={detailVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setDetailVisible(false);
-          setPersonnelWarningDetail(null);
-          setEmergencyAcknowledged(false);
-        }}
-      >
-        <View style={styles.detailBackdrop}>
-          <View style={styles.detailCard}>
-            <View style={styles.detailHeader}>
-              <Text style={styles.detailTitle}>
-                {selectedNotification ? displayTitle(selectedNotification) : t('staffNotifDetailDefault')}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setDetailVisible(false);
-                  setPersonnelWarningDetail(null);
-                }}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={20} color="#718096" />
-              </TouchableOpacity>
-            </View>
-            {!!selectedNotification?.body &&
-              !isBreakfastBriefingNotification(selectedNotification) &&
-              !isStaffEmergencyAlertNotification(selectedNotification.notification_type) &&
-              !isCounterpartyAgreementNotification(selectedNotification.notification_type) &&
-              !(
-                selectedNotification.notification_type === 'staff_personnel_warning' &&
-                personnelWarningDetail
-              ) && (
-                <Text style={styles.detailBody}>{displayFor(selectedNotification).body}</Text>
-              )}
-            {selectedNotification && isStaffEmergencyAlertNotification(selectedNotification.notification_type) ? (
-              <StaffEmergencyNotifCard payload={staffEmergencySnapshot(selectedNotification)} />
-            ) : null}
-            {selectedNotification && isCounterpartyAgreementNotification(selectedNotification.notification_type) ? (
-              (() => {
-                const snap = counterpartyAgreementNotifFromData(
-                  (selectedNotification.data ?? {}) as Record<string, unknown>
-                );
-                return snap ? <CounterpartyAgreementNotifCard snapshot={snap} /> : null;
-              })()
-            ) : null}
-            {selectedNotification && isBreakfastBriefingNotification(selectedNotification) ? (
-              (() => {
-                const snap = breakfastBriefingSnapshot(selectedNotification);
-                return snap ? (
-                  <BreakfastBriefingNotifCard snapshot={snap} />
-                ) : (
-                  <Text style={styles.detailBody}>{displayFor(selectedNotification).body}</Text>
-                );
-              })()
-            ) : null}
-            {!!selectedNotification && (
-              <Text style={styles.detailMeta}>
-                {t('staffNotifDate', { date: fmtDate(selectedNotification.created_at) })}
-              </Text>
-            )}
-            {!!selectedNotification && categoryLabel(selectedNotification.category) ? (
-              <Text style={styles.detailMeta}>
-                {t('staffNotifCategory', { category: categoryLabel(selectedNotification.category) })}
-              </Text>
-            ) : null}
-
-            {detailLoading ? (
-              <ActivityIndicator size="small" color="#2b6cb0" style={{ marginTop: 10 }} />
-            ) : missingReportDetail ? (
-              <View style={styles.detailBox}>
-                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingReport')}</Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifArea', {
-                    area:
-                      missingReportDetail.area === 'kitchen'
-                        ? t('missArea_kitchen_title')
-                        : t('missArea_hotel_title'),
-                  })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifItemCount', { count: missingReportDetail.item_count })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifStatus', { status: formatMissingStatus(missingReportDetail.status) })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifPriority', { priority: formatMissingPriority(missingReportDetail.priority) })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifAddedBy', { name: missingReportDetail.creator?.full_name || '—' })}
-                </Text>
-                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingItems')}</Text>
-                {(missingReportDetail.items ?? []).map((it, idx) => (
-                  <Text key={idx} style={styles.detailLine}>
-                    • {it.title}
-                  </Text>
-                ))}
-                {missingReportDetail.note?.trim() ? (
-                  <>
-                    <Text style={styles.detailSectionTitle}>{t('missingItemsSectionNote')}</Text>
-                    <Text style={styles.detailNote}>{missingReportDetail.note}</Text>
-                  </>
-                ) : null}
-                <TouchableOpacity
-                  style={styles.detailLinkBtn}
-                  onPress={() => {
-                    setDetailVisible(false);
-                    router.push(`${missingItemsBase}/report/${missingReportDetail.id}` as never);
-                  }}
-                >
-                  <Text style={styles.detailLinkBtnText}>{t('staffNotifOpenFullDetail')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.detailLinkBtnSecondary}
-                  onPress={() => {
-                    setDetailVisible(false);
-                    router.push(`${missingItemsBase}/${missingReportDetail.area}` as never);
-                  }}
-                >
-                  <Text style={styles.detailLinkBtnSecondaryText}>{t('staffNotifGoToList')}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : missingItemDetail ? (
-              <View style={styles.detailBox}>
-                <Text style={styles.detailSectionTitle}>{t('staffNotifMissingDetail')}</Text>
-                <Text style={styles.detailLine}>{t('staffNotifTitleLine', { title: missingItemDetail.title })}</Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifStatus', { status: formatMissingStatus(missingItemDetail.status) })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifPriority', { priority: formatMissingPriority(missingItemDetail.priority) })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifReminderCount', { count: missingItemDetail.reminder_count })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifAddedBy', { name: missingItemDetail.creator?.full_name || '—' })}
-                </Text>
-                <Text style={styles.detailLine}>
-                  {t('staffNotifAddedAt', { date: fmtDate(missingItemDetail.created_at) })}
-                </Text>
-                {missingItemDetail.status === 'resolved' ? (
-                  <Text style={styles.detailLine}>
-                    {t('staffNotifResolvedBy', {
-                      name: missingItemDetail.resolver?.full_name || '—',
-                      date: missingItemDetail.resolved_at ? fmtDate(missingItemDetail.resolved_at) : '—',
-                    })}
-                  </Text>
-                ) : null}
-                <Text style={styles.detailSectionTitle}>{t('missingItemsSectionNote')}</Text>
-                <Text style={styles.detailNote}>{missingItemDetail.description?.trim() || t('staffNotifNoNote')}</Text>
-              </View>
-            ) : selectedNotification?.notification_type === 'staff_personnel_warning' ? (
-              <View style={{ marginTop: 8 }}>
-                {personnelWarningDetail ? (
-                  <View style={styles.detailBox}>
-                    <Text style={styles.detailSectionTitle}>{t('staffNotifWarningRecord')}</Text>
-                    <Text style={styles.detailLine}>
-                      {t('staffNotifSeverity', {
-                        level:
-                          t(`warningSeverity_${personnelWarningDetail.severity}` as 'warningSeverity_severe') ||
-                          personnelWarningDetail.severity,
-                      })}
-                    </Text>
-                    {personnelWarningDetail.subject_line?.trim() ? (
-                      <Text style={styles.detailLine}>
-                        {t('staffNotifSubject', { subject: personnelWarningDetail.subject_line.trim() })}
-                      </Text>
-                    ) : null}
-                    <Text style={styles.detailSectionTitle}>{t('staffNotifBodySection')}</Text>
-                    <Text style={styles.detailNote}>{personnelWarningDetail.body.trim()}</Text>
-                    <Text style={styles.detailMeta}>
-                      {fmtDate(personnelWarningDetail.created_at)}
-                      {personnelWarningDetail.acknowledged_at
-                        ? t('staffNotifReadAt', { date: fmtDate(personnelWarningDetail.acknowledged_at) })
-                        : t('staffNotifAwaitingRead')}
-                    </Text>
-                    {personnelWarningDetail.acknowledgement_note?.trim() ? (
-                      <Text style={[styles.detailLine, { marginTop: 8 }]}>
-                        {t('staffNotifYourNote', { note: personnelWarningDetail.acknowledgement_note.trim() })}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : selectedNotification.body?.trim() ? (
-                  <Text style={styles.detailMeta}>{t('staffNotifWarningPartialSummary')}</Text>
-                ) : (
-                  <Text style={styles.detailWarn}>{t('staffNotifWarningPartialBody')}</Text>
-                )}
-                <TouchableOpacity
-                  style={styles.warningDetailBtn}
-                  onPress={openPersonnelWarningsFromDetail}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="document-text-outline" size={18} color="#fff" />
-                  <Text style={styles.warningDetailBtnText}>{t('staffNotifOpenWarningsPage')}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : selectedNotification &&
-              isEmergencyNotificationPayload(
-                (selectedNotification.data ?? {}) as Record<string, unknown>,
-                selectedNotification.notification_type
-              ) ? (
-              <View style={styles.emergencyBanner}>
-                <Text style={styles.emergencyBannerText}>{t('staffEmergencyAckBanner')}</Text>
-                {eventIdFromNotificationData(
-                  (selectedNotification.data ?? {}) as Record<string, unknown>
-                ) ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.emergencyAckBtn,
-                      emergencyAcknowledged && styles.emergencyAckBtnDone,
-                    ]}
-                    disabled={emergencyAckSubmitting || emergencyAcknowledged}
-                    onPress={async () => {
-                      const eid = eventIdFromNotificationData(
-                        (selectedNotification.data ?? {}) as Record<string, unknown>
-                      );
-                      if (!eid) return;
-                      setEmergencyAckSubmitting(true);
-                      const { ok, error } = await acknowledgeNotificationEvent(eid);
-                      setEmergencyAckSubmitting(false);
-                      if (!ok) {
-                        Alert.alert(t('error'), error ?? t('unknownError'));
-                        return;
-                      }
-                      setEmergencyAcknowledged(true);
-                      Alert.alert(t('staffEmergencyAckDoneTitle'), t('staffEmergencyAckDoneBody'));
-                    }}
-                    activeOpacity={0.88}
-                  >
-                    {emergencyAckSubmitting ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <>
-                        <Ionicons
-                          name={emergencyAcknowledged ? 'checkmark-circle' : 'alert-circle'}
-                          size={22}
-                          color="#fff"
-                        />
-                        <Text style={styles.emergencyAckBtnText}>
-                          {emergencyAcknowledged
-                            ? t('staffEmergencyAckDoneBtn')
-                            : t('staffEmergencyAckBtn')}
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={[styles.detailMeta, { marginTop: 8 }]}>{t('staffEmergencyAckNoEventId')}</Text>
-                )}
-              </View>
-            ) : selectedNotification && isMissingNotification(selectedNotification) ? (
-              <Text style={styles.detailWarn}>{t('staffNotifMissingLoadFailed')}</Text>
-            ) : assignmentDetail ? (
-              <View style={styles.detailBox}>
-                <Text style={styles.detailSectionTitle}>{assignmentDetail.title}</Text>
-                {assignmentDetail.body?.trim() ? (
-                  <Text style={styles.detailNote}>{assignmentDetail.body.trim()}</Text>
-                ) : null}
-                {isAssignmentOpen(assignmentDetail.status) ? (
-                  <TouchableOpacity
-                    style={styles.taskCompleteDetailBtn}
-                    onPress={() => {
-                      setDetailVisible(false);
-                      setCompleteTarget(assignmentDetail);
-                    }}
-                    activeOpacity={0.88}
-                  >
-                    <Ionicons name="checkmark-done-outline" size={18} color="#fff" />
-                    <Text style={styles.taskCompleteDetailBtnText}>{t('staffTasks_completeBtn')}</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.taskCompletedBadge}>
-                    <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
-                    <Text style={styles.taskCompletedBadgeText}>{t('staffNotifTaskCompleted')}</Text>
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={styles.detailLinkBtnSecondary}
-                  onPress={() => {
-                    setDetailVisible(false);
-                    router.push({
-                      pathname: '/staff/tasks',
-                      params: { focusAssignment: assignmentDetail.id },
-                    } as never);
-                  }}
-                >
-                  <Text style={styles.detailLinkBtnSecondaryText}>{t('staffNotifOpenTasksPage')}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : selectedNotification &&
-              isStaffAssignmentNotification(selectedNotification.notification_type, selectedNotification.data) &&
-              !detailLoading ? (
-              <View style={styles.detailBox}>
-                <Text style={styles.detailWarn}>{t('staffNotifTaskCompleteFailed')}</Text>
-                <TouchableOpacity
-                  style={styles.detailLinkBtn}
-                  onPress={() => {
-                    setDetailVisible(false);
-                    router.push('/staff/tasks');
-                  }}
-                >
-                  <Text style={styles.detailLinkBtnText}>{t('staffNotifOpenTasksPage')}</Text>
-                </TouchableOpacity>
-              </View>
-            ) : selectedNotification && hasStaffNotificationAction(selectedNotification.data) ? (
-              (() => {
-                const action = parseStaffNotificationAction(
-                  (selectedNotification.data ?? {}) as Record<string, unknown>
-                );
-                return (
-                  <StaffAnnouncementActionPanel
-                    compact
-                    title={displayTitle(selectedNotification)}
-                    body={displayBody(selectedNotification) ?? displayFor(selectedNotification).body}
-                    videoUrl={action?.videoUrl}
-                    videoTitle={action?.videoTitle}
-                    openScreen={action?.openScreen}
-                    actionLabel={action?.actionLabel}
-                    onOpenScreen={(href) => {
-                      setDetailVisible(false);
-                      router.push(href as never);
-                    }}
-                  />
-                );
-              })()
-            ) : null}
-          </View>
-        </View>
-      </Modal>
       <TaskCompletionSheet
         visible={!!completeTarget}
         taskTitle={completeTarget?.title ?? ''}

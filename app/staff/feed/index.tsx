@@ -32,9 +32,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { theme } from '@/constants/theme';
 import { getFloatingTabBarTotalHeight } from '@/constants/floatingTabBarMetrics';
 import { useBottomNavigation } from '@/hooks/useBottomNavigation';
-import { pds, feedPostCardWidth } from '@/constants/personelDesignSystem';
+import { pds, feedPostCardWidth, feedPostMediaHeightForItems } from '@/constants/personelDesignSystem';
 import { StaffNameWithBadge, AvatarWithBadge } from '@/components/VerifiedBadge';
 import { OnlinePresenceDot } from '@/components/OnlinePresenceDot';
+import { isStaffEffectivelyOnline } from '@/lib/staffPresence';
 import { CachedImage } from '@/components/CachedImage';
 import { formatDistanceToNow } from 'date-fns';
 import { useTranslation } from 'react-i18next';
@@ -99,6 +100,7 @@ import {
   reportStory,
   softDeleteStory,
   loadStoryViewers,
+  storyGroupIndexByStaffIdMap,
   type StoryReplyRow,
   type StaffStoryGroup,
   type StaffStoryRow,
@@ -107,7 +109,7 @@ import { getMuxHlsPlaybackUrl, isMuxPendingMediaUrl } from '@/lib/muxChat';
 import { pollStoryPlaybackReady } from '@/lib/muxStoryUpload';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import { FeedPostMediaGrid, feedPostMediaGridHeight } from '@/components/FeedPostMediaGrid';
+import { FeedMediaCarousel } from '@/components/FeedMediaCarousel';
 import { formatFeedRelativeTime } from '@/lib/feedRelativeTime';
 import { getPostTagVisual } from '@/lib/feedPostTagTheme';
 import { FeedFullscreenVideoPlayer } from '@/components/FeedFullscreenVideoPlayer';
@@ -177,6 +179,7 @@ type StaffAvatarRow = {
   role?: string | null;
   profile_hidden_by_admin?: boolean | null;
   is_online?: boolean | null;
+  last_active?: string | null;
   work_status?: string | null;
 };
 
@@ -190,7 +193,7 @@ type StoryPlayerState = {
 
 export default function StaffHomeScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ openPostId?: string; openStoryId?: string }>();
+  const params = useLocalSearchParams<{ openPostId?: string; openStoryId?: string; openStoryStaffId?: string }>();
   const { t, i18n } = useTranslation();
   const reportReasons = useMemo(() => getFeedReportReasons(), [i18n.language]);
   const dateLocale = useMemo(() => dateFnsLocaleForApp(), [i18n.language]);
@@ -216,8 +219,9 @@ export default function StaffHomeScreen() {
   const staffAvatarById = useMemo(() => buildStaffAvatarLookup(staffList), [staffList]);
   const staffOnlineById = useMemo(() => {
     const map = new Map<string, boolean>();
+    const now = Date.now();
     for (const s of staffList) {
-      if (s.is_online) map.set(s.id, true);
+      if (isStaffEffectivelyOnline(s.is_online, s.last_active, now)) map.set(s.id, true);
     }
     return map;
   }, [staffList]);
@@ -461,7 +465,7 @@ export default function StaffHomeScreen() {
     }
     const { data } = await supabase
       .from('staff')
-      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, work_status, organization:organization_id(name, kind)')
+      .select('id, full_name, profile_image, department, position, verification_badge, email, role, profile_hidden_by_admin, is_online, last_active, work_status, organization:organization_id(name, kind)')
       .eq('is_active', true)
       .is('deleted_at', null)
       .order('full_name');
@@ -472,7 +476,7 @@ export default function StaffHomeScreen() {
       if (!byKey.has(key)) byKey.set(key, r);
     });
     const mapped = Array.from(byKey.values()).map(
-      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin, is_online, work_status }) => ({
+      ({ id, full_name, profile_image, department, position, organization, verification_badge, role, profile_hidden_by_admin, is_online, last_active, work_status }) => ({
         id,
         full_name,
         profile_image,
@@ -483,6 +487,7 @@ export default function StaffHomeScreen() {
         role,
         profile_hidden_by_admin: profile_hidden_by_admin ?? null,
         is_online: is_online ?? null,
+        last_active: last_active ?? null,
         work_status: work_status ?? null,
       })
     );
@@ -880,6 +885,10 @@ export default function StaffHomeScreen() {
     orderedStoryGroups.forEach((g) => map.set(g.staff_id, g));
     return map;
   }, [orderedStoryGroups]);
+  const storyGroupIndexByStaffId = useMemo(
+    () => storyGroupIndexByStaffIdMap(orderedStoryGroups),
+    [orderedStoryGroups]
+  );
   const orderedStaffList = useMemo(() => {
     if (!staff?.id) return staffList;
     const me = staffList.find((s) => s.id === staff.id);
@@ -976,6 +985,13 @@ export default function StaffHomeScreen() {
       }
     }
   }, [params.openStoryId, orderedStoryGroups, openStoryAt, router]);
+
+  useEffect(() => {
+    const staffId = params.openStoryStaffId;
+    if (!staffId || orderedStoryGroups.length === 0) return;
+    openStoryByStaffId(staffId);
+    router.setParams({ openStoryStaffId: undefined });
+  }, [params.openStoryStaffId, orderedStoryGroups.length, openStoryByStaffId, router]);
 
   const goToNextStory = useCallback(() => {
     setStoryPlayer((prev) => {
@@ -1173,6 +1189,7 @@ export default function StaffHomeScreen() {
           body: `${staff.full_name ?? 'Bir personel'} hikayeni begendi.`,
           category: 'staff',
           notificationType: 'story_like',
+          createdByStaffId: staff.id,
           data: { screen: 'staff_feed', url: '/staff/feed', storyId: activeStory.id },
         }).catch(() => {});
       }
@@ -1384,6 +1401,7 @@ export default function StaffHomeScreen() {
               body: t('notifNewLikeBody', { name: liker }),
               category: 'staff',
               notificationType: 'feed_like',
+              createdByStaffId: staff.id,
               data: { screen: 'staff_feed', url: '/staff', postId },
             }).then((res) => {
               if (res?.error) log.warn('StaffFeed', 'Beğeni bildirimi', res.error);
@@ -1894,12 +1912,15 @@ export default function StaffHomeScreen() {
           role={s.role}
           orgLabel={orgLabel}
           verificationBadge={s.verification_badge ?? null}
-          isOnline={!!s.is_online}
+          isOnline={isStaffEffectivelyOnline(s.is_online, s.last_active)}
           isMe={isMe}
           hasStory={hasStory}
           hasUnseen={!!staffStory?.has_unseen}
           profileHidden={!!s.profile_hidden_by_admin && staff?.role !== 'admin'}
-          presenceStatus={resolveStaffPresenceStatus({ isOnline: s.is_online, workStatus: s.work_status })}
+          presenceStatus={resolveStaffPresenceStatus({
+            isOnline: isStaffEffectivelyOnline(s.is_online, s.last_active),
+            workStatus: s.work_status,
+          })}
           compact
           animationIndex={animationIndex}
           onPress={() => {
@@ -1913,6 +1934,17 @@ export default function StaffHomeScreen() {
             }
             router.push(`/staff/profile/${s.id}`);
           }}
+          onLongPress={
+            hasStory
+              ? () => {
+                  if (isMe) {
+                    router.push('/staff/feed/story-new');
+                    return;
+                  }
+                  router.push(`/staff/profile/${s.id}`);
+                }
+              : undefined
+          }
         />
       );
     },
@@ -2102,11 +2134,11 @@ export default function StaffHomeScreen() {
                 ? [{ media_type: p.media_type === 'video' ? 'video' : 'image', media_url: p.media_url || p.thumbnail_url || '', thumbnail_url: p.thumbnail_url, sort_order: 0 }]
                 : []);
             const hasMedia = mediaItems.length > 0;
-            const feedMediaHeight = feedPostMediaGridHeight(feedCardWidth, mediaItems);
+            const feedMediaHeight = feedPostMediaHeightForItems(feedCardWidth, mediaItems);
             const mediaEl =
               hasMedia ? (
                 <View style={[styles.postImageWrap, { height: feedMediaHeight }]}>
-                  <FeedPostMediaGrid
+                  <FeedMediaCarousel
                     items={mediaItems.map((m, i) => ({
                       id: `${p.id}-${i}`,
                       media_type: m.media_type as 'image' | 'video',
@@ -2114,6 +2146,7 @@ export default function StaffHomeScreen() {
                       thumbnail_url: m.thumbnail_url,
                     }))}
                     width={feedCardWidth}
+                    height={feedMediaHeight}
                     onPressItem={(item) => {
                       if (item.media_type === 'video') {
                         setFullscreenPostMedia({
@@ -2181,6 +2214,22 @@ export default function StaffHomeScreen() {
                   horizontalInset={0}
                   onAuthorPress={
                     p.staff_id
+                      ? () => openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id)
+                      : undefined
+                  }
+                  onAvatarPress={
+                    p.staff_id
+                      ? () => {
+                          if (storyGroupIndexByStaffId.has(p.staff_id!)) {
+                            openStoryByStaffId(p.staff_id!);
+                            return;
+                          }
+                          openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id);
+                        }
+                      : undefined
+                  }
+                  onAvatarLongPress={
+                    p.staff_id && storyGroupIndexByStaffId.has(p.staff_id)
                       ? () => openStaffProfileWithVisit(router, p.staff_id!, 'staff', staff?.id)
                       : undefined
                   }

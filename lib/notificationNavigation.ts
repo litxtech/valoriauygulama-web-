@@ -147,6 +147,36 @@ function defaultNotificationsHref(ctx?: NotificationNavContext): Href {
   return isStaff ? '/staff/notifications' : '/customer/notifications';
 }
 
+/** Bildirim listesi satırından push/nav payload oluşturur. */
+export function notificationPayloadFromRow(row: {
+  notification_type?: string | null;
+  data?: Record<string, unknown> | null | undefined;
+}): Record<string, unknown> {
+  const base = row.data && typeof row.data === 'object' ? { ...(row.data as Record<string, unknown>) } : {};
+  const nType = typeof row.notification_type === 'string' ? row.notification_type.trim() : '';
+  if (nType) {
+    base.notificationType = nType;
+    base.notification_type = nType;
+  }
+  return base;
+}
+
+export function notificationHrefToString(href: Href): string {
+  if (typeof href === 'string') return href.split('?')[0];
+  return href.pathname ?? '';
+}
+
+/** Hedef yalnızca bildirimler sekmesi ise tıklamada sayfada kalınır. */
+export function isNotificationsListHref(href: Href): boolean {
+  const s = notificationHrefToString(href);
+  return (
+    s === '/staff/notifications' ||
+    s === '/customer/notifications' ||
+    s.includes('/(tabs)/notifications') ||
+    s.endsWith('/notifications')
+  );
+}
+
 function resolveByNotificationType(
   notificationType: string,
   data: Record<string, unknown>,
@@ -250,8 +280,13 @@ function resolveByNotificationType(
         return { pathname: '/staff/debts/[id]', params: { id: debtId } } as Href;
       }
       return '/staff/debts';
-    case 'finance_counterparty_agreement':
-      return '/staff/notifications';
+    case 'finance_counterparty_agreement': {
+      const counterpartyId = pickStr(data, 'counterpartyId', 'counterparty_id');
+      if (counterpartyId) {
+        return { pathname: '/admin/accounting/counterparties/[id]', params: { id: counterpartyId } } as Href;
+      }
+      return '/admin/accounting/counterparties';
+    }
     case 'transfer_tour':
       return isStaff ? '/staff/transfer-tour' : '/customer/transfer-tour';
     case 'stock_pending_approval':
@@ -428,6 +463,18 @@ function resolveByNotificationType(
     case 'staff_mention':
       return null;
     default:
+      if (notificationType.startsWith('smart_ops')) {
+        const taskId = pickStr(data, 'taskInstanceId', 'task_instance_id');
+        if (taskId) {
+          return { pathname: '/staff/smart-ops/[id]', params: { id: taskId } } as Href;
+        }
+        const url = pickStr(data, 'url');
+        const fromUrl = url.match(/\/staff\/smart-ops\/([^/?#]+)/)?.[1];
+        if (fromUrl) {
+          return { pathname: '/staff/smart-ops/[id]', params: { id: fromUrl } } as Href;
+        }
+        return '/staff/operations';
+      }
       return null;
   }
 }
