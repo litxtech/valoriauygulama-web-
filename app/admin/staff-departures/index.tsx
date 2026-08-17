@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminOrgStore } from '@/stores/adminOrgStore';
 import { AdminOrganizationPicker } from '@/components/admin';
@@ -23,6 +24,7 @@ import { StaffDepartureCard } from '@/components/staffDeparture/StaffDepartureCa
 import { StaffDepartureFormModal } from '@/components/staffDeparture/StaffDepartureFormModal';
 
 export default function StaffDeparturesScreen() {
+  const { t } = useTranslation();
   const staff = useAuthStore((s) => s.staff);
   const selectedOrganizationId = useAdminOrgStore((s) => s.selectedOrganizationId);
   const allowed = canAccessAdminRoute(staff, '/admin/staff-departures');
@@ -131,7 +133,7 @@ export default function StaffDeparturesScreen() {
                   <Text style={styles.addBtnText}>Ekle</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.heroTitle}>Personel Ayrılış Listesi</Text>
+              <Text style={styles.heroTitle}>{t('staffStaffDepartureAdminTitle')}</Text>
               <Text style={styles.heroSub}>
                 Otelden çıkış tarihleri · bireysel veya toplu kayıt · güncellemede bildirim
               </Text>

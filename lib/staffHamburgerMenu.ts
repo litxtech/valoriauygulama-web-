@@ -133,6 +133,7 @@ const ACCENTS: Record<string, string> = {
   finance: '#0369a1',
   audits: '#7c3aed',
   blacklist: '#b91c1c',
+  staff_departures: '#1e40af',
   staff_month_best: '#d97706',
   payments: '#635bff',
 };
@@ -816,6 +817,24 @@ export function buildStaffHamburgerMenuSections(
         href: '/admin/staff-perf',
         icon: 'shield-checkmark-outline',
         accent: '#0f3d3a',
+      });
+    }
+    if (canAccessAdminRoute(staff, '/admin/staff/list')) {
+      push('admin', {
+        id: 'staff_list_admin',
+        label: t('staffStaffListAdminTitle'),
+        href: '/admin/staff/list',
+        icon: 'people-outline',
+        accent: ACCENTS.salary_history,
+      });
+    }
+    if (canAccessAdminRoute(staff, '/admin/staff-departures')) {
+      push('admin', {
+        id: 'staff_departures_admin',
+        label: t('staffStaffDepartureNavTitle'),
+        href: '/admin/staff-departures',
+        icon: 'exit-outline',
+        accent: ACCENTS.staff_departures,
       });
     }
     if (canAccessAdminRoute(staff, '/admin/attendance')) {

@@ -667,6 +667,12 @@ export default function AdminKbsSettingsScreen() {
         <Ionicons name="chevron-forward" size={20} color={T.colors.textMuted} />
       </Pressable>
 
+      <Pressable style={styles.linkRow} onPress={() => router.push('/admin/kbs-access-logs')}>
+        <Ionicons name="eye-outline" size={22} color={T.colors.accent} />
+        <Text style={styles.linkRowText}>Kimlik erişim logları</Text>
+        <Ionicons name="chevron-forward" size={20} color={T.colors.textMuted} />
+      </Pressable>
+
       <View style={styles.card}>
         <SectionHeader icon="globe-outline" title="Web paneli parolası (valoria.tr/kbs)" />
         <View style={styles.statusRow}>

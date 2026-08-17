@@ -62,6 +62,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/technical-assets': 'teknik_varlik_yonetimi',
   '/admin/kbs-settings': 'id_capture',
   '/admin/kbs-permissions': 'id_capture',
+  '/admin/kbs-access-logs': 'id_capture',
   '/admin/documents': 'dokuman_yukle',
   '/admin/maliye': 'maliye_merkezi',
   '/admin/incident-reports': 'tutanaklar',

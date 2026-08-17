@@ -443,6 +443,7 @@ export default function AdminLayout() {
       <Stack.Screen name="kbs-settings" options={{ title: t('adminKbsSettings'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-permissions" options={{ title: t('adminKbsPermissionsTitle'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="kbs-capture-notify" options={{ title: 'Kimlik çekim bildirimleri', headerRight: renderHeaderRight }} />
+      <Stack.Screen name="kbs-access-logs" options={{ title: 'Kimlik erişim logları', headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/index" options={{ title: t('adminNotifications'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="notifications/bulk" options={{ title: t('adminBulkNotification'), headerRight: renderHeaderRight }} />
       <Stack.Screen name="announcements/compose" options={{ title: t('staffAnnouncementCompose'), headerRight: renderHeaderRight }} />

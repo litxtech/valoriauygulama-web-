@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase';
 import { invokeEdgeWithAuth } from '@/lib/invokeEdgeWithAuth';
 import { getEdgeFunctionErrorMessage } from '@/lib/functionsError';
 import { useAuthStore } from '@/stores/authStore';
+import { canAccessAdminRoute } from '@/lib/adminRoutePermissions';
 import { StaffNameWithBadge } from '@/components/VerifiedBadge';
 import { CachedImage } from '@/components/CachedImage';
 import { adminTheme } from '@/constants/adminTheme';
@@ -92,7 +93,9 @@ const ROLE_LABELS: Record<string, string> = {
 
 export default function StaffListScreen() {
   const router = useRouter();
-  const currentStaffId = useAuthStore((s) => s.staff?.id);
+  const authStaff = useAuthStore((s) => s.staff);
+  const currentStaffId = authStaff?.id;
+  const canOpenDepartures = canAccessAdminRoute(authStaff, '/admin/staff-departures');
   const [tab, setTab] = useState<'staff' | 'guests'>('staff');
   const initialStaff = getAdminScreenCache<StaffListCache>(STAFF_LIST_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
   const initialRisky = getAdminScreenCache<RiskyDevicesCache>(RISKY_DEVICES_CACHE_KEY, ADMIN_SCREEN_FOCUS_TTL_MS);
@@ -404,14 +407,26 @@ export default function StaffListScreen() {
           </TouchableOpacity>
         </View>
         {tab === 'staff' ? (
-          <TouchableOpacity
-            style={styles.addStaffButton}
-            onPress={() => router.push('/admin/staff/add')}
-            activeOpacity={0.9}
-          >
-            <Ionicons name="person-add-outline" size={18} color="#fff" />
-            <Text style={styles.addStaffButtonText}>Çalışan ekle</Text>
-          </TouchableOpacity>
+          <View style={styles.staffActionsRow}>
+            <TouchableOpacity
+              style={[styles.addStaffButton, styles.staffActionFlex]}
+              onPress={() => router.push('/admin/staff/add')}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="person-add-outline" size={18} color="#fff" />
+              <Text style={styles.addStaffButtonText}>Çalışan ekle</Text>
+            </TouchableOpacity>
+            {canOpenDepartures ? (
+              <TouchableOpacity
+                style={[styles.departureListButton, styles.staffActionFlex]}
+                onPress={() => router.push('/admin/staff-departures')}
+                activeOpacity={0.9}
+              >
+                <Ionicons name="exit-outline" size={18} color="#1e40af" />
+                <Text style={styles.departureListButtonText}>Ayrılış listesi</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         ) : null}
         {(tab === 'staff' ? staffList.length : guestList.length) > 0 ? (
           <View style={styles.subBarCard}>
@@ -422,7 +437,7 @@ export default function StaffListScreen() {
         ) : null}
       </>
     ),
-    [guestList.length, router, staffList.length, tab]
+    [canOpenDepartures, guestList.length, router, staffList.length, tab]
   );
 
   const listEmpty = useMemo(() => {
@@ -814,6 +829,32 @@ const styles = StyleSheet.create({
   addStaffButtonText: {
     color: '#fff',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  staffActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: adminTheme.spacing.md,
+  },
+  staffActionFlex: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  departureListButton: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  departureListButtonText: {
+    color: '#1e40af',
+    fontSize: 14,
     fontWeight: '700',
   },
   empty: { alignItems: 'center', paddingVertical: 48 },

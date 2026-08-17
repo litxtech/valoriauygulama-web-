@@ -191,6 +191,8 @@ const SECTIONS: Section[] = [
       { href: '/admin/lost-found', icon: 'briefcase-outline', label: 'Kayıp eşya (buluntu)' },
       { href: '/admin/notes', icon: 'create-outline', label: 'Not Al' },
       { href: '/admin/staff-perf', icon: 'ribbon-outline', label: 'Personel Denetim & Performans' },
+      { href: '/admin/staff-departures', icon: 'exit-outline', label: 'Personel ayrılış listesi' },
+      { href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' },
       { href: '/admin/contracts', icon: 'document-outline', label: 'Sözleşmeler (misafir & iş ortağı)' },
       { href: '/admin/department-rules', icon: 'book-outline', label: 'Bölüm Kuralları' },
       { href: '/admin/organizations', icon: 'business-outline', label: 'İşletme yönetimi' },
