@@ -14,6 +14,7 @@ Her özellik için kısa, telifsiz (sentezlenmiş) bir WAV bildirim sesi üretir
   message_pop.wav      - Mesaj (Instagram DM tarzı yumuşak pop)
   room_cleaning.wav    - Temizlik (modern sparkle: whoosh + kristal arpej)
   room_payment.wav     - Oda ödemesi (kasa zili + kısa coin clink)
+  staff_departure_farewell.wav - Personel ayrılış (yumuşak inişli veda chime)
 """
 import math
 import os
@@ -203,6 +204,18 @@ def make_room_payment():
     return out
 
 
+# 10) Personel ayrılış: sıcak, inişli veda chime (A5 → F5 → D5 → A4)
+def make_staff_departure_farewell():
+    out = bell(880, 0.55, 0.58)
+    out += silence(0.06)
+    out += bell(698, 0.65, 0.55)
+    out += silence(0.07)
+    out += bell(587, 0.85, 0.52)
+    out += silence(0.04)
+    out += bell(440, 1.1, 0.38)
+    return out
+
+
 def main():
     print("Valoria bildirim sesleri üretiliyor...")
     _write_wav("emergency_alert.wav", make_emergency())
@@ -214,6 +227,7 @@ def main():
     _write_wav("message_pop.wav", make_message())
     _write_wav("room_cleaning.wav", make_room_cleaning())
     _write_wav("room_payment.wav", make_room_payment())
+    _write_wav("staff_departure_farewell.wav", make_staff_departure_farewell())
     print("Tamamlandı:", os.path.normpath(OUT_DIR))
 
 

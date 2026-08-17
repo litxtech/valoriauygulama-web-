@@ -204,6 +204,9 @@ function staffQuickActionsFor(staff: ReturnType<typeof useAuthStore.getState>['s
   if (canAccessAdminRoute(staff, '/admin/staff/list')) {
     items.push({ href: '/admin/staff/list', icon: 'people-outline', label: 'Kullanıcılar listesi' });
   }
+  if (canAccessAdminRoute(staff, '/admin/staff-departures')) {
+    items.push({ href: '/admin/staff-departures', icon: 'exit-outline', label: 'Personel ayrılış listesi' });
+  }
   if (canAccessAdminRoute(staff, '/admin/staff')) {
     items.push({ href: '/admin/staff/add', icon: 'person-add-outline', label: 'Çalışan ekle' });
   }

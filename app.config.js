@@ -186,6 +186,7 @@ const baseConfig = {
           './assets/sounds/room_payment.wav',
           './assets/sounds/walkie_ptt_open.wav',
           './assets/sounds/walkie_ptt_close.wav',
+          './assets/sounds/staff_departure_farewell.wav',
         ],
       },
     ],

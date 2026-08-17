@@ -78,6 +78,7 @@ export const ADMIN_ROUTE_PERMISSION: Record<string, string> = {
   '/admin/contracts/all': 'tum_sozlesmeler',
   '/admin/staff': 'personel_ekle',
   '/admin/staff/list': 'personel_listesi',
+  '/admin/staff-departures': 'personel_listesi',
   '/admin/organizations': 'isletme_yonetimi',
 };
 

@@ -68,6 +68,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
   { test: (t) => t.startsWith("expense_"), key: "expense" },
   { test: (t) => t === "report_status", key: "report_status" },
   { test: (t) => t.includes("staff_shift") || t.includes("pending_leave"), key: "shift_leave" },
+  { test: (t) => t.startsWith("staff_departure"), key: "staff_departure" },
   { test: (t) => t.includes("staff_permission"), key: "permission_update" },
   { test: (t) => t === "managed_contract", key: "managed_contract" },
   { test: (t) => t === "group_added", key: "group_added" },

@@ -495,6 +495,7 @@ export default function AdminLayout() {
       <Stack.Screen name="accounting" options={{ headerShown: false }} />
       <Stack.Screen name="audits" options={{ headerShown: false }} />
       <Stack.Screen name="staff-perf" options={{ headerShown: false }} />
+      <Stack.Screen name="staff-departures/index" options={{ title: 'Personel Ayrılış', headerRight: renderHeaderRight }} />
       <Stack.Screen name="performance" options={{ headerShown: false }} />
       <Stack.Screen name="finance-checks/index" options={{ title: 'Çek takibi', headerRight: renderHeaderRight }} />
       <Stack.Screen name="finance-checks/new" options={{ title: 'Yeni çek', headerRight: renderHeaderRight }} />
