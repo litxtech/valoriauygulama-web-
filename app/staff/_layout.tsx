@@ -468,6 +468,9 @@ export default function StaffLayout() {
       <Stack.Screen name="fault-records/index" options={{ title: 'Arıza kayıtları', headerBackTitle: t('back') }} />
       <Stack.Screen name="fault-records/new" options={{ title: 'Yeni arıza kaydı', headerBackTitle: t('back') }} />
       <Stack.Screen name="fault-records/[id]" options={{ title: 'Arıza kaydı', headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-issue-archive/index" options={{ title: 'Otel sorun arşivi', headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-issue-archive/new" options={{ title: 'Yeni kayıt', headerBackTitle: t('back') }} />
+      <Stack.Screen name="hotel-issue-archive/[id]" options={{ title: 'Kayıt detayı', headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/index" options={{ title: t('staffFacilityJournal'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/new" options={{ title: t('staffFacilityJournalNew'), headerBackTitle: t('back') }} />
       <Stack.Screen name="facility-journal/[id]" options={{ title: t('staffFacilityJournalDetail'), headerBackTitle: t('back') }} />

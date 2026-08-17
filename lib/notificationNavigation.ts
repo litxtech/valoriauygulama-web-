@@ -301,6 +301,13 @@ function resolveByNotificationType(
       }
       return '/staff/fault-records';
     }
+    case 'hotel_issue_archive_created': {
+      const archiveId = pickStr(data, 'hotelIssueArchiveId', 'hotel_issue_archive_id');
+      if (archiveId) {
+        return { pathname: '/staff/hotel-issue-archive/[id]', params: { id: archiveId } } as Href;
+      }
+      return '/staff/hotel-issue-archive';
+    }
     case 'tech_fault_report':
       return isStaff ? '/staff/technical-assets/faults' : '/admin/technical-assets/faults';
     case 'tech_asset_status':

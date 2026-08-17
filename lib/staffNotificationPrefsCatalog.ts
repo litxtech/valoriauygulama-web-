@@ -313,6 +313,11 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
       'fault_record_resolved',
     ],
   }),
+  entry('hotel_issue_archive', 'staffNotifHotelIssueArchiveTitle', 'staffNotifHotelIssueArchiveHint', {
+    soundFeatureKey: 'hotel_issue_archive',
+    matchExact: ['hotel_issue_archive_created'],
+    matchPrefix: ['hotel_issue_archive'],
+  }),
   entry('staff_perf', 'staffNotifStaffPerfTitle', 'staffNotifStaffPerfHint', {
     soundFeatureKey: 'staff_call',
     matchExact: ['staff_perf', 'staff_perf_event'],

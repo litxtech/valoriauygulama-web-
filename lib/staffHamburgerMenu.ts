@@ -121,6 +121,7 @@ const ACCENTS: Record<string, string> = {
   facility_journal: '#0f766e',
   room_intelligence: '#b45309',
   fault_records: '#ea580c',
+  hotel_issue_archive: '#7c3aed',
   security_recordings: '#0f766e',
   debts: '#0369a1',
   mrz: '#ca8a04',
@@ -662,6 +663,13 @@ export function buildStaffHamburgerMenuSections(
     href: '/staff/fault-records',
     icon: 'build-outline',
     accent: ACCENTS.fault_records,
+  });
+  push('ops', {
+    id: 'hotel_issue_archive',
+    label: 'Otel sorun arşivi',
+    href: '/staff/hotel-issue-archive',
+    icon: 'archive-outline',
+    accent: ACCENTS.hotel_issue_archive,
   });
   if (canAccessLostFound(staff)) {
     const lfBase = isAdmin ? '/admin/lost-found' : '/staff/lost-found';

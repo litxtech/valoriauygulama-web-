@@ -1345,6 +1345,8 @@ const translation = {
       staffNotifGuestServiceRequestHint: 'Room requests, menu orders, and housekeeping notifications',
       staffNotifTechnicalAssetTitle: 'Technical assets / faults',
       staffNotifTechnicalAssetHint: 'Room fault records, technical assets, maintenance, and facility status',
+      staffNotifHotelIssueArchiveTitle: 'Hotel issue archive',
+      staffNotifHotelIssueArchiveHint: 'When a photo/video hotel record is created',
       staffNotifLostFoundTitle: 'Lost & found',
       staffNotifLostFoundHint: 'When a found-item record is opened',
       staffNotifIncidentTitle: 'Incident report',

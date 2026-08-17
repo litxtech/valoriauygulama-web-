@@ -28,6 +28,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
     test: (t) => t.startsWith("tech_") || t.startsWith("fault_record") || t === "hotel_facility_status",
     key: "technical_asset",
   },
+  { test: (t) => t.startsWith("hotel_issue_archive"), key: "hotel_issue_archive" },
   { test: (t) => t.startsWith("department_rule"), key: "department_rule" },
   { test: (t) => t.includes("staff_room_payment"), key: "room_payment" },
   {

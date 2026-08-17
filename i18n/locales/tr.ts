@@ -1356,6 +1356,8 @@ const translation = {
       staffNotifGuestServiceRequestHint: 'Oda talebi, menü siparişi ve ev hizmeti bildirimleri',
       staffNotifTechnicalAssetTitle: 'Teknik varlık / arıza',
       staffNotifTechnicalAssetHint: 'Oda arıza kaydı, teknik varlık, bakım ve tesis durumu bildirimleri',
+      staffNotifHotelIssueArchiveTitle: 'Otel sorun arşivi',
+      staffNotifHotelIssueArchiveHint: 'Foto/video ile otel kaydı oluşturulunca giden bildirim',
       staffNotifLostFoundTitle: 'Kayıp / buluntu',
       staffNotifLostFoundHint: 'Buluntu kaydı açılınca gelen bildirim',
       staffNotifIncidentTitle: 'Olay tutanağı',

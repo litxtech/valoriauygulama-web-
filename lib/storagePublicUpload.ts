@@ -29,6 +29,7 @@ const EDGE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
 const BUCKETS_PREFER_DIRECT_UPLOAD = new Set([
   'facility-journal',
   'fault-records',
+  'hotel-issue-archive',
   'expense-receipts',
   'breakfast-partner-camera',
   'security-camera-recordings',

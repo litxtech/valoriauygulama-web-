@@ -503,6 +503,19 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     maxDurationSec: 3,
   },
   {
+    featureKey: 'hotel_issue_archive',
+    titleTr: 'Otel sorun arşivi',
+    descriptionTr: 'Foto/video ile otel kaydı oluşturulunca giden bildirim.',
+    audiences: ['staff', 'admin'],
+    notificationTypeHints: ['hotel_issue_archive_created'],
+    defaultIosPushSound: 'default',
+    defaultAndroidPushSound: 'default',
+    defaultAndroidChannelId: 'valoria_ns_hotel_issue_archive',
+    priority: 'high',
+    userCanMuteSound: true,
+    maxDurationSec: 3,
+  },
+  {
     featureKey: 'guest_service_request',
     titleTr: 'Misafir ev hizmeti talebi',
     descriptionTr: 'Oda temizliği, havlu, bakım, kayıp eşya ve menü sipariş talepleri.',
@@ -575,6 +588,10 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
       t.startsWith('fault_record') ||
       t === 'hotel_facility_status',
     key: 'technical_asset',
+  },
+  {
+    test: (t) => t.startsWith('hotel_issue_archive'),
+    key: 'hotel_issue_archive',
   },
   {
     test: (t) =>
