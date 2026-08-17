@@ -44,6 +44,54 @@ function pickStr(data: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
+/** Expo / DB payload bazen iç içe `data` veya stringified JSON getirir. */
+export function normalizeNotificationPushData(
+  raw: Record<string, unknown> | undefined | null
+): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  let data: Record<string, unknown> = { ...raw };
+
+  const nested = data.data;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    data = { ...(nested as Record<string, unknown>), ...data };
+    delete data.data;
+  } else if (typeof nested === 'string' && nested.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(nested) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        data = { ...(parsed as Record<string, unknown>), ...data };
+        delete data.data;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!pickStr(data, 'notificationType', 'notification_type')) {
+    const bodyType = pickStr(data, 'type');
+    if (bodyType.startsWith('staff_') || bodyType.startsWith('admin_')) {
+      data.notificationType = bodyType;
+    }
+  }
+
+  // Eski push'larda screen "notifications" iken url veya tip PTT olabilir
+  const screen = pickStr(data, 'screen');
+  const url = pickStr(data, 'url');
+  const nType = pickStr(data, 'notificationType', 'notification_type');
+  if (
+    (!screen || screen === 'notifications') &&
+    (url.includes('/staff/ptt') ||
+      nType === 'staff_ptt_talk' ||
+      nType === 'staff_ptt' ||
+      screen.toLowerCase().includes('ptt'))
+  ) {
+    data.screen = '/staff/ptt';
+    if (!nType) data.notificationType = 'staff_ptt_talk';
+  }
+
+  return data;
+}
+
 function notificationTypeOf(data: Record<string, unknown>): string {
   return pickStr(data, 'notificationType', 'notification_type');
 }
@@ -111,6 +159,8 @@ function resolveByNotificationType(
 
   switch (notificationType) {
     case 'staff_room_cleaning_status':
+    case 'staff_room_cleaning_started':
+    case 'staff_room_cleaning_done':
     case 'staff_room_cleaning_plan_note_saved':
     case 'staff_room_cleaning_plan':
       return '/staff/cleaning-plan';
@@ -164,6 +214,35 @@ function resolveByNotificationType(
         return { pathname: '/staff/tasks', params: { focusAssignment: assignmentId } };
       }
       return '/staff/tasks';
+    case 'staff_ptt_talk':
+    case 'staff_ptt':
+      return {
+        pathname: '/staff/ptt',
+        params: {
+          autoJoin: '1',
+          speakerName: pickStr(data, 'speakerName', 'speaker_name'),
+          roomId: pickStr(data, 'roomId', 'room_id'),
+        },
+      } as Href;
+    case 'staff_perf':
+    case 'staff_perf_event': {
+      const eventId = pickStr(data, 'eventId', 'event_id');
+      const subjectStaffId = pickStr(data, 'staffId', 'staff_id', 'subjectStaffId');
+      if (eventId) {
+        return { pathname: '/staff/denetim/event/[eventId]', params: { eventId } } as Href;
+      }
+      if (subjectStaffId) {
+        return { pathname: '/staff/denetim/[staffId]', params: { staffId: subjectStaffId } } as Href;
+      }
+      return '/staff/denetim';
+    }
+    case 'booking_offer': {
+      const bookingId = pickStr(data, 'bookingId', 'booking_id');
+      if (bookingId) {
+        return { pathname: '/admin/booking/[id]', params: { id: bookingId } } as Href;
+      }
+      return '/admin/booking';
+    }
     case 'staff_task_done':
       return '/admin/tasks';
     case 'staff_debt':
@@ -266,6 +345,17 @@ function resolveByNotificationType(
       }
       return '/admin/notes';
     }
+    case 'room_intelligence':
+    case 'room_intelligence_completed':
+    case 'room_intelligence_update': {
+      const intelligenceId = pickStr(data, 'intelligenceId', 'intelligence_id');
+      if (intelligenceId) {
+        return { pathname: '/admin/room-intelligence/[id]', params: { id: intelligenceId } } as Href;
+      }
+      const href = pickStr(data, 'href');
+      if (href.startsWith('/admin/room-intelligence')) return href as Href;
+      return '/admin/room-intelligence';
+    }
     case 'message':
     case 'chat_message':
     case 'chat_mention':
@@ -340,33 +430,48 @@ export function resolveNotificationHref(
   data: Record<string, unknown> | undefined | null,
   ctx?: NotificationNavContext
 ): Href {
-  if (!data || typeof data !== 'object') {
+  const normalized = normalizeNotificationPushData(data);
+  if (!Object.keys(normalized).length) {
     return defaultNotificationsHref(ctx);
   }
 
-  const notificationType = notificationTypeOf(data);
+  const notificationType = notificationTypeOf(normalized);
   const missingItemsBase = ctx?.pathnameIsAdmin ? '/admin/missing-items' : '/staff/missing-items';
 
+  // Tip bazlı kesin rotalar (PTT vb.) — screen:"notifications" varsayılanından önce
+  const typedEarly = resolveByNotificationType(notificationType, normalized, ctx);
+  if (typedEarly) return typedEarly;
+
   if (notificationType === 'staff_feature_intro') {
-    const videoUrl = pickStr(data, 'videoUrl', 'video_url');
-    if (videoUrl) return buildAnnouncementActionHref(data);
-    const openScreen = pickStr(data, 'openScreen', 'targetScreen');
+    const videoUrl = pickStr(normalized, 'videoUrl', 'video_url');
+    if (videoUrl) return buildAnnouncementActionHref(normalized);
+    const openScreen = pickStr(normalized, 'openScreen', 'targetScreen');
     if (openScreen.startsWith('/')) return openScreen as Href;
   }
 
-  const screenRaw = data.screen;
+  const screenRaw = normalized.screen;
   const screenPath = typeof screenRaw === 'string' ? screenRaw.trim() : '';
   if (screenPath.startsWith('/')) {
     if (screenPath === '/staff/announcement-action') {
-      return buildAnnouncementActionHref(data);
+      return buildAnnouncementActionHref(normalized);
     }
     if (screenPath === '/staff/salary') {
       return '/staff/salary-history';
     }
+    if (screenPath === '/staff/ptt' || screenPath.startsWith('/staff/ptt?')) {
+      return {
+        pathname: '/staff/ptt',
+        params: {
+          autoJoin: '1',
+          speakerName: pickStr(normalized, 'speakerName', 'speaker_name'),
+          roomId: pickStr(normalized, 'roomId', 'room_id'),
+        },
+      } as Href;
+    }
     return screenPath as Href;
   }
 
-  const url = normalizeNotificationUrl(data.url);
+  const url = normalizeNotificationUrl(normalized.url);
   const isInternalPath = url.startsWith('/');
 
   if (notificationType === 'staff_security_camera_recording' || url.startsWith('/staff/security-recordings')) {
@@ -385,7 +490,7 @@ export function resolveNotificationHref(
     notificationType === 'staff_ops_morning_digest' ||
     url === '/staff/checkout-board'
   ) {
-    const checkout = Number(data.checkoutPending ?? data.checkout_pending ?? 0);
+    const checkout = Number(normalized.checkoutPending ?? normalized.checkout_pending ?? 0);
     if (url === '/staff/checkout-board' || (Number.isFinite(checkout) && checkout > 0)) {
       return '/staff/checkout-board';
     }
@@ -404,6 +509,8 @@ export function resolveNotificationHref(
 
   if (
     notificationType === 'staff_room_cleaning_status' ||
+    notificationType === 'staff_room_cleaning_started' ||
+    notificationType === 'staff_room_cleaning_done' ||
     notificationType === 'staff_room_cleaning_plan_note_saved' ||
     notificationType === 'staff_room_cleaning_plan' ||
     url === '/staff/cleaning-plan' ||
@@ -412,11 +519,11 @@ export function resolveNotificationHref(
     return '/staff/cleaning-plan';
   }
 
-  if (isStaffMealMenuDailyNotification(data)) {
-    return staffMealMenuNotificationHref(data);
+  if (isStaffMealMenuDailyNotification(normalized)) {
+    return staffMealMenuNotificationHref(normalized);
   }
 
-  const warningId = pickStr(data, 'warningId', 'warning_id');
+  const warningId = pickStr(normalized, 'warningId', 'warning_id');
   if (
     notificationType === 'staff_personnel_warning' ||
     screenPath === '/staff/warnings' ||
@@ -429,14 +536,14 @@ export function resolveNotificationHref(
   }
 
   if (notificationType === 'staff_personnel_warning_ack') {
-    const sid = pickStr(data, 'subjectStaffId', 'subject_staff_id');
+    const sid = pickStr(normalized, 'subjectStaffId', 'subject_staff_id');
     if (sid) {
       return { pathname: '/admin/staff/[id]', params: { id: sid } } as Href;
     }
     return '/admin/staff';
   }
 
-  const storyId = pickStr(data, 'storyId', 'story_id');
+  const storyId = pickStr(normalized, 'storyId', 'story_id');
   if (storyId) {
     const isStaff = ctx?.isStaff ?? !!useAuthStore.getState().staff;
     if (isStaff || url.includes('/staff')) {
@@ -445,8 +552,8 @@ export function resolveNotificationHref(
     return { pathname: '/customer', params: { openStoryId: storyId } };
   }
 
-  const postId = pickStr(data, 'postId', 'postid');
-  const conversationId = parseConversationIdFromPayload(data);
+  const postId = pickStr(normalized, 'postId', 'postid');
+  const conversationId = parseConversationIdFromPayload(normalized);
 
   if (conversationId) {
     const adminChatMatch = url.match(/\/admin\/messages\/chat\/([^/?#]+)/);
@@ -477,7 +584,7 @@ export function resolveNotificationHref(
     return { pathname: '/customer/feed/[id]', params: { id: postId } };
   }
 
-  const lostFoundId = pickStr(data, 'lostFoundItemId', 'lost_found_item_id');
+  const lostFoundId = pickStr(normalized, 'lostFoundItemId', 'lost_found_item_id');
   const lostFoundBase = ctx?.pathnameIsAdmin ? '/admin/lost-found' : '/staff/lost-found';
   if (lostFoundId) {
     return `${lostFoundBase}/${lostFoundId}` as Href;
@@ -487,13 +594,13 @@ export function resolveNotificationHref(
     return `${lostFoundBase}/${lostFoundUrlMatch[1]}` as Href;
   }
 
-  const reportIdFromData = pickStr(data, 'missingItemReportId', 'missing_item_report_id');
+  const reportIdFromData = pickStr(normalized, 'missingItemReportId', 'missing_item_report_id');
   const kitchenShortageReportMatch = url.match(/\/kitchen-ops\/shortages\/report\/([0-9a-f-]{36})/i);
   if (kitchenShortageReportMatch?.[1]) {
     return `/staff/kitchen-ops/shortages/report/${kitchenShortageReportMatch[1]}` as Href;
   }
   if (reportIdFromData) {
-    const areaForReport = pickStr(data, 'area');
+    const areaForReport = pickStr(normalized, 'area');
     if (areaForReport === 'kitchen' || url.includes('/kitchen-ops/shortages')) {
       return `/staff/kitchen-ops/shortages/report/${reportIdFromData}` as Href;
     }
@@ -509,7 +616,7 @@ export function resolveNotificationHref(
     }
     return `${missingItemsBase}/${missingAreaMatch[1]}` as Href;
   }
-  const area = pickStr(data, 'area');
+  const area = pickStr(normalized, 'area');
   if (area === 'kitchen') {
     return '/staff/kitchen-ops/shortages' as Href;
   }
@@ -517,7 +624,7 @@ export function resolveNotificationHref(
     return `${missingItemsBase}/${area}` as Href;
   }
 
-  const assignmentId = pickStr(data, 'assignmentId', 'openAssignmentId');
+  const assignmentId = pickStr(normalized, 'assignmentId', 'openAssignmentId');
   if (assignmentId && (url === '/staff/tasks' || notificationType === 'staff_assignment')) {
     return { pathname: '/staff/tasks', params: { focusAssignment: assignmentId } };
   }
@@ -536,9 +643,6 @@ export function resolveNotificationHref(
   if (screenPath === 'notifications' || screenPath === 'messages') {
     return defaultNotificationsHref(ctx);
   }
-
-  const typedHref = resolveByNotificationType(notificationType, data, ctx);
-  if (typedHref) return typedHref;
 
   if (url) {
     return url as Href;
@@ -561,7 +665,12 @@ export async function navigateFromNotificationPush(
   try {
     await waitForNotificationNavigationReady();
     const staff = useAuthStore.getState().staff;
-    const href = resolveNotificationHref(data, { isStaff: !!staff });
+    const normalized = normalizeNotificationPushData(data);
+    // Bildirim satırındaki tip bazen yalnızca notification_type kolonunda
+    if (!notificationTypeOf(normalized) && typeof data.notification_type === 'string') {
+      normalized.notificationType = data.notification_type;
+    }
+    const href = resolveNotificationHref(normalized, { isStaff: !!staff });
     await new Promise<void>((resolve) => {
       InteractionManager.runAfterInteractions(() => resolve());
     });

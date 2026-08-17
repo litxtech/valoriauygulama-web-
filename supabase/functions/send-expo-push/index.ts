@@ -172,6 +172,15 @@ Deno.serve(async (req: Request) => {
       data?.emergency === true ||
       notificationType.includes("emergency") ||
       featureKeyRaw === "emergency_alert";
+    const isPttTalk =
+      featureKeyRaw === "staff_ptt" ||
+      notificationType === "staff_ptt_talk" ||
+      notificationType === "staff_ptt";
+    const wantsTimeSensitive =
+      isEmergency ||
+      isPttTalk ||
+      data?.interruptionLevel === "time-sensitive" ||
+      data?.attention === true;
 
     const staffOrgById = new Map<string, string>();
     const staffNameById = new Map<string, string>();
@@ -221,7 +230,9 @@ Deno.serve(async (req: Request) => {
 
     const payloadChannelId = typeof data?.androidChannelId === "string" ? data.androidChannelId.trim() : "";
     const payloadSound = typeof data?.sound === "string" ? data.sound.trim() : "";
-    const roomCleaningMarked = notificationType === "staff_room_cleaning_status";
+    const roomCleaningMarked =
+      notificationType === "staff_room_cleaning_status" ||
+      notificationType === "staff_room_cleaning_done";
     const roomCleaningSoundDisabledStaffIds = new Set<string>();
     if (roomCleaningMarked && staffIds.length > 0) {
       const { data: prefRows } = await supabase
@@ -361,9 +372,15 @@ Deno.serve(async (req: Request) => {
           ...(notificationEventId ? { notificationEventId, notification_event_id: notificationEventId } : {}),
           ...(disableSoundForThisMessage ? { muteSound: true } : {}),
           screen:
-            typeof data?.screen === "string" && data.screen.trim() ? data.screen : "notifications",
+            typeof data?.screen === "string" && data.screen.trim()
+              ? data.screen.trim()
+              : notificationType === "staff_ptt_talk" || notificationType === "staff_ptt"
+                ? "/staff/ptt"
+                : typeof data?.url === "string" && data.url.trim().startsWith("/")
+                  ? data.url.trim()
+                  : "notifications",
         },
-        ...(isEmergency ? { interruptionLevel: "time-sensitive" as const } : {}),
+        ...(wantsTimeSensitive ? { interruptionLevel: "time-sensitive" as const } : {}),
       });
     })
     );

@@ -1,5 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, BackHandler, InteractionManager } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Platform,
+  BackHandler,
+  InteractionManager,
+  AppState,
+  type AppStateStatus,
+} from 'react-native';
 import { useRouter, Stack, useNavigation, usePathname, useRootNavigationState } from 'expo-router';
 import { safeRouterReplace } from '@/lib/safeRouter';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +20,6 @@ import { theme } from '@/constants/theme';
 import { useTranslation } from 'react-i18next';
 import { feedSharedText } from '@/lib/feedSharedI18n';
 import { staffTipText } from '@/lib/staffTipsI18n';
-import { isPostgrestSchemaCacheError, sleepMs } from '@/lib/supabaseTransientErrors';
 import { PersonnelWarningGate } from '@/components/staff/PersonnelWarningGate';
 import { StaffLiveLocationBootstrap } from '@/components/staff/StaffLiveLocationBootstrap';
 import {
@@ -23,53 +32,83 @@ import {
 import { prefetchStaffMealMenuBrowse } from '@/lib/staffMealMenuCache';
 import { StaffHamburgerNavigationHost } from '@/components/header/StaffHamburgerNavigationHost';
 import { useStaffAccountStatusRealtime } from '@/hooks/useStaffAccountStatusRealtime';
+import { pttLiveSession } from '@/lib/ptt/liveSession';
+import { resolveActivePttRoomId } from '@/lib/ptt/rooms';
+import { STAFF_PRESENCE_HEARTBEAT_MS, updateStaffOnlinePresence } from '@/lib/staffPresence';
 
+/** Personel uygulamadayken çevrim içi, arka plan / çıkışta çevrim dışı. */
 function useStaffPresence(staffId: string | undefined) {
   useEffect(() => {
     if (!staffId) return;
 
     let preferOffline = false;
     let cancelled = false;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let ready = false;
 
-    const setOnline = (online: boolean) => {
-      (async () => {
-        if (cancelled) return;
-        const max = 3;
-        for (let a = 1; a <= max; a++) {
-          const { error } = await supabase
-            .from('staff')
-            .update({
-              is_online: online,
-              last_active: new Date().toISOString(),
-            })
-            .eq('id', staffId);
-          if (!error) return;
-          if (isPostgrestSchemaCacheError(error) && a < max) {
-            await sleepMs(300 * a);
-            continue;
-          }
-          if (!isPostgrestSchemaCacheError(error)) {
-            console.warn('Staff presence update failed', error.message);
-          }
-          return;
+    const pushPresence = (online: boolean) => {
+      void updateStaffOnlinePresence(staffId, online).catch(() => {});
+    };
+
+    const stopHeartbeat = () => {
+      if (!heartbeat) return;
+      clearInterval(heartbeat);
+      heartbeat = null;
+    };
+
+    const startHeartbeat = () => {
+      stopHeartbeat();
+      if (preferOffline || cancelled) return;
+      heartbeat = setInterval(() => {
+        if (cancelled || preferOffline) return;
+        if (AppState.currentState !== 'active') return;
+        pushPresence(true);
+      }, STAFF_PRESENCE_HEARTBEAT_MS);
+    };
+
+    const applyForAppState = (state: AppStateStatus) => {
+      if (!ready || cancelled) return;
+      if (state === 'active') {
+        if (!preferOffline) {
+          pushPresence(true);
+          startHeartbeat();
+        } else {
+          stopHeartbeat();
         }
-      })().catch(() => {});
+        return;
+      }
+      // Arka plan / inactive: uygulamadan çıkmış say → çevrim dışı
+      stopHeartbeat();
+      pushPresence(false);
     };
 
     (async () => {
-      // Personel profilindeki manuel "çevrimdışı" tercihini koru.
-      const { data } = await supabase.from('staff').select('work_status').eq('id', staffId).maybeSingle();
-      preferOffline = data?.work_status === 'off' || data?.work_status === 'offline';
-      if (!preferOffline) setOnline(true);
+      try {
+        const { data } = await supabase.from('staff').select('work_status').eq('id', staffId).maybeSingle();
+        if (cancelled) return;
+        // Profildeki manuel "çevrimdışı" tercihini koru.
+        preferOffline = data?.work_status === 'off' || data?.work_status === 'offline';
+      } catch {
+        preferOffline = false;
+      }
+      if (cancelled) return;
+      ready = true;
+      applyForAppState(AppState.currentState);
     })().catch(() => {
-      // Okuma başarısızsa mevcut davranışa dön.
-      setOnline(true);
+      if (cancelled) return;
+      preferOffline = false;
+      ready = true;
+      applyForAppState(AppState.currentState);
     });
+
+    const sub = AppState.addEventListener('change', applyForAppState);
 
     return () => {
       cancelled = true;
-      // Personel oturumdan cikinca/ekran kapaninca offline'a cek.
-      setOnline(false);
+      stopHeartbeat();
+      sub.remove();
+      // Oturum / layout kapanınca mutlaka çevrim dışı (önceki cancelled guard bug'ı düzeltildi).
+      void updateStaffOnlinePresence(staffId, false).catch(() => {});
     };
   }, [staffId]);
 }
@@ -104,6 +143,24 @@ export default function StaffLayout() {
     const t = setTimeout(() => prefetchStaffMealMenuBrowse(staff.organization_id!), 4000);
     return () => clearTimeout(t);
   }, [staff?.organization_id]);
+
+  // Bas-konuş: yalnız token önbelleği — ses oturumu açma (müzik kesilmesin).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!staff?.id || isBanned || isDeleted || isAccountLocked) return;
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void (async () => {
+        const roomId = await resolveActivePttRoomId(staff.id);
+        if (cancelled || !roomId) return;
+        pttLiveSession.warm(roomId);
+      })();
+    });
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
+  }, [staff?.id, isBanned, isDeleted, isAccountLocked]);
 
   // Root _layout'ta initAuthListener zaten loadSession çağırıyor; burada tekrar çağırmak
   // loading: true yapıp layout'u null döndürüyor ve arkadaki lobi görünüyordu.
@@ -319,6 +376,7 @@ export default function StaffLayout() {
       />
       <Stack.Screen name="evaluation" options={{ headerBackTitle: t('back') }} />
       <Stack.Screen name="performance/index" options={{ title: t('perfDashboardScreenTitle'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="denetim" options={{ headerShown: false }} />
       <Stack.Screen name="points/index" options={{ title: 'Alınan puanlarım', headerBackTitle: t('back') }} />
       <Stack.Screen name="in-house" options={{ title: 'Otel nüfusu', headerBackTitle: t('back') }} />
       <Stack.Screen
@@ -457,6 +515,7 @@ export default function StaffLayout() {
       <Stack.Screen name="local-area-guide/index" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="local-area-guide/[id]" options={{ title: t('localAreaGuideScreenTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="emergency" options={{ title: t('screenEmergencyButton'), headerBackTitle: t('back') }} />
+      <Stack.Screen name="ptt" options={{ title: t('pttTitle'), headerBackTitle: t('back') }} />
       <Stack.Screen name="occupancy" options={{ headerShown: false }} />
       <Stack.Screen name="technical-assets" options={{ headerShown: false }} />
       <Stack.Screen name="warnings" options={{ title: t('staffOfficialWarningsNavTitle'), headerBackTitle: t('back') }} />

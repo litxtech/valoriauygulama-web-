@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
+  Alert,
   Animated,
   Easing,
   Modal,
@@ -48,6 +49,8 @@ import {
   resolveMenuSectionColor,
   type ResolvedStaffHamburgerTheme,
 } from '@/lib/staffHamburgerTheme';
+import { availableToAdd } from '@/lib/staffTabCustomization';
+import { STAFF_HAMBURGER_MAX_PINS } from '@/stores/staffHamburgerPinsStore';
 
 export type StaffQuickMenuItem = StaffHamburgerMenuItem;
 
@@ -75,6 +78,10 @@ type Props = {
   /** Kişisel üste sabitlenen özellikler */
   pinnedItems?: StaffHamburgerMenuItem[];
   pinnedIdSet?: string[];
+  /** Yetkili tüm menü öğeleri — kısayol seçici adayları */
+  pinCandidates?: StaffHamburgerMenuItem[];
+  /** Parent menü id → alt özellik kısayolları (Mutfak → Hasılat Gir vb.) */
+  pinChildrenByParentId?: Record<string, StaffHamburgerMenuItem[]>;
   onTogglePin?: (itemId: string) => Promise<boolean> | boolean;
   onMovePin?: (itemId: string, direction: -1 | 1) => Promise<void> | void;
   showAttendanceShortcuts?: boolean;
@@ -696,6 +703,8 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   recentItems = [],
   pinnedItems = [],
   pinnedIdSet,
+  pinCandidates = [],
+  pinChildrenByParentId = {},
   onTogglePin,
   onMovePin,
   showAttendanceShortcuts = false,
@@ -736,6 +745,9 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   /** Kapanış animasyonu bitene kadar mount tut. */
   const [mounted, setMounted] = useState(visible);
   const [pinsEditMode, setPinsEditMode] = useState(false);
+  const [pinPickerOpen, setPinPickerOpen] = useState(false);
+  const [pinPickerQuery, setPinPickerQuery] = useState('');
+  const [pinPickerParentId, setPinPickerParentId] = useState<string | null>(null);
 
   const pinnedIdLookup = useMemo(() => {
     if (pinnedIdSet?.length) return new Set(pinnedIdSet);
@@ -763,10 +775,90 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   const useGrid = menuTheme.layoutMode === 'grid' || menuTheme.itemStyle === 'grid';
   const usePill = menuTheme.itemStyle === 'pill';
   const showHubs = menuTheme.showHubCards && filteredHubs.length > 0;
+  /** Kısayol alanı her zaman görünür; aramada yalnızca eşleşen pinler. */
   const showPinnedSection =
-    onTogglePin != null &&
-    (pinsEditMode ||
-      (searchQuery.trim() ? filteredPinned.length > 0 : pinnedItems.length > 0));
+    onTogglePin != null && (searchQuery.trim() ? filteredPinned.length > 0 : true);
+
+  /** Kök liste: eklenmemiş özellikler + alt kısayolu kalan hub’lar */
+  const rootPinPickerItems = useMemo(() => {
+    const primaryId = primary?.id ?? null;
+    return pinCandidates.filter((item) => {
+      if (item.id === primaryId) return false;
+      if (!pinnedIdLookup.has(item.id)) return true;
+      const children = pinChildrenByParentId[item.id] ?? [];
+      return availableToAdd(children, [...pinnedIdLookup]).length > 0;
+    });
+  }, [pinCandidates, pinnedIdLookup, primary?.id, pinChildrenByParentId]);
+
+  const pinPickerParent = useMemo(() => {
+    if (!pinPickerParentId) return null;
+    return pinCandidates.find((i) => i.id === pinPickerParentId) ?? null;
+  }, [pinPickerParentId, pinCandidates]);
+
+  const pinPickerChildItems = useMemo(() => {
+    if (!pinPickerParentId) return [];
+    return pinChildrenByParentId[pinPickerParentId] ?? [];
+  }, [pinPickerParentId, pinChildrenByParentId]);
+
+  const addablePinChildren = useMemo(
+    () => availableToAdd(pinPickerChildItems, [...pinnedIdLookup]),
+    [pinPickerChildItems, pinnedIdLookup]
+  );
+
+  type PinPickerRow = {
+    item: StaffHamburgerMenuItem;
+    hasChildren: boolean;
+    parentLabel?: string;
+  };
+
+  const filteredPinPickerRows = useMemo((): PinPickerRow[] => {
+    const q = pinPickerQuery.trim().toLocaleLowerCase();
+
+    if (pinPickerParentId) {
+      const items = q ? filterMenuItems(addablePinChildren, pinPickerQuery) : addablePinChildren;
+      return items.map((item) => ({ item, hasChildren: false }));
+    }
+
+    if (!q) {
+      return rootPinPickerItems.map((item) => ({
+        item,
+        hasChildren: (pinChildrenByParentId[item.id]?.length ?? 0) > 0,
+      }));
+    }
+
+    const rows: PinPickerRow[] = [];
+    const seen = new Set<string>();
+    for (const item of filterMenuItems(rootPinPickerItems, pinPickerQuery)) {
+      seen.add(item.id);
+      rows.push({
+        item,
+        hasChildren: (pinChildrenByParentId[item.id]?.length ?? 0) > 0,
+      });
+    }
+    for (const parent of pinCandidates) {
+      const children = pinChildrenByParentId[parent.id] ?? [];
+      if (!children.length) continue;
+      for (const child of availableToAdd(children, [...pinnedIdLookup])) {
+        if (seen.has(child.id)) continue;
+        const label = (child.label ?? '').toLocaleLowerCase();
+        const id = (child.id ?? '').toLocaleLowerCase();
+        if (!label.includes(q) && !id.includes(q)) continue;
+        seen.add(child.id);
+        rows.push({ item: child, hasChildren: false, parentLabel: parent.label });
+      }
+    }
+    return rows;
+  }, [
+    pinPickerParentId,
+    pinPickerQuery,
+    addablePinChildren,
+    rootPinPickerItems,
+    pinChildrenByParentId,
+    pinCandidates,
+    pinnedIdLookup,
+  ]);
+
+  const canAddMorePins = pinnedIdLookup.size < STAFF_HAMBURGER_MAX_PINS;
 
   const insets = useSafeAreaInsets();
   const backdrop = useRef(new Animated.Value(0)).current;
@@ -787,7 +879,12 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
   panelWidthRef.current = panelWidth;
 
   useEffect(() => {
-    if (!visible) setPinsEditMode(false);
+    if (!visible) {
+      setPinsEditMode(false);
+      setPinPickerOpen(false);
+      setPinPickerQuery('');
+      setPinPickerParentId(null);
+    }
     if (visible) dragX.setValue(0);
   }, [visible, dragX]);
 
@@ -873,6 +970,45 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
       void onTogglePin(itemId);
     },
     [onTogglePin, itemsPressEnabled, primary?.id]
+  );
+
+  const openPinPicker = useCallback(() => {
+    if (!onTogglePin || !itemsPressEnabled) return;
+    if (!canAddMorePins) {
+      Alert.alert(t('staffMenuPinsFull'));
+      return;
+    }
+    hapticSelection();
+    setPinPickerQuery('');
+    setPinPickerParentId(null);
+    setPinPickerOpen(true);
+  }, [onTogglePin, itemsPressEnabled, canAddMorePins, t]);
+
+  const openPinPickerChildren = useCallback((parentId: string) => {
+    hapticSelection();
+    setPinPickerQuery('');
+    setPinPickerParentId(parentId);
+  }, []);
+
+  const closePinPickerChildren = useCallback(() => {
+    hapticSelection();
+    setPinPickerQuery('');
+    setPinPickerParentId(null);
+  }, []);
+
+  const handleAddPinFromPicker = useCallback(
+    (itemId: string) => {
+      if (!onTogglePin || !itemsPressEnabled) return;
+      if (primary?.id && itemId === primary.id) return;
+      if (pinnedIdLookup.has(itemId)) return;
+      if (!canAddMorePins) {
+        Alert.alert(t('staffMenuPinsFull'));
+        return;
+      }
+      hapticImpactLight();
+      void onTogglePin(itemId);
+    },
+    [onTogglePin, itemsPressEnabled, primary?.id, canAddMorePins, pinnedIdLookup, t]
   );
 
   const tryApplyMenuScrollRestore = useCallback(() => {
@@ -1147,7 +1283,22 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               <Ionicons name="pin" size={14} color="#d97706" style={{ marginRight: 5 }} />
               <Text style={[styles.sectionLabel, { color: '#d97706', flex: 1 }]}>
                 {t('staffMenuPinnedTitle')}
+                {pinnedItems.length > 0
+                  ? ` (${pinnedItems.length}/${STAFF_HAMBURGER_MAX_PINS})`
+                  : ''}
               </Text>
+              <TouchableOpacity
+                onPress={openPinPicker}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('staffMenuAddShortcut')}
+                style={styles.pinHeaderAction}
+              >
+                <Ionicons name="add-circle-outline" size={16} color={effectivePalette.indigo} />
+                <Text style={[styles.pinEditToggle, { color: effectivePalette.indigo }]}>
+                  {t('staffMenuAddShortcut')}
+                </Text>
+              </TouchableOpacity>
               {pinnedItems.length > 0 ? (
                 <TouchableOpacity
                   onPress={() => {
@@ -1157,6 +1308,7 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
                   accessibilityLabel={pinsEditMode ? t('staffMenuPinnedDone') : t('staffMenuPinnedEdit')}
+                  style={styles.pinHeaderAction}
                 >
                   <Text style={[styles.pinEditToggle, { color: effectivePalette.indigo }]}>
                     {pinsEditMode ? t('staffMenuPinnedDone') : t('staffMenuPinnedEdit')}
@@ -1179,9 +1331,31 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
               ]}
             >
               {filteredPinned.length === 0 ? (
-                <Text style={[styles.pinEmptyHint, { color: effectivePalette.muted }]}>
-                  {pinsEditMode ? t('staffMenuPinnedEmptyEdit') : t('staffMenuPinnedHint')}
-                </Text>
+                <TouchableOpacity
+                  onPress={openPinPicker}
+                  activeOpacity={0.85}
+                  style={[
+                    styles.pinEmptyCard,
+                    {
+                      backgroundColor: effectivePalette.cardBg,
+                      borderColor: effectivePalette.cardBorder,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('staffMenuAddShortcut')}
+                >
+                  <View style={[styles.pinEmptyIcon, { backgroundColor: 'rgba(217,119,6,0.12)' }]}>
+                    <Ionicons name="add" size={22} color="#d97706" />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.pinEmptyTitle, { color: effectivePalette.text }]}>
+                      {t('staffMenuAddShortcut')}
+                    </Text>
+                    <Text style={[styles.pinEmptyHint, { color: effectivePalette.muted, paddingHorizontal: 0, paddingVertical: 0 }]}>
+                      {t('staffMenuAddShortcutSubtitle')}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               ) : (
                 filteredPinned.map((item, idx, items) => (
                   <View
@@ -1211,17 +1385,13 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
                       }}
                       onUnpin={() => handleTogglePinItem(item.id)}
                       onPress={() => go(onSelect, item.href, itemsPressEnabled, item, scrollYRef.current)}
-                      onLongPress={onTogglePin ? () => handleTogglePinItem(item.id) : undefined}
+                      onLongPress={() => handleTogglePinItem(item.id)}
                     />
                   </View>
                 ))
               )}
             </View>
           </View>
-        ) : onTogglePin && !searchQuery.trim() ? (
-          <Text style={[styles.pinHintLine, styles.pinHintStandalone, { color: effectivePalette.muted }]}>
-            {t('staffMenuPinnedHint')}
-          </Text>
         ) : null}
 
         {filteredSections.map((section) => {
@@ -1416,13 +1586,258 @@ export const StaffQuickMenuSheet = memo(function StaffQuickMenuSheet({
           ]}
         >
           {menuScroll}
+          {pinPickerOpen ? (
+            <View
+              style={[
+                styles.pinPickerOverlay,
+                { backgroundColor: effectivePalette.pageBg, paddingBottom: insets.bottom + 12 },
+              ]}
+            >
+              <View style={[styles.pinPickerHeader, { borderBottomColor: effectivePalette.cardBorder }]}>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (pinPickerParentId) {
+                      closePinPickerChildren();
+                      return;
+                    }
+                    hapticSelection();
+                    setPinPickerOpen(false);
+                    setPinPickerQuery('');
+                    setPinPickerParentId(null);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={[styles.pinPickerBackBtn, { backgroundColor: effectivePalette.cardBg }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('staffMenuPinnedDone')}
+                >
+                  <Ionicons name="chevron-back" size={20} color={effectivePalette.text} />
+                </TouchableOpacity>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.pinPickerTitle, { color: effectivePalette.text }]} numberOfLines={1}>
+                    {pinPickerParent
+                      ? pinPickerParent.label
+                      : t('staffMenuAddShortcutTitle')}
+                  </Text>
+                  <Text style={[styles.pinPickerSubtitle, { color: effectivePalette.muted }]} numberOfLines={2}>
+                    {pinPickerParent
+                      ? t('staffMenuShortcutChildren')
+                      : t('staffMenuAddShortcutSubtitle')}
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  styles.searchWrap,
+                  IS_ANDROID && styles.searchWrapAndroid,
+                  styles.pinPickerSearch,
+                  {
+                    backgroundColor: effectivePalette.cardBg,
+                    borderColor: effectivePalette.cardBorder,
+                  },
+                ]}
+              >
+                <Ionicons name="search-outline" size={18} color={effectivePalette.muted} style={styles.searchIcon} />
+                <TextInput
+                  value={pinPickerQuery}
+                  onChangeText={setPinPickerQuery}
+                  placeholder={t('staffMenuSearch')}
+                  placeholderTextColor={effectivePalette.muted}
+                  style={[styles.searchInput, { color: effectivePalette.text }]}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  clearButtonMode="while-editing"
+                  returnKeyType="search"
+                />
+                {pinPickerQuery.length > 0 ? (
+                  <TouchableOpacity
+                    onPress={() => setPinPickerQuery('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('clear')}
+                  >
+                    <Ionicons name="close-circle" size={18} color={effectivePalette.muted} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <ScrollView
+                style={styles.pinPickerScroll}
+                contentContainerStyle={styles.pinPickerScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {pinPickerParent && !pinnedIdLookup.has(pinPickerParent.id) && !pinPickerQuery.trim() ? (
+                  <TouchableOpacity
+                    onPress={() => handleAddPinFromPicker(pinPickerParent.id)}
+                    activeOpacity={0.82}
+                    style={[
+                      styles.pinPickerRow,
+                      {
+                        backgroundColor: effectivePalette.cardBg,
+                        borderColor: effectivePalette.cardBorder,
+                      },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('staffMenuShortcutAddParent')}: ${pinPickerParent.label}`}
+                  >
+                    <View
+                      style={[
+                        styles.listIcon,
+                        {
+                          backgroundColor: accentTintBg(
+                            resolveMenuItemAccent(pinPickerParent.id, pinPickerParent.accent, menuTheme)
+                          ),
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={pinPickerParent.icon}
+                        size={18}
+                        color={resolveMenuItemAccent(pinPickerParent.id, pinPickerParent.accent, menuTheme)}
+                      />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[styles.listLabel, { color: effectivePalette.text }]} numberOfLines={1}>
+                        {t('staffMenuShortcutAddParent')}
+                      </Text>
+                      <Text style={[styles.pinPickerParentHint, { color: effectivePalette.muted }]} numberOfLines={1}>
+                        {pinPickerParent.label}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.pinPickerAddChip,
+                        {
+                          backgroundColor: `${resolveMenuItemAccent(pinPickerParent.id, pinPickerParent.accent, menuTheme)}18`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="add"
+                        size={16}
+                        color={resolveMenuItemAccent(pinPickerParent.id, pinPickerParent.accent, menuTheme)}
+                      />
+                      <Text
+                        style={[
+                          styles.pinPickerAddChipText,
+                          {
+                            color: resolveMenuItemAccent(
+                              pinPickerParent.id,
+                              pinPickerParent.accent,
+                              menuTheme
+                            ),
+                          },
+                        ]}
+                      >
+                        {t('staffTabPinsAdd')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
+                {filteredPinPickerRows.length === 0 ? (
+                  <Text style={[styles.emptySearch, { color: effectivePalette.muted }]}>
+                    {pinPickerParentId
+                      ? addablePinChildren.length === 0
+                        ? t('staffMenuAddShortcutEmpty')
+                        : t('staffMenuSearchEmpty')
+                      : rootPinPickerItems.length === 0
+                        ? t('staffMenuAddShortcutEmpty')
+                        : t('staffMenuSearchEmpty')}
+                  </Text>
+                ) : (
+                  filteredPinPickerRows.map(({ item, hasChildren, parentLabel }) => {
+                    const accent = resolveMenuItemAccent(item.id, item.accent, menuTheme);
+                    const alreadyPinned = pinnedIdLookup.has(item.id);
+                    return (
+                      <View
+                        key={`add-pin-${pinPickerParentId ?? 'root'}-${item.id}`}
+                        style={[
+                          styles.pinPickerRow,
+                          {
+                            backgroundColor: effectivePalette.cardBg,
+                            borderColor: effectivePalette.cardBorder,
+                          },
+                        ]}
+                      >
+                        <TouchableOpacity
+                          style={styles.pinPickerRowMain}
+                          onPress={() => {
+                            if (hasChildren && !pinPickerParentId) {
+                              openPinPickerChildren(item.id);
+                              return;
+                            }
+                            if (!alreadyPinned) handleAddPinFromPicker(item.id);
+                          }}
+                          activeOpacity={0.82}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            hasChildren && !pinPickerParentId
+                              ? `${t('staffMenuShortcutOpenChildren')}: ${item.label}`
+                              : `${t('staffMenuAddShortcut')}: ${item.label}`
+                          }
+                        >
+                          <View style={[styles.listIcon, { backgroundColor: accentTintBg(accent) }]}>
+                            <Ionicons name={item.icon} size={18} color={accent} />
+                          </View>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text
+                              style={[styles.listLabel, { color: effectivePalette.text }]}
+                              numberOfLines={1}
+                            >
+                              {item.label}
+                            </Text>
+                            {hasChildren && !pinPickerParentId ? (
+                              <Text
+                                style={[styles.pinPickerParentHint, { color: effectivePalette.muted }]}
+                                numberOfLines={1}
+                              >
+                                {t('staffMenuShortcutOpenChildren')} · {t('staffMenuShortcutChildHint')}
+                              </Text>
+                            ) : parentLabel ? (
+                              <Text
+                                style={[styles.pinPickerParentHint, { color: effectivePalette.muted }]}
+                                numberOfLines={1}
+                              >
+                                {parentLabel}
+                              </Text>
+                            ) : null}
+                          </View>
+                          {hasChildren && !pinPickerParentId ? (
+                            <Ionicons name="chevron-forward" size={18} color={effectivePalette.muted} />
+                          ) : null}
+                        </TouchableOpacity>
+                        {!alreadyPinned ? (
+                          <TouchableOpacity
+                            onPress={() => handleAddPinFromPicker(item.id)}
+                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                            style={[styles.pinPickerAddChip, { backgroundColor: `${accent}18` }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${t('staffTabPinsAdd')}: ${item.label}`}
+                          >
+                            <Ionicons name="add" size={16} color={accent} />
+                            <Text style={[styles.pinPickerAddChipText, { color: accent }]}>
+                              {t('staffTabPinsAdd')}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={[styles.pinPickerAddChip, { backgroundColor: 'rgba(217,119,6,0.12)' }]}>
+                            <Ionicons name="pin" size={14} color="#d97706" />
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
+          ) : null}
         </View>
         {showRecentFlyout ? (
           <View style={[styles.panelFlyoutCol, { width: FLYOUT_W, borderLeftColor: effectivePalette.cardBorder }]}>
             <StaffHamburgerRecentFlyout
               items={recentItems}
               bottomInset={insets.bottom}
-              canPress={itemsPressEnabled}
+              canPress={itemsPressEnabled && !pinPickerOpen}
               palette={effectivePalette}
               onSelect={(href, target) => {
                 onSelect(href, { ...target, scrollY: scrollYRef.current });
@@ -1628,6 +2043,8 @@ const styles = StyleSheet.create({
   panelDrawerCol: {
     minHeight: 0,
     flexDirection: 'column',
+    overflow: 'hidden',
+    position: 'relative',
   },
   panelDrawerColFull: {
     flex: 1,
@@ -1885,6 +2302,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
+  pinHeaderAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 8,
+  },
+  pinEmptyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  pinEmptyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: -0.15,
+  },
   pinHintLine: {
     fontSize: 11,
     fontWeight: '500',
@@ -1896,6 +2341,86 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 0,
     paddingHorizontal: H_PAD,
+  },
+  pinPickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
+  pinPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: H_PAD,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  pinPickerBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinPickerTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  pinPickerSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  pinPickerSearch: {
+    marginHorizontal: H_PAD,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  pinPickerScroll: {
+    flex: 1,
+  },
+  pinPickerScrollContent: {
+    paddingHorizontal: H_PAD,
+    paddingBottom: 24,
+    gap: 8,
+  },
+  pinPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    minHeight: 54,
+  },
+  pinPickerRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minWidth: 0,
+  },
+  pinPickerParentHint: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+    lineHeight: 14,
+  },
+  pinPickerAddChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  pinPickerAddChipText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   pillItemPinned: {
     borderWidth: 1.5,

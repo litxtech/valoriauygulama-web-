@@ -923,10 +923,17 @@ export default function StaffNotificationsScreen() {
       return;
     }
     if (isMissingNotification(n)) {
-      const href = resolveNotificationHref((n.data ?? {}) as Record<string, unknown>, {
-        pathnameIsAdmin: !!pathname?.startsWith('/admin'),
-        isStaff: true,
-      });
+      const href = resolveNotificationHref(
+        {
+          ...((n.data ?? {}) as Record<string, unknown>),
+          notificationType: n.notification_type ?? undefined,
+          notification_type: n.notification_type ?? undefined,
+        },
+        {
+          pathnameIsAdmin: !!pathname?.startsWith('/admin'),
+          isStaff: true,
+        }
+      );
       if (href && href !== '/staff/notifications' && href !== '/admin/notifications') {
         router.push(href as never);
         return;
@@ -934,6 +941,59 @@ export default function StaffNotificationsScreen() {
       openNotificationDetail(n);
       return;
     }
+
+    // Bas-konuş / tip+url ile bilinen derin linkler — detay modalına düşmesin
+    {
+      const href = resolveNotificationHref(
+        {
+          ...((n.data ?? {}) as Record<string, unknown>),
+          notificationType: n.notification_type ?? undefined,
+          notification_type: n.notification_type ?? undefined,
+        },
+        {
+          pathnameIsAdmin: !!pathname?.startsWith('/admin'),
+          isStaff: true,
+        }
+      );
+      const hrefStr = typeof href === 'string' ? href : href?.pathname ?? '';
+      if (
+        hrefStr === '/staff/ptt' ||
+        hrefStr.startsWith('/staff/ptt') ||
+        n.notification_type === 'staff_ptt_talk' ||
+        n.notification_type === 'staff_ptt'
+      ) {
+        router.push(
+          (typeof href === 'object' && href
+            ? href
+            : {
+                pathname: '/staff/ptt',
+                params: { autoJoin: '1' },
+              }) as never
+        );
+        return;
+      }
+      if (
+        href &&
+        href !== '/staff/notifications' &&
+        href !== '/admin/notifications' &&
+        hrefStr.startsWith('/') &&
+        !hrefStr.includes('notifications')
+      ) {
+        // Güvenli derin linkler (cleaning-plan, payment-board, …)
+        const deep =
+          hrefStr === '/staff/cleaning-plan' ||
+          hrefStr === '/staff/payment-board' ||
+          hrefStr === '/staff/checkout-board' ||
+          hrefStr === '/staff/tasks' ||
+          hrefStr.startsWith('/staff/kbs') ||
+          hrefStr.startsWith('/staff/expenses');
+        if (deep) {
+          router.push(href as never);
+          return;
+        }
+      }
+    }
+
     openNotificationDetail(n);
   };
 

@@ -216,6 +216,19 @@ export const NOTIFICATION_SOUND_FEATURES: NotificationSoundFeatureDef[] = [
     maxDurationSec: 3,
   },
   {
+    featureKey: 'staff_ptt',
+    titleTr: 'Bas-konuş (telsiz)',
+    descriptionTr: 'Personel telsizinde biri konuşunca gelen bildirim.',
+    audiences: ['staff', 'admin'],
+    notificationTypeHints: ['staff_ptt_talk', 'staff_ptt'],
+    defaultIosPushSound: 'walkie_ptt_open.wav',
+    defaultAndroidPushSound: 'walkie_ptt_open.wav',
+    defaultAndroidChannelId: 'valoria_ns_staff_ptt_v2',
+    priority: 'high',
+    userCanMuteSound: true,
+    maxDurationSec: 2,
+  },
+  {
     featureKey: 'social_feed',
     titleTr: 'Akış (beğeni / yorum)',
     descriptionTr: 'Gönderi, hikaye beğeni ve yorum bildirimleri.',
@@ -526,12 +539,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
       t.includes('meal'),
     key: 'kitchen_request',
   },
-  {
-    test: (t) =>
-      t.startsWith('guest_service_request') ||
-      t === 'hotel_kitchen_menu_order',
-    key: 'guest_service_request',
-  },
+  { test: (t) => t.startsWith('guest_service_request') || t === 'hotel_kitchen_menu_order' || t === 'kitchen_menu_order_paid', key: 'guest_service_request' },
   {
     test: (t) =>
       t.includes('staff_tip') ||
@@ -577,6 +585,7 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
         !t.startsWith('guest_service_request') &&
         !t.includes('staff_room_payment') &&
         !t.includes('staff_room_cleaning') &&
+        !t.includes('staff_room_linen') &&
         !t.includes('room_cleaning')),
     key: 'reception_request',
   },
@@ -594,6 +603,10 @@ const TYPE_TO_FEATURE: { test: (t: string) => boolean; key: string }[] = [
       t.includes('personnel_warning') || t.includes('staff_mention'),
     key: 'staff_call',
   },
+  { test: (t) => t.includes('staff_ptt') || t.includes('ptt_talk'), key: 'staff_ptt' },
+  { test: (t) => t.startsWith('staff_perf'), key: 'staff_call' },
+  { test: (t) => t.includes('staff_room_linen'), key: 'room_cleaning' },
+  { test: (t) => t.startsWith('booking_'), key: 'reception_request' },
   {
     test: (t) => t.includes('feed_') || t.includes('story_'),
     key: 'social_feed',

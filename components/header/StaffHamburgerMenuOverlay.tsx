@@ -18,6 +18,14 @@ import { useStaffHamburgerMenuActions } from '@/hooks/useStaffHamburgerMenuActio
 import { useStaffMenuRealtime } from '@/hooks/useStaffMenuRealtime';
 import { useStaffHamburgerTheme } from '@/hooks/useStaffHamburgerTheme';
 import { applyPersonalPinsToLayout } from '@/lib/staffHamburgerPersonalPins';
+import {
+  buildShortcutChildrenByParentId,
+  collectShortcutChildPool,
+  expandLayoutWithShortcutChildren,
+  listShortcutParentIds,
+} from '@/lib/staffHamburgerShortcutChildren';
+import { collectAvailableShortcutItems } from '@/lib/staffTabCustomization';
+import { useKitchenFinanceAccess } from '@/hooks/useKitchenFinanceAccess';
 import { confirmDialog } from '@/lib/confirmDialog';
 import { runAfterUiReady } from '@/lib/runAfterUiReady';
 import { safeRouterReplace } from '@/lib/safeRouter';
@@ -49,6 +57,7 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
   const pinnedIds = useStaffHamburgerPinsStore((s) => s.pinnedIds);
   const togglePin = useStaffHamburgerPinsStore((s) => s.togglePin);
   const movePin = useStaffHamburgerPinsStore((s) => s.movePin);
+  const { financeStaffIds } = useKitchenFinanceAccess();
 
   useEffect(() => {
     if (!staff?.id) return;
@@ -68,7 +77,7 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
 
   const baseMenuLayout = useMemo(() => {
     if (!staff) return null;
-    return buildStaffHamburgerMenuLayout(
+    const built = buildStaffHamburgerMenuLayout(
       t,
       {
         role: staff.role,
@@ -79,6 +88,7 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
       },
       orgUiConfig
     );
+    return expandLayoutWithShortcutChildren(built, t, staff, { financeStaffIds });
   }, [
     t,
     staff?.role,
@@ -86,12 +96,36 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
     staff?.hidden_menu_item_ids,
     staff?.kbs_access_enabled,
     staff?.department,
+    staff?.id,
     orgUiConfig,
+    financeStaffIds,
   ]);
 
+  /** Yetkili tüm menü öğeleri — kısayol seçicide; yeni yetki açılınca otomatik gelir. */
+  const pinCandidates = useMemo(
+    () => collectAvailableShortcutItems(baseMenuLayout),
+    [baseMenuLayout]
+  );
+
+  const pinParentIds = useMemo(() => {
+    const fromLayout = pinCandidates.map((i) => i.id);
+    const parents = new Set([...fromLayout, ...listShortcutParentIds()]);
+    return [...parents];
+  }, [pinCandidates]);
+
+  const pinChildrenByParentId = useMemo(() => {
+    if (!staff) return {};
+    return buildShortcutChildrenByParentId(t, staff, pinParentIds, { financeStaffIds });
+  }, [t, staff, pinParentIds, financeStaffIds]);
+
+  const shortcutChildPool = useMemo(() => {
+    if (!staff) return [];
+    return collectShortcutChildPool(t, staff, pinParentIds, { financeStaffIds });
+  }, [t, staff, pinParentIds, financeStaffIds]);
+
   const { layout: menuLayout, pinnedItems } = useMemo(
-    () => applyPersonalPinsToLayout(baseMenuLayout, pinnedIds),
-    [baseMenuLayout, pinnedIds]
+    () => applyPersonalPinsToLayout(baseMenuLayout, pinnedIds, shortcutChildPool),
+    [baseMenuLayout, pinnedIds, shortcutChildPool]
   );
 
   const menuIdentity = useMemo(
@@ -229,6 +263,8 @@ export const StaffHamburgerMenuOverlay = memo(function StaffHamburgerMenuOverlay
         recentItems={recentItems}
         pinnedItems={pinnedItems}
         pinnedIdSet={pinnedIds}
+        pinCandidates={pinCandidates}
+        pinChildrenByParentId={pinChildrenByParentId}
         onTogglePin={handleTogglePin}
         onMovePin={handleMovePin}
         showAttendanceShortcuts={showAttendanceShortcuts}

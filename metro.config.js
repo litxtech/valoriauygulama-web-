@@ -26,6 +26,12 @@ const workletsCoreEntry = path.join(
   'node_modules/react-native-worklets-core/lib/module/index.js'
 );
 
+/** @livekit/react-native "react-native" alanı src/index.tsx; Metro ./polyfills/DOMException (.ts) çözemez → commonjs. */
+const livekitRnEntry = path.join(
+  projectRoot,
+  'node_modules/@livekit/react-native/lib/commonjs/index.js'
+);
+
 const defaultResolveRequest = config.resolver.resolveRequest;
 
 const ALIAS_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.json'];
@@ -64,6 +70,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'react-native-worklets-core') {
     return { filePath: workletsCoreEntry, type: 'sourceFile' };
+  }
+  if (moduleName === '@livekit/react-native') {
+    return { filePath: livekitRnEntry, type: 'sourceFile' };
   }
   const aliasHit = resolveProjectAlias(moduleName);
   if (aliasHit) return aliasHit;

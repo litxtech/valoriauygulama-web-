@@ -49,6 +49,8 @@ export const MANDATORY_NOTIFICATION_TYPES = new Set([
   'admin_panel_alert',
   'staff_personnel_warning',
   'staff_attendance_action',
+  'staff_quick_note',
+  'room_intelligence',
 ]);
 
 export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
@@ -58,7 +60,7 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('new_task', 'staffNotifNewTaskTitle', 'staffNotifNewTaskHint', {
     soundFeatureKey: 'new_task',
-    matchExact: ['staff_new_task', 'staff_urgent_task', 'staff_task_done'],
+    matchExact: ['staff_new_task', 'staff_urgent_task', 'staff_task_done', 'staff_task_failed'],
     matchPrefix: ['staff_new_repair', 'staff_urgent_repair', 'staff_repair_done'],
   }),
   entry('stock_pending_approval', 'staffNotifStockMovementsTitle', 'staffNotifStockMovementsHint', {
@@ -82,7 +84,19 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('breakfast_briefing', 'staffNotifBreakfastBriefingTitle', 'staffNotifBreakfastBriefingHint', {
     soundFeatureKey: 'kitchen_request',
-    matchExact: ['breakfast_morning_briefing', 'breakfast_partner_entry', 'breakfast_partner_remind', 'breakfast_partner_payment_staff'],
+    matchExact: [
+      'breakfast_morning_briefing',
+      'breakfast_partner_entry',
+      'breakfast_partner_remind',
+      'breakfast_partner_payment_staff',
+      'breakfast_partner_approved',
+      'breakfast_partner_price',
+      'breakfast_partner_suspended',
+      'breakfast_partner_campaign',
+      'breakfast_partner_camera_video',
+      'breakfast_guest_pass_redeemed',
+    ],
+    matchPrefix: ['breakfast_partner'],
   }),
   entry('staff_meal_menu_daily', 'staffNotifMealMenuDailyTitle', 'staffNotifMealMenuDailyHint', {
     soundFeatureKey: 'kitchen_request',
@@ -94,9 +108,22 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
     matchPrefix: ['guest_request', 'guest_checkin', 'guest_checkout', 'guest_admin_assigned', 'guest_room', 'admin_pending_checkin'],
     matchContains: ['checkin', 'checkout'],
   }),
+  entry('room_cleaning_started', 'staffNotifRoomCleaningStartedTitle', 'staffNotifRoomCleaningStartedHint', {
+    soundFeatureKey: 'room_cleaning',
+    matchExact: ['staff_room_cleaning_started'],
+  }),
+  entry('room_cleaning_done', 'staffNotifRoomCleaningDoneTitle', 'staffNotifRoomCleaningDoneHint', {
+    soundFeatureKey: 'room_cleaning',
+    matchExact: ['staff_room_cleaning_done'],
+  }),
   entry('room_cleaning', 'staffNotifRoomCleaningTitle', 'staffNotifRoomCleaningHint', {
     soundFeatureKey: 'room_cleaning',
-    matchPrefix: ['staff_room_cleaning'],
+    matchExact: ['staff_room_cleaning_plan', 'staff_room_cleaning_plan_note_saved', 'staff_room_cleaning_status'],
+    matchPrefix: ['staff_room_cleaning_plan'],
+  }),
+  entry('staff_ptt', 'staffNotifPttTitle', 'staffNotifPttHint', {
+    soundFeatureKey: 'staff_ptt',
+    matchExact: ['staff_ptt_talk', 'staff_ptt'],
   }),
   entry('room_payment', 'staffNotifRoomPaymentTitle', 'staffNotifRoomPaymentHint', {
     soundFeatureKey: 'room_payment',
@@ -106,9 +133,35 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
     soundFeatureKey: 'room_cleaning',
     matchExact: ['staff_ops_morning_digest'],
   }),
+  entry('room_linen', 'staffNotifRoomLinenTitle', 'staffNotifRoomLinenHint', {
+    soundFeatureKey: 'room_cleaning',
+    matchExact: ['staff_room_linen_handover'],
+    matchPrefix: ['staff_room_linen'],
+  }),
   entry('complaint', 'staffNotifComplaintTitle', 'staffNotifComplaintHint', {
     soundFeatureKey: 'complaint',
-    matchPrefix: ['guest_complaint', 'staff_internal_note'],
+    matchPrefix: ['guest_complaint', 'staff_internal_note', 'qr_complaint'],
+  }),
+  entry('lost_found', 'staffNotifLostFoundTitle', 'staffNotifLostFoundHint', {
+    soundFeatureKey: 'missing_item',
+    matchPrefix: ['lost_found'],
+  }),
+  entry('incident', 'staffNotifIncidentTitle', 'staffNotifIncidentHint', {
+    soundFeatureKey: 'complaint',
+    matchPrefix: ['incident'],
+  }),
+  entry('facility_journal', 'staffNotifFacilityJournalTitle', 'staffNotifFacilityJournalHint', {
+    soundFeatureKey: 'technical_asset',
+    matchPrefix: ['facility_journal'],
+  }),
+  entry('security_recordings', 'staffNotifSecurityRecordingsTitle', 'staffNotifSecurityRecordingsHint', {
+    soundFeatureKey: 'technical_asset',
+    matchExact: ['staff_security_camera_recording'],
+    matchPrefix: ['security_camera', 'staff_security'],
+  }),
+  entry('announcement', 'staffNotifBoardAnnouncementTitle', 'staffNotifBoardAnnouncementHint', {
+    soundFeatureKey: 'announcement',
+    matchExact: ['staff_board_announcement', 'staff_feature_intro'],
   }),
   entry('missing_item', 'staffNotifMissingItemTitle', 'staffNotifMissingItemHint', {
     soundFeatureKey: 'missing_item',
@@ -181,7 +234,7 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('chat_screenshot', 'staffNotifChatScreenshotTitle', 'staffNotifChatScreenshotHint', {
     soundFeatureKey: 'new_message',
-    matchExact: ['chat_screenshot'],
+    matchExact: ['chat_screenshot', 'app_screenshot'],
   }),
   entry('feed_like', 'staffNotifFeedLikesTitle', 'staffNotifFeedLikesHint', {
     soundFeatureKey: 'social_feed',
@@ -240,7 +293,12 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
   }),
   entry('guest_service_request', 'staffNotifGuestServiceRequestTitle', 'staffNotifGuestServiceRequestHint', {
     soundFeatureKey: 'guest_service_request',
-    matchExact: ['guest_service_request_new', 'guest_service_request_status', 'hotel_kitchen_menu_order', 'kitchen_menu_order_paid'],
+    matchExact: [
+      'guest_service_request_new',
+      'guest_service_request_status',
+      'hotel_kitchen_menu_order',
+      'kitchen_menu_order_paid',
+    ],
   }),
   entry('technical_asset', 'staffNotifTechnicalAssetTitle', 'staffNotifTechnicalAssetHint', {
     soundFeatureKey: 'technical_asset',
@@ -254,6 +312,16 @@ export const STAFF_NOTIFICATION_DELIVERY_TOGGLES: StaffNotifPrefEntry[] = [
       'fault_record_unresolved',
       'fault_record_resolved',
     ],
+  }),
+  entry('staff_perf', 'staffNotifStaffPerfTitle', 'staffNotifStaffPerfHint', {
+    soundFeatureKey: 'staff_call',
+    matchExact: ['staff_perf', 'staff_perf_event'],
+    matchPrefix: ['staff_perf'],
+  }),
+  entry('booking_offer', 'staffNotifBookingOfferTitle', 'staffNotifBookingOfferHint', {
+    soundFeatureKey: 'reception_request',
+    matchExact: ['booking_offer'],
+    matchPrefix: ['booking_'],
   }),
 ];
 
@@ -270,6 +338,7 @@ export function isMandatoryNotificationType(notificationType?: string | null): b
   if (!t) return false;
   if (MANDATORY_NOTIFICATION_TYPES.has(t)) return true;
   if (t.includes('emergency')) return true;
+  if (t.startsWith('room_intelligence')) return true;
   return false;
 }
 
@@ -277,6 +346,7 @@ export function isMandatoryNotificationType(notificationType?: string | null): b
 export function resolveStaffNotificationPrefKey(notificationType?: string | null): string {
   const t = (notificationType ?? '').trim().toLowerCase();
   if (!t) return 'announcement';
+  if (t.startsWith('room_intelligence')) return 'room_intelligence';
   if (isMandatoryNotificationType(t)) return t;
 
   for (const row of STAFF_NOTIFICATION_DELIVERY_TOGGLES) {

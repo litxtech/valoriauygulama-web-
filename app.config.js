@@ -5,12 +5,12 @@ const devClientScheme = 'exp+valoria-hotel';
 /**
  * Mağaza sürümleri — görünen sürüm adı (APP_VERSION) burada; bundle no EAS remote.
  * ANDROID_VERSION_CODE / IOS_BUILD_NUMBER: local fallback; production’da eas.json
- * autoIncrement ile EAS remote (Android 309→310+, iOS 312→313+) otomatik artar.
- * Önceki: 3.3.4 · Yeni: 3.3.5 (feed/lobby, rezervasyon, maaş, muhasebe, bildirim sesleri).
+ * autoIncrement ile EAS remote (Android 310→311+, iOS 314→315+) otomatik artar.
+ * Önceki: 3.3.6 · Yeni: 3.3.7 (PTT/walkie, oda zekâsı, KBS erişim logları).
  */
-const APP_VERSION = '3.3.5';
-const ANDROID_VERSION_CODE = 310;
-const IOS_BUILD_NUMBER = '313';
+const APP_VERSION = '3.3.7';
+const ANDROID_VERSION_CODE = 311;
+const IOS_BUILD_NUMBER = '315';
 
 /** EAS Build: preview/production → Apple production APNs; development client → sandbox */
 const easProfile = process.env.EAS_BUILD_PROFILE;
@@ -50,7 +50,8 @@ const baseConfig = {
       NSPhotoLibraryUsageDescription: 'Profil ve belge yükleme için galeri erişimi.',
       NSLocationWhenInUseUsageDescription:
         'Haritada yol tarifi, yakın noktalar ve (açarsanız) konum paylaşımı için yalnızca uygulama kullanılırken konum alınır.',
-      NSMicrophoneUsageDescription: 'Sesli mesaj kaydi icin mikrofon erisimi gerekir.',
+      NSMicrophoneUsageDescription:
+        'Sesli mesaj ve personel bas-konus (telsiz) icin mikrofon erisimi gerekir.',
       NSLocalNetworkUsageDescription: 'Güvenlik kameralarını canlı izlemek ve geliştirme sunucusuna bağlanmak için yerel ağ erişimi gerekir.',
       ITSAppUsesNonExemptEncryption: false,
     },
@@ -183,6 +184,8 @@ const baseConfig = {
           './assets/sounds/message_pop.wav',
           './assets/sounds/room_cleaning.wav',
           './assets/sounds/room_payment.wav',
+          './assets/sounds/walkie_ptt_open.wav',
+          './assets/sounds/walkie_ptt_close.wav',
         ],
       },
     ],
@@ -191,7 +194,8 @@ const baseConfig = {
     [
       'expo-av',
       {
-        microphonePermission: 'Sesli mesaj kaydı için mikrofon kullanılır.',
+        microphonePermission:
+          'Sesli mesaj ve personel bas-konuş (telsiz) için mikrofon kullanılır.',
       },
     ],
     [
@@ -207,6 +211,8 @@ const baseConfig = {
         iosUrlScheme: 'com.googleusercontent.apps.47373050426-8men09t0m35sufet2n6nl21r4oq07gfo',
       },
     ],
+    '@livekit/react-native-expo-plugin',
+    '@config-plugins/react-native-webrtc',
     './plugins/withPlaySafeManifest.js',
     './plugins/withGoogleModularHeaders.js',
   ],

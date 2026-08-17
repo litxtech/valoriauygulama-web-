@@ -31,6 +31,7 @@ import {
   VALORIA_TAB_BAR_RADIUS,
   getFloatingTabBarInnerHeight,
 } from '@/constants/floatingTabBarMetrics';
+import { StaffFeedPttFab } from '@/components/staff/StaffFeedPttFab';
 import { pds, pdsNight } from '@/constants/personelDesignSystem';
 import { useAuthStore } from '@/stores/authStore';
 import { useStaffTabPinsStore } from '@/stores/staffTabPinsStore';
@@ -257,6 +258,7 @@ export function StaffCustomizableTabBar({
   ]);
 
   const focusedRoute = state.routes[state.index]?.name;
+  const isFeedHome = focusedRoute === 'index';
 
   const items = useMemo((): BuiltItem[] => {
     const out: BuiltItem[] = [
@@ -432,87 +434,95 @@ export function StaffCustomizableTabBar({
   );
 
   return (
-    <Animated.View
-      onLayout={handleShellLayout}
-      style={[
-        styles.shell,
-        styles.shellFloating,
-        {
-          left: FLOAT_SIDE_INSET,
-          right: FLOAT_SIDE_INSET,
-          transform: [{ translateY }],
-        },
-      ]}
-      pointerEvents={barVisible ? 'box-none' : 'none'}
-    >
-      <View style={styles.shadowHost} pointerEvents="box-none">
-        <GlassBackground borderRadius={VALORIA_TAB_BAR_RADIUS} opacity={0.85} style={styles.glassFill}>
-          <View
-            style={[
-              styles.row,
-              {
-                minHeight: innerH,
-                paddingBottom: Math.max(bottomPad, 8),
-              },
-            ]}
-          >
-            {items.map((item) => {
-              let focused = false;
-              let color: string = inactiveColor;
-              let label = '';
-              let iconNode: ReactNode = null;
-              let badge: string | number | undefined;
+    <>
+      {isFeedHome ? (
+        <StaffFeedPttFab
+          bottomOffset={barH + 10}
+          isNight={isNight}
+        />
+      ) : null}
+      <Animated.View
+        onLayout={handleShellLayout}
+        style={[
+          styles.shell,
+          styles.shellFloating,
+          {
+            left: FLOAT_SIDE_INSET,
+            right: FLOAT_SIDE_INSET,
+            transform: [{ translateY }],
+          },
+        ]}
+        pointerEvents={barVisible ? 'box-none' : 'none'}
+      >
+        <View style={styles.shadowHost} pointerEvents="box-none">
+          <GlassBackground borderRadius={VALORIA_TAB_BAR_RADIUS} opacity={0.85} style={styles.glassFill}>
+            <View
+              style={[
+                styles.row,
+                {
+                  minHeight: innerH,
+                  paddingBottom: Math.max(bottomPad, 8),
+                },
+              ]}
+            >
+              {items.map((item) => {
+                let focused = false;
+                let color: string = inactiveColor;
+                let label = '';
+                let iconNode: ReactNode = null;
+                let badge: string | number | undefined;
 
-              if (item.kind === 'href') {
-                label = item.item.label;
-                focused = isHrefActive(item.item.href);
-                color = focused ? activeColor : inactiveColor;
-                iconNode = <Ionicons name={item.item.icon} size={ICON_SIZE} color={color} />;
-              } else {
-                label = item.label;
-                focused = focusedRoute === item.routeName;
-                color = focused ? activeColor : inactiveColor;
-                badge = item.badge;
-                iconNode = item.isProfile ? (
-                  <ProfileIcon focused={focused} color={color} />
-                ) : (
-                  <Ionicons
-                    name={focused ? item.iconFocused : item.icon}
-                    size={ICON_SIZE}
-                    color={color}
-                  />
+                if (item.kind === 'href') {
+                  label = item.item.label;
+                  focused = isHrefActive(item.item.href);
+                  color = focused ? activeColor : inactiveColor;
+                  iconNode = <Ionicons name={item.item.icon} size={ICON_SIZE} color={color} />;
+                } else {
+                  label = item.label;
+                  focused = focusedRoute === item.routeName;
+                  color = focused ? activeColor : inactiveColor;
+                  badge = item.badge;
+                  iconNode = item.isProfile ? (
+                    <ProfileIcon focused={focused} color={color} />
+                  ) : (
+                    <Ionicons
+                      name={focused ? item.iconFocused : item.icon}
+                      size={ICON_SIZE}
+                      color={color}
+                    />
+                  );
+                }
+
+                return (
+                  <Pressable
+                    key={item.key}
+                    onPress={() => onPressItem(item)}
+                    style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: focused }}
+                    accessibilityLabel={label}
+                  >
+                    <View>
+                      {iconNode}
+                      {badge != null && badge !== 0 && badge !== '0' ? (
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{badge}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {item.kind === 'route' && item.isProfile ? null : (
+                      <Text style={[styles.label, { color }]} numberOfLines={1}>
+                        {label}
+                      </Text>
+                    )}
+                  </Pressable>
                 );
-              }
-
-              return (
-                <Pressable
-                  key={item.key}
-                  onPress={() => onPressItem(item)}
-                  style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: focused }}
-                  accessibilityLabel={label}
-                >
-                  <View>
-                    {iconNode}
-                    {badge != null && badge !== 0 && badge !== '0' ? (
-                      <View style={styles.badge}>
-                        <Text style={styles.badgeText}>{badge}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  {item.kind === 'route' && item.isProfile ? null : (
-                    <Text style={[styles.label, { color }]} numberOfLines={1}>
-                      {label}
-                    </Text>
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        </GlassBackground>
-      </View>
-    </Animated.View>
+              })}
+            </View>
+          </GlassBackground>
+        </View>
+      </Animated.View>
+    </>
   );
 }
 

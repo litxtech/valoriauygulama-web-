@@ -43,6 +43,13 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
   { key: 'video_paylasim', label: 'Video / resim paylaşımı (feed)', section: 'communication', defaultEnabled: true },
   { key: 'gonderi_yonetimi', label: 'Gönderi yönetimi (admin feed)', section: 'communication', defaultEnabled: false },
   { key: 'toplu_duyuru', label: 'Toplu duyuru gönderebilir', section: 'communication', defaultEnabled: false },
+  {
+    key: 'bas_konus',
+    label: 'Bas-konuş (telsiz)',
+    description: 'LiveKit personel kanallarına katılıp basılı tutarak konuşabilir.',
+    section: 'communication',
+    defaultEnabled: true,
+  },
   { key: 'bahsis_alabilir', label: 'Misafir bahşişi alabilir', description: 'Kapalıysa misafir profilinde bahşiş butonu görünmez.', section: 'communication', defaultEnabled: true },
 
   // —— Görev & personel ——
@@ -58,6 +65,20 @@ export const STAFF_APP_PERMISSION_CATALOG: StaffAppPermissionEntry[] = [
 
   // —— Misafir & konaklama ——
   { key: 'doluluk_operasyon', label: 'Doluluk / oda operasyonları', description: 'Giriş-çıkış, oda atama, konaklama merkezi.', section: 'guests_rooms', defaultEnabled: false },
+  {
+    key: 'oda_istihbarat',
+    label: 'İstihbarat',
+    description: 'Tüm personelde varsayılan açık; ek izin gerekmez.',
+    section: 'guests_rooms',
+    defaultEnabled: true,
+  },
+  {
+    key: 'oda_istihbarat_yonetim',
+    label: 'İstihbarat yönetimi',
+    description: 'Kritik kayıt, kapatma ve yönetim kapsamındaki tüm kayıtları görme.',
+    section: 'guests_rooms',
+    defaultEnabled: false,
+  },
   { key: 'misafir_yonetimi', label: 'Misafir listesi & detay', section: 'guests_rooms', defaultEnabled: false },
   { key: 'misafir_sikayetleri', label: 'Misafir şikayet / öneri', section: 'guests_rooms', defaultEnabled: false },
   { key: 'misafir_talepleri', label: 'Misafir talepleri (oda / kayıp)', section: 'guests_rooms', defaultEnabled: false },

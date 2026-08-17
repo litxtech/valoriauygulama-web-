@@ -78,6 +78,12 @@ const FEATURE_SOUND_CHANNELS: { id: string; name: string; sound: string; descrip
   { id: 'valoria_messages_v2', name: 'Valoria Mesajlar', sound: 'message_pop.wav', description: 'Sohbet mesajları — gönderen ve içerik' },
   { id: 'valoria_cleaning_v1', name: 'Temizlik', sound: 'room_cleaning.wav', description: 'Oda temizlik eklendi / temizlendi bildirimleri' },
   { id: 'valoria_room_payment_v1', name: 'Oda ödemeleri', sound: 'room_payment.wav', description: 'Oda tahsilatı alınacak / alındı bildirimleri' },
+  {
+    id: 'valoria_ns_staff_ptt_v2',
+    name: 'Bas-konuş (telsiz)',
+    sound: 'walkie_ptt_open.wav',
+    description: 'Personel telsizi — oturum başlangıcı (dikkat çekici)',
+  },
 ];
 
 function isChatMessageNotificationType(notificationType: string): boolean {
@@ -165,14 +171,16 @@ async function ensureAndroidNotificationChannels(
     description: 'Personel acil durum alarmlari',
   });
   for (const ch of FEATURE_SOUND_CHANNELS) {
+    const isPtt = ch.id === 'valoria_ns_staff_ptt_v2';
     await Notifications.setNotificationChannelAsync(ch.id, {
       name: ch.name,
-      importance: AndroidImportance.HIGH,
+      importance: isPtt ? AndroidImportance.MAX : AndroidImportance.HIGH,
       enableVibrate: true,
       enableLights: true,
       lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
       sound: ch.sound,
-      vibrationPattern: [0, 200, 120, 200],
+      // Telsiz: kısa çift bip + uzun titreşim — diğer kanallardan ayrışır.
+      vibrationPattern: isPtt ? [0, 90, 60, 90, 60, 280] : [0, 200, 120, 200],
       showBadge: true,
       description: ch.description,
     });
@@ -235,7 +243,9 @@ export async function initPushNotificationsPresentation(): Promise<void> {
         const notificationTypeRaw = data.notificationType ?? data.notification_type;
         const notificationType = normalizeNotificationType(notificationTypeRaw);
         const featureKeyRaw = typeof data.feature_key === 'string' ? data.feature_key.trim() : '';
-        const roomCleaningMarked = notificationType === 'staff_room_cleaning_status';
+        const roomCleaningMarked =
+          notificationType === 'staff_room_cleaning_status' ||
+          notificationType === 'staff_room_cleaning_done';
         const roomCleaningSoundPref = await AsyncStorage.getItem(STAFF_ROOM_CLEANING_SOUND_PREF_KEY);
         const roomCleaningSoundEnabled = roomCleaningSoundPref == null ? true : roomCleaningSoundPref === '1';
         const muteByLocalPref = roomCleaningMarked && !roomCleaningSoundEnabled;

@@ -24,6 +24,8 @@ import {
   isKitchenStaffMember,
   canAccessOccupancyOps,
   canAccessRoomPaymentBoard,
+  canAccessRoomIntelligence,
+  canManageRoomIntelligence,
   canAccessGuestComplaints,
   canViewManagedContracts,
   canManageManagedContracts,
@@ -83,8 +85,13 @@ const ACCENTS: Record<string, string> = {
   meal_edit: '#c2410c',
   meal_hist: '#64748b',
   emergency: '#dc2626',
+  ptt: '#0ea5e9',
   board: '#2563eb',
   announcement_compose: '#7c3aed',
+  notifications_hub: '#7c3aed',
+  notifications_compose: '#6d28d9',
+  notifications_templates: '#5b21b6',
+  notifications_routing: '#4338ca',
   messages: '#2563eb',
   cleaning: '#0f766e',
   checkout_board: '#c2410c',
@@ -112,6 +119,7 @@ const ACCENTS: Record<string, string> = {
   assets: '#7c3aed',
   my_stock: '#0d9488',
   facility_journal: '#0f766e',
+  room_intelligence: '#b45309',
   fault_records: '#ea580c',
   security_recordings: '#0f766e',
   debts: '#0369a1',
@@ -303,6 +311,13 @@ export function buildStaffHamburgerMenuSections(
     icon: 'warning-outline',
     accent: ACCENTS.emergency,
   });
+  push('nav', {
+    id: 'ptt',
+    label: t('pttTitle'),
+    href: '/staff/ptt',
+    icon: 'mic-outline',
+    accent: ACCENTS.ptt,
+  });
   push('nav', { id: 'map', label: t('mapTab'), href: '/staff/map', icon: 'map-outline', accent: ACCENTS.map });
   push('nav', { id: 'board', label: t('staffBoardTitle'), href: '/staff/board', icon: 'eye-outline', accent: ACCENTS.board });
   if (canAccessAdminRoute(staff, '/admin/announcements/compose')) {
@@ -312,6 +327,36 @@ export function buildStaffHamburgerMenuSections(
       href: '/admin/announcements/compose',
       icon: 'megaphone-outline',
       accent: ACCENTS.announcement_compose,
+    });
+  }
+  if (canAccessAdminRoute(staff, '/admin/notifications')) {
+    push('admin', {
+      id: 'notifications_hub',
+      label: 'Bildirim merkezi',
+      href: '/admin/notifications',
+      icon: 'notifications-outline',
+      accent: ACCENTS.notifications_hub,
+    });
+    push('admin', {
+      id: 'notifications_compose',
+      label: 'Bireysel bildirim gönder',
+      href: '/admin/notifications/compose',
+      icon: 'send-outline',
+      accent: ACCENTS.notifications_compose,
+    });
+    push('admin', {
+      id: 'notifications_templates',
+      label: 'Otomatik push',
+      href: '/admin/notifications/templates',
+      icon: 'time-outline',
+      accent: ACCENTS.notifications_templates,
+    });
+    push('admin', {
+      id: 'notifications_routing',
+      label: 'Kim hangi bildirimi alsın',
+      href: '/admin/notifications/routing',
+      icon: 'people-outline',
+      accent: ACCENTS.notifications_routing,
     });
   }
 
@@ -372,6 +417,13 @@ export function buildStaffHamburgerMenuSections(
     href: '/staff/warnings',
     icon: 'warning-outline',
     accent: ACCENTS.warnings,
+  });
+  push('staff', {
+    id: 'expenses_new',
+    label: t('staffExpenseNewTitle'),
+    href: '/staff/expenses/new',
+    icon: 'cash-outline',
+    accent: ACCENTS.expenses,
   });
   if (hasStaffAppPermission(staff, 'harcama_yonetimi')) {
     push('staff', {
@@ -442,6 +494,15 @@ export function buildStaffHamburgerMenuSections(
       accent: ACCENTS.department_rules,
     });
   }
+
+  // Denetim Defteri — tüm personel (puan + yorum şeffaf)
+  push('staff', {
+    id: 'staff_perf',
+    label: t('staffDenetimTitle'),
+    href: '/staff/denetim',
+    icon: 'ribbon-outline',
+    accent: '#0f3d3a',
+  });
   if (perms.tum_sozlesmeler && !isAdmin) {
     push('staff', {
       id: 'contracts_staff',
@@ -583,6 +644,15 @@ export function buildStaffHamburgerMenuSections(
       href: fjBase,
       icon: 'clipboard-outline',
       accent: ACCENTS.facility_journal,
+    });
+  }
+  if (canAccessRoomIntelligence(staff) || canManageRoomIntelligence(staff)) {
+    push(canManageRoomIntelligence(staff) || isAdmin ? 'admin' : 'ops', {
+      id: 'room_intelligence',
+      label: 'İstihbarat',
+      href: '/admin/room-intelligence',
+      icon: 'eye-outline',
+      accent: ACCENTS.room_intelligence,
     });
   }
   push('ops', {
@@ -741,10 +811,10 @@ export function buildStaffHamburgerMenuSections(
     }
     if (canAccessAdminRoute(staff, '/admin/staff-perf')) {
       push('admin', {
-        id: 'staff_perf',
-        label: t('staffPerfSystemTitle'),
+        id: 'staff_perf_admin',
+        label: t('staffDenetimAdminTitle'),
         href: '/admin/staff-perf',
-        icon: 'ribbon-outline',
+        icon: 'shield-checkmark-outline',
         accent: '#0f3d3a',
       });
     }
@@ -836,6 +906,22 @@ export function buildStaffHamburgerMenuSections(
 
   if (isKbsUiEnabled() && (isAdmin || staff.kbs_access_enabled !== false)) {
     push('admin', { id: 'kbs', label: t('kbsNavOperation'), href: '/staff/kbs', icon: 'scan-outline', accent: ACCENTS.kbs });
+  }
+
+  if (
+    isKbsUiEnabled() &&
+    (isAdmin ||
+      staff.role === 'manager' ||
+      staff.role === 'reception_chief' ||
+      canAccessAdminRoute(staff, '/admin/kbs-access-logs'))
+  ) {
+    push('admin', {
+      id: 'kbs_access_logs',
+      label: 'Kimlik erişim logları',
+      href: '/admin/kbs-access-logs',
+      icon: 'eye-outline',
+      accent: ACCENTS.kbs,
+    });
   }
 
   pushBreakfastBriefingMenuItem(push, staff, isAdmin);
